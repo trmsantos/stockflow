@@ -1,0 +1,165 @@
+# SECURITY.md — Modelo de ameaças e controlos
+
+Aplica-se a todo o código do repositório. O agente consulta este ficheiro sempre que toca em
+autenticação, permissões, dados pessoais, uploads, integrações externas ou configuração.
+A verificação automática está na skill `security-check`.
+
+## 1. Ameaças que assumimos
+
+| Ameaça | Controlo principal |
+|---|---|
+| Injeção (SQL, comando, template) | ORM + parâmetros; sem `eval`/`subprocess` com input; autoescape |
+| Auth quebrada / sessões roubadas | Sessões server-side, cookies httpOnly+Secure+SameSite, Argon2id |
+| Acesso a dados de outro tenant | Permissões por objeto **e** RLS no Postgres |
+| XSS | React escapa por defeito; `dangerouslySetInnerHTML` proibido sem sanitização (DOMPurify); CSP |
+| CSRF | Django CSRF middleware + `X-CSRFToken` no cliente |
+| Fuga de segredos | `.env` ignorado; gitleaks no CI; segredos em runtime |
+| Dependência vulnerável | `pip-audit`, `pnpm audit`, lockfiles, Renovate |
+| Upload malicioso | Validação de MIME real, tamanho máximo, armazenamento fora do webroot, nomes gerados |
+| Prompt injection (agentes) | Output de LLM nunca executado; tools sem shell/SQL; conteúdo externo marcado untrusted |
+| Exposição de dados em logs | Logs sem PII; filtros de campos sensíveis |
+| DoS | Rate limit no proxy e por utilizador; limites de payload; timeouts |
+| Roubo do disco/backup | Encriptação at rest + campo a campo para PII sensível |
+
+## 2. Configuração Django obrigatória (`settings/prod.py`)
+
+```python
+DEBUG = False
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS")
+SECRET_KEY = env("DJANGO_SECRET_KEY")          # ≥ 50 chars, rotacionável
+
+SECURE_SSL_REDIRECT = True
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SECURE = True
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS")
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+X_FRAME_OPTIONS = "DENY"
+
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.Argon2PasswordHasher", ...]
+AUTH_PASSWORD_VALIDATORS = [...]               # mínimo 12 chars, não comum, não numérico
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.UserRateThrottle",
+                                 "rest_framework.throttling.AnonRateThrottle"],
+    "DEFAULT_THROTTLE_RATES": {"user": "600/min", "anon": "60/min"},
+}
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+```
+
+`uv run manage.py check --deploy` tem de passar sem warnings. Faz parte do `security-check`.
+
+CSP via `django-csp`: `default-src 'self'`; scripts só do próprio domínio com nonce; sem
+`unsafe-inline`; `frame-ancestors 'none'`.
+
+## 3. Base de dados
+
+### Ligação
+- TLS obrigatório (`sslmode=verify-full` em prod).
+- Utilizador da app com privilégios mínimos: sem `SUPERUSER`, sem `CREATEDB`. Migrações com
+  um role separado.
+
+### Isolamento multi-tenant (RLS)
+```sql
+ALTER TABLE core_document ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core_document FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON core_document
+  USING (tenant_id = current_setting('app.tenant_id')::uuid);
+```
+O `TenantMiddleware` faz `SET LOCAL app.tenant_id = ...` no início de cada transação.
+Qualquer tabela com `tenant_id` tem esta política. Sem `app.tenant_id` definido, a query
+devolve zero linhas — falha fechada.
+
+### Encriptação — três camadas
+1. **At rest**: encriptação de disco/volume no fornecedor (RDS, Neon, ou LUKS self-hosted).
+   Protege contra roubo físico e de snapshots. Não protege contra a app.
+2. **In transit**: TLS na ligação (acima).
+3. **Ao nível de campo** (para PII sensível: NIF, IBAN, dados de saúde, tokens OAuth de
+   terceiros): `django-fernet-fields` ou `EncryptedTextField` próprio com AES-256-GCM.
+   Chave (`FIELD_ENCRYPTION_KEY`) vem de um KMS/Vault ou de secret de runtime, **nunca** do
+   `.env` commitado. Rotação: campos guardam `key_id`; job de re-encriptação.
+   - Passwords: nunca encriptadas — só Argon2id (hash).
+   - O que é encriptado não é pesquisável por `LIKE`; se precisares de pesquisa, guarda um
+     HMAC do valor num campo separado (`nif_hash`) e pesquisa por igualdade.
+
+### Backups
+- Diários, encriptados, testados por restore mensal automatizado. Retenção definida por lei
+  (RGPD: minimização — não guardar mais do que o necessário).
+
+## 4. Entrada de dados
+
+- Serializers DRF com `max_length`, `validators`, `choices`. Nunca `fields = "__all__"` em
+  serializers de escrita.
+- IDs expostos são UUIDv4, nunca inteiros sequenciais.
+- Uploads: verificar tipo real (`python-magic`), extensão numa allowlist, tamanho máximo,
+  guardar em S3/MinIO com nome gerado, servir por URL assinada com expiração.
+- Redirects só para URLs na allowlist (`url_has_allowed_host_and_scheme`).
+- Frontend: Zod em todas as respostas; formulários com validação client + server.
+
+## 5. Autenticação e autorização
+
+- Login com rate limit por IP e por conta (`django-axes`); bloqueio progressivo.
+- MFA (TOTP) disponível; obrigatório para admins.
+- Sessões expiram em 14 dias inativas; rotação de session key após login.
+- Permissão por objeto em todas as views que recebem um `pk`: `has_object_permission` verifica
+  `obj.tenant_id == request.tenant.id` **antes** de qualquer outra regra.
+- Admin Django num path não óbvio, só acessível por IP/VPN, com MFA.
+
+## 6. Agentes e LLMs
+
+- Output do modelo é texto. Nunca vai para `exec`, `subprocess`, SQL, `render_template_string`
+  ou `dangerouslySetInnerHTML`.
+- Tools têm schema estrito; o modelo não escolhe endpoints nem tabelas, só argumentos validados.
+- Conteúdo de utilizadores/web entra no prompt dentro de delimitadores explícitos e o prompt de
+  sistema diz para o tratar como dados.
+- Limite de custo por utilizador/dia. Logs de prompts sem PII (ou com PII redigida).
+- Chaves de API de LLM com scope mínimo, rotacionadas, nunca no frontend.
+
+## 7. Frontend
+
+- Sem tokens em `localStorage`/`sessionStorage`.
+- `fetch` com `credentials: "include"` e header `X-CSRFToken`.
+- Sem `dangerouslySetInnerHTML`; se inevitável, `DOMPurify.sanitize` e revisão obrigatória.
+- Links externos com `rel="noopener noreferrer"`.
+- Sem segredos em `VITE_*` — tudo o que começa por `VITE_` vai para o bundle público.
+- Dependências: `pnpm audit --audit-level=high` no CI.
+
+## 8. Docker e infra
+
+- Imagens não-root, read-only filesystem onde possível, `cap_drop: [ALL]`.
+- Scan de imagens com Trivy no CI; sem CVEs HIGH/CRITICAL com fix disponível.
+- Rede interna do compose; só o proxy expõe 80/443.
+- Segredos por Docker secrets / orquestrador. `docker history` da imagem final não pode mostrar
+  segredos.
+
+## 9. CI — gates obrigatórios
+
+Tudo isto corre em cada PR (o script `security_check.sh` corre o subconjunto local):
+
+| Gate | Ferramenta |
+|---|---|
+| Segredos | gitleaks |
+| Python SAST | bandit, semgrep (regras `p/django`, `p/python`, `p/owasp-top-ten`) |
+| Python deps | pip-audit |
+| Django config | `manage.py check --deploy` |
+| JS/TS SAST | semgrep (`p/react`, `p/typescript`), eslint-plugin-security |
+| JS deps | pnpm audit |
+| Docker | hadolint, trivy |
+| Fronteiras | import-linter |
+
+## 10. Resposta a incidentes (mínimo)
+
+1. Rotacionar credenciais afetadas (SECRET_KEY, chaves de BD, chaves de API).
+2. Invalidar todas as sessões (`Session.objects.all().delete()` ou mudar `SECRET_KEY`).
+3. Preservar logs. Identificar tenants afetados.
+4. Notificar a CNPD em ≤72h se houver dados pessoais envolvidos (RGPD art. 33).
+5. Post-mortem escrito; controlo novo adicionado a este ficheiro.
