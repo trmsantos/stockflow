@@ -30,35 +30,97 @@ Todos os tokens são variáveis CSS mapeadas para Tailwind v4 via `@theme`. O ag
 
 ### Cor — semântica, não literal
 
+Três papéis por cor de estado, porque um valor só não serve os três. Uma cor de estado usada
+como **texto** sobre o fundo precisa de 4.5:1; a mesma cor como **preenchimento** de um banner
+precisa de ter texto legível por cima; e a **borda** desse banner precisa de 3:1 para delimitar
+um componente. Um token só para os três papéis é como se perde a acessibilidade sem ninguém dar
+por isso — a versão anterior deste ficheiro tinha `warning` a **2.17:1**, abaixo das duas barras
+que esta própria secção exige.
+
 ```css
 @theme {
   /* Superfícies */
-  --color-background: oklch(0.985 0.002 250);
-  --color-surface:    oklch(1 0 0);
-  --color-surface-2:  oklch(0.965 0.003 250);
-  --color-border:     oklch(0.90 0.004 250);
+  --color-background:  oklch(0.985 0.002 250);
+  --color-surface:     oklch(1 0 0);
+  --color-surface-2:   oklch(0.965 0.003 250);
+
+  /* Bordas — dois papéis distintos */
+  --color-border:        oklch(0.90 0.004 250);   /* separador decorativo; isento dos 3:1 */
+  --color-border-strong: oklch(0.626 0.008 250);  /* fronteira de componente (input): 3.2:1 */
 
   /* Texto */
   --color-foreground:       oklch(0.20 0.01 250);
-  --color-muted-foreground: oklch(0.50 0.01 250);
+  --color-muted-foreground: oklch(0.528 0.01 250);
 
   /* Marca — UMA cor de acento, usada com parcimónia */
-  --color-primary:            oklch(0.52 0.14 165);   /* verde-azulado escuro; único acento */
+  --color-primary:            oklch(0.514 0.105 165);  /* verde-azulado; único acento */
   --color-primary-foreground: oklch(0.99 0 0);
 
-  /* Estado */
-  --color-success: oklch(0.62 0.15 150);
-  --color-warning: oklch(0.75 0.15 80);
-  --color-danger:  oklch(0.58 0.20 25);
+  /* Estado — texto / preenchimento suave / borda */
+  --color-success:         oklch(0.512 0.14 150);
+  --color-success-surface: oklch(0.95 0.035 150);
+  --color-success-border:  oklch(0.610 0.15 150);
+
+  --color-warning:         oklch(0.532 0.11 80);
+  --color-warning-surface: oklch(0.95 0.038 80);
+  --color-warning-border:  oklch(0.630 0.13 80);
+
+  --color-danger:          oklch(0.552 0.20 25);
+  --color-danger-surface:  oklch(0.95 0.020 25);
+  --color-danger-border:   oklch(0.650 0.20 25);
 }
 
-@media (prefers-color-scheme: dark) { /* redefinir todos os tokens acima */ }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background:  oklch(0.18 0.006 250);
+    --color-surface:     oklch(0.21 0.006 250);
+    --color-surface-2:   oklch(0.25 0.007 250);
+
+    --color-border:        oklch(0.30 0.008 250);
+    --color-border-strong: oklch(0.544 0.008 250);
+
+    --color-foreground:       oklch(0.96 0.003 250);
+    --color-muted-foreground: oklch(0.644 0.01 250);
+
+    --color-primary:            oklch(0.628 0.13 165);
+    --color-primary-foreground: oklch(0.16 0.01 250);
+
+    --color-success:         oklch(0.628 0.15 150);
+    --color-success-surface: oklch(0.26 0.030 150);
+    --color-success-border:  oklch(0.528 0.145 150);
+
+    --color-warning:         oklch(0.648 0.135 80);
+    --color-warning-surface: oklch(0.26 0.032 80);
+    --color-warning-border:  oklch(0.548 0.115 80);
+
+    --color-danger:          oklch(0.668 0.20 25);
+    --color-danger-surface:  oklch(0.26 0.035 25);
+    --color-danger-border:   oklch(0.568 0.20 25);
+  }
+}
 ```
+
+Como se usam os três papéis, e não há um quarto:
+- `--color-<estado>` é **cor de texto e de ícone**, sobre qualquer das três superfícies. Serve
+  também de preenchimento de botão sólido, com `--color-primary-foreground` por cima (≥ 5.1:1).
+- `--color-<estado>-surface` é o preenchimento suave de um banner ou badge, e o texto por cima é
+  `--color-foreground` — nunca a cor de estado, que sobre a própria tinta não tem contraste.
+- `--color-<estado>-border` é a borda desse banner, e só isso.
 
 Regras:
 - Uma cor de acento. Gradientes só se a identidade os pedir explicitamente; nunca como default.
 - Cinzentos com um ligeiro tom (o `0.002–0.01` de chroma acima), nunca `#888` puro.
-- Contraste mínimo WCAG AA (4.5:1 texto, 3:1 UI). Verificar com o plugin de a11y.
+- **Contraste mínimo WCAG AA: 4.5:1 texto, 3:1 UI, verificado contra a pior das três superfícies**
+  — que é o `surface-2` nos dois modos, não o `background`. Os valores acima dão 4.80–4.84 para
+  texto e 3.21–3.22 para elementos de UI: margem deliberada, para um arredondamento não fazer
+  falhar a barra.
+- **Todos os valores estão dentro do gamut sRGB.** Um `oklch()` fora do gamut é distorcido pelo
+  browser em silêncio, e o contraste medido deixa de ser o contraste real. À luminosidade das
+  tintas (0.95) o vermelho aceita muito menos croma que o verde — daí o `danger-surface` ser mais
+  discreto que o `success-surface`. É um limite do sRGB, não uma escolha estética.
+- O `--color-border` a ~1.3:1 **não** é uma falha: um separador decorativo entre superfícies está
+  fora da regra dos 3:1, que se aplica a fronteiras que identificam componentes. Para essas há o
+  `--color-border-strong`. Um `input` delimitado com `--color-border` é um bug de acessibilidade.
 
 ### Tipografia
 
@@ -138,7 +200,9 @@ Se o agente se apanhar a produzir qualquer um destes, apaga e recomeça a partir
 - [ ] Fontes são as do projeto, não Inter/Roboto.
 - [ ] Todos os estados (loading/empty/error/disabled/focus) existem.
 - [ ] Navegação por teclado funciona; foco é visível.
-- [ ] Contraste AA verificado.
+- [ ] Contraste AA **medido**, contra o `surface-2` (a pior superfície), e não presumido.
+- [ ] Nenhum `oklch()` fora do gamut sRGB — fora do gamut, o contraste medido é ficção.
+- [ ] Nenhum `input` ou controlo delimitado com `--color-border` em vez de `--color-border-strong`.
 - [ ] Funciona a 360px.
 - [ ] `prefers-reduced-motion` respeitado.
 - [ ] Nenhum item da secção 5 presente.
