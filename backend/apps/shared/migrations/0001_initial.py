@@ -6,19 +6,19 @@ não se edita (CLAUDE.md) e uma política mal escrita descobre-se tarde.
 
 ## Porque é que `ENABLE` não basta: `FORCE`
 
-`ENABLE ROW LEVEL SECURITY` não se aplica ao **dono** da tabela. Hoje o dono é o
-mesmo role que a aplicação usa (`DATABASE_URL` do `.env.example`), pelo que uma
-política só com `ENABLE` seria ignorada em todas as queries reais — e passava a
-dar uma falsa sensação de isolamento. `FORCE ROW LEVEL SECURITY` sujeita o dono
-à política e entra em todas as migrações de tabelas com `tenant_id` desde a
-primeira (ADR 0005, "Consequências"). A separação de roles a sério — aplicação
-sem `ALTER TABLE`, migrações com role próprio — é a ADR 0006.
+`ENABLE ROW LEVEL SECURITY` não se aplica ao **dono** da tabela, e o dono desta é
+o `stockflow_owner` — o role que corre as migrações. Sem `FORCE`, uma migração de
+dados corria sem política nenhuma. `FORCE ROW LEVEL SECURITY` sujeita-o, e entra
+em todas as migrações de tabelas com `tenant_id` desde a primeira (ADR 0005).
 
-Nota que fica registada por ser verificável: no Postgres do compose o role é o
-bootstrap do cluster (`initdb -U stockflow`), logo é `SUPERUSER` e tem
-`BYPASSRLS`, e um superuser **não** é sujeito a políticas nem com `FORCE`. É por
-isso que o teste de isolamento troca o role da ligação por um sem privilégios
-antes de afirmar o que quer que seja, com uma guarda a confirmá-lo.
+Nota histórica, porque explica a forma deste ficheiro: quando esta migração foi
+escrita o role da aplicação era o `stockflow` do compose, que é o bootstrap do
+cluster (`initdb -U stockflow`) e portanto `SUPERUSER` com `BYPASSRLS` — e um
+superuser **não** é sujeito a políticas nem com `FORCE`. A política existia e não
+era imposta em runtime. A ADR 0006 separou os roles: a aplicação liga-se agora
+como `stockflow_app`, `NOSUPERUSER NOBYPASSRLS` e dona de nada, e a RLS
+alcança-a. O teste de isolamento deixou de precisar de trocar o role da ligação;
+a guarda que o confirma mudou de casa para `tests/test_db_roles.py`.
 
 ## Porque é que o predicado leva `NULLIF`
 

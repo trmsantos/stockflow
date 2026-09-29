@@ -45,6 +45,10 @@ Skills externas esperadas (ver README): frontend-design, web-design-guidelines, 
 ## Regras que não se discutem
 - **Stock é um ledger.** Nunca se altera `quantity` de um `StockLevel`; cria-se um `StockMovement`.
 - Toda a tabela com `tenant_id` tem política RLS na migração que a cria.
+- Onde append-only é regra de negócio, a mesma migração revoga a escrita destrutiva ao role da
+  aplicação: `REVOKE UPDATE, DELETE ON <tabela> FROM stockflow_app` (ADR 0006). Hoje aplica-se a
+  `inventory_stockmovement` e a mais nada; a lista fechada vive no `APPEND_ONLY` de
+  `tests/test_db_roles.py` e o teste falha se a lista e a base de dados divergirem.
 - Lógica em `services.py`; módulos só se importam via `apps/<m>/api.py` (import-linter).
 - Serializers de escrita listam `fields`; sem `__all__`. IDs são UUID. Quantidades e dinheiro são `Decimal`.
 - Efeitos secundários (email, extração de faturas, previsões) em Celery via outbox.
