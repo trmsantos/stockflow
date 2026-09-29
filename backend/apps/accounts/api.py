@@ -1,6 +1,6 @@
 """A porta do módulo `accounts` (ARCHITECTURE.md §3).
 
-É o único ficheiro do `accounts` que outro módulo pode importar. Expõe três
+É o único ficheiro do `accounts` que outro módulo pode importar. Expõe quatro
 coisas e nada mais:
 
 1. **Os DTOs do contexto do pedido.** `request.tenant` é o `TenantContext`
@@ -17,6 +17,12 @@ coisas e nada mais:
    que não declare nada é servida com âmbito, uma que não o consiga obter leva
    403 antes de o `get_response()` correr. Quem lê a declaração é o
    `TenantMiddleware`; quem a escreve usa `tenant_scope_exempt` daqui.
+4. **A forma canónica de um email.** `normalizar_email` é a definição de "a
+   mesma conta" (a unicidade é insensível à caixa — ver `models.py`), e é
+   pública porque há um consumidor fora do módulo: o `AXES_USERNAME_CALLABLE`
+   em `config/lockout.py`, que tem de contar as tentativas de login na mesma
+   chave em que a conta existe. Uma segunda definição em qualquer outro sítio é
+   um bug à espera de acontecer.
 
 O que este ficheiro **não** expõe, de propósito: pesquisa de utilizadores. O
 `accounts_user` é a tabela sem política (ADR 0007) e um endpoint que aceite um
@@ -35,7 +41,7 @@ from uuid import UUID
 
 from django.http import HttpRequest
 
-from apps.accounts.models import Papel
+from apps.accounts.models import Papel, UserManager
 from apps.accounts.permissions import PertenceAoTenant, TemPapel
 from apps.accounts.selectors import membership_no_ambito
 from apps.shared.db import TenantScopeConflict, current_tenant
@@ -51,6 +57,7 @@ __all__ = [
     "dispensa_declarada",
     "dispensar_ambito",
     "membership_atual",
+    "normalizar_email",
     "tenant_context",
     "tenant_scope_exempt",
     "utilizador_atual",
@@ -285,3 +292,26 @@ def tenant_context(user_id: UUID, tenant_id: UUID) -> TenantContext | None:
         role=membership.role,
     )
 
+
+
+# ---------------------------------------------------------------------------
+# A forma canónica de um email
+# ---------------------------------------------------------------------------
+def normalizar_email(valor: str | None) -> str:
+    """A forma canónica de um email: é a definição de "a mesma conta".
+
+    A unicidade do email é insensível à caixa (`models.py`), pelo que `Ana@x.pt`
+    e `ana@x.pt` normalizam para o mesmo valor. A implementação é o
+    `UserManager.normalize_email` e este é só a porta — a implementação fica
+    onde o Django a chama, para não haver duas definições a divergir.
+
+    É um `classmethod` por baixo: não toca na base de dados nem precisa do
+    âmbito de tenant. Isso é requisito de quem a chama de fora, não detalhe —
+    o `AXES_USERNAME_CALLABLE` corre no caminho crítico do login, de dentro da
+    construção da query das tentativas, onde uma query a mais é uma recursão
+    (ver o docstring de `config/lockout.py`).
+
+    Não é um validador: um valor que não seja um email sai normalizado da mesma
+    forma. Quem valida a forma é o `EmailField` do modelo ou o serializer.
+    """
+    return UserManager.normalize_email(valor)

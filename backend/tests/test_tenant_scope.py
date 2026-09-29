@@ -49,7 +49,13 @@ from django.db.utils import DataError, ProgrammingError
 from django.http import HttpRequest, HttpResponse
 from django.test import RequestFactory
 
-from apps.shared.db import TenantScopeConflict, current_tenant, system_scope, tenant_scope
+from apps.shared.db import (
+    TenantScopeConflict,
+    current_tenant,
+    in_system_scope,
+    system_scope,
+    tenant_scope,
+)
 from apps.shared.events import DomainEvent
 from apps.shared.middleware import (
     REQUEST_ID_HEADER,
@@ -129,11 +135,6 @@ def test_a_saida_do_ambito_o_guc_nao_sobrevive_na_mesma_ligacao() -> None:
         _escalar("SELECT current_setting('app.tenant_id', true)::uuid")
 
 
-# A leitura da outbox sob `system_scope()` é sem tenant por desenho — é como o
-# consumidor lê a linha — e o guarda de âmbito do `conftest.py` não distingue
-# "sem âmbito nenhum" de "âmbito de sistema". Daí a marca, aqui e nos dois
-# testes do disjunto de sistema mais abaixo.
-@pytest.mark.sem_ambito_de_rls
 @pytest.mark.django_db(transaction=True)
 def test_uma_excecao_dentro_do_ambito_desfaz_a_transacao_e_fecha_o_guc() -> None:
     evento = _EventoDeTeste(tenant_id=TENANT_A, quantidade=Decimal("1.000"))
@@ -193,6 +194,59 @@ def test_tenant_scope_dentro_de_system_scope_levanta() -> None:
 def test_current_tenant_fora_de_qualquer_ambito_e_none() -> None:
     """E não é erro: login, healthcheck, admin e anónimo vivem aqui."""
     assert current_tenant() is None
+
+
+# ---------------------------------------------------------------------------
+# `in_system_scope()`: o segundo âmbito legítimo, e como se pergunta por ele
+# ---------------------------------------------------------------------------
+def test_in_system_scope_fora_de_qualquer_ambito_e_falso() -> None:
+    assert in_system_scope() is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_in_system_scope_distingue_os_dois_ambitos_legitimos() -> None:
+    """A pergunta a que `current_tenant()` sozinho não responde.
+
+    Dentro de `system_scope()` o tenant é `None` por desenho — o consumidor da
+    outbox lê a linha antes de saber de que tenant ela é —, logo "tenant a
+    `None`" não pode ser lido como "sem âmbito". Era o que o guarda de âmbito da
+    suite fazia, e o preço eram três testes com a marca de dispensa por uma
+    limitação do guarda e não por nada que quisessem provar.
+
+    Os dois âmbitos são mutuamente exclusivos: abrir um dentro do outro levanta
+    `TenantScopeConflict` (os dois testes acima), pelo que dentro de
+    `tenant_scope` esta função é sempre `False`.
+    """
+    with system_scope():
+        assert in_system_scope() is True
+        assert current_tenant() is None
+
+    assert in_system_scope() is False
+
+    with tenant_scope(TENANT_A):
+        assert in_system_scope() is False
+        assert current_tenant() == TENANT_A
+
+    assert in_system_scope() is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_in_system_scope_e_reentrante_e_fecha_mesmo_com_excecao() -> None:
+    """Reentrante como o `tenant_scope`, e o `ContextVar` é reposto no `finally`.
+
+    Sem a reposição, uma exceção dentro do consumidor deixava o processo
+    convencido de que estava em âmbito de sistema para sempre — e o guarda
+    de âmbito da suite passava a deixar passar tudo a partir daí.
+    """
+    with system_scope(), system_scope():
+        assert in_system_scope() is True
+
+    assert in_system_scope() is False
+
+    with pytest.raises(RuntimeError, match="a publicação correu mal"), system_scope():
+        raise RuntimeError("a publicação correu mal")
+
+    assert in_system_scope() is False
 
 
 @pytest.mark.django_db(transaction=True)
@@ -300,11 +354,15 @@ def test_sem_ambito_a_outbox_devolve_zero_linhas_sem_erro() -> None:
     assert OutboxEvent.objects.count() == 0
 
 
-@pytest.mark.sem_ambito_de_rls
 @pytest.mark.django_db(transaction=True)
 def test_o_system_scope_ve_as_linhas_de_todos_os_tenants() -> None:
     """O disjunto `app.scope = 'system'`, que só esta tabela tem: o consumidor
-    da outbox não é um pedido e não tem tenant nenhum."""
+    da outbox não é um pedido e não tem tenant nenhum.
+
+    Sem marca de dispensa, e é o ponto: esta é a leitura que o consumidor faz,
+    o guarda do `conftest.py` reconhece-a como âmbito legítimo
+    (`in_system_scope()`) e continua montado durante o teste inteiro.
+    """
     linha_a = _publicar(TENANT_A)
     linha_b = _publicar(TENANT_B)
 

@@ -1,4 +1,12 @@
-"""Bloqueio progressivo de login (SECURITY.md §5).
+"""Defesa do login: os dois ganchos que o `django-axes` nos deixa (SECURITY.md §5).
+
+1. `progressive_cooloff` — `AXES_COOLOFF_TIME`: quanto tempo dura o bloqueio.
+2. `axes_username` — `AXES_USERNAME_CALLABLE`: **qual é a conta** a que uma
+   tentativa pertence. Sem ele o contador por conta fragmenta-se pela caixa do
+   email e o lockout deixa de trancar; a segunda metade deste docstring explica
+   o que o axes faz de facto.
+
+## 1. `progressive_cooloff`
 
 O `django-axes` aceita em `AXES_COOLOFF_TIME` um callable que recebe o request e
 devolve um `timedelta`. É esse o gancho que a escada de SECURITY.md §5 usa.
@@ -64,14 +72,44 @@ O que este desenho garante desde já: o login funciona, o lockout dispara às 5
 falhas e dura 30 minutos deslizantes, e a janela de contagem tem um piso que
 não se contorna a espaçar as tentativas. O `getattr` com default mantém a
 função correta se um dia o axes passar a preencher o atributo mais cedo.
+
+## 2. `axes_username`, e o que o axes faz de facto com a caixa do email
+
+**Nada.** Lido no pacote instalado (django-axes 8.3.1), não presumido: não há um
+`lower()`, um `casefold()` ou um `normalize` em ficheiro nenhum do pacote. O
+`get_client_username` (`helpers.py:134`) devolve o valor cru de
+`credentials[AXES_USERNAME_FORM_FIELD]` ou de `request.data`/`request.POST`, e
+esse valor entra tal e qual nos dois lados do contador:
+
+* na escrita — `AccessAttempt.objects.get_or_create(username=username, ...)`
+  (`handlers/database.py:181`);
+* na leitura — `AccessAttempt.objects.filter(**filter_kwargs)`
+  (`handlers/database.py:369`), com `username=` exato.
+
+Consequência, e é a que interessa: com a unicidade do email insensível à caixa,
+`ana@x.pt` e `Ana@x.pt` são **uma** conta no `accounts_user` e **duas** chaves no
+contador do axes. Cinco tentativas repartidas entre as duas grafias dão duas
+linhas de três e de duas, o `max()` do `get_failures` devolve 3, e o limite de 5
+nunca é atingido: o lockout deixa de existir para quem varie a caixa entre
+tentativas — de graça, sem proxies e sem esperar. O eixo `(ip_address, username)`
+fragmenta-se exatamente da mesma forma.
+
+`AXES_USERNAME_CALLABLE` é o gancho que resolve isso, e resolve-o nos dois lados
+de uma vez: é a **primeira** coisa que o `get_client_username` consulta, logo
+todos os caminhos que perguntam "de quem é esta tentativa?" passam por aqui — a
+decisão de lockout, o registo da falha, as chaves de cache e a resposta 429.
 """
 
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from axes.helpers import get_failure_limit
+from django.conf import settings
 from django.http import HttpRequest
+
+from apps.accounts.api import normalizar_email
 
 #: Escada de espera, a partir do momento em que `AXES_FAILURE_LIMIT` é atingido.
 #: A última entrada é o teto: a partir daí não cresce mais.
@@ -121,3 +159,94 @@ def progressive_cooloff(request: HttpRequest | None = None) -> timedelta:
 
     excess = max(failures - limit, 0)
     return COOLOFF_STEPS[min(excess, len(COOLOFF_STEPS) - 1)]
+
+
+def axes_username(
+    request: HttpRequest | None,
+    credentials: dict[str, Any] | None = None,
+) -> str | None:
+    """A conta a que esta tentativa de login pertence, na forma canónica.
+
+    É o `AXES_USERNAME_CALLABLE`. Faz duas coisas: acha o valor da conta no
+    pedido (`_valor_da_conta`, que segue a precedência do axes e conserta um
+    caso em que ele desiste) e normaliza-o com o `normalizar_email` do
+    `accounts` — a **mesma** função que decide se duas grafias são a mesma conta
+    na base de dados. Duas definições de "a mesma conta" davam um contador que
+    não fecha com a tabela que protege.
+
+    Lê `AXES_USERNAME_FORM_FIELD` em vez de fixar `"email"`: a setting continua
+    a ser o sítio onde se declara o campo que transporta a conta, e assim
+    apagá-la volta a dar o defeito visível que `tests/test_lockout.py` fixa, em
+    vez de um contador que parece funcionar.
+
+    Zero queries e zero chamadas a APIs do axes, pela razão do
+    `progressive_cooloff`: isto corre no caminho crítico do login, de dentro da
+    construção da query das tentativas.
+
+    Devolve `None` quando não há campo nenhum, que é exatamente o que o axes já
+    devolvia: um pedido de login sem o campo da conta não identifica conta
+    nenhuma e as suas tentativas agrupam-se todas sob a mesma chave. Um valor
+    que **não seja texto** — `{"email": [...]}` num corpo JSON — cai no mesmo
+    sítio, e aí é uma melhoria de propósito: hoje esse valor atravessa o axes
+    até ao `filter(username=[...])` e rebenta a query do login.
+    """
+    valor = _valor_da_conta(request, credentials)
+    if not isinstance(valor, str):
+        return None
+    return normalizar_email(valor)
+
+
+#: A chave por que o `authenticate()` do Django transporta a conta. Não é a
+#: nossa (`AXES_USERNAME_FORM_FIELD = "email"`) e é procurada logo depois dela —
+#: ver o docstring de `_valor_da_conta` para o caso concreto que a exige.
+CAMPO_DO_DJANGO = "username"
+
+
+def _valor_da_conta(request: HttpRequest | None, credentials: dict[str, Any] | None) -> Any:
+    """O valor cru da conta: credenciais primeiro, corpo do pedido depois.
+
+    A precedência entre as duas **fontes** é a do `get_client_username`
+    (`axes/helpers.py:134`) e não uma escolha nossa: as credenciais mandam
+    quando trazem resposta, porque são o que o backend de autenticação recebeu;
+    senão lê-se o corpo do pedido — `request.data` num pedido DRF,
+    `request.POST` num pedido Django.
+
+    ## Porque é que se procuram duas chaves, e não só a nossa
+
+    O axes procura só `AXES_USERNAME_FORM_FIELD` e desiste. Isso tem um modo de
+    falha silencioso que não é sobre caixa nenhuma e é pior do que ela: o
+    `django.contrib.auth.authenticate()` emite o sinal `user_login_failed` com
+    os **kwargs que o chamador lhe passou** (`django/contrib/auth/__init__.py`),
+    e a forma canónica é `authenticate(request, username=..., password=...)` —
+    é assim que o `AuthenticationForm` do admin o chama. Nesse caminho as
+    credenciais são `{"username": ..., "password": "***"}`, o
+    `credentials.get("email")` do axes devolve `None` e, porque o dicionário das
+    credenciais não está vazio, ele **não** desce ao corpo do pedido: todas as
+    falhas ficam registadas com `username = NULL`.
+
+    A consequência não é um contador a menos, é um contador global: o eixo
+    `"username"` do `AXES_LOCKOUT_PARAMETERS` passa a casar
+    `filter(username=None)`, que são as tentativas de *todas* as contas juntas —
+    cinco falhas de cinco pessoas diferentes trancavam o login a todas. Procurar
+    também o `username` resolve-o no único sítio onde a pergunta "de quem é esta
+    tentativa?" é respondida.
+
+    Um valor que não seja `None` é resposta, mesmo vazio: só a **ausência** da
+    chave faz descer à fonte seguinte.
+    """
+    campos = tuple(dict.fromkeys((settings.AXES_USERNAME_FORM_FIELD, CAMPO_DO_DJANGO)))
+    for fonte in (credentials, _corpo(request)):
+        for campo in campos:
+            valor = fonte.get(campo) if hasattr(fonte, "get") else None
+            if valor is not None:
+                return valor
+    return None
+
+
+def _corpo(request: HttpRequest | None) -> Any:
+    """O corpo do pedido: `request.data` num pedido DRF, `request.POST` no do
+    Django. Pode não ter `get` — um corpo JSON pode ser uma lista."""
+    if request is None:
+        return None
+    dados = getattr(request, "data", None)
+    return getattr(request, "POST", None) if dados is None else dados

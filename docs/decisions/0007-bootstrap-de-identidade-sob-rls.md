@@ -174,7 +174,7 @@ adulterada para o uuid de B dá 403 e a query do middleware devolve zero linhas,
 B é lida nem pelo caminho do próprio middleware; um `Membership` desativado sob uma sessão viva dá 403
 no pedido seguinte; e dentro de `tenant_scope(A)` o `Tenant.objects.count()` é 1 havendo dois tenants,
 e é 0 fora de qualquer âmbito. Um guarda autouse no `conftest.py`, por `connection.execute_wrapper`,
-que levanta quando `current_tenant()` é `None` e o SQL menciona uma relação com política: a lista vem
+que levanta quando o SQL menciona uma relação com política e não há âmbito que a cubra — `current_tenant()` a `None` **e** sem `in_system_scope()`, ou em âmbito de sistema sobre uma relação cuja política não tem o disjunto `app.scope` (só a `outbox` o tem, ADR 0005), que é o caso em que um âmbito aberto dá aparência de legitimidade a uma leitura que devolve zero linhas: a lista vem
 do `pg_policy` no arranque da sessão de testes, logo uma tabela nova entra no guarda sozinha, e é ele
 que faz falhar quem puser uma leitura de tabela tenant-scoped antes do âmbito — no login, no admin ou
 em qualquer view que se esqueça de declarar o que precisa. Tem um teste próprio que faz a leitura

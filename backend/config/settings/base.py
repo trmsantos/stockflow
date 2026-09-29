@@ -217,6 +217,16 @@ AXES_FAILURE_LIMIT = 5
 # de defeito do `django-ipware` (SECURITY.md §5): a configuração parece estar
 # lá e o controlo não está. Fixado em `tests/test_lockout.py`.
 AXES_USERNAME_FORM_FIELD = "email"
+# E o valor desse campo é normalizado antes de virar chave do contador. O axes
+# **não** o normaliza — medido no pacote instalado, não há um `lower()` no
+# django-axes 8.3.1 —, e a unicidade do email é insensível à caixa (ADR 0007 +
+# `accounts.models`): `ana@x.pt` e `Ana@x.pt` são uma conta na base de dados e
+# seriam duas chaves no `AccessAttempt`. Cinco tentativas repartidas entre as
+# duas grafias não trancavam nada, e o eixo (IP, conta) fragmenta-se da mesma
+# forma. Path em string pela razão do `AXES_COOLOFF_TIME` abaixo; o callable
+# está em `config/lockout.py`, ao lado do outro gancho do axes, e delega a
+# normalização no `accounts.api` — uma definição só de "a mesma conta".
+AXES_USERNAME_CALLABLE = "config.lockout.axes_username"
 # Dois contadores independentes; o axes faz `max()` sobre os grupos
 # (`handlers/database.py get_failures`), logo ganha o mais restritivo:
 #   1. o par (IP, utilizador) — o eixo fino. Sozinho não serve, mas é ele que

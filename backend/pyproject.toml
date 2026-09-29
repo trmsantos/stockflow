@@ -72,8 +72,10 @@ addopts = "-ra --strict-markers --strict-config"
 # Registado porque `--strict-markers` recusa marcadores desconhecidos: um
 # marcador mal escrito passa a ser um erro de recolha e não uma dispensa
 # silenciosa do guarda. Ver a secção (c) de `tests/conftest.py` — a marca só é
-# legítima nos testes que provam a leitura sem âmbito (política a devolver zero
-# linhas) e nos que correm sob `system_scope()`, onde não há tenant por desenho.
+# legítima nos testes que fazem a leitura fora de âmbito **de propósito**, para
+# provar que a política devolve zero linhas em vez de levantar. Correr sob
+# `system_scope()` não é motivo: o guarda reconhece o âmbito de sistema como
+# âmbito legítimo (`apps.shared.db.in_system_scope`).
 markers = [
     "sem_ambito_de_rls: dispensa o guarda que proíbe ler tabelas com política fora de âmbito",
 ]

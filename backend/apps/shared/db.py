@@ -1,8 +1,16 @@
 """Âmbito transacional da RLS multi-tenant (ADR 0005).
 
-Este módulo é a fronteira de isolamento do StockFlow. Expõe quatro nomes e mais
-nada — `tenant_scope`, `system_scope`, `current_tenant` e `TenantScopeConflict`:
-o resto do repositório não conhece o nome do GUC nem o SQL que o escreve.
+Este módulo é a fronteira de isolamento do StockFlow. Expõe cinco nomes e mais
+nada — `tenant_scope`, `system_scope`, `current_tenant`, `in_system_scope` e
+`TenantScopeConflict`: o resto do repositório não conhece o nome do GUC nem o
+SQL que o escreve.
+
+Há **dois** âmbitos legítimos, e quem inspeciona o âmbito ativo tem de saber
+dos dois: `current_tenant()` responde pelo âmbito de um tenant e
+`in_system_scope()` pelo de sistema. Um `current_tenant() is None` sozinho não
+quer dizer "sem âmbito" — dentro de `system_scope()` é `None` por desenho, e
+tratá-lo como ausência de âmbito foi exatamente o que levou o guarda dos testes
+a acusar as leituras legítimas do consumidor da outbox.
 
 ## Como funciona
 
@@ -76,7 +84,13 @@ from uuid import UUID
 
 from django.db import connection, transaction
 
-__all__ = ["TenantScopeConflict", "current_tenant", "system_scope", "tenant_scope"]
+__all__ = [
+    "TenantScopeConflict",
+    "current_tenant",
+    "in_system_scope",
+    "system_scope",
+    "tenant_scope",
+]
 
 #: Nome do GUC que a política RLS lê. Privado de propósito: o único sítio fora
 #: deste módulo que o pode escrever é o SQL de uma política, numa migração.
@@ -111,8 +125,37 @@ def current_tenant() -> UUID | None:
     `None` é o caso normal em muitos sítios: login, healthcheck, admin, pedido
     anónimo, cron que itera tenants. Não é erro — é a política a devolver zero
     linhas.
+
+    **`None` não significa "sem âmbito".** Dentro de `system_scope()` é `None`
+    por desenho: o consumidor da outbox não tem tenant nenhum. Quem quiser
+    decidir se há *algum* âmbito aberto tem de perguntar também a
+    `in_system_scope()`.
     """
     return _current_tenant.get()
+
+
+def in_system_scope() -> bool:
+    """Está aberto um `system_scope()`?
+
+    É contrato público pela mesma razão que `current_tenant()`: quem inspeciona
+    o âmbito ativo de fora deste módulo — o guarda de âmbito da suite
+    (`tests/conftest.py`), um filtro de logs, uma asserção num service — precisa
+    de distinguir "âmbito de sistema" de "âmbito nenhum", e a alternativa era
+    ler o `ContextVar` privado.
+
+    Os dois âmbitos são mutuamente exclusivos (abrir um dentro do outro levanta
+    `TenantScopeConflict`), logo `current_tenant() is None and not
+    in_system_scope()` é a definição de "fora de qualquer âmbito".
+
+    O que isto **não** quer dizer é que o âmbito de sistema alcance tudo. Ele só
+    é âmbito para as relações cuja política tem o disjunto `app.scope`, e hoje é
+    uma: a da outbox. Dentro de `system_scope()` o `app.tenant_id` continua a
+    NULL, pelo que ler uma tabela de dados de um tenant a partir de lá devolve
+    zero linhas exatamente como se não houvesse âmbito nenhum — é por isso que o
+    consumidor fecha o bloco antes de reentrar em `tenant_scope(row.tenant_id)`,
+    e é isso que o guarda da suite distingue.
+    """
+    return _system.get()
 
 
 @contextmanager

@@ -54,7 +54,7 @@ from django.conf import settings
 from django.db import connections
 from pytest_django.plugin import DjangoDbBlocker
 
-from apps.shared.db import current_tenant
+from apps.shared.db import current_tenant, in_system_scope
 
 #: O role que serve pedidos e com que os testes correm. Vai literal porque os
 #: `GRANT` são DDL e um nome de role não é parametrizável; o `django_db_setup`
@@ -309,24 +309,46 @@ def django_db_setup(
 # que apareceu três vezes no mesmo dia.
 #
 # Este guarda transforma-a num teste vermelho. Está montado por
-# `connection.execute_wrapper` em **todos** os testes e levanta quando as duas
+# `connection.execute_wrapper` em **todos** os testes e levanta quando as três
 # condições se verificam ao mesmo tempo:
 #
 #   1. `current_tenant()` é `None` — não há `tenant_scope` aberto;
-#   2. o SQL menciona uma relação que tem política de RLS.
+#   2. o âmbito de sistema, se estiver aberto, não alcança a relação em causa.
+#      Há **dois** âmbitos legítimos (ADR 0005) e o guarda tem de conhecer os
+#      dois: dentro de `system_scope()` o tenant é `None` por desenho, e é assim
+#      que o consumidor da outbox lê a linha antes de saber de que tenant ela é.
+#      Sem o `in_system_scope()`, o guarda acusava a leitura legítima do
+#      consumidor e a saída era pôr-lhe a marca de dispensa — desligar o guarda
+#      inteiro num teste para calar um caso que ele devia reconhecer.
 #
-# A lista das relações vem do `pg_policy`, na primeira query que a precisa, e
-# não de uma constante: uma tabela nova com política entra no guarda **sozinha**,
-# sem ninguém se lembrar de a acrescentar aqui. É a mesma escolha do
-# `tests/test_db_roles.py`, que varre o `pg_class` em vez de ler modelos.
+#      Mas o âmbito de sistema não é um passe geral, e o guarda também não o
+#      trata como tal: **só a política da outbox tem o disjunto `app.scope`**
+#      (ADR 0005). Dentro de `system_scope()` o `app.tenant_id` está a NULL,
+#      logo uma leitura do `accounts_membership` a partir de lá devolve zero
+#      linhas em silêncio — o mesmo defeito, agora com um âmbito aberto a
+#      dar-lhe aparência de legitimidade. O que decide é o predicado da política,
+#      lido do catálogo;
+#   3. o SQL menciona uma relação que tem política de RLS.
+#
+# A lista das relações — e o disjunto de cada política — vem do `pg_policy`, na
+# primeira query que a precisa, e não de uma constante: uma tabela nova com
+# política entra no guarda **sozinha**, sem ninguém se lembrar de a acrescentar
+# aqui. É a mesma escolha do `tests/test_db_roles.py`, que varre o `pg_class` em
+# vez de ler modelos.
 #
 # ## A dispensa, e por que razão existe
 #
 # `@pytest.mark.sem_ambito_de_rls` desliga-o para um teste. Só a devem ter os
-# testes que fazem a leitura sem âmbito **de propósito** — os que provam que a
-# política devolve zero linhas, e os que correm sob `system_scope()`, onde não
-# há tenant por desenho (o consumidor da outbox). Fora desses, a marca é o sinal
-# de que alguém está a contornar o guarda em vez de corrigir o código.
+# testes que fazem a leitura sem âmbito **de propósito**: os que provam que a
+# política devolve zero linhas em vez de levantar. Fora desses, a marca é o
+# sinal de que alguém está a contornar o guarda em vez de corrigir o código.
+#
+# Correr sob `system_scope()` **não** é motivo para a marca, e já foi: o guarda
+# não distinguia âmbito de sistema de âmbito nenhum, e três testes levavam a
+# dispensa por uma limitação do guarda e não por nada que quisessem provar. A
+# marca é uma dispensa total — desliga o guarda para o teste inteiro, incluindo
+# as queries que não são o objeto do teste —, por isso a limitação custava
+# cobertura: o `in_system_scope()` da condição 2 é o que a devolve.
 #
 # O guarda tem um teste próprio em `tests/test_rls_isolation.py`, que faz a
 # leitura proibida e afirma que ele levanta: sem isso, um guarda quebrado ficava
@@ -345,19 +367,28 @@ MARCADOR_SEM_AMBITO = "sem_ambito_de_rls"
 #: `SAVEPOINT`, `SET`, `BEGIN` e DDL também não mencionam linhas.
 _PREFIXOS_DML = frozenset({"select", "insert", "update", "delete"})
 
+#: As relações com política **e** se a política de cada uma reconhece o âmbito
+#: de sistema. O segundo valor vem do texto do predicado: só o
+#: `shared_outboxevent` tem o disjunto `current_setting('app.scope') = 'system'`
+#: (ADR 0005), e é a diferença entre "o consumidor pode ler isto sem tenant" e
+#: "isto devolve zero linhas em silêncio". Lido do catálogo e não de uma
+#: constante, como a lista das relações: uma tabela nova entra no guarda sozinha,
+#: e com o disjunto certo.
 _POLITICAS_SQL = """
-SELECT DISTINCT c.relname
+SELECT c.relname,
+       bool_or(pg_get_expr(p.polqual, p.polrelid) LIKE '%%app.scope%%')
   FROM pg_policy p
   JOIN pg_class c ON c.oid = p.polrelid
  WHERE c.relnamespace = 'public'::regnamespace
+ GROUP BY c.relname
 """
 
-_relacoes_com_politica: frozenset[str] | None = None
+_politicas_por_relacao: dict[str, bool] | None = None
 _a_consultar_o_catalogo = False
 
 
 class LeituraSemAmbito(AssertionError):
-    """Query a uma tabela com política de RLS fora de qualquer `tenant_scope`.
+    """Query a uma tabela com política de RLS fora de um âmbito que a alcance.
 
     `AssertionError` e não `Exception`: isto é uma falha de teste, não uma
     condição de runtime. Em produção a mesma query não levanta — devolve zero
@@ -365,20 +396,20 @@ class LeituraSemAmbito(AssertionError):
     """
 
 
-def _relacoes(conexao: Any) -> frozenset[str]:
-    """As relações com política, lidas do `pg_policy` e guardadas na sessão."""
-    global _relacoes_com_politica, _a_consultar_o_catalogo
-    if _relacoes_com_politica is None:
+def _politicas(conexao: Any) -> dict[str, bool]:
+    """`{relação: a política reconhece o âmbito de sistema}`, lido uma vez."""
+    global _politicas_por_relacao, _a_consultar_o_catalogo
+    if _politicas_por_relacao is None:
         # A própria query ao catálogo passa pelo wrapper: sem esta bandeira,
         # recursão infinita na primeira leitura.
         _a_consultar_o_catalogo = True
         try:
             with conexao.cursor() as cursor:
                 cursor.execute(_POLITICAS_SQL)
-                _relacoes_com_politica = frozenset(nome for (nome,) in cursor.fetchall())
+                _politicas_por_relacao = dict(cursor.fetchall())
         finally:
             _a_consultar_o_catalogo = False
-    return _relacoes_com_politica
+    return _politicas_por_relacao
 
 
 def _guarda_de_ambito(
@@ -394,20 +425,44 @@ def _guarda_de_ambito(
     if sql.lstrip()[:6].lower() not in _PREFIXOS_DML:
         return execute(sql, params, many, context)
 
+    sistema = in_system_scope()
     mencionadas = sorted(
         nome
-        for nome in _relacoes(context["connection"])
-        if re.search(rf"\b{re.escape(nome)}\b", sql)
+        for nome, reconhece_sistema in _politicas(context["connection"]).items()
+        if not (sistema and reconhece_sistema) and re.search(rf"\b{re.escape(nome)}\b", sql)
     )
     if mencionadas:
-        raise LeituraSemAmbito(
-            f"query a {mencionadas} fora de qualquer tenant_scope. Em produção "
-            f"isto não levanta: a política devolve zero linhas e o bug aparece "
-            f"como 'não encontrei nada'. Abre o âmbito (ADR 0005) ou, se a "
-            f"leitura sem âmbito é o que o teste quer provar, marca-o com "
-            f"@pytest.mark.{MARCADOR_SEM_AMBITO}.\nSQL: {sql[:200]}"
-        )
+        raise LeituraSemAmbito(_porque_e_que_isto_devolve_zero_linhas(mencionadas, sql, sistema))
     return execute(sql, params, many, context)
+
+
+def _porque_e_que_isto_devolve_zero_linhas(
+    mencionadas: list[str], sql: str, sistema: bool
+) -> str:
+    """A mensagem do guarda, que é diferente nos dois casos que ele apanha."""
+    if sistema:
+        # Âmbito de sistema não é um passe geral: só a política do
+        # `shared_outboxevent` tem o disjunto `app.scope` (ADR 0005). Nas outras,
+        # `app.tenant_id` está a NULL dentro de `system_scope()` e a leitura
+        # devolve zero linhas sem erro — o mesmo defeito silencioso, com um
+        # âmbito aberto a dar-lhe uma aparência de legitimidade.
+        return (
+            f"query a {mencionadas} dentro de system_scope(), e a política "
+            f"destas relações não tem o disjunto app.scope: com app.tenant_id a "
+            f"NULL devolve zero linhas sem erro. O âmbito de sistema serve para "
+            f"reclamar linhas da outbox e mais nada — lê a linha, fecha o bloco "
+            f"e reentra em tenant_scope(row.tenant_id) antes de tocar em "
+            f"dados do tenant (ADR 0005)."
+            f"\nSQL: {sql[:200]}"
+        )
+    return (
+        f"query a {mencionadas} sem âmbito nenhum — nem tenant_scope nem "
+        f"system_scope. Em produção isto não levanta: a política devolve zero "
+        f"linhas e o bug aparece como 'não encontrei nada'. Abre o âmbito "
+        f"(ADR 0005) ou, se a leitura sem âmbito é o que o teste quer provar, "
+        f"marca-o com @pytest.mark.{MARCADOR_SEM_AMBITO}."
+        f"\nSQL: {sql[:200]}"
+    )
 
 
 @pytest.fixture(autouse=True)

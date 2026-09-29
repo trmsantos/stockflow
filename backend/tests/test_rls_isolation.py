@@ -72,7 +72,13 @@ from apps.accounts.middleware import (
 from apps.accounts.models import Membership, Tenant, User
 from apps.accounts.selectors import membership_no_ambito
 from apps.accounts.services import conceder_pertenca, criar_tenant, revogar_pertenca
-from apps.shared.db import TenantScopeConflict, current_tenant, tenant_scope
+from apps.shared.db import (
+    TenantScopeConflict,
+    current_tenant,
+    in_system_scope,
+    system_scope,
+    tenant_scope,
+)
 from apps.shared.models import OutboxEvent
 from tests.conftest import LeituraSemAmbito
 
@@ -546,6 +552,56 @@ def test_o_guarda_de_ambito_nao_levanta_dentro_do_ambito(transactional_db: None)
     with tenant_scope(uuid4()):
         assert Membership.objects.count() == 0
         assert Tenant.objects.count() == 0
+
+
+def test_o_guarda_de_ambito_nao_levanta_no_consumidor_da_outbox(
+    transactional_db: None,
+) -> None:
+    """Âmbito de sistema é âmbito: a leitura do consumidor é legítima.
+
+    É a forma exata do consumidor da outbox (ARCHITECTURE.md §4): ler a linha
+    sob `system_scope()`, sem tenant, porque é a linha que **diz** de que tenant
+    se trata. Antes do `in_system_scope()` o guarda não distinguia isto de uma
+    leitura fora de âmbito e a saída era marcar o teste com
+    `sem_ambito_de_rls` — dispensar o guarda inteiro para calar um caso que ele
+    devia reconhecer.
+
+    As duas metades são necessárias: sem a segunda, o guarda podia ter sido
+    desligado em vez de corrigido.
+    """
+    assert current_tenant() is None
+
+    with system_scope():
+        assert in_system_scope() is True
+        assert OutboxEvent.objects.count() == 0
+
+    with pytest.raises(LeituraSemAmbito, match="shared_outboxevent"):
+        OutboxEvent.objects.count()
+
+
+def test_o_ambito_de_sistema_nao_e_um_passe_geral(transactional_db: None) -> None:
+    """E o guarda sabe qual é a diferença, porque a lê do predicado da política.
+
+    Só o `shared_outboxevent` tem o disjunto `app.scope = 'system'` (ADR 0005).
+    Dentro de `system_scope()` o `app.tenant_id` está a NULL, logo uma leitura
+    do `accounts_membership` a partir de lá devolve **zero linhas sem erro** —
+    o defeito silencioso de sempre, agora com um âmbito aberto a dar-lhe
+    aparência de legitimidade. Tratar "âmbito de sistema" como "âmbito
+    qualquer" tirava esse caso ao guarda.
+
+    É também a forma errada de escrever o consumidor da outbox, e a mensagem
+    diz qual é a certa: ler a linha, fechar o bloco, reentrar em
+    `tenant_scope(row.tenant_id)`.
+    """
+    with system_scope():
+        with pytest.raises(LeituraSemAmbito, match="app.scope"):
+            Membership.objects.count()
+
+        with pytest.raises(LeituraSemAmbito, match="accounts_tenant"):
+            Tenant.objects.count()
+
+        # E a da outbox, que é a única com o disjunto, continua a passar.
+        assert OutboxEvent.objects.count() == 0
 
 
 def test_o_guarda_de_ambito_cobre_as_tres_tabelas_com_politica(transactional_db: None) -> None:

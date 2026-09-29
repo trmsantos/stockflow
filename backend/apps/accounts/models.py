@@ -50,12 +50,14 @@ duas funções de `apps/accounts/services.py`.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.db.models.functions import Lower
 
 from apps.shared.models import TenantModel
 
@@ -123,15 +125,49 @@ class Tenant(models.Model):
 
 
 class UserManager(BaseUserManager["User"]):
-    """Criação de utilizadores com `email` como `USERNAME_FIELD`.
+    """Criação e **procura** de utilizadores com `email` como `USERNAME_FIELD`.
 
     Existe para o `createsuperuser` e para os services: o `BaseUserManager` do
     Django não traz `create_user` nem `create_superuser` (isso é do
     `UserManager` do `auth`, que assume `username`).
 
-    Nenhum destes métodos escreve numa tabela com política, pelo que correm
-    fora de âmbito — é o que o `createsuperuser` precisa.
+    Nenhum destes métodos toca numa tabela com política, pelo que correm fora
+    de âmbito — é o que o `createsuperuser` e o login precisam.
+
+    ## A caixa do email define-se aqui; os outros sítios delegam
+
+    A unicidade do email é insensível à caixa (ver o docstring do `User`), o que
+    exige as duas metades no mesmo sítio: **normalizar na escrita**
+    (`normalize_email`, por onde `create_user` e `create_superuser` passam os
+    dois) e **procurar sem caixa na autenticação** (`get_by_natural_key`, que é
+    o que o `ModelBackend` chama). Faltar uma delas dá o pior dos dois mundos:
+    criar `ana@x.pt` e não conseguir entrar com `Ana@x.pt`.
+
+    Os outros três sítios que precisam da regra não a reimplementam: o
+    `User.normalize_username` (formulários), o `accounts.api.normalizar_email`
+    (porta pública) e o `AXES_USERNAME_CALLABLE` (contador de tentativas)
+    chamam esta função. Um `.lower()` espalhado pelas views não serve — as views
+    de autenticação ainda nem existem, e a que aparecer não pode ter de se
+    lembrar disto.
     """
+
+    @classmethod
+    def normalize_email(cls, email: str | None) -> str:
+        """A forma canónica de um email: tudo em minúsculas.
+
+        O `normalize_email` do Django só normaliza o **domínio** (`x.PT` →
+        `x.pt`) e deixa a parte local como veio, porque o RFC 5321 permite que
+        um servidor a trate como sensível à caixa. Na prática nenhum fornecedor
+        de email o faz, e a decisão do produto é que `Ana@x.pt` e `ana@x.pt` são
+        a mesma conta — logo a parte local desce também.
+
+        `lower()` e não `casefold()`: o índice único é sobre `LOWER(email)` no
+        Postgres, e é com essa função que este valor tem de concordar. O
+        `casefold()` do Python dobra mais do que o `lower()` do SQL (`ß` → `ss`)
+        e as duas normalizações passariam a discordar — a constraint é a rede,
+        mas uma rede que não coincide com a regra é uma fonte de bugs.
+        """
+        return super().normalize_email(email).lower()
 
     def create_user(self, email: str, password: str | None = None, **extra: object) -> User:
         """Um utilizador com email normalizado e password em Argon2id.
@@ -154,6 +190,46 @@ class UserManager(BaseUserManager["User"]):
         if extra["is_staff"] is not True or extra["is_superuser"] is not True:
             raise ValueError("um superuser tem de ter is_staff e is_superuser a True.")
         return self.create_user(email, password, **extra)
+
+    def get_by_natural_key(self, username: str) -> User:
+        """O utilizador com este email, **sem** olhar à caixa.
+
+        É a função que o `ModelBackend.authenticate` chama para achar a conta
+        (`django/contrib/auth/backends.py:65`), e é por isso o sítio onde a
+        autenticação fica insensível à caixa — não numa view, nem num
+        serializer, nem num `.lower()` a cada chamador.
+
+        O predicado é `LOWER(email) = %s`, e não `email = %s` sobre o valor
+        normalizado, por duas razões:
+
+        * é **a expressão do índice único** (`user_email_lower_uniq`), logo o
+          Postgres resolve o login por esse índice em vez de varrer a tabela. Um
+          `email__iexact` não serviria: o Django gera
+          `UPPER(email::text) LIKE UPPER(%s)`, que o índice não cobre;
+        * encontra a conta mesmo que a linha não esteja canónica. A normalização
+          na escrita é a regra, mas o admin edita o `email` por `ModelForm` e o
+          `User.normalize_username` é que o dobra lá — se um dia esse caminho
+          mudar, o login continua a funcionar em vez de falhar como
+          "credenciais inválidas".
+        """
+        return self._por_email(username).get()
+
+    async def aget_by_natural_key(self, username: str) -> User:
+        """A versão assíncrona, que o `ModelBackend.aauthenticate` usa.
+
+        Existe para não haver uma segunda definição de "o mesmo email": sem a
+        sobreposição, o caminho assíncrono do Django caía no
+        `BaseUserManager.aget_by_natural_key`, que compara o email tal e qual e
+        seria sensível à caixa — uma incoerência que só aparecia no dia em que
+        alguém escrevesse uma view `async`.
+        """
+        return await self._por_email(username).aget()
+
+    def _por_email(self, username: str) -> models.QuerySet[User]:
+        """A queryset de um email na forma canónica. Uma linha, ou nenhuma."""
+        return self.annotate(email_canonico=Lower("email")).filter(
+            email_canonico=self.normalize_email(username)
+        )
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -204,13 +280,50 @@ class User(AbstractBaseUser, PermissionsMixin):
     duas tabelas de junção não têm `tenant_id` nem política, e estão na lista
     fechada do `tests/test_db_roles.py`.
 
-    ## Uma decisão que **não** está tomada
+    ## A unicidade do email é insensível à caixa
 
-    A unicidade do email é a do Postgres: sensível a maiúsculas. `Ana@x.pt` e
-    `ana@x.pt` são duas contas, e o `normalize_email` do Django só normaliza o
-    domínio. Se o produto quiser dobrar a caixa, é um
-    `UniqueConstraint(Lower("email"))` e uma decisão sobre contas já existentes
-    — conversa da sessão da autenticação, não desta.
+    `Ana@x.pt` e `ana@x.pt` são **a mesma conta**. Não era assim: o default do
+    Postgres é sensível à caixa e o `normalize_email` do Django só dobra o
+    domínio. A decisão foi tomada agora, com zero contas criadas, e a altura é
+    a razão — mais tarde seria este índice mais uma política de reconciliação
+    para as contas que já existissem, e essa política não tem resposta boa (qual
+    das duas contas fica? o que acontece aos dados de cada uma?).
+
+    Três peças, e são precisas as três:
+
+    * `UniqueConstraint(Lower("email"))` — a regra na base de dados, que vale
+      mesmo para uma escrita que não passe pelo manager (o admin, um
+      `loaddata`, uma migração de dados). É a rede, como a RLS: o
+      `email = %s` que o Postgres compara continua sensível à caixa, e o que
+      torna a coluna única sem caixa é o índice funcional;
+    * `UserManager.normalize_email` — a regra no código, na escrita;
+    * `UserManager.get_by_natural_key` — a mesma regra na leitura da
+      autenticação. Sem ela, criar `ana@x.pt` e tentar entrar com `Ana@x.pt`
+      dava "credenciais inválidas", que é pior do que ter duas contas.
+
+    E fora do Django, o contador de tentativas do `django-axes`: ele conta por
+    conta usando o valor que vem do formulário, **sem** o normalizar, pelo que
+    5 tentativas repartidas entre `ana@` e `Ana@` não trancavam nada. Está
+    resolvido no `AXES_USERNAME_CALLABLE` (`config/lockout.py`).
+
+    ### Porque é que o `unique=True` do campo fica
+
+    Parece redundante — se `LOWER(email)` é único, `email` também é — e não é
+    removível: o check `check_user_model` do Django exige que o `USERNAME_FIELD`
+    seja único e só aceita `unique=True` no campo ou um `UniqueConstraint`
+    **sobre o campo**. Um sobre uma expressão não conta: o
+    `Options.total_unique_constraints` filtra `contains_expressions`
+    (`options.py:973`) e é essa lista que o
+    `django/contrib/auth/checks.py:71` consulta —
+    `User._meta.total_unique_constraints` é `[]` com a constraint nova lá.
+    Tirar o `unique=True` dava `auth.W004` (aviso, e não o `auth.E003`, porque
+    os `AUTHENTICATION_BACKENDS` não são só o `ModelBackend` — o axes vem à
+    frente), e o `check --deploy` sem avisos é um gate do SECURITY.md §9.
+
+    A consequência prática é ter duas unicidades sobre a mesma coluna. O índice
+    do campo não é desperdício puro: é o que serve a ordenação por email do
+    admin, e é ele que a `0001_initial` já criou — o `unique=True` ficar
+    poupa também um `AlterField` numa migração a uma tabela já aplicada.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
@@ -239,9 +352,41 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Meta:
         verbose_name = "utilizador"
         verbose_name_plural = "utilizadores"
+        constraints = [
+            # A unicidade insensível à caixa. Sobre uma expressão, logo o
+            # Postgres implementa-a como índice único funcional e **não** como
+            # constraint de tabela: `ADD CONSTRAINT ... UNIQUE USING INDEX` não
+            # aceita índices de expressão. É por isso que a migração a cria com
+            # um `CREATE UNIQUE INDEX CONCURRENTLY` dentro de um
+            # `SeparateDatabaseAndState`, e não com o `AddConstraint` que o
+            # `makemigrations` gera.
+            models.UniqueConstraint(Lower("email"), name="user_email_lower_uniq"),
+        ]
 
     def __str__(self) -> str:
         return self.email
+
+    @classmethod
+    def normalize_username(cls, username: Any) -> Any:
+        """Dobra a caixa do `USERNAME_FIELD` em qualquer caminho de `ModelForm`.
+
+        É o gancho que o `AbstractBaseUser.clean()` chama
+        (`django/contrib/auth/base_user.py:75`), e o `clean()` corre em todo o
+        `full_clean()` — ou seja, no formulário do admin, que é o único sítio
+        onde hoje se edita um email fora do manager. O default do Django
+        normaliza a forma Unicode (NFKC) e mais nada.
+
+        Delega no `normalize_email` do manager para não haver duas definições de
+        "a mesma conta" a divergir com o tempo. `Any` na assinatura porque é o
+        que o gancho recebe de facto: o `clean()` corre **mesmo quando o
+        `clean_fields()` já falhou**, logo o valor pode ser `None` ou outra
+        coisa que o campo vai recusar. Nesse caso passa tal e qual, como no
+        Django — normalizar um `None` para `""` trocava o erro de validação por
+        outro.
+        """
+        if not isinstance(username, str):
+            return username
+        return UserManager.normalize_email(super().normalize_username(username))
 
 
 class Membership(TenantModel):
