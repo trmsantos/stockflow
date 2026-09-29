@@ -75,7 +75,9 @@ ALTER TABLE core_document FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON core_document
   USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
 ```
-O `TenantMiddleware` faz `SET LOCAL app.tenant_id = ...` no início de cada transação.
+O `TenantMiddleware` abre uma transação por pedido e corre nela
+`SELECT set_config('app.tenant_id', %s, true)` — parametrizado, nunca interpolado, e com âmbito de
+transação (ADR 0005). Um `SET LOCAL` fora de um bloco de transação não tem efeito.
 Qualquer tabela com `tenant_id` tem esta política. Sem `app.tenant_id` definido, a query
 devolve zero linhas — falha fechada.
 

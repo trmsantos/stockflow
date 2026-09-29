@@ -43,9 +43,12 @@ SECRET_KEY = required(env, "DJANGO_SECRET_KEY")
 DATABASES = {"default": required_db(env, "DATABASE_URL")}
 DATABASES["default"]["CONN_MAX_AGE"] = env.int("DATABASE_CONN_MAX_AGE", default=60)
 DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
-# Sem ATOMIC_REQUESTS: a transação é aberta explicitamente em `services.py`
-# (`@transaction.atomic`), que é também onde o `SET LOCAL app.tenant_id` da RLS
-# tem de viver (ARCHITECTURE.md §4, SECURITY.md §3).
+# Sem ATOMIC_REQUESTS, e não por economia: abriria a transação em volta da
+# *view*, dentro da cadeia de middleware, onde nenhum middleware lhe consegue
+# pôr o `set_config` da RLS. A transação do pedido é aberta pelo
+# `TenantMiddleware` a envolver o `get_response()`, e é lá que o
+# `set_config('app.tenant_id', ...)` vive — não nos services, cujo
+# `@transaction.atomic` passa a ser um savepoint dentro dela (ADR 0005).
 DATABASES["default"]["ATOMIC_REQUESTS"] = False
 
 # ---------------------------------------------------------------------------
@@ -105,8 +108,12 @@ INSTALLED_APPS = [*DJANGO_APPS, *THIRD_PARTY_APPS, *LOCAL_APPS]
 # Ordem: segurança → CSP (gera o nonce antes de qualquer template) → sessão →
 # CSRF → autenticação → mensagens → clickjacking → axes (precisa do
 # `request.user`, por isso vem depois do AuthenticationMiddleware).
-# O `TenantMiddleware` entra aqui no passo 3/4, a partir de `apps.accounts`
-# (ADR 0003), imediatamente depois do AuthenticationMiddleware.
+# O `TenantMiddleware` entra no passo 3/4, a partir de `apps.accounts` (ADR
+# 0003), no **fim** desta lista — não aqui a seguir ao AuthenticationMiddleware.
+# É ele que abre a transação do pedido (ADR 0005), e ser o último deixa a
+# escrita da sessão e o `AccessAttempt` do axes de fora dela, em autocommit,
+# que é onde têm de estar. O middleware de logging entra no topo: cria o
+# `request_id` antes de qualquer coisa poder falhar.
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "csp.middleware.CSPMiddleware",

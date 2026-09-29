@@ -98,14 +98,32 @@ livre — `apps.notifications` a importar `apps.inventory.api` dá `BROKEN` e ex
 ## 4. Fluxo de um request
 
 1. Proxy termina TLS, aplica rate limit e headers de segurança.
-2. Middleware Django: sessão → CSRF → `TenantMiddleware` (define `SET app.tenant_id` na
-   ligação Postgres para ativar RLS) → logging estruturado com request id.
-3. View DRF: autentica, aplica `permission_classes`, valida com serializer.
-4. View chama **uma** função em `services.py`. A função corre numa transação
-   (`transaction.atomic`), escreve na BD e, se necessário, insere um evento na tabela `outbox`
-   **na mesma transação**.
-5. Resposta serializada. Nada de efeitos secundários síncronos.
-6. Um worker Celery lê a `outbox`, publica o evento aos `handlers.py` subscritos, marca como
+2. Middleware Django, de fora para dentro: logging estruturado (cria o `request_id`) → segurança →
+   CSP → sessão → CSRF → autenticação → axes → `TenantMiddleware`, que é o **último**.
+3. O `TenantMiddleware` (em `apps/accounts/`) resolve o tenant e envolve o `get_response()` inteiro
+   em `tenant_scope(tenant_id)` de `apps/shared/db.py`: uma transação por pedido, com
+   `SELECT set_config('app.tenant_id', %s, true)` como primeira instrução — âmbito de transação,
+   valor parametrizado, nunca interpolado. É a fronteira da RLS (ADR 0005). Pedido sem tenant
+   (login, healthcheck, admin, anónimo) não abre âmbito nem transação: `app.tenant_id` fica NULL,
+   as políticas devolvem zero linhas e nada falha com erro. Ser o último middleware é deliberado —
+   a escrita da sessão (`SESSION_SAVE_EVERY_REQUEST`) e o `AccessAttempt` do axes ficam fora da
+   transação do pedido, onde têm de estar.
+4. View DRF: autentica, aplica `permission_classes`, valida com serializer.
+5. View chama **uma** função em `services.py`. O `@transaction.atomic` da função é um savepoint
+   dentro da transação do pedido: se o service falhar, desfaz o que escreveu sem derrubar o pedido.
+   O evento vai para a tabela `outbox` na mesma transação.
+6. A resposta é serializada ainda dentro do âmbito — é por isso que as leituras de `selectors.py`
+   avaliadas durante a serialização estão cobertas. Se a resposta sair 5xx, o middleware marca
+   `transaction.set_rollback(True)`: o DRF trata a exceção dentro da view e sem isto um 500
+   commitava escritas parciais. Nada de efeitos secundários síncronos.
+7. `ATOMIC_REQUESTS` continua `False`: abriria a transação em volta da view, dentro da cadeia de
+   middleware, onde nenhum middleware lhe consegue pôr o `set_config`.
+8. O Celery não tem middleware. `TenantTask` é o `task_cls` do app, logo toda a tarefa o herda:
+   `tenant_id` é argumento obrigatório e o corpo corre dentro de `tenant_scope`. A dispensa é
+   explícita (`tenant_scope_exempt`) e hoje só a têm o cron que itera tenants e o consumidor da
+   outbox, que lê a linha sob `system_scope()` e reentra em `tenant_scope(row.tenant_id)` antes de
+   tocar em mais nada.
+9. Um worker Celery lê a `outbox`, publica o evento aos `handlers.py` subscritos, marca como
    processado. Handlers são idempotentes (chave: `event_id`).
 
 ## 5. Contratos e compatibilidade

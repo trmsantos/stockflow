@@ -12,6 +12,17 @@ os.environ.setdefault("DJANGO_SECRET_KEY", "chave-de-teste-sem-valor-0123456789-
 os.environ.setdefault("DATABASE_URL", "postgres://stockflow@localhost:5442/stockflow_test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6389")
 
+# Estas duas são `os.environ[...] =`, não `setdefault`, e é deliberado: o Celery
+# lê `CELERY_BROKER_URL` e `CELERY_RESULT_BACKEND` do **ambiente** por cima do
+# que o `config_from_object` traz das settings do Django. Com um `.env` no disco
+# (o `read_env` do base injeta-o em `os.environ`), uma atribuição de settings
+# passava a valer em `settings.CELERY_BROKER_URL` e a não valer no
+# `app.conf.broker_url` efetivo — e a suite publicava tarefas num Redis real.
+# Forçar aqui faz a precedência do Celery trabalhar a favor. Coberto por
+# `tests/test_celery_config.py`.
+os.environ["CELERY_BROKER_URL"] = "memory://"
+os.environ["CELERY_RESULT_BACKEND"] = "cache+memory://"
+
 from config.settings.base import *
 
 # Nunca `True` em testes: com DEBUG ligado o Django devolve páginas de erro em

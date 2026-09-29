@@ -4,8 +4,12 @@ Os efeitos secundários do StockFlow (extração de faturas, emails de alerta,
 previsões, consumo da outbox) correm todos aqui — nunca no ciclo do pedido
 (CLAUDE.md, ARCHITECTURE.md §4).
 
-Configuração: toda em `config/settings/base.py` com o prefixo `CELERY_`, para
-haver uma só fonte de verdade por ambiente.
+Configuração: em `config/settings/base.py` com o prefixo `CELERY_`, lida por
+`config_from_object`. Com uma exceção que morde: o Celery lê `CELERY_BROKER_URL`
+e `CELERY_RESULT_BACKEND` do **ambiente** com precedência sobre as settings, pelo
+que `settings.CELERY_BROKER_URL` pode divergir do `app.conf.broker_url` efetivo.
+Quem quiser fixá-las tem de as pôr no ambiente — é o que o `config/settings/test.py`
+faz para a suite não falar com um broker real.
 """
 
 import os
