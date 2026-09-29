@@ -4,6 +4,12 @@ O `base.py` exige `DJANGO_SECRET_KEY` e `DATABASE_URL` sem default. Para o
 `pytest` correr numa máquina limpa e no CI sem `.env`, os valores de teste são
 postos no ambiente **antes** de importar o base — com `setdefault`, para que o
 ambiente real (CI, docker compose) continue a mandar quando os define.
+
+O `.env` é lido antes destes `setdefault`, no `config/settings/__init__.py`, e é
+o que faz `uv run pytest` falar com o Postgres do compose: o `DATABASE_URL` aqui
+em baixo não tem password, e sem aquela leitura prévia era ele que ganhava. Quem
+corre a suite numa máquina sem `.env` — o CI — cai nestes valores, que é para
+isso que existem.
 """
 
 import os

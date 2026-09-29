@@ -28,7 +28,14 @@ from django.conf import settings
 # continua em `dev` por ser CLI de desenvolvimento.
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.prod")
 
-app = Celery("stockflow")
+# `task_cls` em vez de `base=` em cada `@app.task`: o Celery não tem middleware,
+# e o âmbito da RLS não pode depender de alguém se lembrar de o pedir. Com a
+# base no app, toda a tarefa — incluindo as de `@shared_task`, que usa o app
+# atual — herda `tenant_id` obrigatório e o corpo dentro de `tenant_scope`
+# (ADR 0005, ARCHITECTURE.md §4.8). Em string e não importada: resolve-se na
+# criação da primeira tarefa, e não puxa `apps.shared` durante o import de
+# `config`, que acontece antes de o registo de apps do Django estar populado.
+app = Celery("stockflow", task_cls="apps.shared.tasks:TenantTask")
 
 # `namespace="CELERY"` = só as settings com esse prefixo; evita colisões com as
 # settings do Django.

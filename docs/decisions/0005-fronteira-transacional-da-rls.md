@@ -39,8 +39,15 @@ dispensa é um atributo de classe visível e greppable (`tenant_scope_exempt`), 
 que itera tenants a enfileirar uma tarefa por cada e para o consumidor da outbox, que lê a linha sob
 `system_scope()` (`app.scope = 'system'`, disjunto que só a tabela `outbox` tem na sua política) e
 reentra em `tenant_scope(row.tenant_id)` antes de tocar em mais nada. Pedidos sem tenant — login,
-healthcheck, admin, anónimos — não abrem âmbito nem transação: `current_setting('app.tenant_id',
-true)` é NULL, a comparação da política é NULL, zero linhas, sem erro.
+healthcheck, admin, anónimos — não abrem âmbito nem transação, e a política devolve zero linhas sem
+erro. Com uma correção ao que esta ADR dizia antes de o passo 3 medir: `current_setting('app.tenant_id',
+true)` **não** é NULL fora do âmbito. É NULL só numa ligação que nunca definiu o GUC; depois da
+primeira transação passa a ser a **string vazia**, porque é esse o valor de arranque de um
+placeholder. Logo o predicado tem de ser `NULLIF(current_setting('app.tenant_id', true), '')::uuid` —
+sem o `NULLIF` o cast levanta `invalid input syntax for type uuid: ""` e o caminho sem tenant responde
+500 em vez de zero linhas, o oposto do que esta decisão promete. Está medido e fixado em
+`tests/test_tenant_scope.py`, que afirma o `pg_backend_pid` igual antes e depois, o valor cru a `''`,
+e que o cast ingénuo levanta.
 
 **Alternativas.** GUC de sessão com `CONN_MAX_AGE = 0` — resolve a travessia ao preço de um
 handshake TCP+TLS+auth por pedido, e não resolve o Celery. `ATOMIC_REQUESTS = True` — a transação

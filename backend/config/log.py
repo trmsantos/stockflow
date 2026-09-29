@@ -38,9 +38,19 @@ latência. A garantia fica onde é verificável.
 Alargar a `EXTRA_ALLOWLIST` é uma decisão de segurança — passa pelo
 `security-reviewer`.
 
-Quem preenche `request_id`/`tenant_id`/`user_id` é o middleware de logging, que
-nasce no passo 3 do kickoff. Até lá o filtro garante que as chaves existem com
-valor `None`, para o formato da linha ser estável desde o primeiro dia.
+## De onde vêm os três campos de correlação
+
+`apps.shared.middleware.request_log_context()`, por `ContextVar` — o filtro corre
+em cada registo e não tem acesso ao `request`. O `request_id` é gerado pelo
+`RequestContextMiddleware`, que é o primeiro da lista para o id existir antes de
+qualquer coisa poder falhar; o `tenant_id` é o do âmbito da RLS
+(`apps.shared.db.current_tenant()`), o que faz uma tarefa Celery aparecer no log
+com o seu tenant sem haver pedido nenhum; o `user_id` é um HMAC, nunca o pk (ver
+o docstring do middleware).
+
+Fora de um pedido os campos continuam a existir com valor `None`: o formato da
+linha é o mesmo em qualquer processo. E um `extra=` explícito ganha ao contexto —
+quem loga em nome de outro tenant (o consumidor da outbox) diz qual.
 """
 
 from __future__ import annotations
@@ -48,6 +58,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+
+from apps.shared.middleware import request_log_context
 
 #: Campos de correlação presentes em todas as linhas de log.
 CONTEXT_FIELDS: tuple[str, ...] = ("request_id", "tenant_id", "user_id")
@@ -72,12 +84,13 @@ EXTRA_ALLOWLIST: frozenset[str] = frozenset(
 
 
 class RequestContextFilter(logging.Filter):
-    """Garante que os campos de correlação existem em todos os registos."""
+    """Preenche os campos de correlação do pedido (ou da tarefa) em curso."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        context = request_log_context()
         for field in CONTEXT_FIELDS:
             if not hasattr(record, field):
-                setattr(record, field, None)
+                setattr(record, field, context.get(field))
         return True
 
 

@@ -28,11 +28,10 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 env = environ.Env()
 
-# O `.env` é uma conveniência de desenvolvimento e de CI local. Em produção as
-# variáveis vêm do orquestrador / Docker secrets e este ficheiro não existe.
-_ENV_FILE = BASE_DIR / ".env"
-if _ENV_FILE.is_file():
-    env.read_env(_ENV_FILE)
+# O `.env` já está no ambiente: quem o lê é o `config/settings/__init__.py`, que
+# o Python importa antes deste módulo e antes de qualquer módulo de ambiente.
+# Aqui só se lê `os.environ` — ver o docstring desse ficheiro para a razão da
+# ordem, que não é arbitrária.
 
 # ---------------------------------------------------------------------------
 # Segredos e ligações — obrigatórios, sem default (SECURITY.md §1 "Fuga de
@@ -105,16 +104,21 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = [*DJANGO_APPS, *THIRD_PARTY_APPS, *LOCAL_APPS]
 
-# Ordem: segurança → CSP (gera o nonce antes de qualquer template) → sessão →
-# CSRF → autenticação → mensagens → clickjacking → axes (precisa do
-# `request.user`, por isso vem depois do AuthenticationMiddleware).
-# O `TenantMiddleware` entra no passo 3/4, a partir de `apps.accounts` (ADR
+# Ordem: contexto de log (gera o `request_id`) → segurança → CSP (gera o nonce
+# antes de qualquer template) → sessão → CSRF → autenticação → mensagens →
+# clickjacking → axes (precisa do `request.user`, por isso vem depois do
+# AuthenticationMiddleware).
+# O `RequestContextMiddleware` é o primeiro de propósito (ARCHITECTURE.md §4):
+# um pedido recusado pelo middleware de segurança, um 404 antes da view ou uma
+# exceção na resolução da URL têm de ser logados já com `request_id`, senão
+# essas linhas — as que interessam — ficam sem nada que as ligue ao resto.
+# O `TenantMiddleware` entra no passo 4, a partir de `apps.accounts` (ADR
 # 0003), no **fim** desta lista — não aqui a seguir ao AuthenticationMiddleware.
 # É ele que abre a transação do pedido (ADR 0005), e ser o último deixa a
 # escrita da sessão e o `AccessAttempt` do axes de fora dela, em autocommit,
-# que é onde têm de estar. O middleware de logging entra no topo: cria o
-# `request_id` antes de qualquer coisa poder falhar.
+# que é onde têm de estar.
 MIDDLEWARE = [
+    "apps.shared.middleware.RequestContextMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "csp.middleware.CSPMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",

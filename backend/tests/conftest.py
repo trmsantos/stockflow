@@ -12,16 +12,22 @@ Duas coisas resolvem isso, e são as duas necessárias:
    mesmo na máquina de qualquer pessoa e no CI.
 
 2. `_restaura_os_environ` (autouse) — snapshot e restore de `os.environ` a cada
-   teste. O `monkeypatch` não chega: o `base.py` chama `env.read_env(.env)` e o
-   django-environ **escreve as chaves do ficheiro em `os.environ`** de forma
-   permanente (`environ/environ.py read_env`). Um `_reload("base")` numa
-   máquina com `.env` contaminava todos os testes seguintes, incluindo os que
-   nada têm a ver com settings.
+   teste. O `monkeypatch` não chega: a camada de settings chama
+   `environ.Env.read_env(.env)` e o django-environ **escreve as chaves do
+   ficheiro em `os.environ`** de forma permanente (`environ/environ.py
+   read_env`). Numa máquina com `.env`, um teste que apague ou substitua uma
+   dessas variáveis contaminava todos os seguintes, incluindo os que nada têm a
+   ver com settings.
 
-O `clean_env` também neutraliza o `read_env`: com as variáveis apagadas, o
-`.env` deixa de ser ignorado (o django-environ não sobrepõe o que já existe,
-mas preenche o que falta) e voltaria a decidir o resultado do teste. O que se
-testa aqui são os **defaults do código**, não o `.env` de quem corre a suite.
+O `clean_env` também neutraliza o `read_env`: com as variáveis apagadas, um
+`.env` no disco deixa de ser ignorado (o django-environ não sobrepõe o que já
+existe, mas preenche o que falta) e voltaria a decidir o resultado do teste. O
+que se testa aqui são os **defaults do código**, não o `.env` de quem corre a
+suite.
+
+Onde é que o `.env` é lido, já que isso decide o que o `clean_env` tem de
+neutralizar: em `config/settings/__init__.py`, uma vez, quando o Python importa
+o pacote. O `base.py` não o lê — ver o docstring desse `__init__.py`.
 """
 
 from __future__ import annotations

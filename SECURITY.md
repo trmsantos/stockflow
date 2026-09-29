@@ -73,8 +73,13 @@ CSP via `django-csp`: `default-src 'self'`; scripts só do próprio domínio com
 ALTER TABLE core_document ENABLE ROW LEVEL SECURITY;
 ALTER TABLE core_document FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON core_document
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ```
+O `NULLIF` não é decoração. `app.tenant_id` é um *placeholder*, e o valor a que o fim da transação
+o devolve é a **string vazia**, não NULL — medido no PostgreSQL 16.15, na mesma ligação. Sem o
+`NULLIF`, `''::uuid` levanta `invalid input syntax for type uuid: ""` a partir da segunda transação
+de cada ligação persistente, e o pedido *sem* tenant — login, healthcheck, anónimo, 404 antes da
+view — responde 500 em vez de ver zero linhas.
 O `TenantMiddleware` abre uma transação por pedido e corre nela
 `SELECT set_config('app.tenant_id', %s, true)` — parametrizado, nunca interpolado, e com âmbito de
 transação (ADR 0005). Um `SET LOCAL` fora de um bloco de transação não tem efeito.
