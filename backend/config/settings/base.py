@@ -79,6 +79,10 @@ DJANGO_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Pelo `ArrayField` do `accounts.User.tenant_ids` (ADR 0007). Não cria
+    # tabela nenhuma: registra os lookups e as verificações de sistema dos
+    # campos específicos do Postgres.
+    "django.contrib.postgres",
 ]
 
 THIRD_PARTY_APPS = [
@@ -112,11 +116,11 @@ INSTALLED_APPS = [*DJANGO_APPS, *THIRD_PARTY_APPS, *LOCAL_APPS]
 # um pedido recusado pelo middleware de segurança, um 404 antes da view ou uma
 # exceção na resolução da URL têm de ser logados já com `request_id`, senão
 # essas linhas — as que interessam — ficam sem nada que as ligue ao resto.
-# O `TenantMiddleware` entra no passo 4, a partir de `apps.accounts` (ADR
-# 0003), no **fim** desta lista — não aqui a seguir ao AuthenticationMiddleware.
-# É ele que abre a transação do pedido (ADR 0005), e ser o último deixa a
-# escrita da sessão e o `AccessAttempt` do axes de fora dela, em autocommit,
-# que é onde têm de estar.
+# O `TenantMiddleware` vive em `apps.accounts` (ADR 0003) e é o **último** —
+# não a seguir ao AuthenticationMiddleware. Precisa do `request.user`, e é ele
+# que abre a transação do pedido (ADR 0005): ser o último deixa a escrita da
+# sessão (`SESSION_SAVE_EVERY_REQUEST`) e o `AccessAttempt` do axes de fora
+# dela, em autocommit, que é onde têm de estar.
 MIDDLEWARE = [
     "apps.shared.middleware.RequestContextMiddleware",
     "django.middleware.security.SecurityMiddleware",
@@ -128,6 +132,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "axes.middleware.AxesMiddleware",
+    "apps.accounts.middleware.TenantMiddleware",
 ]
 
 TEMPLATES = [
@@ -149,6 +154,11 @@ TEMPLATES = [
 # ---------------------------------------------------------------------------
 # Autenticação, sessões e passwords (SECURITY.md §5)
 # ---------------------------------------------------------------------------
+#: O `USERNAME_FIELD` é `email` e a tabela é deliberadamente pequena: credencial
+#: e flags, e mais nada. O nome exibido e o papel vivem no `Membership`, que tem
+#: política RLS (ADR 0007).
+AUTH_USER_MODEL = "accounts.User"
+
 # O AxesStandaloneBackend tem de ser o primeiro: é ele que recusa o pedido
 # quando a conta/IP está em lockout, antes de qualquer verificação de password
 # (obrigatório no django-axes 8.x).
@@ -198,6 +208,15 @@ AUTH_PASSWORD_VALIDATORS = [
 # ---------------------------------------------------------------------------
 AXES_ENABLED = True
 AXES_FAILURE_LIMIT = 5
+# O nome do campo que transporta a conta, e sem ele o eixo por utilizador
+# desaparece **em silêncio**. Medido no pacote instalado: o
+# `axes.helpers.get_client_username` devolve
+# `credentials.get(settings.AXES_USERNAME_FORM_FIELD)`, cujo default é
+# `"username"`; com login por email esse `get` devolve `None` e o contador por
+# conta passa a agrupar todas as tentativas sob a chave `None`. É a mesma classe
+# de defeito do `django-ipware` (SECURITY.md §5): a configuração parece estar
+# lá e o controlo não está. Fixado em `tests/test_lockout.py`.
+AXES_USERNAME_FORM_FIELD = "email"
 # Dois contadores independentes; o axes faz `max()` sobre os grupos
 # (`handlers/database.py get_failures`), logo ganha o mais restritivo:
 #   1. o par (IP, utilizador) — o eixo fino. Sozinho não serve, mas é ele que

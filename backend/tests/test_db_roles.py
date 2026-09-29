@@ -14,11 +14,17 @@ ninguém se tenha autenticado como ninguém — era isso que a fixture antiga fa
 é a única forma de dizer "a ligação **é** do `stockflow_app`", e depois desta ADR
 não há um único `SET ROLE` no repositório.
 
-As três varreduras do `pg_class` no fim existem para transformar regras escritas
-em gates:
+As varreduras do `pg_class` no fim existem para transformar regras escritas em
+gates:
 
-* o CLAUDE.md diz "toda a tabela com `tenant_id` tem política RLS na migração que
-  a cria". Passa a ser um teste que falha na migração seguinte que se esqueça;
+* a regra do CLAUDE.md, na forma que a ADR 0007 lhe deu, é uma **igualdade de
+  conjuntos nos dois sentidos**: as tabelas com política são exatamente as que
+  têm `tenant_id` mais o `accounts_tenant` (onde a coluna do tenant é `id`), e
+  as que não têm política são exatamente uma lista fechada, comentada entrada
+  por entrada. A versão anterior — "toda a tabela com coluna `tenant_id` tem
+  política" — deixava passar em silêncio uma tabela de dados de um tenant que
+  chamasse `restaurante_id` à sua coluna: não entrava na varredura, logo a falta
+  de política nunca era vista. Agora cai no complemento e falha;
 * o `roles.sql` concede DML por `ALTER DEFAULT PRIVILEGES`, que é indexado pelo
   role **que cria** a tabela: uma migração corrida pelo role errado produz
   tabelas sem GRANT nenhum, e o erro apareceria na app e não na migração. A
@@ -55,6 +61,53 @@ APPEND_ONLY: frozenset[str] = frozenset()
 #: passavam por vacuidade.
 TABELA_ANCORA = "shared_outboxevent"
 
+#: Tabelas com política que **não** têm coluna `tenant_id`. Hoje uma só, e é a
+#: razão pela qual a regra do CLAUDE.md passou de "coluna" para "papel" (ADR
+#: 0007): no `accounts_tenant` a coluna que identifica o tenant é `id`, porque a
+#: tabela **é** o tenant.
+COM_POLITICA_SEM_TENANT_ID: frozenset[str] = frozenset({"accounts_tenant"})
+
+#: A lista **fechada** das tabelas sem política de RLS, comentada entrada por
+#: entrada. Qualquer tabela que não esteja aqui tem de ter política — é o
+#: complemento que faz a varredura apanhar uma tabela de domínio que chame à sua
+#: coluna de tenant outra coisa que não `tenant_id`.
+SEM_POLITICA: frozenset[str] = frozenset(
+    {
+        # Identidade que tem de ser lida **antes** de existir âmbito: o
+        # `WHERE email = %s` do login. Uma política com uma porta para o login
+        # não é uma política, e a resposta é encolher a tabela — email, hash e
+        # flags, e mais nada (ADR 0007). Risco residual nomeado no SECURITY.md §3.
+        "accounts_user",
+        # As duas junções do `PermissionsMixin`: permissões do admin do Django,
+        # sem `tenant_id`. Seguem o `accounts_user` porque são dele.
+        "accounts_user_groups",
+        "accounts_user_user_permissions",
+        # Permissões e grupos do Django. Dados de configuração do próprio
+        # framework, iguais para todos os tenants, e só o admin os lê.
+        "auth_group",
+        "auth_group_permissions",
+        "auth_permission",
+        # Contadores de tentativas de login do django-axes. Nascem **antes** de
+        # haver sessão (e portanto âmbito), e o `AccessAttempt` é escrito fora
+        # da transação do pedido de propósito — o `TenantMiddleware` é o último
+        # middleware precisamente para isso (ADR 0005).
+        "axes_accessattempt",
+        "axes_accessattemptexpiration",
+        "axes_accessfailurelog",
+        "axes_accesslog",
+        # Log do admin. O admin só registra modelos sem política (ADR 0007), e
+        # o seu `user_id` aponta para o `accounts_user`.
+        "django_admin_log",
+        # Tabelas de infraestrutura do Django. O `django_session` é lido pelo
+        # `TenantMiddleware` **antes** do âmbito: é de lá que vem o `tenant_id`
+        # que o âmbito vai usar, pelo que uma política aqui seria a
+        # circularidade que a ADR 0007 desfaz.
+        "django_content_type",
+        "django_migrations",
+        "django_session",
+    }
+)
+
 _PRIVILEGIOS_DML = """
 SELECT c.relname,
        has_table_privilege(%s, c.oid, 'SELECT'),
@@ -67,22 +120,22 @@ SELECT c.relname,
  ORDER BY c.relname
 """
 
-_TABELAS_COM_TENANT_ID = """
+_VARREDURA_DE_POLITICAS = """
 SELECT c.relname,
-       c.relrowsecurity,
-       c.relforcerowsecurity,
-       EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)
-  FROM pg_class c
- WHERE c.relnamespace = 'public'::regnamespace
-   AND c.relkind = 'r'
-   AND EXISTS (
+       EXISTS (
            SELECT 1
              FROM pg_attribute a
             WHERE a.attrelid = c.oid
               AND a.attname = 'tenant_id'
               AND a.attnum > 0
               AND NOT a.attisdropped
-       )
+       ) AS tem_tenant_id,
+       EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid) AS tem_politica,
+       c.relrowsecurity,
+       c.relforcerowsecurity
+  FROM pg_class c
+ WHERE c.relnamespace = 'public'::regnamespace
+   AND c.relkind = 'r'
  ORDER BY c.relname
 """
 
@@ -225,30 +278,93 @@ def test_so_as_tabelas_append_only_perdem_update_e_delete(
     )
 
 
-@pytest.mark.django_db
-def test_toda_a_tabela_com_tenant_id_tem_rls_forcada_e_politica() -> None:
-    """A regra do CLAUDE.md como gate, e não como item de revisão.
+@pytest.fixture
+def varredura(db: None) -> dict[str, tuple[bool, bool, bool, bool]]:
+    """`{tabela: (tem_tenant_id, tem_politica, enable, force)}` para o esquema todo.
+
+    Varre relações e não modelos, de propósito: uma tabela de junção que venha a
+    carregar `tenant_id` — ou uma tabela criada por um `RunSQL` — aparece aqui
+    sem passar por `models.py` nenhum.
+    """
+    linhas = _linhas(_VARREDURA_DE_POLITICAS)
+    mapa = {
+        nome: (tenant, politica, enable, force)
+        for nome, tenant, politica, enable, force in linhas
+    }
+    assert TABELA_ANCORA in mapa, "a varredura do pg_class não encontrou nada"
+    return mapa
+
+
+def test_as_tabelas_com_politica_sao_exatamente_as_de_dados_de_tenant(
+    varredura: dict[str, tuple[bool, bool, bool, bool]],
+) -> None:
+    """Igualdade de conjuntos, e é ela que apanha o que a versão antiga deixava passar.
+
+    A varredura era "toda a tabela com coluna `tenant_id` tem política". Passava
+    nos dois casos que mais interessam: uma tabela de dados de um tenant que
+    chame à sua coluna outra coisa (`restaurante_id`, `org_id`) não tem
+    `tenant_id`, logo não entrava na varredura e a falta de política não era
+    vista; e o `accounts_tenant`, cuja coluna é `id`, teria de ser uma exceção
+    escrita à mão. Nos dois sentidos, não: o complemento é uma lista fechada, e
+    quem não estiver nela **tem** de ter política.
+    """
+    com_politica = {nome for nome, (_t, politica, *_r) in varredura.items() if politica}
+    com_tenant_id = {nome for nome, (tenant, *_r) in varredura.items() if tenant}
+
+    assert com_politica == com_tenant_id | COM_POLITICA_SEM_TENANT_ID, (
+        "as tabelas com política deixaram de ser exatamente as que têm "
+        "tenant_id mais o accounts_tenant. Uma tabela de dados de um tenant "
+        "sem política é travessia de tenant à espera de acontecer (CLAUDE.md); "
+        "uma tabela sem dados de tenant com política é um engano que vai "
+        "aparecer como 'não encontrei nada'."
+    )
+    # Âncoras nos dois lados, para nenhuma das igualdades passar por vacuidade.
+    assert TABELA_ANCORA in com_tenant_id
+    assert "accounts_tenant" in com_politica
+
+
+def test_as_tabelas_sem_politica_sao_uma_lista_fechada(
+    varredura: dict[str, tuple[bool, bool, bool, bool]],
+) -> None:
+    """O outro sentido: só estas, e cada uma com a sua razão escrita.
+
+    Uma tabela nova sem política falha aqui mesmo que não tenha coluna
+    `tenant_id` — e é esse o ponto. A decisão de acrescentar uma entrada a
+    `SEM_POLITICA` é uma decisão de segurança, visível no diff, com a razão ao
+    lado (ADR 0007).
+    """
+    sem_politica = {nome for nome, (_t, politica, *_r) in varredura.items() if not politica}
+
+    assert sem_politica == SEM_POLITICA, (
+        "a lista fechada das tabelas sem política de RLS mudou. Se a tabela "
+        "guarda dados de um tenant, a migração que a cria leva o bloco de RLS; "
+        "se não guarda, entra nesta lista com o comentário que diz porquê."
+    )
+    assert SEM_POLITICA <= varredura.keys(), (
+        "SEM_POLITICA nomeia tabelas que não existem no esquema: a lista ficou "
+        "atrás de um rename ou de uma migração revertida."
+    )
+
+
+def test_toda_a_tabela_com_politica_tem_enable_e_force(
+    varredura: dict[str, tuple[bool, bool, bool, bool]],
+) -> None:
+    """A política existir não basta: sem `ENABLE` não é avaliada, e sem `FORCE`
+    não alcança o dono.
 
     O `FORCE` é o que sujeita o `stockflow_owner` à política: uma migração de
     dados sobre uma tabela de tenant corre como dono e tem de ver zero linhas
     até definir o `app.tenant_id` — a saída é iterar tenants, não `NO FORCE`.
     """
-    linhas = _linhas(_TABELAS_COM_TENANT_ID)
-
-    nomes = {nome for nome, *_ in linhas}
-    assert TABELA_ANCORA in nomes, (
-        f"{TABELA_ANCORA} tem coluna tenant_id e não apareceu: a varredura está "
-        f"a olhar para o sítio errado e todo este teste passaria por vacuidade."
-    )
-
     em_falta = sorted(
         nome
-        for nome, enable, force, politica in linhas
-        if not (enable and force and politica)
+        for nome, (_t, politica, enable, force) in varredura.items()
+        if politica and not (enable and force)
     )
+
     assert em_falta == [], (
-        "tabelas com tenant_id sem ENABLE + FORCE ROW LEVEL SECURITY e sem "
-        "política: a RLS entra no RunSQL da migração que cria a tabela."
+        "tabelas com política sem ENABLE + FORCE ROW LEVEL SECURITY: as três "
+        "linhas andam juntas no RunSQL da migração que cria a tabela."
     )
 
 

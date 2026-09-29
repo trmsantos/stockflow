@@ -69,6 +69,14 @@ python_files = ["test_*.py", "*_test.py"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config"
+# Registado porque `--strict-markers` recusa marcadores desconhecidos: um
+# marcador mal escrito passa a ser um erro de recolha e não uma dispensa
+# silenciosa do guarda. Ver a secção (c) de `tests/conftest.py` — a marca só é
+# legítima nos testes que provam a leitura sem âmbito (política a devolver zero
+# linhas) e nos que correm sob `system_scope()`, onde não há tenant por desenho.
+markers = [
+    "sem_ambito_de_rls: dispensa o guarda que proíbe ler tabelas com política fora de âmbito",
+]
 
 # ---------------------------------------------------------------------------
 # import-linter — fronteiras entre módulos (ARCHITECTURE.md §3 e §6b).

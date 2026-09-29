@@ -110,6 +110,21 @@ devolve zero linhas — falha fechada.
 2. **In transit**: TLS na ligação (acima).
 3. **Ao nível de campo** (para PII sensível: NIF, IBAN, dados de saúde, tokens OAuth de
    terceiros): `django-fernet-fields` ou `EncryptedTextField` próprio com AES-256-GCM.
+   - **O NIF do tenant é um caso especial e não é folclore.** Uma fatia relevante dos clientes
+     são ENI (empresário em nome individual) — cafés e pastelarias constituem-se assim e faturam
+     com o **NIF pessoal do dono**, prefixo 1 ou 2. Logo o NIF do tenant é PII de pessoa singular
+     numas vezes e não noutras, e não há como saber de antemão qual. Isso colide com a
+     unicidade: um campo encriptado não serve de índice único. A forma é `nif_encrypted`
+     (AES-256-GCM, `key_id` para rotação) mais `nif_hmac` **único e indexado**, HMAC-SHA256 com
+     **pepper secreto fora da base de dados** — nunca um hash simples: 9 dígitos são 10⁹
+     candidatos e a coluna inteira quebra-se num portátil. Rodar o pepper obriga a reescrever a
+     coluna e o índice, ao contrário de rodar a chave de encriptação.
+   - O NIF é **único mas não imutável**: ENI → Lda ao fim de ~2 anos é o mesmo restaurante com
+     NIF novo, e o hmac antigo tem de continuar pesquisável, porque as faturas antigas trazem o
+     NIF antigo. A mudança escreve uma linha append-only com autor e motivo.
+   - **Consequência de RGPD a nomear:** se o NIF do tenant pode ser de pessoa singular, o próprio
+     registo do tenant é dado pessoal, e o direito ao apagamento de um ENI é apagar um tenant com
+     um ledger append-only lá dentro. Não está resolvido.
    Chave (`FIELD_ENCRYPTION_KEY`) vem de um KMS/Vault ou de secret de runtime, **nunca** do
    `.env` commitado. Rotação: campos guardam `key_id`; job de re-encriptação.
    - Passwords: nunca encriptadas — só Argon2id (hash).

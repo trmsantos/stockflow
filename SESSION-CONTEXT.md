@@ -69,7 +69,13 @@ bloquear ou avisar quando falta stock, clientes com várias lojas serem um NIF o
 talão de POS ou em lote, cozinha central com stock em trânsito, `yield_factor`, e a hora a que
 começa o dia de negócio (o desperdício da 01h30 pertence ao serviço anterior). Nenhuma bloqueia o
 kickoff; todas bloqueiam o catálogo e o ledger, e são caras de mudar depois de haver migrações
-aplicadas — que o CLAUDE.md proíbe editar.
+aplicadas — que o CLAUDE.md proíbe editar. A conversa do NIF (sessão 2) acrescentou cinco: o
+conjunto de papéis (o segundo sócio é `owner` igual, ou há um papel intermédio? — bloqueia a ADR do
+convite); com que frequência acontece ENI → Lda e se esperam que o histórico transite (decide se a
+mudança de NIF é self-service ou só suporte); se a contabilista é utilizadora do produto ou só
+recebe exports (decide quanto vale o seletor de tenant); se as faturas emitidas ao NIF pessoal do
+sócio são frequentes (decide se os "NIFs alternativos" entram no v1); e se grupos com N sociedades
+estão no mercado-alvo ao lançamento (decide se `Organization` é fase 2 ou nunca).
 
 **Plano de sessões (README §2):** 0 validação com donos de restaurante · 1 `/kickoff` · 2 catálogo ·
 3 ledger de stock · 4 listagem + alertas · 5 contagem em telemóvel · 6–7 receção por fatura · 8 receitas + desperdício.

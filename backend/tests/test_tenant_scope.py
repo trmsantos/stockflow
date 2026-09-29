@@ -42,7 +42,8 @@ from uuid import UUID, uuid4
 
 import pytest
 from django.conf import settings
-from django.contrib.auth.models import AnonymousUser, User
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.db import connection
 from django.db.utils import DataError, ProgrammingError
 from django.http import HttpRequest, HttpResponse
@@ -128,6 +129,11 @@ def test_a_saida_do_ambito_o_guc_nao_sobrevive_na_mesma_ligacao() -> None:
         _escalar("SELECT current_setting('app.tenant_id', true)::uuid")
 
 
+# A leitura da outbox sob `system_scope()` é sem tenant por desenho — é como o
+# consumidor lê a linha — e o guarda de âmbito do `conftest.py` não distingue
+# "sem âmbito nenhum" de "âmbito de sistema". Daí a marca, aqui e nos dois
+# testes do disjunto de sistema mais abaixo.
+@pytest.mark.sem_ambito_de_rls
 @pytest.mark.django_db(transaction=True)
 def test_uma_excecao_dentro_do_ambito_desfaz_a_transacao_e_fecha_o_guc() -> None:
     evento = _EventoDeTeste(tenant_id=TENANT_A, quantidade=Decimal("1.000"))
@@ -282,6 +288,7 @@ def test_a_politica_da_outbox_isola_por_tenant() -> None:
     assert visiveis == {linha_b.id}
 
 
+@pytest.mark.sem_ambito_de_rls  # é esta leitura que o teste existe para provar
 @pytest.mark.django_db(transaction=True)
 def test_sem_ambito_a_outbox_devolve_zero_linhas_sem_erro() -> None:
     """Falha fechada, e sem exceção: é o que a ADR promete para um pedido sem
@@ -293,6 +300,7 @@ def test_sem_ambito_a_outbox_devolve_zero_linhas_sem_erro() -> None:
     assert OutboxEvent.objects.count() == 0
 
 
+@pytest.mark.sem_ambito_de_rls
 @pytest.mark.django_db(transaction=True)
 def test_o_system_scope_ve_as_linhas_de_todos_os_tenants() -> None:
     """O disjunto `app.scope = 'system'`, que só esta tabela tem: o consumidor
@@ -491,7 +499,9 @@ def test_o_tenant_id_dos_logs_vem_do_ambito_da_rls(
     assert coletor.registos[-1].tenant_id is None
 
 
-def _user_id_logado(rf: RequestFactory, coletor: _Coletor, user: User) -> str | None:
+def _user_id_logado(
+    rf: RequestFactory, coletor: _Coletor, user: AbstractBaseUser
+) -> str | None:
     request = rf.get("/qualquer/")
     request.COOKIES[settings.SESSION_COOKIE_NAME] = "sessao-de-teste"
     request.user = user
@@ -511,8 +521,13 @@ def test_o_user_id_dos_logs_vai_em_hash(rf: RequestFactory, coletor: _Coletor) -
     enumera-se em segundos, o que devolvia a identidade que o hash esconde. É a
     chave secreta no HMAC que fecha essa porta.
     """
-    ana = User.objects.create(username="ana", email="ana@exemplo.pt")
-    beto = User.objects.create(username="beto", email="beto@exemplo.pt")
+    # O `AUTH_USER_MODEL` é o `accounts.User`: sem `username`, e o email é o
+    # `USERNAME_FIELD` (ADR 0007). `get_user_model()` em vez do import direto —
+    # `django.contrib.auth.models.User` continua importável e a sua tabela já
+    # não existe.
+    User = get_user_model()
+    ana = User.objects.create_user(email="ana@exemplo.pt")
+    beto = User.objects.create_user(email="beto@exemplo.pt")
 
     de_ana = _user_id_logado(rf, coletor, ana)
     de_beto = _user_id_logado(rf, coletor, beto)
@@ -524,7 +539,7 @@ def test_o_user_id_dos_logs_vai_em_hash(rf: RequestFactory, coletor: _Coletor) -
     assert len(de_ana) == 16
     assert set(de_ana) <= set("0123456789abcdef")
     linha = json.dumps(json.loads(JsonFormatter().format(coletor.registos[-1])))
-    for pii in (beto.username, beto.email, "/qualquer/"):
+    for pii in (beto.email, "/qualquer/"):
         assert pii not in linha
 
 

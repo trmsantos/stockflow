@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 from axes.handlers.proxy import AxesProxyHandler
-from axes.helpers import get_client_ip_address, get_cool_off
+from axes.helpers import get_client_ip_address, get_client_username, get_cool_off
 from axes.models import AccessAttempt
 from django.conf import settings
 from django.contrib.auth import authenticate
@@ -346,3 +346,37 @@ def test_throttle_de_anonimos_usa_a_mesma_ponta_do_header(prod_env: None) -> Non
         ident = AnonRateThrottle().get_ident(_request_do_proxy(f"{FORJADO_IP}, {CLIENTE_IP}"))
 
     assert ident == CLIENTE_IP
+
+
+# ---------------------------------------------------------------------------
+# O campo que transporta a conta (SECURITY.md §5)
+# ---------------------------------------------------------------------------
+def test_o_contador_por_conta_do_axes_le_o_campo_email() -> None:
+    """Sem `AXES_USERNAME_FORM_FIELD = "email"`, o eixo por conta desaparece.
+
+    O `USERNAME_FIELD` do projeto é o `email` (ADR 0007), mas o default desta
+    setting é `"username"` — e o `get_client_username` do axes vai buscar o nome
+    exatamente a essa chave, seja em `credentials` seja no `request.POST`. Com o
+    default, o `get` devolve `None` em **todos** os pedidos de login, o contador
+    por conta agrupa a humanidade inteira sob a chave `None` e o eixo do
+    SECURITY.md §5 que apanha password spraying (N IPs contra 1 conta) deixa de
+    existir. Não há erro nem aviso: é a mesma classe de defeito do
+    `django-ipware` — a configuração parece estar lá e o controlo não está.
+
+    As duas metades do teste são necessárias: a primeira afirma que hoje
+    funciona, a segunda que é **esta** setting que o faz. Sem a segunda, o teste
+    passava com a setting apagada.
+    """
+    assert settings.AXES_USERNAME_FORM_FIELD == "email"
+    # O eixo por conta existe nos parâmetros de lockout — `"username"` é o nome
+    # interno do eixo no axes, não o nome do campo do formulário.
+    assert "username" in settings.AXES_LOCKOUT_PARAMETERS
+
+    pedido = RequestFactory().post("/api/v1/auth/login/", {"email": "ana@exemplo.pt"})
+
+    assert get_client_username(pedido) == "ana@exemplo.pt"
+    assert get_client_username(pedido, {"email": "ana@exemplo.pt"}) == "ana@exemplo.pt"
+
+    with override_settings(AXES_USERNAME_FORM_FIELD="username"):
+        assert get_client_username(pedido) is None
+        assert get_client_username(pedido, {"email": "ana@exemplo.pt"}) is None

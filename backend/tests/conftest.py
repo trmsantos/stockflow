@@ -1,9 +1,11 @@
-"""Fixtures partilhadas: isolamento do ambiente e os dois roles da suite.
+"""Fixtures partilhadas: ambiente, os dois roles da suite e o guarda de âmbito.
 
-Duas responsabilidades, ambas sobre o *arranque* da suite e nenhuma sobre
-domínio: (a) tornar determinístico o ambiente que a camada de settings lê, e
+Três responsabilidades, todas sobre o *arranque* da suite e nenhuma sobre
+domínio: (a) tornar determinístico o ambiente que a camada de settings lê,
 (b) criar a base de dados de teste com o role que migra e correr os testes com
-o role que serve pedidos (ADR 0006, `django_db_setup` no fim do ficheiro).
+o role que serve pedidos (ADR 0006, `django_db_setup`), e (c) montar em todos
+os testes o guarda que levanta quando alguém lê uma tabela com política de RLS
+fora de âmbito (ADR 0007, no fim do ficheiro).
 
 ## (a) Isolamento do ambiente
 
@@ -41,14 +43,18 @@ from __future__ import annotations
 
 import importlib
 import os
-from collections.abc import Iterator
+import re
+from collections.abc import Callable, Iterator
 from types import ModuleType
+from typing import Any
 
 import environ
 import pytest
 from django.conf import settings
 from django.db import connections
 from pytest_django.plugin import DjangoDbBlocker
+
+from apps.shared.db import current_tenant
 
 #: O role que serve pedidos e com que os testes correm. Vai literal porque os
 #: `GRANT` são DDL e um nome de role não é parametrizável; o `django_db_setup`
@@ -292,3 +298,123 @@ def django_db_setup(
             # deixava-a ao alcance de quem lá parasse.
             _usa_credenciais(user_da_app, password_da_app)
             connections["default"].close()
+
+
+# ---------------------------------------------------------------------------
+# (c) O guarda de âmbito (ADR 0007)
+#
+# A regra "nada lê uma tabela com política antes de o âmbito existir" não é
+# verificável por revisão: o modo de falha é a política devolver **zero linhas
+# sem erro**, que aparece como "não encontrei nada" e não como bug. Foi o padrão
+# que apareceu três vezes no mesmo dia.
+#
+# Este guarda transforma-a num teste vermelho. Está montado por
+# `connection.execute_wrapper` em **todos** os testes e levanta quando as duas
+# condições se verificam ao mesmo tempo:
+#
+#   1. `current_tenant()` é `None` — não há `tenant_scope` aberto;
+#   2. o SQL menciona uma relação que tem política de RLS.
+#
+# A lista das relações vem do `pg_policy`, na primeira query que a precisa, e
+# não de uma constante: uma tabela nova com política entra no guarda **sozinha**,
+# sem ninguém se lembrar de a acrescentar aqui. É a mesma escolha do
+# `tests/test_db_roles.py`, que varre o `pg_class` em vez de ler modelos.
+#
+# ## A dispensa, e por que razão existe
+#
+# `@pytest.mark.sem_ambito_de_rls` desliga-o para um teste. Só a devem ter os
+# testes que fazem a leitura sem âmbito **de propósito** — os que provam que a
+# política devolve zero linhas, e os que correm sob `system_scope()`, onde não
+# há tenant por desenho (o consumidor da outbox). Fora desses, a marca é o sinal
+# de que alguém está a contornar o guarda em vez de corrigir o código.
+#
+# O guarda tem um teste próprio em `tests/test_rls_isolation.py`, que faz a
+# leitura proibida e afirma que ele levanta: sem isso, um guarda quebrado ficava
+# verde e calado — que é exatamente a classe de defeito que ele existe para
+# apanhar.
+# ---------------------------------------------------------------------------
+
+#: Nome do marcador que dispensa o guarda. Registado em `pyproject.toml`, porque
+#: a suite corre com `--strict-markers`: um marcador mal escrito é um erro de
+#: recolha e não uma dispensa silenciosa.
+MARCADOR_SEM_AMBITO = "sem_ambito_de_rls"
+
+#: As quatro instruções que a RLS filtra. `TRUNCATE` fica de fora de propósito:
+#: nenhuma política o filtra (é por isso que o `_GRANT_TRUNCATE` acima existe) e
+#: é o que o `flush` do pytest-django corre entre testes `transaction=True`.
+#: `SAVEPOINT`, `SET`, `BEGIN` e DDL também não mencionam linhas.
+_PREFIXOS_DML = frozenset({"select", "insert", "update", "delete"})
+
+_POLITICAS_SQL = """
+SELECT DISTINCT c.relname
+  FROM pg_policy p
+  JOIN pg_class c ON c.oid = p.polrelid
+ WHERE c.relnamespace = 'public'::regnamespace
+"""
+
+_relacoes_com_politica: frozenset[str] | None = None
+_a_consultar_o_catalogo = False
+
+
+class LeituraSemAmbito(AssertionError):
+    """Query a uma tabela com política de RLS fora de qualquer `tenant_scope`.
+
+    `AssertionError` e não `Exception`: isto é uma falha de teste, não uma
+    condição de runtime. Em produção a mesma query não levanta — devolve zero
+    linhas, que é o que a torna difícil de encontrar sem este guarda.
+    """
+
+
+def _relacoes(conexao: Any) -> frozenset[str]:
+    """As relações com política, lidas do `pg_policy` e guardadas na sessão."""
+    global _relacoes_com_politica, _a_consultar_o_catalogo
+    if _relacoes_com_politica is None:
+        # A própria query ao catálogo passa pelo wrapper: sem esta bandeira,
+        # recursão infinita na primeira leitura.
+        _a_consultar_o_catalogo = True
+        try:
+            with conexao.cursor() as cursor:
+                cursor.execute(_POLITICAS_SQL)
+                _relacoes_com_politica = frozenset(nome for (nome,) in cursor.fetchall())
+        finally:
+            _a_consultar_o_catalogo = False
+    return _relacoes_com_politica
+
+
+def _guarda_de_ambito(
+    execute: Callable[..., object],
+    sql: str,
+    params: object,
+    many: bool,
+    context: dict[str, object],
+) -> object:
+    if _a_consultar_o_catalogo or current_tenant() is not None:
+        return execute(sql, params, many, context)
+
+    if sql.lstrip()[:6].lower() not in _PREFIXOS_DML:
+        return execute(sql, params, many, context)
+
+    mencionadas = sorted(
+        nome
+        for nome in _relacoes(context["connection"])
+        if re.search(rf"\b{re.escape(nome)}\b", sql)
+    )
+    if mencionadas:
+        raise LeituraSemAmbito(
+            f"query a {mencionadas} fora de qualquer tenant_scope. Em produção "
+            f"isto não levanta: a política devolve zero linhas e o bug aparece "
+            f"como 'não encontrei nada'. Abre o âmbito (ADR 0005) ou, se a "
+            f"leitura sem âmbito é o que o teste quer provar, marca-o com "
+            f"@pytest.mark.{MARCADOR_SEM_AMBITO}.\nSQL: {sql[:200]}"
+        )
+    return execute(sql, params, many, context)
+
+
+@pytest.fixture(autouse=True)
+def guarda_de_rls(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Monta o guarda em todos os testes que não o dispensem."""
+    if request.node.get_closest_marker(MARCADOR_SEM_AMBITO):
+        yield
+        return
+    with connections["default"].execute_wrapper(_guarda_de_ambito):
+        yield
