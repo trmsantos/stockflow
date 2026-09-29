@@ -40,11 +40,16 @@ ensure_uv_tool lint-imports import-linter
 broken() { BROKEN+=("${1:-$GATE}"); note "  [ERRO] ${1:-$GATE} — ${2:-relatório ilegível}"; }
 
 count_sev() { # $1=critical $2=high $3=medium $4=low
-  local v
+  local v n=()
+  # O `wc -l` do BSD devolve a contagem com espaços à frente ("      1"), por
+  # isso normaliza-se antes de validar. O que não passa aqui é texto, e texto
+  # significa que o gate não produziu resultado — nunca zero.
   for v in "$1" "$2" "$3" "$4"; do
-    [[ "$v" =~ ^[0-9]+$ ]] || { broken "$GATE" "contagem inválida ('$v')"; return 0; }
+    v="${v//[[:space:]]/}"
+    [[ "$v" =~ ^[0-9]+$ ]] || { broken "$GATE" "contagem inválida ('$1 $2 $3 $4')"; return 0; }
+    n+=("$v")
   done
-  CRIT=$((CRIT+$1)); HIGH=$((HIGH+$2)); MED=$((MED+$3)); LOW=$((LOW+$4))
+  CRIT=$((CRIT+n[0])); HIGH=$((HIGH+n[1])); MED=$((MED+n[2])); LOW=$((LOW+n[3]))
 }
 
 # ---------------------------------------------------------------- secrets
@@ -57,7 +62,9 @@ if run_if secrets; then
   else skip gitleaks "instala: https://github.com/gitleaks/gitleaks#installing"; fi
 
   log "Ficheiros sensíveis no git"
-  bad=$(git ls-files 2>/dev/null | grep -E '(^|/)(\.env|\.env\..*|.*\.pem|.*\.key|db\.sqlite3|id_rsa.*)$' || true)
+  # `.env.example` / `.sample` / `.template` são para estar no repositório — é
+  # deles que sai o `.env` real. Tudo o resto com cara de `.env.<ambiente>` não.
+  bad=$(git ls-files 2>/dev/null | grep -E '(^|/)(\.env|\.env\..*|.*\.pem|.*\.key|db\.sqlite3|id_rsa.*)$' | grep -vE '\.(example|sample|template)$' || true)
   if [[ -n "$bad" ]]; then note "  CRITICAL ficheiros sensíveis commitados:"; echo "$bad" | sed 's/^/    /' | tee -a "$SUMMARY"; count_sev "$(echo "$bad" | wc -l)" 0 0 0; else note "  ok"; fi
 fi
 
