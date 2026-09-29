@@ -1,0 +1,236 @@
+# Os gates do SECURITY.md §9. Cada um corre localmente e passa — este ficheiro é
+# a transcrição de coisas verificadas, não uma lista de esperanças.
+#
+# Três princípios:
+#   * **Nada por tag móvel.** As actions estão fixadas por SHA de commit e as
+#     ferramentas por digest de imagem. Uma tag é um alvo móvel, e um gate de
+#     segurança que se atualiza sozinho é um gate que alguém pode mover.
+#   * **Um job por preocupação**, para a falha ser legível: "o SAST falhou" diz
+#     mais do que "o CI falhou", e os jobs correm em paralelo.
+#   * **Falha fechada.** Nenhum `continue-on-error`, nenhum `|| true`. Um gate
+#     que não corre não é um gate que passa — foi a lição do dia em que o
+#     `security_check.sh` dava PASS com quatro gates nunca executados.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Menos privilégios do que o default: nenhum job aqui escreve no repositório.
+permissions:
+  contents: read
+
+# Um push novo cancela a corrida anterior do mesmo ramo.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMG_GITLEAKS: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  IMG_HADOLINT: hadolint/hadolint@sha256:a1d49ae1a4e83c1dbad26b8c1ad7588c8bd1e04f4866b34ad3cac50335198552
+  IMG_TRIVY: aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+
+jobs:
+  # ---------------------------------------------------------------- segredos
+  segredos:
+    name: Segredos (gitleaks)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # O gitleaks analisa a **história**, não a árvore: sem isto varre um
+          # commit só e um segredo introduzido e removido passa.
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo "$IMG_GITLEAKS" \
+            detect --source . --no-banner --redact --verbose
+
+  # ---------------------------------------------------------------- backend
+  backend:
+    name: Backend (ruff, fronteiras, testes, check --deploy)
+    runs-on: ubuntu-24.04
+    services:
+      db:
+        # O mesmo digest do docker/compose.yml: os testes correm contra a versão
+        # de Postgres que vai para produção, não contra a que o runner trouxer.
+        image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_DB: stockflow
+          POSTGRES_USER: stockflow
+          POSTGRES_PASSWORD: ci-bootstrap-sem-valor
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U stockflow -d stockflow"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      PGPASSWORD: ci-bootstrap-sem-valor
+      STOCKFLOW_APP_PASSWORD: ci-app-sem-valor
+      STOCKFLOW_OWNER_PASSWORD: ci-owner-sem-valor
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Provisionar os três roles (ADR 0006)
+        # O mesmo ficheiro que o compose usa. Sem isto a suite corria como
+        # superuser e a RLS não se aplicava — toda a promessa da ADR 0006 ficava
+        # vazia com os testes verdes.
+        run: psql -h localhost -U stockflow -d stockflow -v ON_ERROR_STOP=1 -f docker/db/roles.sql
+
+      - name: Confirmar que o role da app não escapa à RLS
+        # Uma asserção e não uma suposição: se isto falhar, os testes de
+        # isolamento passariam por não estarem a testar nada.
+        run: |
+          psql -h localhost -U stockflow -d stockflow -t -A -c \
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname='stockflow_app'" \
+            | grep -qx f
+
+      - working-directory: backend
+        run: uv sync --frozen
+
+      - name: ruff
+        working-directory: backend
+        run: uv run ruff check .
+
+      - name: import-linter (fronteiras entre módulos)
+        working-directory: backend
+        run: uv run lint-imports
+
+      - name: Migrações sem alterações pendentes
+        working-directory: backend
+        env:
+          DATABASE_URL: postgres://stockflow_owner:ci-owner-sem-valor@localhost:5432/stockflow
+          DJANGO_SECRET_KEY: ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+        run: uv run manage.py makemigrations --check --dry-run
+
+      - name: pytest
+        working-directory: backend
+        env:
+          # Testes como a app, setup da base de dados como o dono (ADR 0006).
+          DATABASE_URL: postgres://stockflow_app:ci-app-sem-valor@localhost:5432/stockflow_test
+          MIGRATION_DATABASE_URL: postgres://stockflow_owner:ci-owner-sem-valor@localhost:5432/stockflow_test
+          DJANGO_SECRET_KEY: ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+          REDIS_URL: redis://127.0.0.1:6379
+        run: uv run pytest -q
+
+      - name: check --deploy (settings de produção, sem warnings)
+        working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          DJANGO_SECRET_KEY: ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+          DATABASE_URL: postgres://ninguem@127.0.0.1:1/vazio
+          ALLOWED_HOSTS: stockflow.example.pt
+          CSRF_TRUSTED_ORIGINS: https://stockflow.example.pt
+          DJANGO_ADMIN_URL: gestao-interna/
+          REDIS_URL: redis://127.0.0.1:6379
+        # O `check --deploy` não abre ligação à base de dados. Zero warnings é a
+        # barra (SECURITY.md §2), e é por isso que o grep é por qualquer `W0`.
+        run: |
+          out=$(uv run manage.py check --deploy 2>&1)
+          echo "$out"
+          echo "$out" | grep -qE "security\.W[0-9]+" && exit 1
+          echo "$out" | grep -q "no issues"
+
+  # ---------------------------------------------------------------- frontend
+  frontend:
+    name: Frontend (typecheck, lint, build, audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      # pnpm pelo corepack e não por uma action: a versão é a do
+      # `packageManager` do package.json, que é a fonte de verdade.
+      - run: corepack enable && corepack install
+        working-directory: frontend
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm typecheck
+        working-directory: frontend
+      # O `lint` inclui o check-design-tokens: proíbe hex, `bg-[...]`, as fontes
+      # proibidas do DESIGN.md §5, e exige que todo o token esteja redefinido no
+      # modo escuro.
+      - run: pnpm lint
+        working-directory: frontend
+      - run: pnpm build
+        working-directory: frontend
+      - run: pnpm audit --audit-level=high
+        working-directory: frontend
+
+  # ---------------------------------------------------------------- SAST
+  sast:
+    name: SAST (bandit, semgrep)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: bandit
+        # `working-directory` e caminhos relativos, e não `-r backend` da raiz: a
+        # exclusão `./backend/.venv` não casa quando se corre de fora, e o
+        # bandit varre o ambiente virtual inteiro — 660 mil linhas e 16 issues
+        # de severidade alta, todas de código de terceiros. Esta é a invocação
+        # que o `security_check.sh` usa e que dá 0/0/0.
+        working-directory: backend
+        run: uvx --from bandit==1.9.4 bandit -r . -x './.venv,./tests,./*/migrations' -q
+      - name: semgrep (python, django, owasp)
+        run: |
+          uvx --from semgrep==1.178.0 semgrep \
+            --config p/django --config p/python --config p/owasp-top-ten \
+            --error --quiet --exclude .venv --exclude migrations backend
+      - name: semgrep (react, typescript)
+        run: |
+          uvx --from semgrep==1.178.0 semgrep \
+            --config p/react --config p/typescript \
+            --error --quiet --exclude node_modules --exclude dist frontend
+
+  # ---------------------------------------------------------------- deps
+  deps:
+    name: Dependências Python (pip-audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # `--no-dev`: o que interessa é o que vai para produção. E `--disable-pip`
+      # porque sem ele o pip-audit tenta um `ensurepip` que falha em ambientes
+      # geridos pelo uv.
+      - run: uv export --frozen --no-dev --project backend -o requirements.txt
+      - run: uvx --from pip-audit==2.10.1 pip-audit -r requirements.txt --disable-pip
+
+  # ---------------------------------------------------------------- docker
+  docker:
+    name: Docker (hadolint, trivy)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: hadolint
+        run: |
+          for f in docker/*.Dockerfile; do
+            echo "== $f"
+            docker run --rm -i "$IMG_HADOLINT" hadolint --no-color - < "$f"
+          done
+      - name: Construir as imagens
+        run: |
+          docker build -f docker/backend.Dockerfile -t stockflow-backend .
+          docker build -f docker/frontend.Dockerfile -t stockflow-frontend .
+          docker build -f docker/proxy.Dockerfile -t stockflow-proxy .
+      - name: trivy config
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo "$IMG_TRIVY" \
+            config --severity HIGH,CRITICAL --exit-code 1 .
+      - name: trivy image
+        # `--ignorefile .trivyignore` traz as seis excepções datadas do
+        # SECURITY.md §9. Uma sétima vulnerabilidade faz isto falhar, que é o
+        # ponto de as ter num ficheiro em vez de na memória de alguém.
+        run: |
+          for img in stockflow-backend stockflow-frontend stockflow-proxy; do
+            echo "== $img"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$PWD/.trivyignore:/.trivyignore:ro" "$IMG_TRIVY" \
+              image --severity HIGH,CRITICAL --ignore-unfixed \
+              --ignorefile /.trivyignore --exit-code 1 --quiet "$img"
+          done

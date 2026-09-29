@@ -234,9 +234,19 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-    # O worker não serve HTTP, logo não tem healthcheck HTTP. Um `celery
-    # inspect ping` custa um round-trip ao broker a cada verificação e mente
-    # quando a fila está cheia; fica de fora até haver uma razão.
+    # **Desligado explicitamente, e é obrigatório desligá-lo.** A imagem é a
+    # mesma do `backend` — uma imagem por processo duplicava a superfície a
+    # analisar — logo o worker **herda** o `HEALTHCHECK` do Dockerfile, que faz
+    # um pedido HTTP a `127.0.0.1:8000`. Um worker Celery não serve HTTP: o
+    # healthcheck falha sempre e o contentor fica `unhealthy` para sempre, o que
+    # num orquestrador é um ciclo de reinícios de um processo que está bem.
+    #
+    # Não se substitui por um `celery inspect ping`: custa um round-trip ao
+    # broker a cada verificação e responde `ok` com a fila parada, que é o modo
+    # de falha que interessava detectar. Vigiar um worker faz-se pelo tamanho da
+    # outbox (ARCHITECTURE.md §8), não por um ping.
+    healthcheck:
+      disable: true
     restart: unless-stopped
 
   frontend:
