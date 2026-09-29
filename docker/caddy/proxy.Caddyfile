@@ -6,21 +6,45 @@
 #      SECURE_SSL_REDIRECT entra em ciclo de redirects;
 #   3. impõe o teto de tamanho do corpo, que o Django **não** impõe para
 #      ficheiros — o DATA_UPLOAD_MAX_MEMORY_SIZE só conta campos de formulário;
-#
-# O que ele **não** faz, e é dívida nomeada: rate limit por IP. O SECURITY.md §1
-# e §5 delegam-no aqui (o django-axes cobre a conta e o par IP+conta, não o IP
-# puro), mas no Caddy isso exige o plugin `caddy-ratelimit` e uma imagem
-# construída com `xcaddy` — não é uma directiva da imagem oficial. Enquanto não
-# existir, o limite por IP é o que o fornecedor puser à frente (Cloudflare, ALB)
-# ou nenhum. Não se finge com `max_size`: esse limita o tamanho, não a taxa.
+#   4. limita a taxa por IP, que é a metade do SECURITY.md §5 que o django-axes
+#      não faz — ele cobre a conta e o par IP+conta, não o IP puro. Vem do
+#      plugin `caddy-ratelimit`, que é a segunda razão pela qual o binário é
+#      construído em `docker/proxy.Dockerfile` em vez de vir da imagem oficial.
 {
 	admin off
 	# Em dev não há TLS: o HSTS do Django ficaria colado ao browser para todo o
 	# localhost. Em produção isto sai e o Caddy pede certificado sozinho.
 	auto_https off
+	order rate_limit before basicauth
 }
 
 :8080 {
+	# ---- taxa por IP ------------------------------------------------------
+	# Dois limites, porque servem coisas diferentes. O do login é o que impede
+	# alguém de varrer contas: o axes tranca uma conta às 5 falhas, mas um
+	# atacante com uma password e mil emails nunca tranca conta nenhuma — é o
+	# buraco que o SECURITY.md §5 delega ao proxy. O geral existe para não haver
+	# um IP a consumir o pool de ligações (uma transação por pedido, ADR 0005).
+	#
+	# `{remote_host}` e não um header: é o IP da ligação TCP, que o cliente não
+	# escolhe. Chavear por `X-Forwarded-For` era deixar o atacante escolher o
+	# seu próprio balde — o mesmo defeito que o `NUM_PROXIES` do DRF tinha.
+	rate_limit {
+		zone login {
+			match {
+				path /api/v1/auth/login /api/v1/auth/registo /api/v1/auth/recuperar
+			}
+			key {remote_host}
+			events 10
+			window 1m
+		}
+		zone geral {
+			key {remote_host}
+			events 600
+			window 1m
+		}
+	}
+
 	# ---- limites de corpo -------------------------------------------------
 	# 12 MiB é o teto de uma foto de fatura vinda de um telemóvel. O
 	# SECURITY.md §2 põe 5 MiB nos campos de formulário do Django; este é o

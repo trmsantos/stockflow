@@ -213,6 +213,40 @@ Ordem do pipeline: `docker/db/roles.sql` (bootstrap dos roles) → `migrate` com
 `MIGRATION_DATABASE_URL` → `pytest` (setup como dono, testes como app) → os gates acima. O
 `check --deploy` não abre ligação à base de dados e corre só com a credencial da app.
 
+### Excepção aceite: 6 CVEs nas dependências transitivas do Caddy
+
+A regra desta secção é "sem CVEs HIGH/CRITICAL com fix disponível". As imagens do `proxy` e do
+`frontend` têm **seis**, e a excepção é deliberada e datada (2026-09-29):
+
+| CVE | Pacote | Instalado | Corrigido em |
+|---|---|---|---|
+  `CVE-2026-46600` | `golang.org/x/net` | v0.55.0 | 0.56.0
+  `CVE-2026-56852` | `golang.org/x/text` | v0.37.0 | 0.39.0
+  `CVE-2026-56854` | `golang.org/x/crypto` | v0.52.0 | 0.55.0
+  `CVE-2026-84304` | `google.golang.org/grpc` | v1.81.0 | 1.83.1
+  `CVE-2026-84445` | `google.golang.org/grpc` | v1.81.0 | 1.82.2
+  `GHSA-hrxh-6v49-42gf` | `google.golang.org/grpc` | v1.81.0 | 1.82.1
+
+**O que já foi feito.** O binário das imagens oficiais do Caddy (todas as tags, v2.11.4) tinha
+**17**, dos quais 11 no Go stdlib — 1.26.3 quando a correcção está na 1.26.4. O
+`docker/proxy.Dockerfile` constrói o Caddy com Go 1.26.8 e esses 11 desapareceram. A mesma build
+trouxe o plugin `caddy-ratelimit`, que fechou a dívida do rate limit por IP desta secção e da §5.
+
+**Porque é que os 6 ficam.** Estão em dependências transitivas fixadas pelo `go.mod` do **Caddy**,
+não pelo nosso: `x/crypto`, `x/net`, `x/text` e `grpc`. Forçá-las para cima exige um `go.mod` nosso
+a sobrepor as versões do upstream, e as tentativas bateram em conflitos de resolução em cascata
+(`crypto@0.55.0` exige `net@0.57.0`, `grpc@1.83.2` exige `net@0.58.0`). O resultado seria um
+ficheiro de dependências nosso a divergir do do Caddy, que é uma coisa a manter para sempre, contra
+vulnerabilidades em bibliotecas que o Caddy usa e o nosso código não chama directamente.
+
+**Gatilho para reverificar, e é concreto:** a próxima versão do Caddy. Quando sair, muda-se a versão
+no `docker/proxy.Dockerfile` e corre-se
+`trivy image --severity HIGH,CRITICAL --ignore-unfixed stockflow-proxy`. Se o número não for zero, a
+decisão volta à mesa — incluindo a alternativa medida: `nginx:1-alpine` tem 1 CVE, que um
+`apk upgrade` leva a zero, e `limit_req` nativo em vez do plugin.
+
+**O que esta excepção não cobre:** qualquer CVE no `backend`, que está a zero e tem de ficar.
+
 ## 10. Resposta a incidentes (mínimo)
 
 1. Rotacionar credenciais afetadas (SECRET_KEY, chaves de BD, chaves de API).

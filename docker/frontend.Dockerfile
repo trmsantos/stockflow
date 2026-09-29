@@ -26,36 +26,40 @@ COPY frontend/ ./
 RUN pnpm build
 
 # ---------------------------------------------------------------- runtime
-FROM caddy@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b AS runtime
+# O Caddy é construído e não vem da imagem oficial, pela mesma razão do
+# `proxy.Dockerfile`: o binário oficial da v2.11.4 traz 17 CVEs HIGH/CRITICAL
+# com correção disponível (Go stdlib desactualizado) e o SECURITY.md §9 exige
+# zero. Aqui **sem** o plugin de rate limit: este serviço só serve ficheiros
+# estáticos na rede interna, o limite por IP é do proxy.
+FROM golang@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS caddy-builder
+# Sem `apk add git`: verificado que o xcaddy resolve os módulos pelo proxy do
+# Go e não precisa dele. Menos uma dependência e menos uma versão para fixar.
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7 \
+ && xcaddy build v2.11.4
 
-# A imagem do Caddy corre como root por omissão. Ouvimos em 8080 (>1024), logo
-# não é preciso.
-#
-# E há uma armadilha: o binário do Caddy vem com `cap_net_bind_service` nas
-# **capabilities de ficheiro**, para se poder ligar à porta 80 sem ser root. Com
-# `cap_drop: [ALL]` no compose o bounding set fica vazio, e o `execve` de um
-# binário com capabilities que não podem ser concedidas falha com
-# `operation not permitted` — o contentor entra em ciclo de reinícios e o
-# sintoma não aponta para aqui. Um `cp` simples não copia extended attributes,
-# logo a cópia fica sem as capabilities, que é o que queremos: em 8080 não
-# servem para nada e a alternativa era não retirar as capabilities.
-RUN addgroup -g 10001 app && adduser -u 10001 -G app -D -H -s /sbin/nologin app \
- && cp /usr/bin/caddy /usr/local/bin/caddy \
- && rm /usr/bin/caddy \
+FROM alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+
+RUN addgroup -g 10001 app \
+ && adduser -u 10001 -G app -D -H -s /sbin/nologin app \
  && mkdir -p /data /config /srv \
  && chown -R app:app /data /config /srv
 
+COPY --from=caddy-builder --chown=root:root /go/caddy /usr/local/bin/caddy
 COPY --chown=app:app docker/caddy/frontend.Caddyfile /etc/caddy/Caddyfile
 COPY --from=builder --chown=app:app /app/dist /srv
 
-USER app
+# UID numérico: ver DL3066 — o runtime não tem de resolver o nome.
+USER 10001:10001
 EXPOSE 8080
 
 # `caddy validate` na build apanha um Caddyfile inválido aqui, e não no arranque
 # do contentor em produção.
 RUN caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
-HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -q --spider http://127.0.0.1:8080/ || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  # Notação JSON (DL3025) e sem `|| exit 1`: o Docker já trata exit não-zero
+  # como unhealthy, e o `wget` devolve não-zero num 4xx/5xx.
+  CMD ["wget", "-q", "--spider", "http://127.0.0.1:8080/"]
 
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

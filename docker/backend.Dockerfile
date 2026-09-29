@@ -58,19 +58,21 @@ COPY --from=builder --chown=app:app /app /app
 # Nota para quem revê (SECURITY.md §8, "`docker history` não pode mostrar
 # segredos"): o `docker history` **mostra** a string `DJANGO_SECRET_KEY=` desta
 # linha, e verificar isso é o reflexo certo. O que ele mostra é o *comando*, com
-# o `$(head -c 32 /dev/urandom | base64)` por expandir — a expansão acontece
+# o `$(python -c ...)` por expandir — a expansão acontece
 # dentro do contentor, em runtime de build, e o valor não fica em camada
 # nenhuma. Verificado: `docker history --no-trunc` traz o literal, zero
 # passwords. A chave também não serve para nada: é gerada, usada por um comando
 # que não abre socket nenhum, e descartada.
-RUN DJANGO_SECRET_KEY=x-apenas-para-collectstatic-$(head -c 32 /dev/urandom | base64) \
+RUN DJANGO_SECRET_KEY="x-collectstatic-$(python -c 'import secrets; print(secrets.token_urlsafe(32))')" \
     DATABASE_URL=postgres://ninguem@127.0.0.1:1/vazio \
     ALLOWED_HOSTS=localhost CSRF_TRUSTED_ORIGINS=https://localhost \
     DJANGO_ADMIN_URL=x/ REDIS_URL=redis://127.0.0.1:1 \
     python manage.py collectstatic --noinput --clear \
  && chown -R app:app /app/staticfiles
 
-USER app
+# UID numérico e não `app`: assim o runtime não precisa de resolver o nome,
+# que é o que permite a um orquestrador verificar `runAsNonRoot` (DL3066).
+USER 10001:10001
 EXPOSE 8000
 
 # Duas coisas que este healthcheck tem de fazer e que a versão óbvia não faz.
