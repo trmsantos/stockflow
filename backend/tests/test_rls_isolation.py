@@ -707,9 +707,17 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
     """As dispensas de hoje, nos dois sentidos, sobre o `ROOT_URLCONF` real.
 
     A ADR 0007 lista as dispensas que vão existir — admin, healthcheck, login,
-    logout, registo, listagem de tenants e troca de tenant. Hoje existe uma: o
-    admin. As outras nascem na sessão da autenticação e este teste é o que as
-    obriga a aparecer aqui quando nascerem.
+    logout, registo, listagem de tenants e troca de tenant. Hoje existem duas
+    famílias: o admin e os dois endpoints de saúde (`config/health.py`). As
+    outras nascem na sessão da autenticação e este teste é o que as obriga a
+    aparecer aqui quando nascerem.
+
+    As duas da saúde estão aqui pelo mesmo critério das outras, e não por serem
+    inofensivas: não abrem âmbito porque não leem dados de tenant nenhum, e não
+    o abrem *de propósito* porque o `tenant_scope` abre uma transação por
+    pedido (ADR 0005) e a verificação repete-se a cada poucos segundos, por
+    contentor. Ver `tests/test_health.py` para as propriedades que as tornam
+    servíveis sem âmbito.
     """
     rotas = list(_vistas(get_resolver(settings.ROOT_URLCONF).url_patterns))
     assert rotas, "âncora: o ROOT_URLCONF não tem rotas e o teste não diria nada"
@@ -719,7 +727,7 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
 
     assert dispensadas, "nenhuma view dispensada: o admin deixou de o estar?"
     fora_do_admin = [rota for rota in dispensadas if not rota.startswith(settings.ADMIN_URL)]
-    assert fora_do_admin == [], (
+    assert fora_do_admin == ["healthz", "readyz"], (
         "views dispensadas de âmbito fora do admin. A dispensa é uma decisão de "
         "isolamento: passa pelo security-reviewer e entra neste teste."
     )

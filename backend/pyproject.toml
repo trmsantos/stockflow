@@ -12,6 +12,20 @@ dependencies = [
     "django-environ>=0.14.0",
     "djangorestframework>=3.18.1",
     "drf-spectacular>=0.30.0",
+    # O servidor de produção: WSGI, e não ASGI. A pilha é síncrona de ponta a
+    # ponta (DRF, ORM, psycopg, `TenantMiddleware`) e as chamadas a LLM da
+    # extração de faturas correm em Celery, nunca no ciclo do pedido — logo o
+    # ASGI não traz concorrência que aqui falte. O que traria é um problema:
+    # sob ASGI, cada pedido síncrono corre no seu próprio executor de uma
+    # thread (`ThreadSensitiveContext` por pedido, django/core/handlers/asgi.py;
+    # asgiref/sync.py escolhe um executor de `max_workers=1` por contexto), o
+    # que não tem teto de concorrência — e uma ligação por thread com
+    # `CONN_MAX_AGE = 60` (ADR 0005) é uma ligação que fica aberta depois de a
+    # thread desaparecer. Com `gunicorn --workers W --threads T` o teto é
+    # exatamente `W × T`, que é o número que tem de caber no `max_connections`
+    # do Postgres, porque a ADR 0005 abre uma transação por pedido.
+    # Teto no major: um `gunicorn 24` muda defaults de worker sem aviso.
+    "gunicorn>=23.0,<24",
     "psycopg[binary]>=3.3.6",
     "redis>=8.1.0",
 ]

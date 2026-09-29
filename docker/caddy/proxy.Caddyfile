@@ -1,0 +1,86 @@
+# O único serviço que expõe portas ao exterior (SECURITY.md §8).
+#
+# Faz quatro coisas que a aplicação não pode fazer sozinha:
+#   1. identifica o cliente real (X-Forwarded-For) para o rate limit por IP;
+#   2. diz ao Django que o TLS terminou aqui (X-Forwarded-Proto), sem o qual o
+#      SECURE_SSL_REDIRECT entra em ciclo de redirects;
+#   3. impõe o teto de tamanho do corpo, que o Django **não** impõe para
+#      ficheiros — o DATA_UPLOAD_MAX_MEMORY_SIZE só conta campos de formulário;
+#
+# O que ele **não** faz, e é dívida nomeada: rate limit por IP. O SECURITY.md §1
+# e §5 delegam-no aqui (o django-axes cobre a conta e o par IP+conta, não o IP
+# puro), mas no Caddy isso exige o plugin `caddy-ratelimit` e uma imagem
+# construída com `xcaddy` — não é uma directiva da imagem oficial. Enquanto não
+# existir, o limite por IP é o que o fornecedor puser à frente (Cloudflare, ALB)
+# ou nenhum. Não se finge com `max_size`: esse limita o tamanho, não a taxa.
+{
+	admin off
+	# Em dev não há TLS: o HSTS do Django ficaria colado ao browser para todo o
+	# localhost. Em produção isto sai e o Caddy pede certificado sozinho.
+	auto_https off
+}
+
+:8080 {
+	# ---- limites de corpo -------------------------------------------------
+	# 12 MiB é o teto de uma foto de fatura vinda de um telemóvel. O
+	# SECURITY.md §2 põe 5 MiB nos campos de formulário do Django; este é o
+	# limite do pedido inteiro, e é o único que existe para ficheiros.
+	request_body {
+		max_size 12MB
+	}
+
+	# ---- o que nunca chega à aplicação ------------------------------------
+	# O X-Tenant-ID é do cliente e só pode causar 409 (ADR 0007). Passa, mas o
+	# proxy nunca o injeta nem o reescreve: um proxy que o escrevesse provocava
+	# 409 em massa. Já o X-Forwarded-* é o oposto — tem de ser reescrito aqui,
+	# senão o cliente forja o seu próprio IP e contorna o rate limit.
+	request_header -X-Forwarded-For
+	request_header -X-Forwarded-Proto
+	request_header -X-Real-IP
+
+	# ---- o que morre aqui -------------------------------------------------
+	# O `/readyz` responde pelas **dependências** e um 503 dele diz a quem
+	# pergunta que a base de dados está em baixo. É para o orquestrador, na
+	# rede interna, não para a Internet.
+	#
+	# Um 404 explícito e não "deixar cair no frontend": sem esta regra o
+	# caminho cai no `handle` de baixo e devolve a SPA com **200** — medido. Um
+	# monitor apontado a este URL ficava com um 200 permanente, indiferente ao
+	# estado da base de dados, que é um modo de falha pior do que não ter
+	# endpoint nenhum. Dentro da rede continua a responder em
+	# `http://backend:8000/readyz`.
+	@readyz path /readyz /readyz/*
+	handle @readyz {
+		error 404
+	}
+
+	# ---- API e admin: para o Django ---------------------------------------
+	@backend path /api/* /healthz /gestao-interna/* /static/*
+	handle @backend {
+		reverse_proxy backend:8000 {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-For {remote_host}
+			header_up Host {host}
+			# Uma extração de fatura não corre aqui (é Celery), mas a
+			# confirmação de 60 linhas corre — e é uma transação por pedido.
+			transport http {
+				read_timeout 60s
+				write_timeout 60s
+			}
+		}
+	}
+
+	# ---- tudo o resto: os estáticos do frontend ---------------------------
+	handle {
+		reverse_proxy frontend:8080
+	}
+
+	# Os headers de segurança são do Django (SECURITY.md §2) e não se duplicam
+	# aqui: dois sítios a escrever o mesmo header divergem, e a CSP com nonce
+	# só o Django sabe gerar.
+
+	log {
+		output stdout
+		format json
+	}
+}

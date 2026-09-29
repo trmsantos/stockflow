@@ -161,8 +161,27 @@ fi
 
 # ---------------------------------------------------------------- docker
 if run_if docker; then
-  dfs=$(git ls-files 2>/dev/null | grep -iE '(^|/)(Dockerfile.*|.*\.Dockerfile)$' || find . -name 'Dockerfile*' -not -path '*/node_modules/*' 2>/dev/null)
+  # A união dos dois, e não `git ls-files || find`: o `ls-files` não vê ficheiros
+  # ainda não commitados, que é precisamente quando este gate interessa, e o
+  # `||` só cai no `find` quando o grep **falha** — com o repositório vazio de
+  # Dockerfiles rastreados, o grep devolve zero linhas e exit 1, mas com um
+  # Dockerfile rastreado e outro novo, ficava só o rastreado.
+  #
+  # O padrão do `find` cobre as duas convenções: `Dockerfile`, `Dockerfile.algo`
+  # e `algo.Dockerfile` — esta última é a deste projeto (ARCHITECTURE.md §9) e a
+  # versão anterior (`-name 'Dockerfile*'`) não a apanhava. O resultado era a
+  # secção inteira saltada em silêncio e um PASS sem ter olhado para nada.
+  dfs=$( { git ls-files 2>/dev/null | grep -iE '(^|/)(Dockerfile.*|.*\.Dockerfile)$' || true
+           find . \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) \
+                -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/.venv/*' 2>/dev/null \
+             | sed 's|^\./||'
+         } | sort -u )
+  if [[ -z "$dfs" ]]; then
+    log "Docker"
+    note "  nenhum Dockerfile no repositório"
+  fi
   if [[ -n "$dfs" ]]; then
+    note "  $(echo "$dfs" | wc -l | tr -d ' ') Dockerfile(s): $(echo "$dfs" | tr '\n' ' ')"
     log "hadolint"
     if have hadolint; then
       n=0; ilegivel=0

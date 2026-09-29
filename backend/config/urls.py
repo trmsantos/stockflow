@@ -3,6 +3,12 @@
 A API vive toda sob `/api/v1/` (ARCHITECTURE.md §5). As rotas de cada módulo
 entram em `api_v1_patterns` com um `include("apps.<m>.urls")` quando a feature
 correspondente for construída — por agora só existe o schema.
+
+Fora do `/api/v1/` vivem três coisas, e cada uma por uma razão diferente: o
+admin (path não óbvio, SECURITY.md §5), o `/healthz` e o `/readyz`. Os dois
+últimos não são API — não têm cliente gerado, não entram no `schema.yml` e são
+consumidos por infraestrutura (o `HEALTHCHECK` do Docker e o orquestrador).
+Ver `config/health.py`.
 """
 
 from django.conf import settings
@@ -11,6 +17,7 @@ from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerSplitView
 
 from apps.accounts.api import dispensar_ambito
+from config.health import healthz, readyz
 
 api_v1_patterns = [
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -29,6 +36,17 @@ if settings.API_DOCS_ENABLED:
     ]
 
 urlpatterns = [
+    # Saúde do processo, primeiro na lista: a resolução de URLs é uma varredura
+    # linear e estas são as rotas mais pedidas de todas (uma por contentor a
+    # cada poucos segundos).
+    #
+    # Sem barra final, e não é estética: com a rota a `healthz/`, um pedido a
+    # `/healthz` levava um 301 do `APPEND_SLASH` do `CommonMiddleware` — e um
+    # healthcheck com `curl -f` trata 301 como sucesso, pelo que o contentor
+    # ficava "saudável" sem nunca ter chegado à view. O caminho tem de ser
+    # exatamente o que o `HEALTHCHECK` do Dockerfile pede.
+    path("healthz", healthz, name="healthz"),
+    path("readyz", readyz, name="readyz"),
     # Path do admin fora do default e configurável por instalação
     # (SECURITY.md §5). O acesso por IP/VPN é imposto no proxy.
     #

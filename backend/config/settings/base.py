@@ -56,6 +56,23 @@ DATABASES["default"]["ATOMIC_REQUESTS"] = False
 DEBUG = False
 ALLOWED_HOSTS: list[str] = []
 
+#: Os dois endpoints de saúde ficam fora do redirect para HTTPS. Aqui e não no
+#: `prod.py` porque a razão não é de ambiente: o `SecurityMiddleware` responde
+#: 301 a qualquer pedido em `http` quando o `SECURE_SSL_REDIRECT` está ligado, e
+#: o healthcheck corre **de dentro** do contentor, em HTTP simples, sem proxy
+#: pelo meio a pôr o `X-Forwarded-Proto`. Sem esta dispensa o `HEALTHCHECK`
+#: recebia um 301 para o domínio público — que o `curl -f` conta como sucesso,
+#: logo o contentor ficava "saudável" sem nunca ter tocado na aplicação; e com
+#: `-L` saía para a Internet e verificava outra instância.
+#:
+#: O que se abre é exatamente isto: dois paths que não leem a sessão, não
+#: aceitam corpo, não escrevem nada e respondem `ok`. Os regex são comparados
+#: contra o path sem a barra inicial (`SecurityMiddleware.process_request`), e
+#: a coerência entre esta lista e as rotas reais está fixada em
+#: `tests/test_health.py` — duplicar os paths aqui é o preço de as settings não
+#: poderem importar `config.urls`.
+SECURE_REDIRECT_EXEMPT = [r"^healthz$", r"^readyz$"]
+
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"

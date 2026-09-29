@@ -36,6 +36,28 @@ SELECT 'CREATE ROLE stockflow_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCRE
 ALTER ROLE stockflow_owner LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE CREATEDB PASSWORD :'owner_pw';
 ALTER ROLE stockflow_app   LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD :'app_pw';
 
+-- Timeouts no role da aplicação, porque o timeout do servidor de aplicação não
+-- alcança o Postgres: o `--timeout=30` do gunicorn mata o worker, mas o backend
+-- do lado do servidor continua com a transação aberta e os locks presos — só
+-- nota que o cliente desapareceu na próxima escrita. Com uma transação por
+-- pedido (ADR 0005) e o FEFO a trancar linhas de `StockLevel` com `FOR UPDATE`,
+-- uma transação órfã bloqueia os outros pedidos sobre os mesmos produtos.
+--
+-- Os três, e o que cada um trava:
+--   statement_timeout                  uma query que demora demasiado
+--   lock_timeout                       uma espera por um lock que não chega
+--   idle_in_transaction_session_timeout  uma transação aberta e parada, que é
+--                                      o caso do worker morto
+--
+-- Ficam no role e não nas settings do Django de propósito: assim valem para
+-- **qualquer** ligação com esta credencial, incluindo um `psql` de alguém a
+-- depurar em produção. O `stockflow_owner` não os leva — uma migração de dados
+-- pode legitimamente demorar minutos, e um `statement_timeout` a matá-la a meio
+-- é pior do que a espera.
+ALTER ROLE stockflow_app SET statement_timeout = '15s';
+ALTER ROLE stockflow_app SET lock_timeout = '5s';
+ALTER ROLE stockflow_app SET idle_in_transaction_session_timeout = '30s';
+
 -- Desde o PG 15 o esquema `public` pertence a `pg_database_owner`: passar a
 -- posse da BD dá o esquema ao dono sem um único GRANT, e é a mesma mecânica que
 -- lhe dá CREATE na base de dados de teste que ele próprio cria.
