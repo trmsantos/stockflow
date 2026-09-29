@@ -47,7 +47,7 @@ backend/
 │   ├── urls.py
 │   └── asgi.py
 ├── apps/
-│   ├── accounts/       # Tenant (=restaurante), User, Membership (owner|manager|staff)
+│   ├── accounts/       # Tenant (=restaurante), User, Membership (owner|manager|staff), TenantMiddleware
 │   ├── catalog/        # Product, Category, Unit, ProductPackaging, Supplier, SupplierProductCode
 │   ├── inventory/      # Location, Lot, StockMovement (ledger), StockLevel (projeção), StockCount, alertas
 │   ├── purchasing/     # PurchaseOrder, InvoiceDocument, PurchaseReceiptDraft, SupplierPrice
@@ -55,7 +55,7 @@ backend/
 │   ├── agents/         # extract_invoice, forecasting, chat sobre stock — output sempre draft
 │   ├── billing/        # planos por nº de utilizadores/localizações (fase 3)
 │   ├── notifications/  # email de alertas (validade, mínimo), webhooks
-│   └── shared/         # TenantModel, events.py, outbox.py, TenantMiddleware
+│   └── shared/         # TenantModel, events.py, outbox.py — infraestrutura pura, não importa módulos
 ├── tests/
 ├── pyproject.toml      # gerido por uv
 └── uv.lock
@@ -84,14 +84,16 @@ docker/
 | `services.py` | Lógica de negócio; única forma de escrever na BD | **Não** |
 | `selectors.py` | Queries de leitura reutilizáveis | **Não** |
 | `views.py` / `urls.py` | Transporte HTTP; sem lógica | **Não** |
-| `api.py` | **Interface pública** do módulo: funções e DTOs (dataclasses) | **Sim — só este** |
+| `api.py` | **Interface pública** do módulo: funções e DTOs (dataclasses) | **Sim — a porta do módulo** |
 | `events.py` | Eventos de domínio que o módulo emite | Sim (só as classes de evento) |
 | `handlers.py` | Subscrições a eventos de outros módulos | Não |
 | `tasks.py` | Tarefas Celery | Não |
 | `permissions.py` | Classes DRF `has_permission` / `has_object_permission` | Não |
 
-Imposição: `import-linter` em `pyproject.toml` com um contrato `layers` e `independence`
-entre módulos. O CI falha se `apps.billing` importar `apps.core.models`.
+Imposição: 10 contratos `forbidden` em `backend/pyproject.toml` — um transversal (entre módulos só
+se importa `api.py`, `events.py` e `apps.shared`) e um por módulo-origem, todos com
+`allow_indirect_imports = true`: só as arestas diretas são proibidas. Nem a interface pública é
+livre — `apps.notifications` a importar `apps.inventory.api` dá `BROKEN` e exit 1 no `lint-imports`.
 
 ## 4. Fluxo de um request
 
@@ -144,7 +146,8 @@ Agentes são componentes de primeira classe, mas o seu output é **entrada não 
 **Alertas**: tarefa periódica lê `StockLevel`/`Lot` → `notifications` envia digest diário por tenant.
 
 Dependências permitidas (import-linter): `agents → purchasing.api, catalog.api` · `purchasing → inventory.api, catalog.api`
-· `recipes → inventory.api, catalog.api` · `inventory → catalog.api` · todos → `accounts.api, shared`. Nada mais.
+· `recipes → inventory.api, catalog.api` · `inventory → catalog.api` · todos → `accounts.api, shared` e `<m>.events`
+de qualquer módulo · `shared → nada` (nem `accounts.api`). Nada mais.
 
 ## 7. Quando extrair um serviço
 

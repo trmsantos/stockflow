@@ -28,8 +28,14 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
-**Estado atual:** `[ATUALIZAR]` — ex.: "repo vazio, vou correr `/kickoff`" ou
-"catalog feito (sessão 2); hoje: `/feature localizações e movimentos de stock com lotes e validade`".
+**Estado atual (2026-09-28, sessão 1):** repo `trmsantos/stockflow` criado — privado, na conta pessoal,
+fora da org `bridgeinpt` — em `main`, com um commit só de documentação e `.claude/`. Ainda não existe
+`backend/`, `frontend/` nem `docker/`. Ferramentas prontas: `uv` 0.11, `pnpm` 12 (via corepack em
+`~/.local/bin`), `gh` autenticado. Skill externa `web-design-guidelines` instalada; `react-best-practices`,
+`shadcn` e `grill-me` ficam para antes da sessão 4. Sessão 0 (validação com donos de restaurante): por confirmar.
+**Hoje: correr `/kickoff`**, passo a passo com a minha aprovação em cada um dos 8 passos, sem features de
+negócio. No fim: `/review`, commit, e substituir esta linha por
+"kickoff feito (sessão 1); próxima: `/feature catálogo de produtos com unidades, embalagens e fornecedores`".
 
 **Plano de sessões (README §2):** 0 validação com donos de restaurante · 1 `/kickoff` · 2 catálogo ·
 3 ledger de stock · 4 listagem + alertas · 5 contagem em telemóvel · 6–7 receção por fatura · 8 receitas + desperdício.

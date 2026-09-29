@@ -16,11 +16,11 @@ done
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
-REPORT_DIR="$ROOT/.security-reports"; mkdir -p "$REPORT_DIR"
+export REPORT_DIR="$ROOT/.security-reports"; mkdir -p "$REPORT_DIR"
 SUMMARY="$REPORT_DIR/summary.txt"; : > "$SUMMARY"
-CRIT=0; HIGH=0; MED=0; LOW=0; SKIPPED=()
+CRIT=0; HIGH=0; MED=0; LOW=0; SKIPPED=(); BROKEN=(); GATE=""
 
-log()  { printf '\n\033[1;34m== %s ==\033[0m\n' "$*"; }
+log()  { GATE="$*"; printf '\n\033[1;34m== %s ==\033[0m\n' "$*"; }
 note() { echo "$*" | tee -a "$SUMMARY"; }
 skip() { SKIPPED+=("$1"); note "  [skip] $1 — $2"; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -34,7 +34,16 @@ ensure_uv_tool semgrep semgrep
 ensure_uv_tool pip-audit pip-audit
 ensure_uv_tool lint-imports import-linter
 
+# Um gate que não produz números não correu — nunca conta como zero. Era assim
+# que este script dava "PASS" com quatro gates de backend por executar: os
+# contadores vinham vazios, a aritmética rebentava e a contagem ficava a zeros.
+broken() { BROKEN+=("${1:-$GATE}"); note "  [ERRO] ${1:-$GATE} — ${2:-relatório ilegível}"; }
+
 count_sev() { # $1=critical $2=high $3=medium $4=low
+  local v
+  for v in "$1" "$2" "$3" "$4"; do
+    [[ "$v" =~ ^[0-9]+$ ]] || { broken "$GATE" "contagem inválida ('$v')"; return 0; }
+  done
   CRIT=$((CRIT+$1)); HIGH=$((HIGH+$2)); MED=$((MED+$3)); LOW=$((LOW+$4))
 }
 
@@ -43,7 +52,7 @@ if run_if secrets; then
   log "Segredos (gitleaks)"
   if have gitleaks; then
     gitleaks detect --source . --no-banner --redact -r "$REPORT_DIR/gitleaks.json" >/dev/null 2>&1
-    n=$(python3 -c "import json,sys;print(len(json.load(open('$REPORT_DIR/gitleaks.json'))))" 2>/dev/null || echo 0)
+    n=$(python3 -c "import json,sys;print(len(json.load(open('$REPORT_DIR/gitleaks.json'))))" 2>/dev/null || echo INVALIDO)
     note "  gitleaks: $n segredo(s) potenciais"; count_sev "$n" 0 0 0
   else skip gitleaks "instala: https://github.com/gitleaks/gitleaks#installing"; fi
 
@@ -84,8 +93,8 @@ PY
   log "pip-audit (dependências)"
   if have pip-audit && have uv; then
     uv export --frozen --no-dev -o "$REPORT_DIR/requirements.txt" >/dev/null 2>&1
-    pip-audit -r "$REPORT_DIR/requirements.txt" -f json -o "$REPORT_DIR/pip-audit.json" >/dev/null 2>&1
-    n=$(python3 -c "import json,os;d=json.load(open(os.environ['REPORT_DIR']+'/pip-audit.json'));print(sum(len(x.get('vulns',[])) for x in d.get('dependencies',[])))" 2>/dev/null || echo 0)
+    pip-audit -r "$REPORT_DIR/requirements.txt" --disable-pip -f json -o "$REPORT_DIR/pip-audit.json" >/dev/null 2>&1
+    n=$(python3 -c "import json,os;d=json.load(open(os.environ['REPORT_DIR']+'/pip-audit.json'));print(sum(len(x.get('vulns',[])) for x in d.get('dependencies',[])))" 2>/dev/null || echo INVALIDO)
     note "  pip-audit: $n vulnerabilidade(s)"; count_sev 0 "$n" 0 0
   else skip pip-audit "uv tool install pip-audit"; fi
 
@@ -149,8 +158,12 @@ if run_if docker; then
   if [[ -n "$dfs" ]]; then
     log "hadolint"
     if have hadolint; then
-      n=0; for f in $dfs; do n=$((n + $(hadolint -f json "$f" 2>/dev/null | python3 -c "import json,sys;print(sum(1 for x in json.load(sys.stdin) if x['level'] in ('error','warning')))" 2>/dev/null || echo 0))); done
-      note "  hadolint: $n problema(s)"; count_sev 0 0 "$n" 0
+      n=0; ilegivel=0
+      for f in $dfs; do
+        k=$(hadolint -f json "$f" 2>/dev/null | python3 -c "import json,sys;print(sum(1 for x in json.load(sys.stdin) if x['level'] in ('error','warning')))" 2>/dev/null || echo "")
+        if [[ "$k" =~ ^[0-9]+$ ]]; then n=$((n+k)); else ilegivel=1; fi
+      done
+      if (( ilegivel )); then broken hadolint "saída ilegível em pelo menos um Dockerfile"; else note "  hadolint: $n problema(s)"; count_sev 0 0 "$n" 0; fi
     else skip hadolint "https://github.com/hadolint/hadolint"; fi
 
     log "Verificações rápidas de Dockerfile"
@@ -165,7 +178,7 @@ if run_if docker; then
     log "trivy (config + imagens locais)"
     if have trivy; then
       trivy config --severity HIGH,CRITICAL -f json -o "$REPORT_DIR/trivy-config.json" . >/dev/null 2>&1
-      n=$(python3 -c "import json,os;d=json.load(open(os.environ['REPORT_DIR']+'/trivy-config.json'));print(sum(len(r.get('Misconfigurations',[])) for r in d.get('Results',[])))" 2>/dev/null || echo 0)
+      n=$(python3 -c "import json,os;d=json.load(open(os.environ['REPORT_DIR']+'/trivy-config.json'));print(sum(len(r.get('Misconfigurations',[])) for r in d.get('Results',[])))" 2>/dev/null || echo INVALIDO)
       note "  trivy config: $n misconfig HIGH/CRITICAL"; count_sev 0 "$n" 0 0
     else skip trivy "https://aquasecurity.github.io/trivy"; fi
   fi
@@ -175,5 +188,11 @@ fi
 log "RESUMO"
 note "critical=$CRIT high=$HIGH medium=$MED low=$LOW"
 [[ ${#SKIPPED[@]} -gt 0 ]] && note "ferramentas não corridas: ${SKIPPED[*]}"
+[[ ${#BROKEN[@]} -gt 0 ]] && note "gates sem resultado: ${BROKEN[*]}"
 note "relatórios em $REPORT_DIR/"
-if (( CRIT > 0 || HIGH > 0 )); then note "VEREDICTO: FAIL"; exit 1; else note "VEREDICTO: PASS"; exit 0; fi
+# Um gate que não corre não é um gate que passa. Só há PASS com cobertura completa;
+# o CLAUDE.md exige PASS no fim de cada feature, e INCONCLUSIVO não serve.
+if (( ${#SKIPPED[@]} > 0 || ${#BROKEN[@]} > 0 )); then
+  note "VEREDICTO: INCONCLUSIVO — cobertura incompleta, não serve como PASS"; exit 2
+elif (( CRIT > 0 || HIGH > 0 )); then note "VEREDICTO: FAIL"; exit 1
+else note "VEREDICTO: PASS"; exit 0; fi

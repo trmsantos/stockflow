@@ -52,7 +52,9 @@ Skills externas esperadas (ver README): frontend-design, web-design-guidelines, 
   Toda a extração de fatura passa por revisão humana antes de gerar movimentos.
 - Frontend: só tokens de `DESIGN.md`; sem `bg-[#…]`; sem Inter/Roboto; sem tokens em localStorage.
 - Docker: multi-stage, `USER app`, `HEALTHCHECK`, imagens fixadas por digest, zero segredos.
-- Nunca: `DEBUG=True` fora de dev, desligar CSRF/CORS, editar migração aplicada, suprimir lint.
+- Nunca: `DEBUG=True` fora de dev, desligar CSRF/CORS, editar migração aplicada, `# noqa` no código.
+- Exceção de lint só em `[tool.ruff.lint.per-file-ignores]`, com comentário e ADR. Hoje são duas:
+  `S101` nos testes e `F403` na camada de settings (ADR 0004). Uma terceira é sinal de que algo está errado.
 
 ## Ficheiros
 `DESIGN.md` · `ARCHITECTURE.md` · `SECURITY.md` · `docs/decisions/` (ADRs) · `.claude/`
