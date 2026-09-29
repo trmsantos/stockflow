@@ -24,13 +24,23 @@ services:
       - -c
       - log_statement=ddl
     environment:
+      # Superuser de bootstrap do cluster (initdb). **Não** é o role da
+      # aplicação: nenhuma app se liga com ele, e não aparece em DATABASE_URL
+      # nenhum. Só provisiona (ADR 0006).
       POSTGRES_DB: ${POSTGRES_DB:-stockflow}
       POSTGRES_USER: ${POSTGRES_USER:-stockflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD no .env}
+      # Lidas pelo roles.sql quando corre no init dir (volume novo).
+      STOCKFLOW_APP_PASSWORD: ${STOCKFLOW_APP_PASSWORD:?define STOCKFLOW_APP_PASSWORD no .env}
+      STOCKFLOW_OWNER_PASSWORD: ${STOCKFLOW_OWNER_PASSWORD:?define STOCKFLOW_OWNER_PASSWORD no .env}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5442}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Num volume novo o init dir corre isto sozinho. Num volume que já existe
+      # nunca corre — para esses há o serviço `db-roles` abaixo.
+      - ./db/roles.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro
+      - ./db:/db:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockflow} -d ${POSTGRES_DB:-stockflow}"]
       interval: 5s
@@ -52,6 +62,39 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+
+  # --- setup, sob `--profile setup`: não arrancam com um `up` normal ---------
+
+  # Provisiona os três roles do ADR 0006. Idempotente: corre quantas vezes for
+  # preciso. É a via para um volume que já existe, e o modelo do que se faz numa
+  # base de dados gerida, onde não há init dir.
+  #   docker compose --env-file backend/.env -f docker/compose.yml \
+  #     --profile setup run --rm db-roles
+  db-roles:
+    profiles: ["setup"]
+    image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      STOCKFLOW_APP_PASSWORD: ${STOCKFLOW_APP_PASSWORD:?}
+      STOCKFLOW_OWNER_PASSWORD: ${STOCKFLOW_OWNER_PASSWORD:?}
+    volumes:
+      - ./db:/db:ro
+    command:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -h
+      - db
+      - -U
+      - ${POSTGRES_USER:-stockflow}
+      - -d
+      - ${POSTGRES_DB:-stockflow}
+      - -f
+      - /db/roles.sql
+    restart: "no"
 
 volumes:
   pgdata:

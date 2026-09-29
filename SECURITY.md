@@ -65,8 +65,26 @@ CSP via `django-csp`: `default-src 'self'`; scripts só do próprio domínio com
 
 ### Ligação
 - TLS obrigatório (`sslmode=verify-full` em prod).
-- Utilizador da app com privilégios mínimos: sem `SUPERUSER`, sem `CREATEDB`. Migrações com
-  um role separado.
+- **Três roles, nenhum com duas funções** (ADR 0006):
+  - `stockflow_app` — `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`, sem `CREATE` no
+    esquema, sem `TRUNCATE`, e **não é dono de nenhuma tabela**. É a única ligação que serve
+    pedidos. Um `migrate` com esta credencial morre no primeiro `CREATE TABLE`, de propósito.
+  - `stockflow_owner` — dono da base de dados e das tabelas. É a credencial do `migrate` e do
+    setup da base de dados de teste, e de nada mais: não existe no ambiente do processo web
+    nem do worker.
+  - Superuser de bootstrap — só provisionamento (`docker/db/roles.sql`). Fora de qualquer
+    `DATABASE_URL`.
+- O dono é um role separado porque **o dono de uma tabela pode
+  `ALTER TABLE ... DISABLE ROW LEVEL SECURITY`**, e um role que desliga o seu próprio
+  isolamento não tem isolamento. Um `SUPERUSER` ou um role com `BYPASSRLS` não é sujeito a
+  política nenhuma — é por isso que a app não pode ser nem uma coisa nem outra.
+- `FORCE ROW LEVEL SECURITY` continua obrigatório, agora pela sua razão verdadeira: sujeitar o
+  `stockflow_owner` quando corre migrações de dados.
+- O ledger é append-only **na base de dados**, não por disciplina:
+  `REVOKE UPDATE, DELETE ON inventory_stockmovement FROM stockflow_app`, na migração que cria
+  a tabela.
+- Os GRANTs das tabelas que as migrações futuras criam vêm de `ALTER DEFAULT PRIVILEGES` do
+  role dono, nunca de GRANTs à mão numa migração.
 
 ### Isolamento multi-tenant (RLS)
 ```sql
@@ -174,6 +192,11 @@ Tudo isto corre em cada PR (o script `security_check.sh` corre o subconjunto loc
 | JS deps | pnpm audit |
 | Docker | hadolint, trivy |
 | Fronteiras | import-linter |
+| Roles e GRANTs da BD | `uv run pytest tests/test_db_roles.py` |
+
+Ordem do pipeline: `docker/db/roles.sql` (bootstrap dos roles) → `migrate` com
+`MIGRATION_DATABASE_URL` → `pytest` (setup como dono, testes como app) → os gates acima. O
+`check --deploy` não abre ligação à base de dados e corre só com a credencial da app.
 
 ## 10. Resposta a incidentes (mínimo)
 

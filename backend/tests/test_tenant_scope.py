@@ -22,13 +22,13 @@ passava sempre — seria um teste vazio a dar confiança.
    política tem de comparar contra `NULLIF(..., '')::uuid`. Está nos dois testes
    que se seguem e no cabeçalho da migração.
 
-2. **O role da ligação é `SUPERUSER` e tem `BYPASSRLS`.** O Postgres do compose
-   é criado com `initdb -U stockflow` (ADR 0002), logo o role da aplicação é o
-   bootstrap do cluster — e um superuser não é sujeito a políticas, nem com
-   `FORCE`. Um teste de isolamento corrido com esse role passava por não estar a
-   testar nada. Daí a fixture `ligacao_sujeita_a_rls`, que troca o role por um
-   sem privilégios e afirma que a troca aconteceu. A separação de roles a sério
-   é a ADR 0006.
+2. **O role da ligação é o `stockflow_app`** — sem `SUPERUSER`, sem `BYPASSRLS`
+   e dono de nada (ADR 0006). A base de dados de teste é criada e migrada pelo
+   `stockflow_owner` e os testes correm como a app: quem faz a troca é o
+   `django_db_setup` em `tests/conftest.py`. Consequência para este ficheiro: a
+   RLS é imposta em **todos** os testes e não só nos quatro que pediam uma
+   fixture para trocar de role, e essa fixture deixou de existir. A guarda que
+   afirma de que role se trata mudou de casa para `tests/test_db_roles.py`.
 """
 
 from __future__ import annotations
@@ -62,10 +62,6 @@ from config.log import CONTEXT_FIELDS, JsonFormatter, RequestContextFilter
 
 TENANT_A = UUID("11111111-1111-1111-1111-111111111111")
 TENANT_B = UUID("22222222-2222-2222-2222-222222222222")
-
-#: Role sem privilégios para as asserções de RLS. NOLOGIN: não é para ninguém
-#: se ligar com ele, só para a ligação do teste assumir o seu papel.
-PROBE_ROLE = "stockflow_rls_probe"
 
 
 # ---------------------------------------------------------------------------
@@ -261,60 +257,19 @@ def test_publicar_um_evento_de_outro_tenant_levanta() -> None:
 
 # ---------------------------------------------------------------------------
 # A política RLS da outbox
+#
+# Sem fixture nenhuma: a ligação destes testes é a do `stockflow_app`, que não é
+# dona da tabela e não tem `BYPASSRLS` (ADR 0006). Antes era preciso trocar de
+# role para a política ser avaliada; agora ela vale em todos os testes, e quem o
+# prova é `tests/test_db_roles.py`.
 # ---------------------------------------------------------------------------
-@pytest.fixture
-def ligacao_sujeita_a_rls(transactional_db: None) -> Iterator[None]:
-    """Troca o role da ligação por um sem privilégios, e confirma-o.
-
-    Sem isto a ligação corre como o bootstrap do cluster — `SUPERUSER` com
-    `BYPASSRLS` — e a política nem é avaliada: os testes de isolamento passavam
-    por não estar a testar nada.
-
-    `set_config('role', ...)` e não `SET ROLE`: o `SET` não aceita parâmetro, e
-    construir o comando por f-string era exatamente o que o CLAUDE.md não quer
-    ver — nem num teste. O nome do role nas duas instruções de DDL vai literal,
-    pela mesma razão.
-
-    O role é criado só se não existir e **fica** no cluster: é um objeto global,
-    não vive dentro da base de dados de teste que o pytest-django cria e apaga.
-    Não tem login nem privilégios fora desta tabela.
-    """
-    assert OutboxEvent._meta.db_table == "shared_outboxevent", (
-        "a tabela mudou de nome: a migração da RLS e os GRANTs desta fixture "
-        "referem-na literalmente"
-    )
-
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [PROBE_ROLE])
-        if cursor.fetchone() is None:
-            cursor.execute("CREATE ROLE stockflow_rls_probe NOLOGIN")
-        cursor.execute(
-            "GRANT SELECT, INSERT, UPDATE ON shared_outboxevent "
-            "TO stockflow_rls_probe"
-        )
-        cursor.execute("SELECT set_config('role', %s, false)", [PROBE_ROLE])
-
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user"
-            )
-            superuser, bypassrls = cursor.fetchone()
-        assert superuser is False, "role com SUPERUSER: a RLS não se aplica"
-        assert bypassrls is False, "role com BYPASSRLS: a RLS não se aplica"
-        yield
-    finally:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT set_config('role', 'none', false)")
-
-
 def _publicar(tenant: UUID) -> OutboxEvent:
     with tenant_scope(tenant):
         return publish(_EventoDeTeste(tenant_id=tenant, quantidade=Decimal("2.500")))
 
 
 @pytest.mark.django_db(transaction=True)
-def test_a_politica_da_outbox_isola_por_tenant(ligacao_sujeita_a_rls: None) -> None:
+def test_a_politica_da_outbox_isola_por_tenant() -> None:
     linha_a = _publicar(TENANT_A)
     linha_b = _publicar(TENANT_B)
 
@@ -328,9 +283,7 @@ def test_a_politica_da_outbox_isola_por_tenant(ligacao_sujeita_a_rls: None) -> N
 
 
 @pytest.mark.django_db(transaction=True)
-def test_sem_ambito_a_outbox_devolve_zero_linhas_sem_erro(
-    ligacao_sujeita_a_rls: None,
-) -> None:
+def test_sem_ambito_a_outbox_devolve_zero_linhas_sem_erro() -> None:
     """Falha fechada, e sem exceção: é o que a ADR promete para um pedido sem
     tenant, e o que o `NULLIF` da política torna verdade em qualquer transação
     da ligação."""
@@ -341,9 +294,7 @@ def test_sem_ambito_a_outbox_devolve_zero_linhas_sem_erro(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_o_system_scope_ve_as_linhas_de_todos_os_tenants(
-    ligacao_sujeita_a_rls: None,
-) -> None:
+def test_o_system_scope_ve_as_linhas_de_todos_os_tenants() -> None:
     """O disjunto `app.scope = 'system'`, que só esta tabela tem: o consumidor
     da outbox não é um pedido e não tem tenant nenhum."""
     linha_a = _publicar(TENANT_A)
@@ -356,9 +307,7 @@ def test_o_system_scope_ve_as_linhas_de_todos_os_tenants(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_a_politica_tambem_recusa_escrever_para_outro_tenant(
-    ligacao_sujeita_a_rls: None,
-) -> None:
+def test_a_politica_tambem_recusa_escrever_para_outro_tenant() -> None:
     """A política não tem `WITH CHECK`, logo o `USING` vale também nas escritas.
 
     A verificação de âmbito do `publish()` apanha isto primeiro e com uma

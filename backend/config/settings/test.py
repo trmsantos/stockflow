@@ -10,12 +10,21 @@ o que faz `uv run pytest` falar com o Postgres do compose: o `DATABASE_URL` aqui
 em baixo não tem password, e sem aquela leitura prévia era ele que ganhava. Quem
 corre a suite numa máquina sem `.env` — o CI — cai nestes valores, que é para
 isso que existem.
+
+A suite é o único ambiente que lê **duas** credenciais (ADR 0006): a base de
+dados de teste é criada, migrada e apagada pelo `stockflow_owner`, e os testes
+correm como `stockflow_app`. Quem faz a troca é o `django_db_setup` do
+`tests/conftest.py`; aqui só se lê a credencial do dono, para uma setting
+própria.
 """
 
 import os
 
 os.environ.setdefault("DJANGO_SECRET_KEY", "chave-de-teste-sem-valor-0123456789-abcdefghij")
-os.environ.setdefault("DATABASE_URL", "postgres://stockflow@localhost:5442/stockflow_test")
+os.environ.setdefault("DATABASE_URL", "postgres://stockflow_app@localhost:5442/stockflow_test")
+os.environ.setdefault(
+    "MIGRATION_DATABASE_URL", "postgres://stockflow_owner@localhost:5442/stockflow_test"
+)
 os.environ.setdefault("REDIS_URL", "redis://localhost:6389")
 
 # Estas duas são `os.environ[...] =`, não `setdefault`, e é deliberado: o Celery
@@ -29,7 +38,21 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6389")
 os.environ["CELERY_BROKER_URL"] = "memory://"
 os.environ["CELERY_RESULT_BACKEND"] = "cache+memory://"
 
+from config.env import required_db
 from config.settings.base import *
+from config.settings.base import env
+
+#: Credencial do `stockflow_owner`: o role que cria, migra e apaga a base de
+#: dados de teste (ADR 0006). O `dev.py` e o `prod.py` **não** a leem — lá o
+#: role é propriedade do processo, e o `migrate` corre num processo cujo
+#: `DATABASE_URL` é o `MIGRATION_DATABASE_URL`.
+#:
+#: Uma setting, e deliberadamente **não** uma segunda alias em `DATABASES`: uma
+#: alias é uma base de dados aos olhos do Django, logo o `setup_databases`
+#: tentaria criar (e apagar) uma base de dados de teste também para ela. Só
+#: `USER` e `PASSWORD` daqui são usados; `HOST`, `PORT` e `NAME` continuam a vir
+#: do `DATABASE_URL`, porque é o mesmo cluster e a mesma base de dados.
+MIGRATION_DATABASE = required_db(env, "MIGRATION_DATABASE_URL")
 
 # Nunca `True` em testes: com DEBUG ligado o Django devolve páginas de erro em
 # vez de 500 e os testes de permissão passam por acidente.

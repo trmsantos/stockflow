@@ -48,11 +48,16 @@ o `domain-expert`. Decisões de domínio já tomadas: **tenant = NIF** (o dono d
 tenant com três localizações, porque recebe uma fatura que cobre entregas em duas lojas), o predicado
 da RLS é `tenant_id` e só, e dados de referência partilhados não têm `tenant_id`.
 
-**Em curso:** passo 3 (`apps/shared/`: `db.py`, `models.py` com `TenantModel`, `outbox.py` com RLS,
-`events.py`, `tasks.py` com `TenantTask`, `middleware.py` com o `request_id`).
-**A seguir:** passo 4 (`accounts` + `TenantMiddleware` + primeira migração RLS provada), ADR 0006
-(separação de roles de BD — hoje o role da app é dono das tabelas e pode `DISABLE ROW LEVEL
-SECURITY`), depois 5 `frontend/`, 6 resto do `docker/`, 7 CI, 8 PASS final.
+**Passo 3 feito** (`apps/shared/`: `db.py` com `tenant_scope`, `TenantModel`, `outbox.py` com RLS,
+`events.py`, `TenantTask`, `RequestContextMiddleware`). **ADR 0006 feita e implementada:** três roles
+de BD — `stockflow_app` (`NOSUPERUSER NOBYPASSRLS`, sem `CREATE` no esquema, dono de nada, é a única
+ligação que serve pedidos), `stockflow_owner` (dono das tabelas, credencial só do `migrate`) e o
+superuser de bootstrap (só provisionamento, `docker/db/roles.sql`, idempotente). **A RLS passou a ser
+imposta de facto** — antes o role da app era o superuser do cluster e ignorava a política por
+completo. `migrate` com a credencial da app morre no primeiro `CREATE TABLE`, de propósito.
+**A seguir: passo 4** (`accounts` com `Tenant`/`User`/`Membership`, o `TenantMiddleware` como
+**último** middleware, primeira migração RLS de uma tabela de domínio), depois 5 `frontend/`,
+6 resto do `docker/`, 7 CI, 8 PASS final.
 
 **Dívida nomeada:** a escada de lockout acima dos 30 min não tem efeito (limitação estrutural do
 axes — ver `SECURITY.md` §5); o 429 do lockout não tem corpo JSON útil; sem beat não há quem drene a

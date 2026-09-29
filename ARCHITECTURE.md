@@ -100,30 +100,36 @@ livre — `apps.notifications` a importar `apps.inventory.api` dá `BROKEN` e ex
 1. Proxy termina TLS, aplica rate limit e headers de segurança.
 2. Middleware Django, de fora para dentro: logging estruturado (cria o `request_id`) → segurança →
    CSP → sessão → CSRF → autenticação → axes → `TenantMiddleware`, que é o **último**.
-3. O `TenantMiddleware` (em `apps/accounts/`) resolve o tenant e envolve o `get_response()` inteiro
+3. O processo que serve pedidos liga-se como `stockflow_app`: `NOSUPERUSER`, `NOBYPASSRLS`, não é
+   dono de nenhuma tabela e não tem `CREATE` no esquema. É essa ligação que a RLS alcança — um
+   superuser ou o dono da tabela não seriam sujeitos à política (ADR 0006). O `migrate` corre num
+   processo separado, com `stockflow_owner`, cuja credencial não existe no ambiente do servidor web
+   nem do worker.
+4. O `TenantMiddleware` (em `apps/accounts/`) resolve o tenant e envolve o `get_response()` inteiro
    em `tenant_scope(tenant_id)` de `apps/shared/db.py`: uma transação por pedido, com
    `SELECT set_config('app.tenant_id', %s, true)` como primeira instrução — âmbito de transação,
    valor parametrizado, nunca interpolado. É a fronteira da RLS (ADR 0005). Pedido sem tenant
    (login, healthcheck, admin, anónimo) não abre âmbito nem transação: `app.tenant_id` fica NULL,
-   as políticas devolvem zero linhas e nada falha com erro. Ser o último middleware é deliberado —
+   as políticas devolvem zero linhas e nada falha com erro — e devolvem porque a ligação está
+   sujeita a elas (ADR 0006). Ser o último middleware é deliberado —
    a escrita da sessão (`SESSION_SAVE_EVERY_REQUEST`) e o `AccessAttempt` do axes ficam fora da
    transação do pedido, onde têm de estar.
-4. View DRF: autentica, aplica `permission_classes`, valida com serializer.
-5. View chama **uma** função em `services.py`. O `@transaction.atomic` da função é um savepoint
+5. View DRF: autentica, aplica `permission_classes`, valida com serializer.
+6. View chama **uma** função em `services.py`. O `@transaction.atomic` da função é um savepoint
    dentro da transação do pedido: se o service falhar, desfaz o que escreveu sem derrubar o pedido.
    O evento vai para a tabela `outbox` na mesma transação.
-6. A resposta é serializada ainda dentro do âmbito — é por isso que as leituras de `selectors.py`
+7. A resposta é serializada ainda dentro do âmbito — é por isso que as leituras de `selectors.py`
    avaliadas durante a serialização estão cobertas. Se a resposta sair 5xx, o middleware marca
    `transaction.set_rollback(True)`: o DRF trata a exceção dentro da view e sem isto um 500
    commitava escritas parciais. Nada de efeitos secundários síncronos.
-7. `ATOMIC_REQUESTS` continua `False`: abriria a transação em volta da view, dentro da cadeia de
+8. `ATOMIC_REQUESTS` continua `False`: abriria a transação em volta da view, dentro da cadeia de
    middleware, onde nenhum middleware lhe consegue pôr o `set_config`.
-8. O Celery não tem middleware. `TenantTask` é o `task_cls` do app, logo toda a tarefa o herda:
+9. O Celery não tem middleware. `TenantTask` é o `task_cls` do app, logo toda a tarefa o herda:
    `tenant_id` é argumento obrigatório e o corpo corre dentro de `tenant_scope`. A dispensa é
    explícita (`tenant_scope_exempt`) e hoje só a têm o cron que itera tenants e o consumidor da
    outbox, que lê a linha sob `system_scope()` e reentra em `tenant_scope(row.tenant_id)` antes de
    tocar em mais nada.
-9. Um worker Celery lê a `outbox`, publica o evento aos `handlers.py` subscritos, marca como
+10. Um worker Celery lê a `outbox`, publica o evento aos `handlers.py` subscritos, marca como
    processado. Handlers são idempotentes (chave: `event_id`).
 
 ## 5. Contratos e compatibilidade
@@ -195,6 +201,12 @@ torna-se cliente HTTP/gRPC, a outbox passa a publicar num broker externo.
   `python:3.12-slim` (ou distroless) copia só `.venv` e código; `USER app`; `HEALTHCHECK`.
 - `frontend.Dockerfile`: `pnpm build` num stage, servido por Caddy num stage final.
 - `compose.yml` dev: `backend`, `worker`, `frontend`, `db`, `redis`, `proxy`. Volumes só para
-  código em dev. Rede interna; só o proxy expõe portas.
+  código em dev. Rede interna; só o proxy expõe portas, e no host em `127.0.0.1` com as portas
+  do ADR 0002.
+- Dois serviços de setup em `profiles: ["setup"]`, que não arrancam com um `up` normal e são os
+  únicos que veem credenciais privilegiadas: `db-roles` (corre `docker/db/roles.sql`, idempotente
+  — o init dir do Postgres só corre na primeira inicialização do volume, e em base de dados
+  gerida não existe) e `migrate` (o único processo com `MIGRATION_DATABASE_URL`). O `backend` e o
+  `worker` recebem `DATABASE_URL` e nunca a credencial do dono (ADR 0006).
 - Prod: mesmas imagens, segredos por Docker secrets ou pelo orquestrador, nunca em `env_file`
   commitado.
