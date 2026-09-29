@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="pt-PT">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Sem `user-scalable=no`: o zoom é do utilizador, não nosso. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Nada de externo: a CSP de produção é `default-src 'self'` (SECURITY.md §2),
+         por isso não há fontes, ícones nem scripts de CDN nesta página. A cor de
+         `theme-color` é escrita em runtime a partir do token `--color-background`
+         (src/lib/theme-color.ts) — não há cores literais no HTML. -->
+    <title>StockFlow</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

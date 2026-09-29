@@ -1,0 +1,207 @@
+/* ---------------------------------------------------------------------------
+ * tokens.css — fonte da verdade do sistema visual (DESIGN.md §2).
+ *
+ * Os valores de cor são copiados do DESIGN.md §2 sem alteração. Foram medidos
+ * (oklch -> sRGB -> WCAG 2.1) contra a pior das três superfícies, que é o
+ * `surface-2` nos dois modos: 4.80-4.84:1 para texto e 3.21-3.22:1 para bordas
+ * de componente. Não arredondar "para valores mais bonitos" — perde-se a
+ * margem que impede um arredondamento de falhar a barra.
+ *
+ * `@theme static` e não `@theme`: o Tailwind v4 só emite em `:root` as
+ * variáveis de tema que alguma utility usa, e as pontes para o shadcn abaixo
+ * (`--color-card: var(--color-surface)`) resolvem-se em runtime. Sem `static`,
+ * um token usado apenas através de uma ponte ficava por emitir e a ponte
+ * resolvia para nada.
+ * ------------------------------------------------------------------------- */
+
+@theme static {
+  /* A paleta default do Tailwind (`bg-red-500`, `bg-zinc-800`, ...) é removida
+   * de propósito: com ela fora, uma cor que não seja um token do DESIGN.md
+   * deixa de compilar. `transparent` e `current` não são tokens de tema, são
+   * valores estáticos da utility, e continuam a funcionar. */
+  --color-*: initial;
+
+  /* Superfícies */
+  --color-background:  oklch(0.985 0.002 250);
+  --color-surface:     oklch(1 0 0);
+  --color-surface-2:   oklch(0.965 0.003 250);
+
+  /* Bordas — dois papéis distintos */
+  --color-border:        oklch(0.90 0.004 250);   /* separador decorativo; isento dos 3:1 */
+  --color-border-strong: oklch(0.626 0.008 250);  /* fronteira de componente (input): 3.2:1 */
+
+  /* Texto */
+  --color-foreground:       oklch(0.20 0.01 250);
+  --color-muted-foreground: oklch(0.528 0.01 250);
+
+  /* Marca — UMA cor de acento, usada com parcimónia */
+  --color-primary:            oklch(0.514 0.105 165);  /* verde-azulado; único acento */
+  --color-primary-foreground: oklch(0.99 0 0);
+
+  /* Estado — texto / preenchimento suave / borda */
+  --color-success:         oklch(0.512 0.14 150);
+  --color-success-surface: oklch(0.95 0.035 150);
+  --color-success-border:  oklch(0.610 0.15 150);
+
+  --color-warning:         oklch(0.532 0.11 80);
+  --color-warning-surface: oklch(0.95 0.038 80);
+  --color-warning-border:  oklch(0.630 0.13 80);
+
+  --color-danger:          oklch(0.552 0.20 25);
+  --color-danger-surface:  oklch(0.95 0.020 25);
+  --color-danger-border:   oklch(0.650 0.20 25);
+
+  /* -----------------------------------------------------------------------
+   * Pontes para os primitivos shadcn. Não são tokens novos: são os nomes que
+   * os componentes de `src/components/ui/` usam, apontados aos 18 tokens
+   * acima. Personalizar o shadcn uma vez, pelos tokens (DESIGN.md §3), em vez
+   * de por componente.
+   * --------------------------------------------------------------------- */
+  --color-card:                 var(--color-surface);
+  --color-card-foreground:      var(--color-foreground);
+  --color-popover:              var(--color-surface);
+  --color-popover-foreground:   var(--color-foreground);
+  --color-secondary:            var(--color-surface-2);
+  --color-secondary-foreground: var(--color-foreground);
+  --color-muted:                var(--color-surface-2);
+  --color-accent:               var(--color-surface-2);
+  --color-accent-foreground:    var(--color-foreground);
+  --color-destructive:          var(--color-danger);
+  /* `border-input` delimita o input: é o papel do `-strong`, não do separador
+   * decorativo. Um input com `--color-border` é um bug de acessibilidade. */
+  --color-input:                var(--color-border-strong);
+  --color-ring:                 var(--color-primary);
+
+  /* -----------------------------------------------------------------------
+   * Tipografia (DESIGN.md §2). IBM Plex servido do próprio bundle — a CSP de
+   * produção é `font-src 'self'` e um @import do Google Fonts seria bloqueado.
+   * Inter/Roboto/Open Sans/Poppins são proibidos.
+   * --------------------------------------------------------------------- */
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* Títulos são a mesma família em peso 600 — `font-heading` é o nome que os
+   * primitivos usam. Uma família, não duas. */
+  --font-heading: "IBM Plex Sans", system-ui, sans-serif;
+
+  /* Escala fechada: 0.75 · 0.875 · 1 · 1.125 · 1.25 · 1.5 · 2 · 2.5 · 3.25rem.
+   * O `initial` remove os degraus 6xl-9xl do Tailwind: nove passos bastam e um
+   * décimo seria uma decisão tomada por omissão. */
+  --text-*: initial;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.5;
+  /* Títulos: 1.2 de line-height e tracking negativo a partir daqui. */
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.2;
+  --text-2xl--letter-spacing: -0.02em;
+  --text-3xl: 2rem;
+  --text-3xl--line-height: 1.2;
+  --text-3xl--letter-spacing: -0.02em;
+  --text-4xl: 2.5rem;
+  --text-4xl--line-height: 1.2;
+  --text-4xl--letter-spacing: -0.02em;
+  --text-5xl: 3.25rem;
+  --text-5xl--line-height: 1.2;
+  --text-5xl--letter-spacing: -0.02em;
+
+  /* -----------------------------------------------------------------------
+   * Espaçamento: grelha de 4px. A escala usada é `1 2 3 4 6 8 12 16 24 32`
+   * (×4px) — `p-4` são 16px, `p-12` são 48px.
+   * --------------------------------------------------------------------- */
+  --spacing: 0.25rem;
+
+  /* -----------------------------------------------------------------------
+   * Forma: um valor base (6px) e dois derivados, sm = base-2 e lg = base+4.
+   * Mapeados para os nomes que os primitivos usam: controlos são `rounded-lg`
+   * (6px, a base), cards são `rounded-xl` (10px) e chips pequenos `rounded-md`
+   * (4px). Tudo acima de `xl` é fixado em 10px para que nenhum componente
+   * escape à escala — `rounded-2xl` em tudo é anti-padrão (DESIGN.md §5).
+   * --------------------------------------------------------------------- */
+  --radius: 6px;
+  --radius-xs: 4px;
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 10px;
+  --radius-2xl: 10px;
+  --radius-3xl: 10px;
+  --radius-4xl: 10px;
+
+  /* -----------------------------------------------------------------------
+   * Sombras: dois níveis, `sm` para cards e `lg` para popovers. Sem sombras
+   * coloridas — a sombra é preto com alfa, nada de tinta da marca. Preferir
+   * uma borda de 1px a uma sombra para separar superfícies.
+   * --------------------------------------------------------------------- */
+  --shadow-*: initial;
+  --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 0.06), 0 1px 3px 0 oklch(0 0 0 / 0.08);
+  --shadow-lg: 0 8px 16px -4px oklch(0 0 0 / 0.12), 0 2px 6px -2px oklch(0 0 0 / 0.10);
+
+  /* -----------------------------------------------------------------------
+   * Movimento: 120ms micro, 200ms transições, 320ms entrada de painéis.
+   * Entradas com `cubic-bezier(0.2, 0, 0, 1)`; saídas com ease-out.
+   * --------------------------------------------------------------------- */
+  --transition-duration-micro: 120ms;
+  --transition-duration-base: 200ms;
+  --transition-duration-panel: 320ms;
+  --ease-entrance: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0, 0, 0.2, 1);
+  --default-transition-duration: 200ms;
+  --default-transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ---------------------------------------------------------------------------
+ * Modo escuro — os 18 tokens redefinidos por inteiro (DESIGN.md §2). As
+ * pontes para o shadcn e o resto da escala não se repetem: apontam para estes
+ * e seguem-nos sozinhas.
+ *
+ * `prefers-color-scheme` e não uma classe `.dark`: é o que o DESIGN.md
+ * especifica, e é também o default do variant `dark:` do Tailwind v4 — a linha
+ * `@custom-variant dark (&:is(.dark *))` que o `shadcn init` escreve foi
+ * removida por isso.
+ * ------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background:  oklch(0.18 0.006 250);
+    --color-surface:     oklch(0.21 0.006 250);
+    --color-surface-2:   oklch(0.25 0.007 250);
+
+    --color-border:        oklch(0.30 0.008 250);
+    --color-border-strong: oklch(0.544 0.008 250);
+
+    --color-foreground:       oklch(0.96 0.003 250);
+    --color-muted-foreground: oklch(0.644 0.01 250);
+
+    --color-primary:            oklch(0.628 0.13 165);
+    --color-primary-foreground: oklch(0.16 0.01 250);
+
+    --color-success:         oklch(0.628 0.15 150);
+    --color-success-surface: oklch(0.26 0.030 150);
+    --color-success-border:  oklch(0.528 0.145 150);
+
+    --color-warning:         oklch(0.648 0.134 80);
+    --color-warning-surface: oklch(0.26 0.032 80);
+    --color-warning-border:  oklch(0.548 0.113 80);
+
+    --color-danger:          oklch(0.668 0.20 25);
+    --color-danger-surface:  oklch(0.26 0.035 25);
+    --color-danger-border:   oklch(0.568 0.20 25);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Aliases sem o prefixo `--color-`. Dois primitivos do shadcn referem
+ * `var(--secondary)` e `var(--foreground)` diretamente dentro de um
+ * `color-mix()`, e não através da utility. Sem estes, esse `color-mix` fica
+ * inválido e o estado de hover desaparece sem erro nenhum.
+ * ------------------------------------------------------------------------- */
+:root {
+  --foreground: var(--color-foreground);
+  --secondary: var(--color-surface-2);
+}

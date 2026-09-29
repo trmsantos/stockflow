@@ -1,0 +1,102 @@
+/* ---------------------------------------------------------------------------
+ * base.css — a camada `base`. Nada aqui é um valor novo: só liga os tokens de
+ * `tokens.css` aos elementos.
+ * ------------------------------------------------------------------------- */
+
+@layer base {
+  :root {
+    /* Diz ao browser que os dois modos existem: barras de scroll, campos de
+     * formulário e controlos nativos seguem o modo, em vez de ficarem brancos
+     * dentro de uma página escura. */
+    color-scheme: light dark;
+  }
+
+  * {
+    /* Um `border-*` sem cor usa o separador decorativo. Fronteiras de
+     * componente (input, controlo) pedem `border-input`/`border-strong`. */
+    border-color: var(--color-border);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    /* Remove o atraso de 300ms do duplo-toque: quem está a contar stock com o
+     * telemóvel numa mão toca depressa. */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Quantidades, preços e códigos alinham em coluna: os dígitos têm de ter
+   * todos a mesma largura (DESIGN.md §2). */
+  [data-numeric],
+  th[data-numeric],
+  td[data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
+    text-align: right;
+  }
+
+  /* O foco é sempre visível e nunca é removido sem substituto. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Densidade compacta em desktop, polegar em mobile: os primitivos shadcn
+   * vêm com 32px de altura, e o mínimo do DESIGN.md §4 é 44px em toque. A
+   * regra é por modalidade de input, não por breakpoint — um tablet com rato
+   * mantém a densidade. `min-height` ganha ao `height` das utilities, por isso
+   * isto não obriga a passar classes componente a componente. */
+  @media (pointer: coarse) {
+    button,
+    [role="button"],
+    a[data-slot="button"],
+    input:not([type="checkbox"], [type="radio"], [type="hidden"]),
+    select,
+    textarea,
+    [data-slot="button"],
+    [data-slot="input"] {
+      min-height: 44px;
+    }
+
+    /* Um alvo de 44px de altura e 20px de largura continua a ser um alvo mau. */
+    button,
+    [role="button"],
+    [data-slot="button"] {
+      min-width: 44px;
+    }
+  }
+
+  /* DESIGN.md §2: respeitar `prefers-reduced-motion` — desligar tudo exceto a
+   * opacidade. Não é um `transition: none` global: a opacidade é o que dá o
+   * sinal de "isto mudou" a quem desliga o movimento. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-property: opacity;
+      transition-duration: var(--transition-duration-micro);
+      animation-duration: 0.01ms;
+      animation-iteration-count: 1;
+      scroll-behavior: auto;
+    }
+
+    /* Exceção deliberada: o pulsar do skeleton é opacidade, e é o único sinal
+     * de que há algo a carregar. Especificidade maior que o `*` acima. */
+    [data-slot="skeleton"] {
+      animation-duration: 2s;
+      animation-iteration-count: infinite;
+    }
+  }
+}

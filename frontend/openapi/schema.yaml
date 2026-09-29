@@ -1,0 +1,8 @@
+openapi: 3.0.3
+info:
+  title: StockFlow API
+  version: 1.0.0
+  description: 'Gestão de stock, validades, receitas e compras para restauração. Multi-tenant:
+    cada pedido corre no contexto do tenant da sessão.'
+paths: {}
+components: {}

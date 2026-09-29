@@ -89,9 +89,9 @@ que esta própria secção exige.
     --color-success-surface: oklch(0.26 0.030 150);
     --color-success-border:  oklch(0.528 0.145 150);
 
-    --color-warning:         oklch(0.648 0.135 80);
+    --color-warning:         oklch(0.648 0.134 80);
     --color-warning-surface: oklch(0.26 0.032 80);
-    --color-warning-border:  oklch(0.548 0.115 80);
+    --color-warning-border:  oklch(0.548 0.113 80);
 
     --color-danger:          oklch(0.668 0.20 25);
     --color-danger-surface:  oklch(0.26 0.035 25);
@@ -114,10 +114,13 @@ Regras:
   — que é o `surface-2` nos dois modos, não o `background`. Os valores acima dão 4.80–4.84 para
   texto e 3.21–3.22 para elementos de UI: margem deliberada, para um arredondamento não fazer
   falhar a barra.
-- **Todos os valores estão dentro do gamut sRGB.** Um `oklch()` fora do gamut é distorcido pelo
-  browser em silêncio, e o contraste medido deixa de ser o contraste real. À luminosidade das
-  tintas (0.95) o vermelho aceita muito menos croma que o verde — daí o `danger-surface` ser mais
-  discreto que o `success-surface`. É um limite do sRGB, não uma escolha estética.
+- **Todos os valores estão dentro do gamut sRGB**, verificado com tolerância de 1e-6 e não com uma
+  margem de arredondamento: o `warning` do modo escuro estava a `-0.0011` no canal azul e uma
+  tolerância de `0.002` deixava-o passar como se estivesse dentro. Um `oklch()` fora do gamut é
+  distorcido pelo browser em silêncio, e o contraste que se mede deixa de ser o contraste que se vê.
+  À luminosidade das tintas (0.95) o vermelho aceita muito menos croma que o verde — daí o
+  `danger-surface` ser mais discreto que o `success-surface`. É um limite do sRGB, não uma escolha
+  estética, e é também por isso que a croma do `warning` escuro é 0.134 e não 0.135.
 - O `--color-border` a ~1.3:1 **não** é uma falha: um separador decorativo entre superfícies está
   fora da regra dos 3:1, que se aplica a fronteiras que identificam componentes. Para essas há o
   `--color-border-strong`. Um `input` delimitado com `--color-border` é um bug de acessibilidade.

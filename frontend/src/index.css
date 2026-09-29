@@ -1,0 +1,13 @@
+/* ---------------------------------------------------------------------------
+ * index.css — entrada única de estilos. Não tem valores: os tokens estão em
+ * `styles/tokens.css` (fonte da verdade, DESIGN.md §2) e a camada base em
+ * `styles/base.css`.
+ * ------------------------------------------------------------------------- */
+
+@import "tailwindcss";
+/* Variantes `data-open`, `data-checked`, ... que os primitivos shadcn usam. */
+@import "shadcn/tailwind.css";
+@import "tw-animate-css";
+@import "./styles/fonts.css";
+@import "./styles/tokens.css";
+@import "./styles/base.css";
