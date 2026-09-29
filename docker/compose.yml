@@ -1,0 +1,57 @@
+# Serviços de infraestrutura para desenvolvimento.
+#
+# Antecipado do passo 6 do kickoff: o passo 4 escreve a primeira migração com
+# Row-Level Security, e uma política RLS que não se corre contra Postgres é uma
+# política que não se sabe se funciona — com o CLAUDE.md a proibir editar uma
+# migração já aplicada. Os serviços da aplicação (backend, worker, frontend,
+# proxy) entram no passo 6, com Dockerfiles multi-stage e digests fixados.
+#
+# Portas do host: ADR 0002 — nenhuma é a default do serviço, para não colidir
+# com outros projetos na mesma máquina. Dentro da rede do compose os
+# contentores continuam nas portas canónicas (5432, 6379).
+name: stockflow
+
+services:
+  db:
+    # PostgreSQL 16.15 (postgres:16-alpine), fixado por digest — SECURITY.md §8.
+    # Para atualizar: docker pull postgres:16-alpine && docker inspect \
+    #   --format='{{index .RepoDigests 0}}' postgres:16-alpine
+    image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    command:
+      # `log_statement=ddl` deixa ver as migrações a aplicar-se; sem `all`,
+      # para os parâmetros das queries não irem para o log (SECURITY.md §1).
+      - postgres
+      - -c
+      - log_statement=ddl
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stockflow}
+      POSTGRES_USER: ${POSTGRES_USER:-stockflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD no .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5442}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockflow} -d ${POSTGRES_DB:-stockflow}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    # Redis 7.4.11 (redis:7-alpine), fixado por digest.
+    image: redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    # Sem persistência: é broker e cache de desenvolvimento, não fonte de verdade.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6389}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
