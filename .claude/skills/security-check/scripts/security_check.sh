@@ -109,9 +109,16 @@ PY
   if have uv && [[ -f manage.py ]]; then
     out=$(DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-config.settings.prod}" uv run manage.py check --deploy 2>&1 || true)
     echo "$out" > "$REPORT_DIR/django-check.txt"
-    w=$(echo "$out" | grep -cE '^\?: \(security\.W|^\(security' || true)
-    e=$(echo "$out" | grep -cE 'ERRORS|\(security\.E' || true)
-    note "  check --deploy: warnings=$w errors=$e"; count_sev 0 "$e" "$w" 0
+    # O SECURITY.md §2 exige `check --deploy` **sem warnings**, ponto — não "sem
+    # warnings de segurança". A versão anterior contava só `security.*`, logo um
+    # `auth.W004` ou um `axes.W...` passava em silêncio. Agora a barra é a mesma
+    # do CI: a saída tem de dizer "no issues".
+    if echo "$out" | grep -q "no issues"; then
+      note "  check --deploy: sem issues"
+    else
+      w=$(echo "$out" | grep -cE '^\?: \(|^\(' || true)
+      note "  check --deploy: $w issue(s) — ver django-check.txt"; count_sev 0 "${w:-1}" 0 0
+    fi
   else skip "check --deploy" "manage.py não encontrado ou uv ausente"; fi
 
   log "import-linter (fronteiras entre módulos)"
@@ -150,7 +157,10 @@ print(c('ERROR'),c('WARNING'),c('INFO'))
 PY
 )
     note "  semgrep: error=$h warning=$m info=$l"; count_sev 0 "$h" "$m" "$l"
-  fi
+  # Este `else skip` faltava, e sem ele o gate de SAST do frontend não corria e
+  # não deixava rasto: nem em SKIPPED, nem no veredicto. PASS com um gate
+  # invisível por executar, que é o defeito que este script já teve uma vez.
+  else skip semgrep "uv tool install semgrep"; fi
 
   log "Padrões perigosos (grep)"
   danger=$(grep -rnE "dangerouslySetInnerHTML|localStorage\.(set|get)Item\(['\"](token|jwt|access|refresh)|VITE_[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)" src 2>/dev/null || true)
@@ -201,7 +211,32 @@ if run_if docker; then
       grep -qE '^\s*FROM\s+\S+:latest' "$f" && { note "  MEDIUM $f: imagem base :latest"; count_sev 0 0 1 0; }
     done
 
-    log "trivy (config + imagens locais)"
+    # O gate que faltava, e a razão de ele existir: o `backend/.env` esteve
+    # dentro da imagem que servia pedidos, com a password do dono da base de
+    # dados, e **nenhum** dos outros gates o podia ver. O gitleaks olha para o
+    # git (e o ficheiro nunca entrou), o `trivy config` olha para o texto do
+    # Dockerfile, a verificação de `COPY .*\.env` não casa com `COPY backend/`,
+    # e o `docker history` mostra comandos e não conteúdo. Este olha para dentro
+    # do artefacto construído, que é onde o segredo estava.
+    log "Segredos dentro das imagens construídas"
+    imagens=$(docker images --format '{{.Repository}}' 2>/dev/null | grep -E '^stockflow-' | sort -u || true)
+    if [[ -z "$imagens" ]]; then
+      skip "segredos-em-imagem" "nenhuma imagem stockflow-* construída (corre docker compose build)"
+    else
+      achados=0
+      for img in $imagens; do
+        encontrado=$(docker run --rm --entrypoint sh "$img" -c \
+          'find / -xdev \( -name ".env" -o -name ".env.*" \) ! -name ".env.example" 2>/dev/null' 2>/dev/null || true)
+        if [[ -n "$encontrado" ]]; then
+          note "  CRITICAL $img tem ficheiros de ambiente:"
+          echo "$encontrado" | sed 's/^/    /' | tee -a "$SUMMARY"
+          achados=$((achados+1))
+        fi
+      done
+      if (( achados > 0 )); then count_sev "$achados" 0 0 0; else note "  ok ($(echo "$imagens" | wc -w | tr -d ' ') imagens)"; fi
+    fi
+
+    log "trivy (config)"
     if have trivy; then
       trivy config --severity HIGH,CRITICAL -f json -o "$REPORT_DIR/trivy-config.json" . >/dev/null 2>&1
       n=$(python3 -c "import json,os;d=json.load(open(os.environ['REPORT_DIR']+'/trivy-config.json'));print(sum(len(r.get('Misconfigurations',[])) for r in d.get('Results',[])))" 2>/dev/null || echo INVALIDO)

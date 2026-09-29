@@ -10,7 +10,7 @@ A verificação automática está na skill `security-check`.
 |---|---|
 | Injeção (SQL, comando, template) | ORM + parâmetros; sem `eval`/`subprocess` com input; autoescape |
 | Auth quebrada / sessões roubadas | Sessões server-side, cookies httpOnly+Secure+SameSite, Argon2id |
-| Acesso a dados de outro tenant | Permissões por objeto **e** RLS no Postgres (duas exceções tratadas — ver §3) |
+| Acesso a dados de outro tenant | Permissões por objeto **e** RLS no Postgres (duas exceções tratadas — ver §3; e o que a RLS **não** cobre, abaixo) |
 | XSS | React escapa por defeito; `dangerouslySetInnerHTML` proibido sem sanitização (DOMPurify); CSP |
 | CSRF | Django CSRF middleware + `X-CSRFToken` no cliente |
 | Fuga de segredos | `.env` ignorado; gitleaks no CI; segredos em runtime |
@@ -20,6 +20,24 @@ A verificação automática está na skill `security-check`.
 | Exposição de dados em logs | Logs sem PII; filtros de campos sensíveis |
 | DoS | Rate limit no proxy e por utilizador; limites de payload; timeouts |
 | Roubo do disco/backup | Encriptação at rest + campo a campo para PII sensível |
+
+### O que a RLS garante, e o que não garante
+
+Medido, não presumido. **Protege contra um filtro esquecido:** um `objects.all()` sem `tenant_id`
+devolve zero linhas em vez das de todos os clientes, e é para isso que ela existe — é a rede, não a
+regra (ADR 0005). Provado também que o role da aplicação **não** consegue desarmá-la: `ALTER TABLE
+... DISABLE ROW LEVEL SECURITY`, `NO FORCE` e `DROP POLICY` são as três recusadas, porque ele não é
+dono de nenhuma tabela (ADR 0006); e um `RESET app.tenant_id` faz a política devolver zero linhas, não
+todas.
+
+**Não protege contra código que execute SQL arbitrário.** O âmbito é um GUC, e quem pode correr SQL
+pode trocá-lo: dentro de `tenant_scope(A)`, um `set_config('app.tenant_id', B, true)` passa a ver os
+dados de B — medido, com as linhas a mudarem de A para B.
+
+A consequência é sobre **severidade, e é ela que justifica a regra ser absoluta**: uma injeção de SQL
+neste sistema não expõe um restaurante, expõe **todos**. É por isso que `.raw()` com f-strings,
+`.extra()` e qualquer interpolação em SQL não são uma questão de estilo, e é a resposta a dar a quem
+propuser "só esta query é que precisa de SQL cru".
 
 ## 2. Configuração Django obrigatória (`settings/prod.py`)
 
@@ -69,6 +87,11 @@ CSP via `django-csp`: `default-src 'self'`; scripts só do próprio domínio com
   - `stockflow_app` — `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`, sem `CREATE` no
     esquema, sem `TRUNCATE`, e **não é dono de nenhuma tabela**. É a única ligação que serve
     pedidos. Um `migrate` com esta credencial morre no primeiro `CREATE TABLE`, de propósito.
+  - O que esta credencial lê **sem âmbito nenhum**, e é o custo aceite da ADR 0007: o
+    `accounts_user` inteiro — `email`, hash Argon2id, `last_login`, `tenant_ids`, e as flags
+    `is_active`/`is_staff`/`is_superuser`. As duas últimas dizem a um atacante **quais** contas
+    abrem o admin, e o `tenant_ids` é o grafo de pertenças entre clientes. Nenhuma tabela de dados
+    de tenant é legível assim.
   - `stockflow_owner` — dono da base de dados e das tabelas. É a credencial do `migrate` e do
     setup da base de dados de teste, e de nada mais: não existe no ambiente do processo web
     nem do worker.
@@ -213,39 +236,25 @@ Ordem do pipeline: `docker/db/roles.sql` (bootstrap dos roles) → `migrate` com
 `MIGRATION_DATABASE_URL` → `pytest` (setup como dono, testes como app) → os gates acima. O
 `check --deploy` não abre ligação à base de dados e corre só com a credencial da app.
 
-### Excepção aceite: 6 CVEs nas dependências transitivas do Caddy
+### Estado dos CVEs das imagens, medido em 2026-09-29
 
-A regra desta secção é "sem CVEs HIGH/CRITICAL com fix disponível". As imagens do `proxy` e do
-`frontend` têm **seis**, e a excepção é deliberada e datada (2026-09-29):
+**Zero HIGH/CRITICAL com correcção disponível nas três imagens.** As do `proxy` e do `frontend` estão
+a zero mesmo **sem** `--ignore-unfixed`. Houve aqui uma excepção aceite de seis CVEs, nas dependências
+transitivas do Caddy, e deixou de ser necessária: com o Caddy construído do código (Go 1.26.8, ver
+`docker/proxy.Dockerfile`) e as imagens reconstruídas sem cache, nenhum dos seis é reportado. O
+`.trivyignore` que os listava foi apagado — uma lista de excepções que já não esconde nada é uma
+lista que alguém vai reaproveitar para esconder a próxima.
 
-| CVE | Pacote | Instalado | Corrigido em |
-|---|---|---|---|
-  `CVE-2026-46600` | `golang.org/x/net` | v0.55.0 | 0.56.0
-  `CVE-2026-56852` | `golang.org/x/text` | v0.37.0 | 0.39.0
-  `CVE-2026-56854` | `golang.org/x/crypto` | v0.52.0 | 0.55.0
-  `CVE-2026-84304` | `google.golang.org/grpc` | v1.81.0 | 1.83.1
-  `CVE-2026-84445` | `google.golang.org/grpc` | v1.81.0 | 1.82.2
-  `GHSA-hrxh-6v49-42gf` | `google.golang.org/grpc` | v1.81.0 | 1.82.1
+**O `backend` é o caso a ler com cuidado.** Zero **com correcção disponível**, e **60 HIGH/CRITICAL
+sem correcção** — pacotes do Debian 12 (`perl-base`, `libsqlite3-0`, `zlib1g`, a família
+`util-linux`, `ncurses`) para os quais não há versão corrigida. O gate corre com `--ignore-unfixed`
+de propósito: falhar por uma vulnerabilidade que ninguém pode corrigir é um gate que se desliga na
+semana seguinte. Mas "o backend está a zero" sem esta qualificação é uma frase que engana o próximo
+leitor, e é a única forma honesta de a escrever.
 
-**O que já foi feito.** O binário das imagens oficiais do Caddy (todas as tags, v2.11.4) tinha
-**17**, dos quais 11 no Go stdlib — 1.26.3 quando a correcção está na 1.26.4. O
-`docker/proxy.Dockerfile` constrói o Caddy com Go 1.26.8 e esses 11 desapareceram. A mesma build
-trouxe o plugin `caddy-ratelimit`, que fechou a dívida do rate limit por IP desta secção e da §5.
-
-**Porque é que os 6 ficam.** Estão em dependências transitivas fixadas pelo `go.mod` do **Caddy**,
-não pelo nosso: `x/crypto`, `x/net`, `x/text` e `grpc`. Forçá-las para cima exige um `go.mod` nosso
-a sobrepor as versões do upstream, e as tentativas bateram em conflitos de resolução em cascata
-(`crypto@0.55.0` exige `net@0.57.0`, `grpc@1.83.2` exige `net@0.58.0`). O resultado seria um
-ficheiro de dependências nosso a divergir do do Caddy, que é uma coisa a manter para sempre, contra
-vulnerabilidades em bibliotecas que o Caddy usa e o nosso código não chama directamente.
-
-**Gatilho para reverificar, e é concreto:** a próxima versão do Caddy. Quando sair, muda-se a versão
-no `docker/proxy.Dockerfile` e corre-se
-`trivy image --severity HIGH,CRITICAL --ignore-unfixed stockflow-proxy`. Se o número não for zero, a
-decisão volta à mesa — incluindo a alternativa medida: `nginx:1-alpine` tem 1 CVE, que um
-`apk upgrade` leva a zero, e `limit_req` nativo em vez do plugin.
-
-**O que esta excepção não cobre:** qualquer CVE no `backend`, que está a zero e tem de ficar.
+O gatilho para reavaliar os sem-fix: uma imagem base mais magra (distroless ou Alpine) tira a maior
+parte deles, ao preço de perder o `apt` e de compilar `psycopg` — decisão de quando houver razão, não
+agora.
 
 ## 10. Resposta a incidentes (mínimo)
 

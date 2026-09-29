@@ -218,19 +218,39 @@ jobs:
           docker build -f docker/backend.Dockerfile -t stockflow-backend .
           docker build -f docker/frontend.Dockerfile -t stockflow-frontend .
           docker build -f docker/proxy.Dockerfile -t stockflow-proxy .
+      - name: Segredos dentro das imagens construídas
+        # O gate que faltava, e a razão: o `backend/.env` esteve dentro da
+        # imagem que servia pedidos, com a password do dono da base de dados, e
+        # nenhum dos outros gates o podia ver — o gitleaks olha para o git (e o
+        # ficheiro nunca entrou), o `trivy config` olha para o texto do
+        # Dockerfile, e o `docker history` mostra comandos e não conteúdo.
+        # Este olha para dentro do artefacto, que é onde o segredo estava.
+        run: |
+          for img in stockflow-backend stockflow-frontend stockflow-proxy; do
+            achados=$(docker run --rm --entrypoint sh "$img" -c \
+              'find / -xdev \( -name ".env" -o -name ".env.*" \) ! -name ".env.example" 2>/dev/null')
+            if [ -n "$achados" ]; then
+              echo "::error::$img tem ficheiros de ambiente:"; echo "$achados"; exit 1
+            fi
+            echo "$img: limpo"
+          done
+
       - name: trivy config
         run: |
           docker run --rm -v "$PWD:/repo" -w /repo "$IMG_TRIVY" \
             config --severity HIGH,CRITICAL --exit-code 1 .
       - name: trivy image
-        # `--ignorefile .trivyignore` traz as seis excepções datadas do
-        # SECURITY.md §9. Uma sétima vulnerabilidade faz isto falhar, que é o
-        # ponto de as ter num ficheiro em vez de na memória de alguém.
+        # Sem `--ignorefile`: já não há excepções. As três imagens estão a zero
+        # HIGH/CRITICAL com correcção disponível (SECURITY.md §9, medido).
+        #
+        # `--ignore-unfixed` é deliberado e está justificado no §9: o `backend`
+        # tem dezenas de HIGH/CRITICAL **sem** correcção, em pacotes do Debian
+        # 12, e falhar por vulnerabilidades que ninguém pode corrigir é um gate
+        # que se desliga na semana seguinte.
         run: |
           for img in stockflow-backend stockflow-frontend stockflow-proxy; do
             echo "== $img"
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD/.trivyignore:/.trivyignore:ro" "$IMG_TRIVY" \
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$IMG_TRIVY" \
               image --severity HIGH,CRITICAL --ignore-unfixed \
-              --ignorefile /.trivyignore --exit-code 1 --quiet "$img"
+              --exit-code 1 --quiet "$img"
           done
