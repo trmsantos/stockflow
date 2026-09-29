@@ -105,16 +105,24 @@ livre — `apps.notifications` a importar `apps.inventory.api` dá `BROKEN` e ex
    superuser ou o dono da tabela não seriam sujeitos à política (ADR 0006). O `migrate` corre num
    processo separado, com `stockflow_owner`, cuja credencial não existe no ambiente do servidor web
    nem do worker.
-4. O `TenantMiddleware` (em `apps/accounts/`) resolve o tenant e envolve o `get_response()` inteiro
-   em `tenant_scope(tenant_id)` de `apps/shared/db.py`: uma transação por pedido, com
-   `SELECT set_config('app.tenant_id', %s, true)` como primeira instrução — âmbito de transação,
-   valor parametrizado, nunca interpolado. É a fronteira da RLS (ADR 0005). Pedido sem tenant
-   (login, healthcheck, admin, anónimo) não abre âmbito nem transação: `app.tenant_id` fica NULL,
-   as políticas devolvem zero linhas e nada falha com erro — e devolvem porque a ligação está
-   sujeita a elas (ADR 0006). Ser o último middleware é deliberado —
-   a escrita da sessão (`SESSION_SAVE_EVERY_REQUEST`) e o `AccessAttempt` do axes ficam fora da
-   transação do pedido, onde têm de estar.
-5. View DRF: autentica, aplica `permission_classes`, valida com serializer.
+4. O `TenantMiddleware` (em `apps/accounts/`) **não** consulta a base de dados antes do âmbito — não
+   poderia, porque o `Membership` tem política e uma leitura sem âmbito devolve zero linhas. Lê o
+   `tenant_id` da **sessão** (tabela sem política), abre `tenant_scope(tenant_id)` de
+   `apps/shared/db.py` a envolver o `get_response()` inteiro — uma transação por pedido, com
+   `SELECT set_config('app.tenant_id', %s, true)` como primeira instrução, âmbito de transação,
+   valor parametrizado, nunca interpolado (ADR 0005) — e a **primeira e única** instrução dentro do
+   âmbito antes de entregar o pedido é a query ao `Membership` de (utilizador autenticado, âmbito):
+   zero linhas é 403 com `transaction.set_rollback(True)`. A sessão escolhe o âmbito, a política
+   concede-o (ADR 0007), e a verificação é por pedido — revogar um `Membership` corta o acesso no
+   pedido seguinte, não na sessão seguinte. Pedido sem tenant (login, registo, healthcheck,
+   anónimo) não abre âmbito nem transação, e a dispensa é declarada na view
+   (`tenant_scope_exempt`): o default é ter âmbito. Nesses, `app.tenant_id` fica a NULL, as políticas
+   devolvem zero linhas e nada falha com erro — e devolvem porque a ligação está sujeita a elas
+   (ADR 0006). Ser o último middleware é deliberado — a escrita da sessão
+   (`SESSION_SAVE_EVERY_REQUEST`) e o `AccessAttempt` do axes ficam fora da transação do pedido,
+   onde têm de estar.
+5. View DRF: autentica, aplica `permission_classes`, valida com serializer. O `request.tenant` é o
+   dataclass `TenantContext` de `apps/accounts/api.py`, não a instância do modelo.
 6. View chama **uma** função em `services.py`. O `@transaction.atomic` da função é um savepoint
    dentro da transação do pedido: se o service falhar, desfaz o que escreveu sem derrubar o pedido.
    O evento vai para a tabela `outbox` na mesma transação.

@@ -44,7 +44,16 @@ Skills externas esperadas (ver README): frontend-design, web-design-guidelines, 
 
 ## Regras que não se discutem
 - **Stock é um ledger.** Nunca se altera `quantity` de um `StockLevel`; cria-se um `StockMovement`.
-- Toda a tabela com `tenant_id` tem política RLS na migração que a cria.
+- **A sessão escolhe o âmbito, a política concede-o.** Nada que venha da sessão ou de um header é
+  credencial: é argumento, verificado dentro do âmbito (ADR 0007).
+- **Toda a tabela de dados de um tenant tem política RLS na migração que a cria**, e o predicado
+  compara a coluna que identifica o tenant contra `NULLIF(current_setting('app.tenant_id', true), '')::uuid`.
+  Essa coluna é `tenant_id` em toda a parte exceto em `accounts_tenant`, onde é `id` — a tabela *é* o
+  tenant (ADR 0007). Sem o `NULLIF` a política levanta erro em vez de devolver zero linhas, porque
+  fora do âmbito o GUC é a string vazia e não NULL. As únicas famílias sem política são os dados de
+  referência partilhados (ADR 0005) e `accounts_user`, que tem de ser lido antes de existir âmbito
+  para o login funcionar (ADR 0007); as duas vivem numa lista fechada em `tests/test_db_roles.py`,
+  que falha nos dois sentidos.
 - Onde append-only é regra de negócio, a mesma migração revoga a escrita destrutiva ao role da
   aplicação: `REVOKE UPDATE, DELETE ON <tabela> FROM stockflow_app` (ADR 0006). Hoje aplica-se a
   `inventory_stockmovement` e a mais nada; a lista fechada vive no `APPEND_ONLY` de

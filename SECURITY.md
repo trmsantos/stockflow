@@ -10,7 +10,7 @@ A verificação automática está na skill `security-check`.
 |---|---|
 | Injeção (SQL, comando, template) | ORM + parâmetros; sem `eval`/`subprocess` com input; autoescape |
 | Auth quebrada / sessões roubadas | Sessões server-side, cookies httpOnly+Secure+SameSite, Argon2id |
-| Acesso a dados de outro tenant | Permissões por objeto **e** RLS no Postgres |
+| Acesso a dados de outro tenant | Permissões por objeto **e** RLS no Postgres (duas exceções tratadas — ver §3) |
 | XSS | React escapa por defeito; `dangerouslySetInnerHTML` proibido sem sanitização (DOMPurify); CSP |
 | CSRF | Django CSRF middleware + `X-CSRFToken` no cliente |
 | Fuga de segredos | `.env` ignorado; gitleaks no CI; segredos em runtime |
