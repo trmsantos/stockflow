@@ -47,5 +47,10 @@ backend/staticfiles
 # --- documentação e testes não vão para a imagem de produção -----------------
 docs
 *.md
-!backend/**/*.md
+# Sem `!backend/**/*.md`: era uma re-inclusão larga **depois** das exclusões, e
+# a precedência do `.dockerignore` é a última regra que casa. O `**/.pytest_cache`
+# de cima excluía o directório e esta linha voltava a incluir o que havia lá
+# dentro — medido numa build fresca: `/app/.pytest_cache/README.md` estava na
+# imagem de produção. O único `.md` sob `backend/` era exactamente esse, logo a
+# re-inclusão não protegia nada e só desfazia uma exclusão.
 backend/tests

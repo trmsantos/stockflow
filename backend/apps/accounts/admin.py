@@ -13,8 +13,11 @@ impersonation sem registo, que é o oposto do que se quer — a impersonation de
 suporte, com motivo, expiração e registo, é uma feature com ADR própria.
 
 `is_staff` é o que abre esta porta, e é só para operadores do StockFlow: um
-`Membership` com papel `owner` não tem relação nenhuma com ele. O admin vive num
-path não óbvio, atrás de IP/VPN, e exige MFA (SECURITY.md §5).
+`Membership` com papel `owner` não tem relação nenhuma com ele. O que está à
+frente dela hoje é o rate limit de 5/min no proxy e o lockout do axes
+(SECURITY.md §5). **Não** é MFA, que não está implementada, e **não** é a
+restrição por IP, cujo default não restringe nada — dizê-lo aqui era descrever
+dois controlos que não existem.
 """
 
 from __future__ import annotations

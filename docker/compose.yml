@@ -138,7 +138,7 @@ services:
       # de um comando (ADR 0006).
       DATABASE_URL: postgres://stockflow_owner:${STOCKFLOW_OWNER_PASSWORD:?}@db:5432/${POSTGRES_DB:-stockflow}
       REDIS_URL: redis://redis:6379
-      DJANGO_ADMIN_URL: ${DJANGO_ADMIN_URL:-gestao-interna/}
+      DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
       ALLOWED_HOSTS: localhost
       CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
     depends_on:
@@ -189,7 +189,7 @@ services:
       # credencial do dono (ADR 0006).
       DATABASE_URL: postgres://stockflow_app:${STOCKFLOW_APP_PASSWORD:?}@db:5432/${POSTGRES_DB:-stockflow}
       REDIS_URL: redis://redis:6379
-      DJANGO_ADMIN_URL: ${DJANGO_ADMIN_URL:-gestao-interna/}
+      DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
       ALLOWED_HOSTS: localhost,127.0.0.1,backend
       CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
     depends_on:
@@ -222,7 +222,7 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?}
       DATABASE_URL: postgres://stockflow_app:${STOCKFLOW_APP_PASSWORD:?}@db:5432/${POSTGRES_DB:-stockflow}
       REDIS_URL: redis://redis:6379
-      DJANGO_ADMIN_URL: ${DJANGO_ADMIN_URL:-gestao-interna/}
+      DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
       ALLOWED_HOSTS: localhost
       CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
     depends_on:
@@ -271,6 +271,15 @@ services:
     # `cap_net_bind_service`, que o `cap_drop: [ALL]` retira.
     ports:
       - "${PROXY_PORT:-8090}:8080"
+    # Sem este bloco o Caddyfile lia os seus dois `{$...}` do ambiente de um
+    # contentor que não tinha nenhum, e ficava sempre nos defaults: o
+    # `ADMIN_ALLOW_CIDRS` que o SECURITY.md §5 diz estar "a uma variável de
+    # distância" estava a uma variável **e a uma alteração ao compose**, e o
+    # path do admin não acompanhava o do Django. Medido: `docker inspect` do
+    # contentor do proxy não devolvia variável `ADMIN_*` nenhuma.
+    environment:
+      ADMIN_PATH: ${ADMIN_PATH:-gestao-interna}
+      ADMIN_ALLOW_CIDRS: ${ADMIN_ALLOW_CIDRS:-0.0.0.0/0 ::/0}
     depends_on:
       backend: { condition: service_healthy }
       frontend: { condition: service_healthy }

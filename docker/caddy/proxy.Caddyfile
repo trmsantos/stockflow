@@ -10,6 +10,19 @@
 #      não faz — ele cobre a conta e o par IP+conta, não o IP puro. Vem do
 #      plugin `caddy-ratelimit`, que é a segunda razão pela qual o binário é
 #      construído em `docker/proxy.Dockerfile` em vez de vir da imagem oficial.
+#
+# `ADMIN_PATH` é a **única** fonte de verdade do path do admin, e o compose
+# alimenta com ela os dois lados: este ficheiro e o `DJANGO_ADMIN_URL` do
+# Django. Esteve fixo aqui em três sítios enquanto o Django o lia do ambiente,
+# e mudar a variável largava os três em silêncio — o rate limit de 5/min
+# deixava de casar, o `ADMIN_ALLOW_CIDRS` deixava de casar, e o path real caía
+# no `handle` do frontend, ou seja na SPA. Um "path não óbvio" que só é óbvio
+# para quem lê três ficheiros commitados não é um controlo.
+#
+# **Sem barras**: o `admin_path()` do Django normaliza `gestao-interna/` e
+# `/gestao-interna/`, mas aqui uma barra a mais dá `/gestao-interna//*` e o
+# matcher deixa de casar. O `.env.example` di-lo, e a divergência entre os dois
+# lados é apanhada pela asserção de 429 no login do admin do job `stack` do CI.
 {
 	admin off
 	# Em dev não há TLS: o HSTS do Django ficaria colado ao browser para todo o
@@ -50,7 +63,7 @@
 		# minuto — o admin é para operadores, não para tráfego.
 		zone admin {
 			match {
-				path /gestao-interna/login/ /gestao-interna/login
+				path /{$ADMIN_PATH:gestao-interna}/login/ /{$ADMIN_PATH:gestao-interna}/login
 			}
 			key {remote_host}
 			events 5
@@ -74,7 +87,7 @@
 	# de distância, em vez de uma alteração ao ficheiro no dia do incidente.
 	# **Produção tem de definir `ADMIN_ALLOW_CIDRS`** — está escrito no §5.
 	@admin_de_fora {
-		path /gestao-interna/*
+		path /{$ADMIN_PATH:gestao-interna}/*
 		not remote_ip {$ADMIN_ALLOW_CIDRS:0.0.0.0/0 ::/0}
 	}
 	handle @admin_de_fora {
@@ -115,7 +128,7 @@
 	}
 
 	# ---- API e admin: para o Django ---------------------------------------
-	@backend path /api/* /healthz /gestao-interna/* /static/*
+	@backend path /api/* /healthz /{$ADMIN_PATH:gestao-interna}/* /static/*
 	handle @backend {
 		reverse_proxy backend:8000 {
 			header_up X-Forwarded-Proto {scheme}

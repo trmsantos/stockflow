@@ -128,7 +128,9 @@ jobs:
           DJANGO_ADMIN_URL: gestao-interna/
           REDIS_URL: redis://127.0.0.1:6379
         # O `check --deploy` não abre ligação à base de dados. Zero warnings é a
-        # barra (SECURITY.md §2), e é por isso que o grep é por qualquer `W0`.
+        # barra (SECURITY.md §2), e quem a impõe é o `grep -q "no issues"` do
+        # fim, que é o último comando e portanto o que fixa o exit code — o
+        # grep por `security\.W[0-9]+` acima é só para o erro sair nomeado.
         run: |
           out=$(uv run manage.py check --deploy 2>&1)
           echo "$out"
@@ -265,8 +267,16 @@ jobs:
           logs=$(docker compose --env-file backend/.env -f docker/compose.yml logs worker 2>&1)
           echo "$logs" | grep -q "Cannot connect" \
             && { echo "::error::o worker não liga ao broker"; echo "$logs" | tail -5; exit 1; }
-          echo "$logs" | grep -qE "ready|celery@" \
-            || { echo "::error::o worker não anunciou estar pronto"; echo "$logs" | tail -20; exit 1; }
+          # `Connected to redis` e **não** `ready|celery@`: o `celery@` aparece
+          # no banner de arranque, impresso antes de qualquer tentativa de
+          # ligação ao broker (`-------------- celery@<host> v5.6.3`). Medido
+          # sobre o log real cortado imediatamente antes do "Connected to":
+          # a alternativa `celery@` casava e o CI declarava "vivo e ligado ao
+          # broker". Qualquer falha depois do banner — base de dados em baixo,
+          # bloqueio no mingle, crash-loop que o `restart: unless-stopped`
+          # mantém em `running` — passava por aqui.
+          echo "$logs" | grep -q "Connected to redis" \
+            || { echo "::error::o worker não ligou ao broker"; echo "$logs" | tail -20; exit 1; }
           echo "worker vivo e ligado ao broker"
 
       - name: Headers de segurança no documento
@@ -310,10 +320,25 @@ jobs:
             done
             echo "$n"
           }
-          # admin: 5/min -> dos 9 pedidos, pelo menos 3 têm de ser 429
-          a=$(conta_429 /gestao-interna/login/ 9)
-          [ "$a" -ge 3 ] || { echo "::error::admin sem rate limit ($a de 9 foram 429)"; exit 1; }
-          echo "  admin: $a/9 travados"
+          # A zona `admin` do Caddyfile casa as **duas** formas do path, com e
+          # sem barra final, e é a forma sem barra que lá faltava e foi
+          # acrescentada — logo é essa que se testa primeiro, com o contador
+          # fresco: 5/min, dos 9 pedidos pelo menos 3 têm de ser 429. Se a
+          # forma sem barra saísse da zona, este número era 0.
+          a=$(conta_429 /gestao-interna/login 9)
+          [ "$a" -ge 3 ] || { echo "::error::admin (sem barra) sem rate limit ($a de 9)"; exit 1; }
+          echo "  admin sem barra: $a/9 travados"
+          # A seguir a forma com barra. As duas partilham zona e chave
+          # (`{remote_host}`), logo o contador já está esgotado e o esperado são
+          # 9 de 9 — o que este número prova é que as duas formas caem na
+          # **mesma** zona, e não que a segunda tem limite próprio.
+          b=$(conta_429 /gestao-interna/login/ 9)
+          [ "$b" -ge 3 ] || { echo "::error::admin (com barra) sem rate limit ($b de 9)"; exit 1; }
+          echo "  admin com barra: $b/9 travados (contador partilhado)"
+          # TODO(sessão da autenticação): a zona `login` do Caddyfile cobre
+          # `/api/v1/auth/login` nas duas formas e **não tem asserção nenhuma**
+          # aqui, porque os endpoints ainda não existem. É a regressão que o
+          # comentário da zona documenta; a asserção entra com os endpoints.
 
       - name: Logs em caso de falha
         if: failure()
@@ -360,12 +385,23 @@ jobs:
         run: ./docker/scan-artefactos.sh stockflow-backend stockflow-frontend stockflow-proxy
 
       - name: trivy config
+        # `--ignorefile /dev/null`: o CWD aqui **é** o repositório montado, e o
+        # trivy lê o `.trivyignore` do CWD sem lhe ser pedido. Hoje não existe
+        # nenhum, mas um ficheiro commitado amanhã silenciava este gate e o
+        # local ao mesmo tempo, e nada o detectava. Medido: com um
+        # `.trivyignore` a listar `AVD-DS-0002`, o mesmo comando passa de
+        # `exit 1` a `exit 0`.
         run: |
           docker run --rm -v "$PWD:/repo" -w /repo "$IMG_TRIVY" \
-            config --severity HIGH,CRITICAL --exit-code 1 .
+            config --ignorefile /dev/null --severity HIGH,CRITICAL --exit-code 1 .
       - name: trivy image
-        # Sem `--ignorefile`: já não há excepções. As três imagens estão a zero
-        # HIGH/CRITICAL com correcção disponível (SECURITY.md §9, medido).
+        # `--ignorefile /dev/null`, e não a **ausência** do flag: omiti-lo não
+        # significa "sem excepções", significa "as excepções que estiverem no
+        # CWD". Este passo estava imune por acidente (o contentor não monta o
+        # repositório, logo o CWD é `/`) e deixava de o estar no dia em que
+        # alguém lhe acrescentasse `-v "$PWD:/repo"` por simetria com o passo
+        # acima. As três imagens estão a zero HIGH/CRITICAL com correcção
+        # disponível (SECURITY.md §9, medido).
         #
         # `--ignore-unfixed` é deliberado e está justificado no §9: o `backend`
         # tem dezenas de HIGH/CRITICAL **sem** correcção, em pacotes do Debian
@@ -375,6 +411,6 @@ jobs:
           for img in stockflow-backend stockflow-frontend stockflow-proxy; do
             echo "== $img"
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$IMG_TRIVY" \
-              image --severity HIGH,CRITICAL --ignore-unfixed \
-              --exit-code 1 --quiet "$img"
+              image --ignorefile /dev/null --severity HIGH,CRITICAL \
+              --ignore-unfixed --exit-code 1 --quiet "$img"
           done

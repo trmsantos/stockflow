@@ -74,8 +74,12 @@ export default tseslint.config(
     // acusa o `readFileSync` do nosso script de lint de CSS, que lê ficheiros
     // que ele próprio encontrou: não há input não confiável em nenhum dos dois.
     //
-    // Fora destas pastas as duas continuam activas, e todas as outras regras do
-    // plugin são erro em qualquer sítio.
+    // Fora destas pastas as duas continuam activas. As outras regras do plugin
+    // ficam a **warn** (é o default do `security.configs.recommended`, medido:
+    // uma sonda com `eval` dá `warning security/detect-eval-with-expression`),
+    // e o que as torna fatais é o `--max-warnings 0` do script `lint`. O
+    // comportamento é o que se quer; o que estava errado era esta frase dizer
+    // "erro" e esconder que a barra vem toda do flag.
     files: ["src/dev/**/*.{ts,tsx}", "scripts/**/*.mjs"],
     rules: {
       "security/detect-object-injection": "off",
@@ -84,7 +88,11 @@ export default tseslint.config(
   },
   pluginQuery.configs["flat/recommended"],
   {
-    files: ["**/*.{ts,tsx}"],
+    // `mts`/`cts` incluídos: os configs partilhados do typescript-eslint
+    // apanham-nos, mas era este bloco que fornecia o `projectService`, e sem
+    // ele um `.mts` fazia o eslint **crashar** (exit 2) em vez de o lintar.
+    // Falhava fechada, logo não era bypass — era uma falha confusa.
+    files: ["**/*.{ts,tsx,mts,cts}"],
     languageOptions: {
       ecmaVersion: 2023,
       globals: globals.browser,

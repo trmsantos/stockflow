@@ -107,7 +107,17 @@ PY
 
   log "Django check --deploy"
   if have uv && [[ -f manage.py ]]; then
-    out=$(DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-config.settings.prod}" uv run manage.py check --deploy 2>&1 || true)
+    # `config.settings.prod` fixo, e **não** `${DJANGO_SETTINGS_MODULE:-...}`:
+    # este gate existe para afirmar a configuração de produção, logo não pode
+    # ser o ambiente a escolher o que ele verifica. Medido: com
+    # `DJANGO_SETTINGS_MODULE=config.settings.dev` exportado, o gate reportava
+    # "5 issue(s)" sobre as settings de dev e não sobre as de produção — a
+    # mesma classe de erro do `.trivyignore` lido do CWD, uma verificação a
+    # correr no contexto que o mecanismo avaliado escolhe. Imprime-se o módulo
+    # para a cobertura ficar no relatório e não na suposição de quem o lê.
+    modulo="config.settings.prod"
+    out=$(DJANGO_SETTINGS_MODULE="$modulo" uv run manage.py check --deploy 2>&1 || true)
+    note "  módulo verificado: $modulo"
     echo "$out" > "$REPORT_DIR/django-check.txt"
     # O SECURITY.md §2 exige `check --deploy` **sem warnings**, ponto — não "sem
     # warnings de segurança". A versão anterior contava só `security.*`, logo um
@@ -216,13 +226,6 @@ if run_if docker; then
     # dados, e **nenhum** dos outros gates o podia ver. O gitleaks olha para o
     # git (e o ficheiro nunca entrou), o `trivy config` olha para o texto do
     # Dockerfile, a verificação de `COPY .*\.env` não casa com `COPY backend/`,
-    # e o `docker history` mostra comandos e não conteúdo. Este olha para dentro
-    # do artefacto construído, que é onde o segredo estava.
-    # O gate que faltava, e a razão de ele existir: o `backend/.env` esteve
-    # dentro da imagem que servia pedidos, com a password do dono da base de
-    # dados, e **nenhum** dos outros gates o podia ver. O gitleaks olha para o
-    # git (e o ficheiro nunca entrou), o `trivy config` olha para o texto do
-    # Dockerfile, a verificação de `COPY .*\.env` não casa com `COPY backend/`,
     # e o `docker history` mostra comandos e não conteúdo.
     #
     # Procura por **nome de ficheiro e por `ENV`**, e não por conteúdo, porque
@@ -246,7 +249,15 @@ if run_if docker; then
 
     log "trivy (config)"
     if have trivy; then
-      trivy config --severity HIGH,CRITICAL -f json -o "$REPORT_DIR/trivy-config.json" . >/dev/null 2>&1
+      # `--ignorefile /dev/null` e não a ausência do flag: sem ele o trivy lê
+      # o `.trivyignore` do CWD **sem lhe ser pedido**, e o CWD aqui é a raiz
+      # do repositório (`cd "$ROOT"`, no topo). Foi assim que reportei 0 CVEs
+      # quando havia 6: a "confirmação independente" correu no sítio onde o
+      # ficheiro de supressão vivia. Medido agora num directório de sonda: com
+      # um `.trivyignore` a listar `AVD-DS-0002`, o gate passava de 1 misconfig
+      # para 0. A lição só conta se estiver no gate e não na prosa.
+      trivy config --ignorefile /dev/null --severity HIGH,CRITICAL \
+        -f json -o "$REPORT_DIR/trivy-config.json" . >/dev/null 2>&1
       n=$(python3 -c "import json,os;d=json.load(open(os.environ['REPORT_DIR']+'/trivy-config.json'));print(sum(len(r.get('Misconfigurations',[])) for r in d.get('Results',[])))" 2>/dev/null || echo INVALIDO)
       note "  trivy config: $n misconfig HIGH/CRITICAL"; count_sev 0 "$n" 0 0
     else skip trivy "https://aquasecurity.github.io/trivy"; fi

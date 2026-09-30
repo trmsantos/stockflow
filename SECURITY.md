@@ -183,19 +183,30 @@ devolve zero linhas — falha fechada.
   `database.py:247` só lhe dá valor depois de já ter chamado `get_failures`). Progressão a sério exige
   contar as falhas fora do axes, com TTL próprio, porque um único valor não pode ser janela curta de
   contagem e bloqueio longo ao mesmo tempo. Fica para ADR; até lá o que vale é a linha acima.
-- MFA (TOTP) disponível; obrigatório para admins.
 - Sessões expiram em 14 dias inativas; rotação de session key após login.
 - Permissão por objeto em todas as views que recebem um `pk`: `has_object_permission` verifica
   `obj.tenant_id == request.tenant.id` **antes** de qualquer outra regra.
-- Admin Django num path não óbvio (vem do ambiente, `DJANGO_ADMIN_URL`), com rate limit de
-  **5 tentativas/minuto por IP** no proxy — o `django-axes` trava brute-force de *uma* conta e não
-  trava varrer contas, e quem entra no admin lê o `accounts_user` inteiro, de todos os tenants.
+- Admin Django num path fora do default, com rate limit de **5 tentativas/minuto por IP** no
+  proxy — o `django-axes` trava brute-force de *uma* conta e não trava varrer contas, e quem entra
+  no admin lê o `accounts_user` inteiro, de todos os tenants.
+- **O path não é um controlo, é redução de exposição a varrimento automático.** Está commitado,
+  e quem tem o repositório sabe-o. O que se exige dele é só isto: que seja **uma** variável, e que
+  mudá-la mude os dois lados. `ADMIN_PATH` é a fonte de verdade — o compose alimenta com ela o
+  `DJANGO_ADMIN_URL` do Django e o `docker/caddy/proxy.Caddyfile`. Esteve fixo no proxy em três
+  sítios (a zona de rate limit, o matcher de CIDRs e a rota para o backend) enquanto o Django o lia
+  do ambiente: mudar a variável largava os três em silêncio e o path real caía na SPA. Medido
+  depois da correcção: `ADMIN_PATH=painel-xyz` dá 4 ocorrências de `/painel-xyz` na configuração
+  adaptada do Caddy e zero do valor antigo. Sem barras — o `admin_path()` do Django normaliza-as,
+  o matcher do Caddy não.
 - **A restrição por IP/VPN do admin é plumbing, não um controlo activo.** O proxy tem o matcher e o
-  `handle`, ligados pela variável `ADMIN_ALLOW_CIDRS` (`docker/caddy/proxy.Caddyfile`), e o default
-  não restringe nada — em desenvolvimento não pode, porque o Docker Desktop faz NAT e o IP do host é
+  `handle`, ligados pela variável `ADMIN_ALLOW_CIDRS` (`docker/caddy/proxy.Caddyfile`), que o
+  serviço `proxy` do compose passa ao contentor — não passava: o serviço não tinha bloco
+  `environment` nenhum, logo a variável ficava sempre no default por muito que alguém a definisse
+  no `.env`, e "a uma variável de distância" era na verdade a uma variável **e** a uma alteração ao
+  compose. O default não restringe nada — em desenvolvimento não pode, porque o Docker Desktop faz NAT e o IP do host é
   imprevisível. **Produção tem de definir `ADMIN_ALLOW_CIDRS`**, ou pôr a restrição no orquestrador.
-  Enquanto isso não acontecer, o que protege o admin é o path não óbvio, o rate limit e o lockout —
-  e não a rede.
+  Enquanto isso não acontecer, o que protege o admin é o rate limit e o lockout — não a rede, e
+  não o path, que é só ruído a menos no varrimento.
 - MFA (TOTP) obrigatória para admins: **não implementada**, dívida nomeada. Sem ela, o que sobra
   contra credenciais roubadas de um operador é o lockout.
 
@@ -284,20 +295,65 @@ pedidos e **nenhum** dos outros gates o podia ver: o gitleaks olha para o git (e
 entrou), o `trivy config` olha para o texto do Dockerfile, a verificação de `COPY .*\.env` não casa
 com `COPY backend/`, e o `docker history` mostra comandos e não conteúdo.
 
-Duas decisões de desenho que o tornam útil em vez de ruidoso, e as duas foram aprendidas a errar:
+**Olha de fora, e isso é a correcção de duas versões que olhavam de dentro.** Faz
+`docker create` + `docker export` e varre o tar **no host**. As duas versões anteriores
+declararam-se limpas sobre imagens que nunca abriram:
 
-- **Varre o que nós pusemos na imagem** (`/app`, sem `.venv` nem `staticfiles`) mais um punhado de
-  caminhos absolutos que nunca têm razão de existir. A versão que varria o sistema de ficheiros
-  inteiro devolvia ~60 falsos positivos por imagem — templates de password do Django, ficheiros do
-  PAM, módulos Perl do Debconf. Um gate que grita a cada corrida é um gate que alguém desliga.
-- **Procura por nome, por conteúdo fixo e por `ENV`, nunca por entropia.** Medido: o
+- `docker run --entrypoint sh … find /app`: o objecto auditado fornecia o shell, o `USER`, o
+  `WORKDIR` e a disposição de directórios da sua própria auditoria. Medido: `/app` **não existe** no
+  frontend nem no proxy (o que é nosso está em `/srv` e `/etc/caddy`), e o `USER 10001` faz o
+  `find /root` sair em EACCES, engolido pelo `2>/dev/null`. O gate dizia `ok` sobre **duas das três**
+  imagens que o CI lhe manda varrer sem ter aberto um ficheiro nelas.
+- `docker save | tar -tf -`: lista o **invólucro OCI** (`blobs/sha256/…`, `index.json`,
+  `oci-layout`), não os caminhos dos ficheiros, que estão dentro de cada blob. Não podia casar nada,
+  e imprimia "varrido pelo tar — nada encontrado" como se tivesse varrido.
+
+É a mesma classe de erro do `.trivyignore` lido do CWD, na forma mais pura: **a verificação a correr
+no contexto que o mecanismo avaliado escolhe.** O `docker export` achata o sistema de ficheiros num
+tar cujos membros *são* os caminhos reais — sem shell, sem depender do `USER`, sem supor onde a
+imagem guarda o que é nosso.
+
+Três decisões de desenho, as três medidas:
+
+- **Nomes: a imagem inteira, sem âmbito.** Contra as 6 imagens reais o padrão dá exactamente um
+  casamento, o `app/.env.example`, que é o template e está excluído. `.env`, `.pgpass` ou
+  `id_ed25519` não existem numa imagem base.
+- **Conteúdo: só o que nós pusemos na imagem** (`/app` sem `.venv` nem `staticfiles`, `/srv`,
+  `/etc/caddy`, `/root`, `/home`). Com âmbito por medição: `PRIVATE KEY-----` aparece **1 vez no
+  `stockflow-caddy-bin`, que tem 13 ficheiros** — está dentro do binário Go, que traz a etiqueta PEM
+  como literal — e 13 vezes no backend, todas na `.venv`. `*.key` e `*.pem` ficam fora do tier de
+  nomes pela mesma razão: dariam 152 falsos positivos no backend e 123 no proxy. Um gate que grita a
+  cada corrida é um gate que alguém desliga.
+- **Por nome, por conteúdo fixo e por `ENV`, nunca por entropia.** Medido: o
   `trivy image --scanners secret` devolve zero contra uma imagem de sonda com cinco ficheiros de
   segredo e um `ENV`. E o nome da variável não basta — o `MIGRATION_DATABASE_URL` que esteve dentro
-  da imagem não tem `SECRET` nem `PASSWORD` no nome, por isso há uma passagem pelo padrão de
-  credencial em DSN (`esquema://utilizador:password@host`), com os placeholders filtrados.
+  da imagem não tem `SECRET` nem `PASSWORD` no nome, e nem o `FIELD_ENCRYPTION_KEY` (§3) nem o
+  `STOCKFLOW_NIF_PEPPER` casavam o padrão anterior. São os dois segredos cuja rotação é mais cara de
+  todas; hoje casam.
 
-Uma imagem sem shell (um stage com só o binário) é varrida pelo tar: a versão que fazia
-`docker run --entrypoint sh` e engolia o `exit 127` dizia "limpa" sem ter corrido.
+**Nunca diz "limpa" sem ter varrido.** Criar o contentor, exportar, listar o tar e extrair o âmbito
+são quatro passos que podem falhar, e cada um sai `2`, que o `security_check.sh` traduz em
+INCONCLUSIVO e não em PASS. Um nome de ficheiro com carácter de controlo também sai `2`, em vez de
+partir a lista em silêncio. E cada imagem imprime a cobertura que teve:
+
+| imagem | membros | ficheiros no âmbito de conteúdo |
+|---|---|---|
+| `stockflow-backend` (= `worker`, `migrate`) | 18 190 | 63 |
+| `stockflow-frontend` | 540 | 8 |
+| `stockflow-proxy` | 905 | 1 |
+| `stockflow-caddy-bin` | 13 | 0 |
+
+O `0` do `caddy-bin` é real e é visível de propósito: a imagem é o binário e treze entradas de
+`/dev` e `/etc`, e o tier de nomes cobre-a inteira. O CI constrói e varre três imagens; o `worker` e
+o `migrate` do compose saem do mesmo `docker/backend.Dockerfile` e têm as **camadas idênticas** ao
+backend (medido: o mesmo hash da lista de camadas), logo os três tags são o mesmo conteúdo.
+
+**O que fica de fora, e quando deixa de ser defensável.** `/app/.venv` é cadeia de fornecimento, que
+é o `pip-audit` e o `trivy image`. `/app/staticfiles` hoje não é alcançável por HTTP — medido,
+`/static/` dá 404 pelo proxy, porque não há whitenoise e o Django não serve estáticos com
+`DEBUG=False`. No dia em que aparecer whitenoise ou uma static view, um ficheiro em `staticfiles`
+passa a ser legível pela rede **e** continua podado deste scan: essa é a linha a reavaliar, e não o
+`.venv`.
 
 ## 10. Resposta a incidentes (mínimo)
 

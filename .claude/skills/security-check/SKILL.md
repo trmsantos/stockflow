@@ -17,8 +17,13 @@ bash .claude/skills/security-check/scripts/security_check.sh [--fix] [--only bac
 
 O script:
 - Instala as ferramentas em falta com `uv tool install` / `pnpm dlx` (não polui o projeto).
-- Corre gitleaks, bandit, semgrep, pip-audit, `manage.py check --deploy`, import-linter,
-  pnpm audit, eslint-plugin-security, hadolint e trivy (se houver Dockerfiles).
+- Corre gitleaks, bandit, semgrep (python e react), pip-audit, `manage.py check --deploy`,
+  import-linter, pnpm audit, um grep de padrões perigosos e, se houver Dockerfiles, hadolint,
+  `trivy config` e `docker/scan-artefactos.sh`.
+- **Não** corre `eslint-plugin-security` nem `trivy image`, apesar de as duas coisas existirem no
+  projeto: o eslint corre pelo `pnpm lint` (com `--max-warnings 0`) e o `trivy image` corre no job
+  `docker` do CI. Quem lê esta lista tem de poder confiar nela — uma regressão de CVE numa imagem é
+  invisível a este script, e o `CLAUDE.md` faz dele o critério de PASS.
 - Escreve relatórios em `.security-reports/` (JSON + resumo) e imprime um sumário por severidade.
 - Sai com código ≠ 0 se houver findings HIGH ou CRITICAL.
 

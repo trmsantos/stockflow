@@ -116,10 +116,16 @@ SELECT c.relname,
        has_table_privilege(%s, c.oid, 'DELETE')
   FROM pg_class c
  WHERE c.relnamespace = 'public'::regnamespace
-   AND c.relkind = 'r'
+   AND c.relkind IN ('r', 'p')
  ORDER BY c.relname
 """
 
+# `relkind IN ('r', 'p')` e não só `'r'`: uma tabela **particionada** é `'p'`, e
+# com o filtro antigo escapava a esta varredura e às duas igualdades de conjuntos
+# que dependem dela. Ou seja: uma tabela particionada com `tenant_id` e sem
+# política RLS passava, em silêncio, no gate que existe precisamente para isso.
+# Não há nenhuma hoje; o custo de fechar era uma palavra e o modo de falha era
+# um buraco invisível no gate de maior valor do repositório.
 _VARREDURA_DE_POLITICAS = """
 SELECT c.relname,
        EXISTS (
@@ -135,7 +141,7 @@ SELECT c.relname,
        c.relforcerowsecurity
   FROM pg_class c
  WHERE c.relnamespace = 'public'::regnamespace
-   AND c.relkind = 'r'
+   AND c.relkind IN ('r', 'p')
  ORDER BY c.relname
 """
 
@@ -225,7 +231,7 @@ def test_a_app_nao_e_dona_de_nada_no_esquema_public() -> None:
               FROM pg_class c
               JOIN pg_roles r ON r.oid = c.relowner
              WHERE c.relnamespace = 'public'::regnamespace
-               AND c.relkind = 'r'
+               AND c.relkind IN ('r', 'p')
             """
         )
     }
