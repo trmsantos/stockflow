@@ -324,21 +324,11 @@ jobs:
           docker build -f docker/frontend.Dockerfile -t stockflow-frontend .
           docker build -f docker/proxy.Dockerfile -t stockflow-proxy .
       - name: Segredos dentro das imagens construídas
-        # O gate que faltava, e a razão: o `backend/.env` esteve dentro da
-        # imagem que servia pedidos, com a password do dono da base de dados, e
-        # nenhum dos outros gates o podia ver — o gitleaks olha para o git (e o
-        # ficheiro nunca entrou), o `trivy config` olha para o texto do
-        # Dockerfile, e o `docker history` mostra comandos e não conteúdo.
-        # Este olha para dentro do artefacto, que é onde o segredo estava.
-        run: |
-          for img in stockflow-backend stockflow-frontend stockflow-proxy; do
-            achados=$(docker run --rm --entrypoint sh "$img" -c \
-              'find / -xdev \( -name ".env" -o -name ".env.*" \) ! -name ".env.example" 2>/dev/null')
-            if [ -n "$achados" ]; then
-              echo "::error::$img tem ficheiros de ambiente:"; echo "$achados"; exit 1
-            fi
-            echo "$img: limpo"
-          done
+        # O mesmo script que o `security_check.sh` chama, porque a versão
+        # duplicada já tinha divergido: o CI ficou com um padrão que só via
+        # `.env*` enquanto o local via vinte. Um gate com duas implementações é
+        # um gate com uma implementação e um bug.
+        run: ./docker/scan-artefactos.sh stockflow-backend stockflow-frontend stockflow-proxy
 
       - name: trivy config
         run: |

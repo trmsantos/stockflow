@@ -218,22 +218,30 @@ if run_if docker; then
     # Dockerfile, a verificação de `COPY .*\.env` não casa com `COPY backend/`,
     # e o `docker history` mostra comandos e não conteúdo. Este olha para dentro
     # do artefacto construído, que é onde o segredo estava.
+    # O gate que faltava, e a razão de ele existir: o `backend/.env` esteve
+    # dentro da imagem que servia pedidos, com a password do dono da base de
+    # dados, e **nenhum** dos outros gates o podia ver. O gitleaks olha para o
+    # git (e o ficheiro nunca entrou), o `trivy config` olha para o texto do
+    # Dockerfile, a verificação de `COPY .*\.env` não casa com `COPY backend/`,
+    # e o `docker history` mostra comandos e não conteúdo.
+    #
+    # Procura por **nome de ficheiro e por `ENV`**, e não por conteúdo, porque
+    # medido: o `trivy image --scanners secret` devolve zero contra uma imagem de
+    # sonda com cinco ficheiros de segredo e um `ENV`. Ele depende de entropia, e
+    # um gate que depende de heurística não é um gate — a primeira versão disto
+    # só procurava `.env*` e deixou passar a mesma sonda inteira.
+    # Delegado em `docker/scan-artefactos.sh`, que o job `docker` do CI também
+    # chama. Viveu duplicado aqui e no CI durante uma hora e as duas cópias já
+    # tinham divergido — o CI ficou com um padrão que só via `.env*`. Um gate
+    # com duas implementações é um gate com uma implementação e um bug.
     log "Segredos dentro das imagens construídas"
-    imagens=$(docker images --format '{{.Repository}}' 2>/dev/null | grep -E '^stockflow-' | sort -u || true)
-    if [[ -z "$imagens" ]]; then
-      skip "segredos-em-imagem" "nenhuma imagem stockflow-* construída (corre docker compose build)"
+    if [[ -x "$ROOT/docker/scan-artefactos.sh" ]]; then
+      saida=$("$ROOT/docker/scan-artefactos.sh" 2>&1); estado=$?
+      echo "$saida" | sed 's/^/  /' | tee -a "$SUMMARY"
+      if (( estado == 1 )); then count_sev 1 0 0 0
+      elif (( estado != 0 )); then broken "segredos-em-imagem" "nenhuma imagem construída"; fi
     else
-      achados=0
-      for img in $imagens; do
-        encontrado=$(docker run --rm --entrypoint sh "$img" -c \
-          'find / -xdev \( -name ".env" -o -name ".env.*" \) ! -name ".env.example" 2>/dev/null' 2>/dev/null || true)
-        if [[ -n "$encontrado" ]]; then
-          note "  CRITICAL $img tem ficheiros de ambiente:"
-          echo "$encontrado" | sed 's/^/    /' | tee -a "$SUMMARY"
-          achados=$((achados+1))
-        fi
-      done
-      if (( achados > 0 )); then count_sev "$achados" 0 0 0; else note "  ok ($(echo "$imagens" | wc -w | tr -d ' ') imagens)"; fi
+      skip "segredos-em-imagem" "docker/scan-artefactos.sh não encontrado"
     fi
 
     log "trivy (config)"
