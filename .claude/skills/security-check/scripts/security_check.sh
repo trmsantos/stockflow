@@ -52,6 +52,53 @@ count_sev() { # $1=critical $2=high $3=medium $4=low
   CRIT=$((CRIT+n[0])); HIGH=$((HIGH+n[1])); MED=$((MED+n[2])); LOW=$((LOW+n[3]))
 }
 
+# --------------------------------------------------- supressões implícitas
+#
+# O primeiro gate de todos, e existe por causa do pior erro desta sessão: eu
+# reportei **0 CVEs quando havia 6**, porque o `trivy` lê o `.trivyignore` do
+# directório actual **sem lhe ser pedido**, e a minha "confirmação independente"
+# correu na raiz do repositório com o ficheiro ainda lá. O mecanismo que eu
+# avaliava silenciou o achado que eu verificava.
+#
+# O `trivy` está tapado com `--ignorefile /dev/null`, mas ele não é o único a
+# ler configuração implícita do CWD: o `gitleaks` lê `.gitleaks.toml` e
+# `.gitleaksignore`, o `semgrep` lê `.semgrepignore`, o `hadolint` lê
+# `.hadolint.yaml`, o `bandit` lê `.bandit`. Os flags para as desligar são
+# diferentes em cada ferramenta e algumas não têm nenhum, por isso a resposta é
+# uma só e cobre também a ferramenta que alguém acrescentar amanhã: **um
+# ficheiro de supressão que ninguém declarou é um achado**, não um default.
+#
+# Isto não proíbe excepções. Proíbe excepções invisíveis — a regra é a mesma do
+# CLAUDE.md para o lint: comentário e ADR, e aqui uma linha no SECURITY.md §9.
+#
+# A severidade certa aqui não é FAIL nem MEDIUM: é **INCONCLUSIVO**. Um ficheiro
+# de supressão que este gate não contabilizou não significa "há uma
+# vulnerabilidade", significa "não sei dizer-te o que os gates seguintes
+# cobriram" — que é precisamente o que o terceiro estado existe para dizer. Um
+# FAIL seria uma afirmação que não tenho, e um MEDIUM passava com verde.
+#
+# `DECLARADAS` é a porta para uma excepção legítima, e está vazia. Uma entrada
+# aqui é visível, revista no diff e obriga a um comentário — ao contrário do
+# ficheiro que simplesmente existe no directório e que ninguém vê.
+log "Supressões implícitas de ferramentas"
+DECLARADAS=()
+supressoes=$(cd "$ROOT" && git ls-files --cached --others --exclude-standard 2>/dev/null \
+  | grep -E '(^|/)(\.trivyignore|trivy\.ya?ml|\.semgrepignore|\.gitleaksignore|\.gitleaks\.toml|\.hadolint\.ya?ml|\.bandit|bandit\.ya?ml|\.snyk|\.nancy-ignore)$' || true)
+nao_declaradas=""
+if [[ -n "$supressoes" ]]; then
+  while IFS= read -r f; do
+    declarada=0
+    for d in ${DECLARADAS[@]+"${DECLARADAS[@]}"}; do [[ "$f" == "$d" ]] && declarada=1; done
+    if (( declarada )); then note "  supressão declarada: $f"
+    else note "  [ERRO] supressão NÃO declarada: $f"; nao_declaradas="$nao_declaradas $f"; fi
+  done <<< "$supressoes"
+fi
+if [[ -n "$nao_declaradas" ]]; then
+  broken "supressoes-implicitas" "ficheiro(s) que podem silenciar gates:$nao_declaradas"
+else
+  note "  nenhuma (as ferramentas correm sem excepções herdadas do directório)"
+fi
+
 # ---------------------------------------------------------------- secrets
 if run_if secrets; then
   log "Segredos (gitleaks)"

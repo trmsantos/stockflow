@@ -111,9 +111,15 @@ Regras:
 - Uma cor de acento. Gradientes só se a identidade os pedir explicitamente; nunca como default.
 - Cinzentos com um ligeiro tom (o `0.002–0.01` de chroma acima), nunca `#888` puro.
 - **Contraste mínimo WCAG AA: 4.5:1 texto, 3:1 UI, verificado contra a pior das três superfícies**
-  — que é o `surface-2` nos dois modos, não o `background`. Os valores acima dão 4.80–4.84 para
-  texto e 3.21–3.22 para elementos de UI: margem deliberada, para um arredondamento não fazer
-  falhar a barra.
+  — que é o `surface-2` nos dois modos, não o `background`. Medido: **4.800–4.835** para texto e
+  **3.208–3.220** para elementos de UI, nos dois modos. A margem é deliberada e estreita, para um
+  arredondamento não fazer falhar a barra — e é por isso que não se mede a olho.
+- **Isto é um gate, não uma promessa.** O `frontend/scripts/check-design-tokens.mjs` recalcula o
+  gamut e o contraste a cada `pnpm lint`, deriva os papéis do **nome** do token (um
+  `--color-info-border` novo entra sozinho na regra dos 3:1) e compara esta secção com o
+  `tokens.css` token a token. Até aqui as três afirmações desta secção eram prosa: verdadeiras
+  quando escritas, e sem nada que as mantivesse verdadeiras. Foi assim que os dois `warning` do
+  modo escuro estiveram fora do gamut sem ninguém dar por isso.
 - **Todos os valores estão dentro do gamut sRGB**, verificado com tolerância de 1e-6 e não com uma
   margem de arredondamento: o `warning` do modo escuro estava a `-0.0011` no canal azul e uma
   tolerância de `0.002` deixava-o passar como se estivesse dentro. Um `oklch()` fora do gamut é
@@ -121,9 +127,11 @@ Regras:
   À luminosidade das tintas (0.95) o vermelho aceita muito menos croma que o verde — daí o
   `danger-surface` ser mais discreto que o `success-surface`. É um limite do sRGB, não uma escolha
   estética, e é também por isso que a croma do `warning` escuro é 0.134 e não 0.135.
-- O `--color-border` a ~1.3:1 **não** é uma falha: um separador decorativo entre superfícies está
-  fora da regra dos 3:1, que se aplica a fronteiras que identificam componentes. Para essas há o
-  `--color-border-strong`. Um `input` delimitado com `--color-border` é um bug de acessibilidade.
+- O `--color-border` a **1.22:1** no claro e **1.17:1** no escuro **não** é uma falha: um separador
+  decorativo entre superfícies está fora da regra dos 3:1, que se aplica a fronteiras que
+  identificam componentes. Para essas há o `--color-border-strong`. Um `input` delimitado com
+  `--color-border` é um bug de acessibilidade. A isenção está no gate pelo nome do token, e é a
+  única — qualquer outro token que não seja superfície é medido.
 
 ### Tipografia
 
@@ -203,8 +211,10 @@ Se o agente se apanhar a produzir qualquer um destes, apaga e recomeça a partir
 - [ ] Fontes são as do projeto, não Inter/Roboto.
 - [ ] Todos os estados (loading/empty/error/disabled/focus) existem.
 - [ ] Navegação por teclado funciona; foco é visível.
-- [ ] Contraste AA **medido**, contra o `surface-2` (a pior superfície), e não presumido.
-- [ ] Nenhum `oklch()` fora do gamut sRGB — fora do gamut, o contraste medido é ficção.
+- [ ] `pnpm lint` passou — é ele que mede o contraste AA contra o `surface-2` (a pior superfície),
+      o gamut sRGB a 1e-6 e a paridade desta secção com o `tokens.css`. Não se presume nenhum dos três.
+- [ ] Se acrescentei uma cor de estado, tem os **três** papéis (`-surface` e `-border` incluídos) e
+      está escrita no §2 — o gate falha nos dois sentidos.
 - [ ] Nenhum `input` ou controlo delimitado com `--color-border` em vez de `--color-border-strong`.
 - [ ] Funciona a 360px.
 - [ ] `prefers-reduced-motion` respeitado.

@@ -243,6 +243,7 @@ Tudo isto corre em cada PR (o script `security_check.sh` corre o subconjunto loc
 
 | Gate | Ferramenta |
 |---|---|
+| Supressões implícitas | `security_check.sh`, primeiro gate de todos |
 | Segredos | gitleaks |
 | Python SAST | bandit, semgrep (regras `p/django`, `p/python`, `p/owasp-top-ten`) |
 | Python deps | pip-audit |
@@ -252,6 +253,18 @@ Tudo isto corre em cada PR (o script `security_check.sh` corre o subconjunto loc
 | Docker | hadolint, trivy |
 | Fronteiras | import-linter |
 | Roles e GRANTs da BD | `uv run pytest tests/test_db_roles.py` |
+| Cor: gamut sRGB, contraste AA, §2 do DESIGN.md | `frontend/scripts/check-design-tokens.mjs`, no `pnpm lint` |
+
+**O primeiro gate verifica se os outros podem ser acreditados.** Várias destas ferramentas leem
+configuração de supressão do directório actual sem lhe ser pedido — o `trivy` o `.trivyignore`, o
+`gitleaks` o `.gitleaks.toml` e o `.gitleaksignore`, o `semgrep` o `.semgrepignore`, o `hadolint` o
+`.hadolint.yaml`. Foi assim que este ficheiro afirmou 0 CVEs havendo 6: a confirmação "independente"
+correu na raiz do repositório com o ficheiro de supressão ainda lá. Os flags para as desligar são
+diferentes em cada ferramenta e algumas não têm nenhum, por isso a resposta é uma só: **um ficheiro
+de supressão que o gate não contabilizou torna o resultado INCONCLUSIVO**, não FAIL — porque o que
+falta não é uma afirmação de que há vulnerabilidade, é a capacidade de dizer o que os gates
+seguintes cobriram. A lista `DECLARADAS` no script é a porta para uma excepção legítima; está vazia,
+e uma entrada nela aparece no diff, ao contrário de um ficheiro que simplesmente existe.
 
 Ordem do pipeline: `docker/db/roles.sql` (bootstrap dos roles) → `migrate` com
 `MIGRATION_DATABASE_URL` → `pytest` (setup como dono, testes como app) → os gates acima. O
