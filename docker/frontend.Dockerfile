@@ -32,11 +32,40 @@ RUN pnpm build
 # zero. Aqui **sem** o plugin de rate limit: este serviço só serve ficheiros
 # estáticos na rede interna, o limite por IP é do proxy.
 FROM golang@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS caddy-builder
-# Sem `apk add git`: verificado que o xcaddy resolve os módulos pelo proxy do
-# Go e não precisa dele. Menos uma dependência e menos uma versão para fixar.
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
-RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7 \
- && xcaddy build v2.11.4
+WORKDIR /build
+
+# O `xcaddy` não serve para isto: o `--with` dele trata cada argumento como um
+# **plugin a importar**, e `golang.org/x/net` não é um pacote importável na raiz.
+# Com o `go.mod` nosso controlamos as versões das dependências transitivas, que
+# é precisamente o que falta.
+COPY <<'GO' main.go
+package main
+
+import (
+	caddycmd "github.com/caddyserver/caddy/v2/cmd"
+	_ "github.com/caddyserver/caddy/v2/modules/standard"
+)
+
+func main() { caddycmd.Main() }
+GO
+
+# As quatro dependências que trazem os 6 CVEs, fixadas nas versões que o grafo
+# de facto resolve — e não nas versões mínimas corrigidas, que era o meu erro:
+# cada mínima puxava outra para cima em cascata (`crypto@0.55` exige
+# `net@0.57`, `grpc@1.83.2` exige `text@0.41`). Estes números vieram de deixar o
+# Go resolver com `-u` e **ler** o resultado, e estão fixados para a build ser
+# reproduzível. O `go mod tidy` é obrigatório depois do upgrade: sem ele faltam
+# entradas no `go.sum` dos módulos `standard` e a build morre.
+RUN go mod init stockflow/caddy \
+ && go get github.com/caddyserver/caddy/v2@v2.11.4 \
+ && go get golang.org/x/crypto@v0.57.0 \
+            golang.org/x/net@v0.59.0 \
+            golang.org/x/text@v0.42.0 \
+            google.golang.org/grpc@v1.84.0 \
+ && go mod tidy \
+ && go build -trimpath -ldflags="-s -w" -o /caddy . \
+ && /caddy version
 
 FROM alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 
@@ -45,7 +74,7 @@ RUN addgroup -g 10001 app \
  && mkdir -p /data /config /srv \
  && chown -R app:app /data /config /srv
 
-COPY --from=caddy-builder --chown=root:root /go/caddy /usr/local/bin/caddy
+COPY --from=caddy-builder --chown=root:root /caddy /usr/local/bin/caddy
 COPY --chown=app:app docker/caddy/frontend.Caddyfile /etc/caddy/Caddyfile
 COPY --from=builder --chown=app:app /app/dist /srv
 

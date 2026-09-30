@@ -12,7 +12,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . && node scripts/check-design-tokens.mjs",
+    "lint": "eslint . --max-warnings 0 && node scripts/check-design-tokens.mjs",
     "gen:api": "bash scripts/gen-api.sh"
   },
   "dependencies": {
@@ -40,6 +40,7 @@
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.7",
+    "eslint-plugin-security": "^4.1.0",
     "globals": "17.12.0",
     "openapi-typescript": "7.13.0",
     "shadcn": "^4.21.0",

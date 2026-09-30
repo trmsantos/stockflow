@@ -32,7 +32,12 @@
 	rate_limit {
 		zone login {
 			match {
-				path /api/v1/auth/login /api/v1/auth/registo /api/v1/auth/recuperar
+				# As duas formas de cada caminho: o matcher `path` do Caddy é exacto
+				# sem `*`, e o Django/DRF serve com barra final. Medido: sem a
+				# forma com barra, 14 POSTs a `/api/v1/auth/login/` davam zero 429.
+				path /api/v1/auth/login /api/v1/auth/login/ \
+				     /api/v1/auth/registo /api/v1/auth/registo/ \
+				     /api/v1/auth/recuperar /api/v1/auth/recuperar/
 			}
 			key {remote_host}
 			events 10

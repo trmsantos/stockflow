@@ -3,6 +3,7 @@ import pluginQuery from "@tanstack/eslint-plugin-query";
 import jsxA11y from "eslint-plugin-jsx-a11y";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
+import security from "eslint-plugin-security";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
@@ -57,6 +58,30 @@ export default tseslint.config(
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,
   jsxA11y.flatConfigs.recommended,
+  // `eslint-plugin-security` — o SECURITY.md §9 e a SKILL.md listam-no como
+  // gate obrigatório e ele não estava instalado: uma linha de tabela que não
+  // corria. Apanha `eval`/`new Function` com input, regex vulnerável a ReDoS,
+  // `child_process`, e caminhos de ficheiro construídos por concatenação.
+  security.configs.recommended,
+  {
+    // Duas regras do plugin desligadas **com âmbito**, nas pastas de
+    // ferramentas, e não com `eslint-disable` inline (que o CLAUDE.md proíbe e
+    // que desapareceria numa revisão).
+    //
+    // `detect-object-injection` acusa qualquer `obj[variavel]`, e a
+    // `/dev/tokens` indexa mapas de tokens por chaves que ela própria define —
+    // é o falso positivo mais conhecido desta regra. `detect-non-literal-fs-filename`
+    // acusa o `readFileSync` do nosso script de lint de CSS, que lê ficheiros
+    // que ele próprio encontrou: não há input não confiável em nenhum dos dois.
+    //
+    // Fora destas pastas as duas continuam activas, e todas as outras regras do
+    // plugin são erro em qualquer sítio.
+    files: ["src/dev/**/*.{ts,tsx}", "scripts/**/*.mjs"],
+    rules: {
+      "security/detect-object-injection": "off",
+      "security/detect-non-literal-fs-filename": "off",
+    },
+  },
   pluginQuery.configs["flat/recommended"],
   {
     files: ["**/*.{ts,tsx}"],

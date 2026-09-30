@@ -241,16 +241,33 @@ jobs:
       - name: Subir a aplicação
         run: docker compose --env-file backend/.env -f docker/compose.yml up -d --wait --wait-timeout 180
 
-      - name: Nenhum serviço unhealthy
-        # O `--wait` já falha num unhealthy, mas esta asserção nomeia o serviço —
-        # e apanha o caso do worker, que herdava um healthcheck HTTP que não
-        # serve.
+      - name: Nenhum serviço unhealthy, e o worker vivo
+        # Duas asserções, porque a primeira **não pode** ver o worker: ele tem
+        # `healthcheck: disable: true` (herdava o healthcheck HTTP da imagem
+        # partilhada, que um worker Celery não serve), logo o campo `.Health`
+        # vem vazio e o `awk` nunca casa. O comentário anterior dizia que
+        # apanhava o worker e era falso.
+        #
+        # O `ps -a` é deliberado: sem ele um serviço que morreu no arranque não
+        # aparece na listagem e escapa às duas asserções.
         run: |
-          maus=$(docker compose --env-file backend/.env -f docker/compose.yml ps \
+          docker compose --env-file backend/.env -f docker/compose.yml ps -a \
+            --format '{{.Service}} {{.Status}}'
+          maus=$(docker compose --env-file backend/.env -f docker/compose.yml ps -a \
                    --format '{{.Service}} {{.Health}}' | awk '$2 == "unhealthy"')
           [ -z "$maus" ] || { echo "::error::unhealthy: $maus"; exit 1; }
-          docker compose --env-file backend/.env -f docker/compose.yml ps \
-            --format '{{.Service}} {{.Status}}'
+          saidos=$(docker compose --env-file backend/.env -f docker/compose.yml ps -a \
+                     --format '{{.Service}} {{.State}}' | awk '$2 == "exited"')
+          [ -z "$saidos" ] || { echo "::error::serviço saiu: $saidos"; exit 1; }
+          # O worker não tem healthcheck: a liveness dele afirma-se pelos logs.
+          # Um worker que não liga ao broker repete "Cannot connect" para sempre
+          # e passaria as asserções acima.
+          logs=$(docker compose --env-file backend/.env -f docker/compose.yml logs worker 2>&1)
+          echo "$logs" | grep -q "Cannot connect" \
+            && { echo "::error::o worker não liga ao broker"; echo "$logs" | tail -5; exit 1; }
+          echo "$logs" | grep -qE "ready|celery@" \
+            || { echo "::error::o worker não anunciou estar pronto"; echo "$logs" | tail -20; exit 1; }
+          echo "worker vivo e ligado ao broker"
 
       - name: Headers de segurança no documento
         # A CSP do Django vive nas respostas JSON, onde um browser não executa
@@ -318,6 +335,18 @@ jobs:
             echo "== $f"
             docker run --rm -i "$IMG_HADOLINT" hadolint --no-color - < "$f"
           done
+      - name: .env de fachada, para o gate poder detectar reincidência
+        # Sem isto o gate do artefacto é cego no CI: o `backend/.env` é
+        # gitignored e este job não o cria, logo o `COPY backend/ ./` não tem
+        # nada para copiar — apagar o `.dockerignore` passaria o CI inteiro. O
+        # ficheiro tem de existir no contexto para o gate ter o que apanhar.
+        run: |
+          cat > backend/.env <<'EOF'
+          DJANGO_SECRET_KEY=ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+          DATABASE_URL=postgres://stockflow_app:ci-app-sem-valor@db:5432/stockflow
+          MIGRATION_DATABASE_URL=postgres://stockflow_owner:ci-owner-sem-valor@db:5432/stockflow
+          EOF
+
       - name: Construir as imagens
         run: |
           docker build -f docker/backend.Dockerfile -t stockflow-backend .

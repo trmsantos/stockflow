@@ -43,6 +43,14 @@ API_DOCS_ENABLED = env.bool("API_DOCS_ENABLED", default=True)
 
 # O Swagger UI vem de um CDN (não temos o pacote sidecar), por isso em dev — e
 # só em dev — o CDN entra na CSP. A política de produção continua `'self'`.
+#
+# Isto é mais largo do que devia e está nomeado como dívida: a CSP é global à
+# aplicação, logo o `unpkg` fica autorizado em **todas** as respostas do Django,
+# incluindo o HTML do admin — que é o alvo de maior valor do SECURITY.md §5. O
+# `django-csp` permite política por view (`@csp_replace`), e a saída limpa é o
+# `drf-spectacular[sidecar]`, que tira o CDN e faz a política voltar a `'self'`
+# em todos os ambientes. Em produção o `API_DOCS_ENABLED` é `False` e este
+# ficheiro não é lido, logo o alcance é o ambiente de desenvolvimento.
 CONTENT_SECURITY_POLICY = {
     "DIRECTIVES": {
         **CONTENT_SECURITY_POLICY["DIRECTIVES"],

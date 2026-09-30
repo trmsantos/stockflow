@@ -18,13 +18,42 @@
 # caminho de todo o tráfego, e um `xcaddy build` sem versões é o oposto de
 # reproduzível. O módulo de terceiros é uma dependência nova e deliberada.
 FROM golang@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS caddy-builder
-# Sem `apk add git`: verificado que o xcaddy resolve os módulos pelo proxy do
-# Go e não precisa dele. Menos uma dependência e menos uma versão para fixar.
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
-# v2.11.4 é a mesma versão da imagem oficial que isto substitui: a única
-# diferença é o toolchain e o plugin, e não um salto de versão do servidor.
-RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7 \
- && xcaddy build v2.11.4 --with github.com/mholt/caddy-ratelimit@v0.1.0
+WORKDIR /build
+
+# O `xcaddy` não serve para isto: o `--with` dele trata cada argumento como um
+# **plugin a importar**, e `golang.org/x/net` não é um pacote importável na raiz.
+# Com o `go.mod` nosso controlamos as versões das dependências transitivas, que
+# é precisamente o que falta.
+COPY <<'GO' main.go
+package main
+
+import (
+	caddycmd "github.com/caddyserver/caddy/v2/cmd"
+	_ "github.com/caddyserver/caddy/v2/modules/standard"
+	_ "github.com/mholt/caddy-ratelimit"
+)
+
+func main() { caddycmd.Main() }
+GO
+
+# As quatro dependências que trazem os 6 CVEs, fixadas nas versões que o grafo
+# de facto resolve — e não nas versões mínimas corrigidas, que era o meu erro:
+# cada mínima puxava outra para cima em cascata (`crypto@0.55` exige
+# `net@0.57`, `grpc@1.83.2` exige `text@0.41`). Estes números vieram de deixar o
+# Go resolver com `-u` e **ler** o resultado, e estão fixados para a build ser
+# reproduzível. O `go mod tidy` é obrigatório depois do upgrade: sem ele faltam
+# entradas no `go.sum` dos módulos `standard` e a build morre.
+RUN go mod init stockflow/caddy \
+ && go get github.com/caddyserver/caddy/v2@v2.11.4 \
+ && go get github.com/mholt/caddy-ratelimit@v0.1.0 \
+ && go get golang.org/x/crypto@v0.57.0 \
+            golang.org/x/net@v0.59.0 \
+            golang.org/x/text@v0.42.0 \
+            google.golang.org/grpc@v1.84.0 \
+ && go mod tidy \
+ && go build -trimpath -ldflags="-s -w" -o /caddy . \
+ && /caddy version
 
 # ---------------------------------------------------------------- runtime
 # Alpine e não a imagem do Caddy: o binário dela é o que estamos a substituir, e
@@ -40,7 +69,7 @@ RUN apk add --no-cache "ca-certificates=20260909-r0" \
  && mkdir -p /data /config \
  && chown -R app:app /data /config
 
-COPY --from=caddy-builder --chown=root:root /go/caddy /usr/local/bin/caddy
+COPY --from=caddy-builder --chown=root:root /caddy /usr/local/bin/caddy
 COPY --chown=app:app docker/caddy/proxy.Caddyfile /etc/caddy/Caddyfile
 
 # UID numérico: ver DL3066 — o runtime não tem de resolver o nome.

@@ -246,25 +246,58 @@ Ordem do pipeline: `docker/db/roles.sql` (bootstrap dos roles) → `migrate` com
 `MIGRATION_DATABASE_URL` → `pytest` (setup como dono, testes como app) → os gates acima. O
 `check --deploy` não abre ligação à base de dados e corre só com a credencial da app.
 
-### Estado dos CVEs das imagens, medido em 2026-09-29
+### Estado dos CVEs das imagens, medido em 2026-09-30
 
 **Zero HIGH/CRITICAL com correcção disponível nas três imagens.** As do `proxy` e do `frontend` estão
-a zero mesmo **sem** `--ignore-unfixed`. Houve aqui uma excepção aceite de seis CVEs, nas dependências
-transitivas do Caddy, e deixou de ser necessária: com o Caddy construído do código (Go 1.26.8, ver
-`docker/proxy.Dockerfile`) e as imagens reconstruídas sem cache, nenhum dos seis é reportado. O
-`.trivyignore` que os listava foi apagado — uma lista de excepções que já não esconde nada é uma
-lista que alguém vai reaproveitar para esconder a próxima.
+a zero mesmo **sem** `--ignore-unfixed`, e sem excepção nenhuma: não existe `.trivyignore`.
+
+O Caddy é construído do código (`docker/proxy.Dockerfile`) com Go 1.26.8 **e** com as quatro
+dependências transitivas que traziam os CVEs fixadas nas versões que o grafo resolve —
+`x/crypto 0.57.0`, `x/net 0.59.0`, `x/text 0.42.0`, `grpc 1.84.0`. O Go novo corrigiu a *stdlib*
+(11 dos 17); estas quatro são o resto. Fixar as versões **mínimas corrigidas** não funciona: cada
+uma puxa outra para cima em cascata, e as versões acima vieram de deixar o Go resolver com `-u` e
+**ler** o resultado. O `go mod tidy` depois do upgrade é obrigatório, senão faltam entradas no
+`go.sum` e a build morre.
+
+**Como esta secção esteve errada, porque a lição vale mais do que o número.** Houve aqui uma
+excepção de seis CVEs, com tabela e gatilho, apagada com base numa medição que dizia zero. A
+medição estava contaminada: **o `trivy` lê o `.trivyignore` do directório actual sem lhe pedir**. A
+"confirmação independente" correu na raiz do repositório enquanto o ficheiro de supressão ainda lá
+estava, e o próprio mecanismo que eu avaliava silenciou o achado que eu verificava. Uma verificação
+feita no mesmo directório do mecanismo de supressão não é independente. Se voltar a haver um
+`.trivyignore`, mede-se de outro directório ou com `--ignorefile /dev/null`.
 
 **O `backend` é o caso a ler com cuidado.** Zero **com correcção disponível**, e **60 HIGH/CRITICAL
 sem correcção** — pacotes do Debian 12 (`perl-base`, `libsqlite3-0`, `zlib1g`, a família
-`util-linux`, `ncurses`) para os quais não há versão corrigida. O gate corre com `--ignore-unfixed`
-de propósito: falhar por uma vulnerabilidade que ninguém pode corrigir é um gate que se desliga na
-semana seguinte. Mas "o backend está a zero" sem esta qualificação é uma frase que engana o próximo
-leitor, e é a única forma honesta de a escrever.
+`util-linux`, `ncurses`) sem versão corrigida. O gate corre com `--ignore-unfixed` de propósito:
+falhar por uma vulnerabilidade que ninguém pode corrigir é um gate que se desliga na semana
+seguinte. Mas "o backend está a zero" sem esta qualificação engana o próximo leitor.
 
 O gatilho para reavaliar os sem-fix: uma imagem base mais magra (distroless ou Alpine) tira a maior
-parte deles, ao preço de perder o `apt` e de compilar `psycopg` — decisão de quando houver razão, não
-agora.
+parte deles, ao preço de perder o `apt` e de compilar `psycopg`.
+
+### O gate que olha para dentro do artefacto
+
+`docker/scan-artefactos.sh`, chamado pelo `security_check.sh` e pelo job `docker` do CI. Existe
+porque o `backend/.env`, com a password do dono da base de dados, esteve dentro da imagem que servia
+pedidos e **nenhum** dos outros gates o podia ver: o gitleaks olha para o git (e o ficheiro nunca
+entrou), o `trivy config` olha para o texto do Dockerfile, a verificação de `COPY .*\.env` não casa
+com `COPY backend/`, e o `docker history` mostra comandos e não conteúdo.
+
+Duas decisões de desenho que o tornam útil em vez de ruidoso, e as duas foram aprendidas a errar:
+
+- **Varre o que nós pusemos na imagem** (`/app`, sem `.venv` nem `staticfiles`) mais um punhado de
+  caminhos absolutos que nunca têm razão de existir. A versão que varria o sistema de ficheiros
+  inteiro devolvia ~60 falsos positivos por imagem — templates de password do Django, ficheiros do
+  PAM, módulos Perl do Debconf. Um gate que grita a cada corrida é um gate que alguém desliga.
+- **Procura por nome, por conteúdo fixo e por `ENV`, nunca por entropia.** Medido: o
+  `trivy image --scanners secret` devolve zero contra uma imagem de sonda com cinco ficheiros de
+  segredo e um `ENV`. E o nome da variável não basta — o `MIGRATION_DATABASE_URL` que esteve dentro
+  da imagem não tem `SECRET` nem `PASSWORD` no nome, por isso há uma passagem pelo padrão de
+  credencial em DSN (`esquema://utilizador:password@host`), com os placeholders filtrados.
+
+Uma imagem sem shell (um stage com só o binário) é varrida pelo tar: a versão que fazia
+`docker run --entrypoint sh` e engolia o `exit 127` dizia "limpa" sem ter corrido.
 
 ## 10. Resposta a incidentes (mínimo)
 
