@@ -187,7 +187,17 @@ devolve zero linhas — falha fechada.
 - Sessões expiram em 14 dias inativas; rotação de session key após login.
 - Permissão por objeto em todas as views que recebem um `pk`: `has_object_permission` verifica
   `obj.tenant_id == request.tenant.id` **antes** de qualquer outra regra.
-- Admin Django num path não óbvio, só acessível por IP/VPN, com MFA.
+- Admin Django num path não óbvio (vem do ambiente, `DJANGO_ADMIN_URL`), com rate limit de
+  **5 tentativas/minuto por IP** no proxy — o `django-axes` trava brute-force de *uma* conta e não
+  trava varrer contas, e quem entra no admin lê o `accounts_user` inteiro, de todos os tenants.
+- **A restrição por IP/VPN do admin é plumbing, não um controlo activo.** O proxy tem o matcher e o
+  `handle`, ligados pela variável `ADMIN_ALLOW_CIDRS` (`docker/caddy/proxy.Caddyfile`), e o default
+  não restringe nada — em desenvolvimento não pode, porque o Docker Desktop faz NAT e o IP do host é
+  imprevisível. **Produção tem de definir `ADMIN_ALLOW_CIDRS`**, ou pôr a restrição no orquestrador.
+  Enquanto isso não acontecer, o que protege o admin é o path não óbvio, o rate limit e o lockout —
+  e não a rede.
+- MFA (TOTP) obrigatória para admins: **não implementada**, dívida nomeada. Sem ela, o que sobra
+  contra credenciais roubadas de um operador é o lockout.
 
 ## 6. Agentes e LLMs
 

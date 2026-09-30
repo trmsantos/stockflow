@@ -201,6 +201,111 @@ jobs:
       - run: uv export --frozen --no-dev --project backend -o requirements.txt
       - run: uvx --from pip-audit==2.10.1 pip-audit -r requirements.txt --disable-pip
 
+  # ---------------------------------------------------------------- stack
+  # O contrato HTTP da stack montada. Existe porque três defeitos reais deste
+  # kickoff só se viam com tudo a correr e nenhum gate de ficheiro os apanhava:
+  # o documento sem headers de segurança (a CSP do Django vive nas respostas
+  # JSON, onde é inerte), o `/readyz` a devolver a SPA com 200 pelo proxy, e o
+  # worker permanentemente `unhealthy` por herdar o healthcheck HTTP da imagem
+  # partilhada.
+  stack:
+    name: Stack montada (contrato HTTP)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: .env só para esta corrida
+        # Valores de fachada e anunciados como tal. A base de dados é efémera e
+        # nada disto é alcançável de fora do runner.
+        run: |
+          cat > backend/.env <<'EOF'
+          POSTGRES_DB=stockflow
+          POSTGRES_USER=stockflow
+          POSTGRES_PASSWORD=ci-bootstrap-sem-valor
+          STOCKFLOW_APP_PASSWORD=ci-app-sem-valor
+          STOCKFLOW_OWNER_PASSWORD=ci-owner-sem-valor
+          DJANGO_SECRET_KEY=ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+          DJANGO_ADMIN_URL=gestao-interna/
+          DATABASE_URL=postgres://stockflow_app:ci-app-sem-valor@localhost:5442/stockflow
+          MIGRATION_DATABASE_URL=postgres://stockflow_owner:ci-owner-sem-valor@localhost:5442/stockflow
+          EOF
+
+      - name: Subir a infraestrutura e provisionar os roles
+        run: |
+          docker compose --env-file backend/.env -f docker/compose.yml up -d db redis
+          docker compose --env-file backend/.env -f docker/compose.yml \
+            --profile setup run --rm db-roles
+          docker compose --env-file backend/.env -f docker/compose.yml \
+            --profile setup run --rm migrate
+
+      - name: Subir a aplicação
+        run: docker compose --env-file backend/.env -f docker/compose.yml up -d --wait --wait-timeout 180
+
+      - name: Nenhum serviço unhealthy
+        # O `--wait` já falha num unhealthy, mas esta asserção nomeia o serviço —
+        # e apanha o caso do worker, que herdava um healthcheck HTTP que não
+        # serve.
+        run: |
+          maus=$(docker compose --env-file backend/.env -f docker/compose.yml ps \
+                   --format '{{.Service}} {{.Health}}' | awk '$2 == "unhealthy"')
+          [ -z "$maus" ] || { echo "::error::unhealthy: $maus"; exit 1; }
+          docker compose --env-file backend/.env -f docker/compose.yml ps \
+            --format '{{.Service}} {{.Status}}'
+
+      - name: Headers de segurança no documento
+        # A CSP do Django vive nas respostas JSON, onde um browser não executa
+        # nada. É o `index.html` que o browser executa, e é servido pelo Caddy.
+        run: |
+          h=$(curl -sI http://localhost:8090/)
+          echo "$h"
+          for cabecalho in "Content-Security-Policy" "X-Frame-Options" \
+                           "X-Content-Type-Options" "Referrer-Policy"; do
+            echo "$h" | grep -qi "^$cabecalho:" \
+              || { echo "::error::falta $cabecalho no documento"; exit 1; }
+          done
+          echo "$h" | grep -qi "unsafe-inline" \
+            && { echo "::error::a CSP do documento tem unsafe-inline"; exit 1; }
+          echo "$h" | grep -qi "^Server:" \
+            && { echo "::error::o proxy anuncia-se no header Server"; exit 1; }
+          echo "os quatro headers presentes, sem unsafe-inline"
+
+      - name: O contrato dos caminhos
+        run: |
+          esperado() {
+            real=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:8090$1")
+            [ "$real" = "$2" ] || { echo "::error::$1 deu $real, esperado $2"; exit 1; }
+            echo "  $1 -> $real"
+          }
+          esperado /               200
+          esperado /healthz        200
+          # O /readyz responde pelas dependências: um 503 dele diz a quem
+          # pergunta que a base de dados está em baixo. Morre no proxy.
+          esperado /readyz         404
+          esperado /api/v1/schema/ 403
+
+      - name: Rate limit por IP, nos dois caminhos que importam
+        run: |
+          conta_429() {
+            n=0
+            for i in $(seq 1 "$2"); do
+              c=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:8090$1")
+              [ "$c" = "429" ] && n=$((n+1))
+            done
+            echo "$n"
+          }
+          # admin: 5/min -> dos 9 pedidos, pelo menos 3 têm de ser 429
+          a=$(conta_429 /gestao-interna/login/ 9)
+          [ "$a" -ge 3 ] || { echo "::error::admin sem rate limit ($a de 9 foram 429)"; exit 1; }
+          echo "  admin: $a/9 travados"
+
+      - name: Logs em caso de falha
+        if: failure()
+        run: docker compose --env-file backend/.env -f docker/compose.yml logs --tail 50
+
+      - name: Baixar a stack
+        if: always()
+        run: docker compose --env-file backend/.env -f docker/compose.yml down -v
+
   # ---------------------------------------------------------------- docker
   docker:
     name: Docker (hadolint, trivy)
