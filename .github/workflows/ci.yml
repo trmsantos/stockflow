@@ -298,6 +298,31 @@ jobs:
             && { echo "::error::o proxy anuncia-se no header Server"; exit 1; }
           echo "os quatro headers presentes, sem unsafe-inline"
 
+      - name: Cache do documento, também nas rotas profundas
+        # O `index.html` não pode ser cacheado: um deploy novo continuaria a
+        # servir HTML antigo, que referencia assets com outro hash. A regra
+        # existia mas o matcher era `path / /index.html`, e numa SPA uma rota
+        # profunda serve o mesmo HTML com um caminho que **não** casa — medido
+        # antes da correcção: `/` trazia `no-cache` e `/stock` trazia header
+        # nenhum. É por isso que esta asserção testa uma rota profunda e não a
+        # raiz: a raiz já passava quando o defeito existia.
+        run: |
+          for caminho in / /stock /alertas/expira; do
+            c=$(curl -sI "http://localhost:8090$caminho" | grep -i '^cache-control:' || true)
+            echo "  $caminho -> ${c:-<nenhum>}"
+            echo "$c" | grep -qi 'no-cache' \
+              || { echo "::error::$caminho serve HTML sem no-cache"; exit 1; }
+          done
+          # E o inverso, para a correcção não ter ido longe demais: um asset com
+          # hash tem de continuar imutável, senão trocámos um deploy quebrado
+          # por um site lento.
+          a=$(curl -s http://localhost:8090/ | grep -oE '/assets/[^"]+\.js' | head -1)
+          [ -n "$a" ] || { echo "::error::não encontrei um asset no index.html"; exit 1; }
+          ca=$(curl -sI "http://localhost:8090$a" | grep -i '^cache-control:' || true)
+          echo "  $a -> $ca"
+          echo "$ca" | grep -qi 'immutable' \
+            || { echo "::error::$a devia ser immutable"; exit 1; }
+
       - name: O contrato dos caminhos
         run: |
           esperado() {
