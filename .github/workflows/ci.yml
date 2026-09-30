@@ -227,7 +227,6 @@ jobs:
           STOCKFLOW_APP_PASSWORD=ci-app-sem-valor
           STOCKFLOW_OWNER_PASSWORD=ci-owner-sem-valor
           DJANGO_SECRET_KEY=ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
-          DJANGO_ADMIN_URL=gestao-interna/
           DATABASE_URL=postgres://stockflow_app:ci-app-sem-valor@localhost:5442/stockflow
           MIGRATION_DATABASE_URL=postgres://stockflow_owner:ci-owner-sem-valor@localhost:5442/stockflow
           EOF
@@ -275,7 +274,10 @@ jobs:
           # broker". Qualquer falha depois do banner — base de dados em baixo,
           # bloqueio no mingle, crash-loop que o `restart: unless-stopped`
           # mantém em `running` — passava por aqui.
-          echo "$logs" | grep -q "Connected to redis" \
+          # `Connected to (redis|amqp)` e não só `redis`: a asserção deixa de
+          # partir no dia em que o broker mudar de esquema — um `amqp://` não
+          # casaria e o CI falharia por uma razão que não é a que ele testa.
+          echo "$logs" | grep -qE "Connected to (redis|amqp)" \
             || { echo "::error::o worker não ligou ao broker"; echo "$logs" | tail -20; exit 1; }
           echo "worker vivo e ligado ao broker"
 
@@ -373,8 +375,16 @@ jobs:
           EOF
 
       - name: Construir as imagens
+        # O `worker` e o `migrate` do compose saem do **mesmo**
+        # `docker/backend.Dockerfile`. Os três tags saem de uma build só, com
+        # três `-t`, o que os torna o mesmo id por construção — e isso substitui
+        # a afirmação de igualdade que o SECURITY.md §9 fazia em prosa e que
+        # nada verificava. Localmente ela chegou a ser falsa: eu reconstruí o
+        # `backend` à mão e não o `migrate`, e ficaram camadas diferentes, com o
+        # `migrate` a conter um ficheiro que o `.dockerignore` já excluía.
         run: |
-          docker build -f docker/backend.Dockerfile -t stockflow-backend .
+          docker build -f docker/backend.Dockerfile \
+            -t stockflow-backend -t stockflow-worker -t stockflow-migrate .
           docker build -f docker/frontend.Dockerfile -t stockflow-frontend .
           docker build -f docker/proxy.Dockerfile -t stockflow-proxy .
       - name: Segredos dentro das imagens construídas
@@ -382,7 +392,10 @@ jobs:
         # duplicada já tinha divergido: o CI ficou com um padrão que só via
         # `.env*` enquanto o local via vinte. Um gate com duas implementações é
         # um gate com uma implementação e um bug.
-        run: ./docker/scan-artefactos.sh stockflow-backend stockflow-frontend stockflow-proxy
+        run: |
+          ./docker/scan-artefactos.sh \
+            stockflow-backend stockflow-worker stockflow-migrate \
+            stockflow-frontend stockflow-proxy
 
       - name: trivy config
         # `--ignorefile /dev/null`: o CWD aqui **é** o repositório montado, e o

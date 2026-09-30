@@ -47,8 +47,12 @@ urlpatterns = [
     # exatamente o que o `HEALTHCHECK` do Dockerfile pede.
     path("healthz", healthz, name="healthz"),
     path("readyz", readyz, name="readyz"),
-    # Path do admin fora do default e configurável por instalação
-    # (SECURITY.md §5). O acesso por IP/VPN é imposto no proxy.
+    # Path do admin fora do default, numa variável só (`ADMIN_PATH`) que
+    # alimenta este lado e o proxy (SECURITY.md §5). O path não é um controlo:
+    # está commitado. A restrição por IP existe no proxy mas o seu default não
+    # restringe nada — dizer aqui "é imposto no proxy" descrevia um controlo que
+    # não está ligado. O que está à frente do admin hoje é o rate limit de 5/min
+    # e o lockout do axes.
     #
     # O `dispensar_ambito` é a declaração de que o admin é servido **sem**
     # âmbito de tenant, e é a única forma de a fazer para views que não são

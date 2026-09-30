@@ -121,7 +121,10 @@ No admin registam-se só modelos sem política — o `User` e os do Django. `Ten
 são registados, e não é "registados e vazios": uma changelist vazia é uma armadilha operacional, onde
 alguém conclui que o cliente não tem dados. A não-inscrição diz a verdade. `is_staff` é para
 operadores do StockFlow e nunca para clientes — um `Membership` com papel `owner` não tem relação
-nenhuma com ele — e continua a exigir MFA. Acesso operacional a dados de um tenant é por comando
+nenhuma com ele. (Esta ADR dizia "e continua a exigir MFA": MFA não está implementada, é dívida
+nomeada no SECURITY.md §5, e a frase fica corrigida aqui em vez de apagada porque uma ADR registra o
+que se decidiu — o que se decidiu foi exigir MFA, e o que existe é o rate limit e o lockout.)
+Acesso operacional a dados de um tenant é por comando
 `manage.py` com `--tenant`, que abre `tenant_scope` explicitamente e cujo `tenant_id` sai nos logs
 pelo `ContextVar`. A impersonation de suporte — com motivo, expiração e registo — é uma feature com
 ADR própria, e o gatilho é o primeiro pedido de suporte que exija ver dados de um cliente; dar um

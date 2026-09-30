@@ -329,44 +329,80 @@ imagem guarda o que é nosso.
 Três decisões de desenho, as três medidas:
 
 - **Nomes: a imagem inteira, sem âmbito.** Contra as 6 imagens reais o padrão dá exactamente um
-  casamento, o `app/.env.example`, que é o template e está excluído. `.env`, `.pgpass` ou
-  `id_ed25519` não existem numa imagem base.
-- **Conteúdo: só o que nós pusemos na imagem** (`/app` sem `.venv` nem `staticfiles`, `/srv`,
-  `/etc/caddy`, `/root`, `/home`). Com âmbito por medição: `PRIVATE KEY-----` aparece **1 vez no
-  `stockflow-caddy-bin`, que tem 13 ficheiros** — está dentro do binário Go, que traz a etiqueta PEM
-  como literal — e 13 vezes no backend, todas na `.venv`. `*.key` e `*.pem` ficam fora do tier de
-  nomes pela mesma razão: dariam 152 falsos positivos no backend e 123 no proxy. Um gate que grita a
-  cada corrida é um gate que alguém desliga.
-- **Por nome, por conteúdo fixo e por `ENV`, nunca por entropia.** Medido: o
-  `trivy image --scanners secret` devolve zero contra uma imagem de sonda com cinco ficheiros de
-  segredo e um `ENV`. E o nome da variável não basta — o `MIGRATION_DATABASE_URL` que esteve dentro
-  da imagem não tem `SECRET` nem `PASSWORD` no nome, e nem o `FIELD_ENCRYPTION_KEY` (§3) nem o
-  `STOCKFLOW_NIF_PEPPER` casavam o padrão anterior. São os dois segredos cuja rotação é mais cara de
-  todas; hoje casam.
+  casamento, o `app/.env.example`, tratado à parte. `.env`, `.pgpass` ou `id_ed25519` não existem
+  numa imagem base.
+- **Conteúdo: a imagem inteira menos o que é vendorizado** (`.venv`, `site-packages`,
+  `node_modules`, `__pycache__`, `staticfiles`). **Deixou de ser uma lista de caminhos**, e a razão
+  é que a lista de inclusão anterior (`/app`, `/srv`, `/etc/caddy`, `/root`, `/home`) foi a causa de
+  três evasões, todas com `exit 0` e a palavra `limpa`: um segredo em `/opt`, `/var/lib` ou
+  `/usr/local/etc`; um ficheiro no âmbito com nome neutro que era **symlink** para fora dele; e o
+  próprio `/app` ser um symlink para `/opt/app`, que anulava o âmbito inteiro. A do symlink era a
+  pior, porque a linha de cobertura saía normal — 62 ficheiros — e não deixava rasto nenhum.
 
-**Nunca diz "limpa" sem ter varrido.** Criar o contentor, exportar, listar o tar e extrair o âmbito
-são quatro passos que podem falhar, e cada um sai `2`, que o `security_check.sh` traduz em
-INCONCLUSIVO e não em PASS. Um nome de ficheiro com carácter de controlo também sai `2`, em vez de
-partir a lista em silêncio. E cada imagem imprime a cobertura que teve:
+  Uma lista de inclusão falha **cega**: o que não está nela não é varrido, em silêncio. Uma de
+  exclusão falha **ruidosa**, e ruído mede-se. Medido no backend: 62 ficheiros no âmbito antigo com
+  0 falsos positivos, contra **5 958 no âmbito novo, também com 0** — sobre a stdlib inteira do
+  Python e as bibliotecas do Debian 12.
+- **Por padrão apertado, nunca por entropia.** Foi apertar os padrões, e não estreitar o âmbito, que
+  tornou o ponto acima possível:
+  - a chave privada é um **bloco PEM ancorado à linha** (`^-----BEGIN … PRIVATE KEY-----$`) e não a
+    substring `PRIVATE KEY-----`. No binário do Caddy, 52 MB compilados do nosso Go, a substring
+    casa — ` denied: %v PRIVATE KEY-----no SNI`, tabela de strings — e o bloco ancorado dá **0**,
+    enquanto numa chave verdadeira dá 1. O falso positivo que justificava o âmbito estreito não era
+    da chave: era do padrão;
+  - `AKIA` exige fronteira à esquerda, senão casa `ISAKIAISLANDISSHARITALICI…`, uma lista de
+    palavras Unicode dentro do `libunistring`;
+  - a palavra de segredo de uma atribuição tem de estar **imediatamente antes** do `=`. Com
+    `_KEY[A-Z0-9_]*=`, o `TMP_KEYRING="${GPGHOMEDIR}/…"` do `/usr/bin/apt-key` casava três vezes;
+  - lê-se o ficheiro **inteiro** e não os primeiros 400 bytes. Uma chave ao byte 601 passava, e a
+    cobertura dizia "3 no âmbito — limpa" sobre três ficheiros todos com segredo: contava ficheiros
+    **abertos**, não varridos até ao fim;
+  - o `ENV` é ao contrário: **qualquer** valor longo e sem espaços é achado, e a isenção é uma lista
+    fechada de nomes benignos com quatro entradas hoje. A allowlist de palavras-chave anterior era
+    uma lista de adivinhações — `OPENAI_APIKEY`, `GITHUB_PAT` e `ADMIN_PW` passavam os três, e nem o
+    `FIELD_ENCRYPTION_KEY` (§3) nem o `STOCKFLOW_NIF_PEPPER` casavam, que são os dois segredos cuja
+    rotação é mais cara de todas.
 
-| imagem | membros | ficheiros no âmbito de conteúdo |
-|---|---|---|
-| `stockflow-backend` (= `worker`, `migrate`) | 18 190 | 63 |
-| `stockflow-frontend` | 540 | 8 |
-| `stockflow-proxy` | 905 | 1 |
-| `stockflow-caddy-bin` | 13 | 0 |
+**Nunca diz "limpa" sem ter varrido, e a cobertura sai em cada corrida.** Criar o contentor,
+exportar, listar o tar e extrair são quatro passos que podem falhar, e cada um sai `2`, que o
+`security_check.sh` traduz em INCONCLUSIVO e não em PASS. **Zero ficheiros varridos também sai `2`**:
+com o âmbito a ser a imagem inteira, zero não significa "não há nada nosso aqui", significa que a
+extracção não produziu nada.
 
-O `0` do `caddy-bin` é real e é visível de propósito: a imagem é o binário e treze entradas de
-`/dev` e `/etc`, e o tier de nomes cobre-a inteira. O CI constrói e varre três imagens; o `worker` e
-o `migrate` do compose saem do mesmo `docker/backend.Dockerfile` e têm as **camadas idênticas** ao
-backend (medido: o mesmo hash da lista de camadas), logo os três tags são o mesmo conteúdo.
+A cobertura **não está escrita aqui em números**, e isso é deliberado: esta secção teve uma tabela
+com `18 190 │ 63` que era o valor de antes de uma correcção ao `.dockerignore`, ao lado da afirmação
+de que o `worker` e o `migrate` tinham conteúdo idêntico ao `backend`. As duas coisas ficaram falsas
+no dia seguinte — reconstruí o `backend` à mão e não o `migrate`, e o `migrate` passou a conter um
+ficheiro que o `.dockerignore` já excluía. Uma tabela de medições num documento é um retrato que
+envelhece em silêncio. O mecanismo é o gate imprimir, por imagem e em cada corrida:
 
-**O que fica de fora, e quando deixa de ser defensável.** `/app/.venv` é cadeia de fornecimento, que
-é o `pip-audit` e o `trivy image`. `/app/staticfiles` hoje não é alcançável por HTTP — medido,
-`/static/` dá 404 pelo proxy, porque não há whitenoise e o Django não serve estáticos com
-`DEBUG=False`. No dia em que aparecer whitenoise ou uma static view, um ficheiro em `staticfiles`
-passa a ser legível pela rede **e** continua podado deste scan: essa é a linha a reavaliar, e não o
-`.venv`.
+```
+stockflow-backend: 18188 membros, 4676 ficheiros varridos (2 acima de 4 MB só nos padrões sem
+quantificador aberto) — limpa
+```
+
+Os dois ficheiros acima de 4 MB são cobertura parcial **declarada**, e não um atalho escondido: dois
+padrões têm quantificadores abertos (`{16,}`, `{30,}`) e o motor de regex do grep do BSD faz
+backtracking patológico sobre binários grandes — medido, `RE_CHAVES` sozinho levava 24 dos 30
+segundos da imagem do backend, e caía a zero excluindo o `libpython3.12.so` e o `libcrypto.so.3`, 10
+MB de 146 MB. Os outros três padrões, incluindo o bloco PEM que é o que interessa num ficheiro de
+chave, correm sobre todos os ficheiros sem limite. Um compromisso de desempenho que não se vê é um
+buraco; este vê-se na linha de cobertura.
+
+**A igualdade entre `backend`, `worker` e `migrate` deixou de ser uma afirmação.** O job `docker` do
+CI constrói o `docker/backend.Dockerfile` uma vez com três `-t` e manda os **cinco** nomes ao gate,
+o que torna os três o mesmo id por construção em vez de por prosa. O job `stack` constrói os cinco
+pelo compose na mesma corrida. Localmente o gate varre todas as `stockflow-*` que existirem.
+
+**O que fica de fora, e quando deixa de ser defensável.** O que é vendorizado — `.venv`,
+`site-packages`, `node_modules` — é cadeia de fornecimento, que é o `pip-audit`, o `pnpm audit` e o
+`trivy image`. O `staticfiles` hoje não é alcançável por HTTP: medido, `/static/` dá 404 pelo proxy,
+porque não há whitenoise e o Django não serve estáticos com `DEBUG=False`. No dia em que aparecer
+whitenoise ou uma static view, um ficheiro em `staticfiles` passa a ser legível pela rede **e**
+continua podado deste scan: essa é a linha a reavaliar, e não o `.venv`. A poda é por **componente
+de caminho** (`/.venv/`) e não ancorada na raiz — com a ancoragem em `^app/`, uma imagem em que
+`/app` era symlink para `/opt/app` devolvia 13 falsos positivos de docstrings do `kombu` e do
+`redis`, porque a poda deixava de casar no mesmo momento em que o âmbito se abria.
 
 ## 10. Resposta a incidentes (mínimo)
 

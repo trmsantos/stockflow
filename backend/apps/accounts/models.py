@@ -247,9 +247,13 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     Não tem relação nenhuma com `Membership(role="owner")`. O dono de uma
     pastelaria é `Papel.OWNER` no seu tenant e `is_staff = False`; quem tem
-    `is_staff = True` é quem trabalha no StockFlow, entra no admin (com MFA,
-    SECURITY.md §5) e vê apenas modelos **sem** política. Confundir os dois dava
-    o admin a um cliente.
+    `is_staff = True` é quem trabalha no StockFlow, entra no admin e vê apenas
+    modelos **sem** política. Confundir os dois dava o admin a um cliente.
+
+    O admin **não** exige MFA: não está implementada e é dívida nomeada no
+    SECURITY.md §5. Esta docstring dizia que exigia, e a frase sobreviveu à
+    limpeza que a tirou do `admin.py` e do §5 — uma afirmação falsa espalhada
+    por quatro ficheiros precisa de ser caçada nos quatro.
 
     ## `tenant_ids` é índice, não autorização
 

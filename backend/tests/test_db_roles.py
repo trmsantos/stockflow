@@ -126,6 +126,14 @@ SELECT c.relname,
 # política RLS passava, em silêncio, no gate que existe precisamente para isso.
 # Não há nenhuma hoje; o custo de fechar era uma palavra e o modo de falha era
 # um buraco invisível no gate de maior valor do repositório.
+#
+# Quando o particionamento chegar, isto precisa de uma decisão que hoje não faz
+# sentido tomar: as **partições folha** são `relkind='r'` e entram por aqui
+# também, mas no Postgres a política do pai é que se aplica no acesso pelo pai.
+# Logo as igualdades de conjuntos vão exigir ou excluir as folhas por
+# `pg_inherits`, ou exigir política em todas. Fica nomeado para quem escrever a
+# primeira tabela particionada não descobrir isto pelo teste a falhar sem razão
+# aparente.
 _VARREDURA_DE_POLITICAS = """
 SELECT c.relname,
        EXISTS (

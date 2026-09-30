@@ -82,8 +82,20 @@ count_sev() { # $1=critical $2=high $3=medium $4=low
 # ficheiro que simplesmente existe no directório e que ninguém vê.
 log "Supressões implícitas de ferramentas"
 DECLARADAS=()
-supressoes=$(cd "$ROOT" && git ls-files --cached --others --exclude-standard 2>/dev/null \
-  | grep -E '(^|/)(\.trivyignore|trivy\.ya?ml|\.semgrepignore|\.gitleaksignore|\.gitleaks\.toml|\.hadolint\.ya?ml|\.bandit|bandit\.ya?ml|\.snyk|\.nancy-ignore)$' || true)
+# `find` na árvore de trabalho e **não** `git ls-files`: o
+# `--exclude-standard` não lista o que está no `.gitignore`, enquanto as
+# ferramentas lêem o ficheiro **do disco**. Uma linha no `.gitignore` desarmava
+# este gate por completo, que é o oposto do que ele existe para fazer. E fora de
+# um repositório git o `git ls-files` saía ≠0, a variável ficava vazia, e o gate
+# imprimia "nenhuma" — falhava aberto.
+supressoes=$(cd "$ROOT" && find . \
+  -path ./.git -prune -o -path '*/node_modules' -prune -o -path '*/.venv' -prune -o \
+  -type f \( -name '.trivyignore' -o -name 'trivy.yml' -o -name 'trivy.yaml' \
+  -o -name '.trivyignore.yaml' -o -name '.trivyignore.yml' \
+  -o -name '.semgrepignore' -o -name '.gitleaksignore' -o -name '.gitleaks.toml' \
+  -o -name '.hadolint.yaml' -o -name '.hadolint.yml' -o -name '.bandit' \
+  -o -name 'bandit.yaml' -o -name 'bandit.yml' -o -name '.snyk' \
+  -o -name '.nancy-ignore' \) -print 2>/dev/null | sed 's|^\./||' | sort || true)
 nao_declaradas=""
 if [[ -n "$supressoes" ]]; then
   while IFS= read -r f; do
@@ -289,7 +301,13 @@ if run_if docker; then
       saida=$("$ROOT/docker/scan-artefactos.sh" 2>&1); estado=$?
       echo "$saida" | sed 's/^/  /' | tee -a "$SUMMARY"
       if (( estado == 1 )); then count_sev 1 0 0 0
-      elif (( estado != 0 )); then broken "segredos-em-imagem" "nenhuma imagem construída"; fi
+      elif (( estado != 0 )); then
+        # A mensagem real do script e não "nenhuma imagem construída": ele sai 2
+        # por cinco razões diferentes (create, export, listagem, extracção, zero
+        # ficheiros legíveis) e rotular todas como "nenhuma imagem" mandava quem
+        # lê o relatório investigar a coisa errada.
+        broken "segredos-em-imagem" "$(printf '%s' "$saida" | grep 'NÃO VARRIDA' | head -3 | tr '\n' ';')"
+      fi
     else
       skip "segredos-em-imagem" "docker/scan-artefactos.sh não encontrado"
     fi
