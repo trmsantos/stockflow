@@ -8,7 +8,8 @@ compras, com entrada de mercadoria por fatura do fornecedor (foto/PDF → linhas
 
 ## Stack (não negociável)
 Python 3.12 · Django 5 · DRF · **uv** · PostgreSQL 16 (RLS por tenant) · Celery + Redis ·
-React 18 · TypeScript strict · Vite · Tailwind v4 · shadcn/ui · TanStack Query · Zod ·
+React 18 · TypeScript strict · Vite · Tailwind v4 · shadcn/ui · TanStack Query ·
+TanStack **Router** (árvore em código, search params validados por Zod — ADR 0008) · Zod ·
 OpenAPI (drf-spectacular → openapi-typescript) · Docker multi-stage · pnpm.
 
 Comandos: `uv sync` · `uv run manage.py <cmd>` · `uv run pytest` · `uv run ruff check .` ·
