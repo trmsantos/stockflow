@@ -182,13 +182,20 @@ jobs:
         working-directory: frontend
         run: |
           falhou=0
-          # `identidades-page` e `data-identidade` cobrem as rotas de comparação
-          # de identidade visual, e a segunda não é redundante: o CSS viaja por
-          # outro caminho que o JS, e o `tokens-page` nunca exercitou esse lado
-          # porque não traz CSS próprio. As duas foram **sondadas** (guard
-          # forçado a verdadeiro, build, grep, reverter) e disparam as duas.
-          for padrao in "dados-falsos-stockflow" "Pastelaria Aurora" \
-                        "tokens-page" "identidades-page" "data-identidade"; do
+          # As sentinelas `identidades-page` e `data-identidade` viveram aqui
+          # durante uma tarde: cobriam as duas rotas de comparação de identidade
+          # visual, que saíram quando o dono do produto escolheu uma. **Saíram
+          # com elas**, e de propósito — uma sentinela que já não tem fonte
+          # nenhuma que a possa disparar nunca será notada quando quebrar, e faz
+          # esta varredura parecer mais larga do que é. É a mesma razão pela qual
+          # a tabela de cobertura saiu do SECURITY.md §9: um gate vazio é pior
+          # que nenhum, porque parece cobertura.
+          #
+          # Quem voltar a prototipar uma paleta numa rota de dev (o modo claro,
+          # que é dívida nomeada no DESIGN.md) acrescenta a sentinela dela — e
+          # isso aparece no diff, ao contrário de uma pré-posicionada que
+          # silenciosamente nunca disparou.
+          for padrao in "dados-falsos-stockflow" "Pastelaria Aurora" "tokens-page"; do
             if grep -rl "$padrao" dist/ 2>/dev/null; then
               echo "::error::'$padrao' chegou ao dist/"
               falhou=1

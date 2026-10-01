@@ -27,31 +27,12 @@ import {
  * sob `import.meta.env.DEV`, com `lazy()`, para o chunk ser eliminado em
  * `pnpm build`.
  *
- * O que aqui se vê e não se consegue ver de outra forma: se o modo escuro está
- * mesmo redefinido (os 18 tokens, não seis), o contraste real de cada par
- * medido no modo em que a página está, os três papéis de cada cor de estado, e
- * as duas bordas lado a lado.
+ * O que aqui se vê e não se consegue ver de outra forma: os 18 tokens como o
+ * browser os resolve (não como estão escritos), o contraste real de cada par,
+ * os três papéis de cada cor de estado, e as duas bordas lado a lado.
  */
 
 type Snapshot = Readonly<Record<TokenName, ResolvedColor | null>>;
-
-const DARK_QUERY = "(prefers-color-scheme: dark)";
-
-function subscribeToScheme(onChange: () => void): () => void {
-  const media = window.matchMedia(DARK_QUERY);
-  media.addEventListener("change", onChange);
-  return () => {
-    media.removeEventListener("change", onChange);
-  };
-}
-
-function readScheme(): "claro" | "escuro" {
-  return window.matchMedia(DARK_QUERY).matches ? "escuro" : "claro";
-}
-
-function useColorScheme(): "claro" | "escuro" {
-  return useSyncExternalStore(subscribeToScheme, readScheme, () => "claro");
-}
 
 function readSnapshot(): Snapshot {
   const computed = getComputedStyle(document.documentElement);
@@ -62,24 +43,32 @@ function readSnapshot(): Snapshot {
 }
 
 /**
- * Os valores resolvidos dos tokens são estado *externo* ao React — vivem no
- * CSSOM e mudam quando o modo do sistema muda. Por isso
- * `useSyncExternalStore` e não um `useState` dentro de um efeito: a subscrição
- * é a media query e o snapshot é memorizado por modo, para o React o poder
- * comparar por identidade.
+ * Os valores resolvidos dos tokens são estado *externo* ao React: vivem no
+ * CSSOM. Por isso `useSyncExternalStore` e não um `useState` dentro de um
+ * efeito — e o snapshot é memorizado, para o React o poder comparar por
+ * identidade em vez de voltar a ler o CSSOM a cada render.
+ *
+ * A subscrição não tem nada a que se subscrever, e isso é a decisão de
+ * 2026-10-01: há **uma paleta**, escura, e ela não muda em runtime. Antes a
+ * subscrição era a media query `prefers-color-scheme` e o cache era por modo.
+ * O modo claro, quando entrar (DESIGN.md §2), traz consigo o mecanismo que o
+ * seleciona — e é aí que esta subscrição volta, com algo real para ouvir.
  */
-let cacheDeSnapshot: { scheme: string; snapshot: Snapshot } | null = null;
+let cacheDeSnapshot: Snapshot | null = null;
 
 function snapshotMemorizado(): Snapshot {
-  const scheme = readScheme();
-  if (cacheDeSnapshot?.scheme !== scheme) {
-    cacheDeSnapshot = { scheme, snapshot: readSnapshot() };
-  }
-  return cacheDeSnapshot.snapshot;
+  cacheDeSnapshot ??= readSnapshot();
+  return cacheDeSnapshot;
+}
+
+function semSubscricao(): () => void {
+  return () => {
+    // Uma paleta só: não há evento nenhum que mude estes valores.
+  };
 }
 
 function useTokenSnapshot(): Snapshot {
-  return useSyncExternalStore(subscribeToScheme, snapshotMemorizado, snapshotMemorizado);
+  return useSyncExternalStore(semSubscricao, snapshotMemorizado, snapshotMemorizado);
 }
 
 function Section({
@@ -140,7 +129,7 @@ function ColorSection({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function ContrastSection({ snapshot, scheme }: { snapshot: Snapshot; scheme: string }) {
+function ContrastSection({ snapshot }: { snapshot: Snapshot }) {
   const rows = CONTRAST_CHECKS.map((check) => {
     const foreground = snapshot[check.foreground];
     const background = snapshot[check.background];
@@ -160,7 +149,7 @@ function ContrastSection({ snapshot, scheme }: { snapshot: Snapshot; scheme: str
           <CircleCheck aria-hidden="true" className="text-success" />
           <AlertTitle>Todos os pares obrigatórios passam</AlertTitle>
           <AlertDescription>
-            {rows.length} pares medidos no modo {scheme}: nenhum abaixo do mínimo.
+            {rows.length} pares medidos na paleta em vigor: nenhum abaixo do mínimo.
           </AlertDescription>
         </Alert>
       ) : (
@@ -179,7 +168,7 @@ function ContrastSection({ snapshot, scheme }: { snapshot: Snapshot; scheme: str
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full border-collapse text-sm">
           <caption className="sr-only">
-            Contraste WCAG 2.1 de cada par de tokens, medido no modo ativo
+            Contraste WCAG 2.1 de cada par de tokens, medido na paleta em vigor
           </caption>
           <thead className="sticky top-0 bg-surface-2">
             <tr>
@@ -367,8 +356,8 @@ function BordersSection() {
 
 function TypographySection() {
   const escala = [
-    { classe: "text-xs", rem: "0.75rem" },
-    { classe: "text-sm", rem: "0.875rem" },
+    { classe: "text-xs", rem: "0.8125rem" },
+    { classe: "text-sm", rem: "0.9375rem" },
     { classe: "text-base", rem: "1rem" },
     { classe: "text-lg", rem: "1.125rem" },
     { classe: "text-xl", rem: "1.25rem" },
@@ -382,13 +371,13 @@ function TypographySection() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          IBM Plex Sans (400/500/600) e IBM Plex Mono (400), servidas do bundle. Se isto aparecer
-          em Helvetica ou system-ui, as fontes não carregaram.
+          Archivo (500/600/700 — a família não tem 400) e IBM Plex Mono (400), servidas do
+          bundle. Se isto aparecer em Helvetica ou system-ui, as fontes não carregaram.
         </p>
         <div className="rounded-lg border border-border bg-surface p-4">
-          <p className="text-2xl">O que falta comprar hoje</p>
           <p className="text-2xl font-medium">O que falta comprar hoje</p>
           <p className="text-2xl font-semibold">O que falta comprar hoje</p>
+          <p className="text-2xl font-bold tracking-microrotulo uppercase">Rótulo de coluna</p>
         </div>
       </div>
 
@@ -493,19 +482,19 @@ function SpacingShapeSection() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="rounded-lg border border-border bg-surface p-4">
-          <h3 className="text-sm font-medium">Forma: 4 · 6 · 10px</h3>
+          <h3 className="text-sm font-medium">Forma: 4 · 6 · 8 · 12px</h3>
           <div className="mt-3 flex items-end gap-3">
             <div className="flex flex-col items-center gap-1">
               <div aria-hidden="true" className="size-14 rounded-md border border-border bg-surface-2" />
-              <span className="font-mono text-xs text-muted-foreground">sm · 4px</span>
+              <span className="font-mono text-xs text-muted-foreground">md · 6px</span>
             </div>
             <div className="flex flex-col items-center gap-1">
               <div aria-hidden="true" className="size-14 rounded-lg border border-border bg-surface-2" />
-              <span className="font-mono text-xs text-muted-foreground">base · 6px</span>
+              <span className="font-mono text-xs text-muted-foreground">base · 8px</span>
             </div>
             <div className="flex flex-col items-center gap-1">
               <div aria-hidden="true" className="size-14 rounded-xl border border-border bg-surface-2" />
-              <span className="font-mono text-xs text-muted-foreground">lg · 10px</span>
+              <span className="font-mono text-xs text-muted-foreground">xl · 12px</span>
             </div>
           </div>
         </div>
@@ -781,7 +770,6 @@ function DataStatesSection() {
 }
 
 export default function TokensPage() {
-  const scheme = useColorScheme();
   const snapshot = useTokenSnapshot();
 
   return (
@@ -800,9 +788,9 @@ export default function TokensPage() {
           produção.
         </p>
         <p className="max-w-2xl text-sm">
-          Modo ativo: <strong className="font-medium">{scheme}</strong>. Troca o tema do sistema
-          para ver o outro — os dois modos vêm de{" "}
-          <span className="font-mono">prefers-color-scheme</span>, não de uma classe.
+          Paleta em vigor: <strong className="font-medium">identidade «Cabine»</strong>,
+          escura e única. Não há modo claro para trocar — é dívida nomeada no DESIGN.md §2, e entra
+          completa e medida ou não entra.
         </p>
       </header>
 
@@ -811,7 +799,7 @@ export default function TokensPage() {
       </Section>
 
       <Section id="contraste" title="Contraste medido">
-        <ContrastSection snapshot={snapshot} scheme={scheme} />
+        <ContrastSection snapshot={snapshot} />
       </Section>
 
       <Section id="estados" title="Os três papéis de cada estado">

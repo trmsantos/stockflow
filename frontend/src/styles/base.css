@@ -1,15 +1,15 @@
 /* ---------------------------------------------------------------------------
  * base.css — a camada `base`. Nada aqui é um valor novo: só liga os tokens de
  * `tokens.css` aos elementos.
+ *
+ * Duas regras no fim do ficheiro estão **fora** de `@layer base`, de propósito
+ * e com a razão escrita lá: têm de ganhar a utilities de primitivos gerados, e
+ * nenhuma camada ganha a `utilities`.
  * ------------------------------------------------------------------------- */
 
 @layer base {
-  :root {
-    /* Diz ao browser que os dois modos existem: barras de scroll, campos de
-     * formulário e controlos nativos seguem o modo, em vez de ficarem brancos
-     * dentro de uma página escura. */
-    color-scheme: light dark;
-  }
+  /* O `color-scheme` vive no `tokens.css`, com a paleta: com um modo só, ele é
+   * um facto da paleta e não uma ligação de token a elemento. */
 
   * {
     /* Um `border-*` sem cor usa o separador decorativo. Fronteiras de
@@ -19,6 +19,10 @@
 
   html {
     font-family: var(--font-sans);
+    /* A Archivo não tem peso 400 (DESIGN.md §2): o corpo é 500. Sem esta
+     * linha o browser resolvia o 400 por aproximação — chegava ao 500 de
+     * qualquer forma, mas por regra de fallback e não por decisão. */
+    font-weight: 500;
     /* Remove o atraso de 300ms do duplo-toque: quem está a contar stock com o
      * telemóvel numa mão toca depressa. */
     touch-action: manipulation;
@@ -99,4 +103,35 @@
       animation-iteration-count: infinite;
     }
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * A fronteira dos controlos, e porque estas quatro linhas estão **fora** de
+ * `@layer base`.
+ *
+ * O DESIGN.md §2 e a checklist do §6 dizem que um controlo delimitado com
+ * `--color-border` (o separador decorativo) é um bug de acessibilidade: a
+ * fronteira de um componente precisa de 3:1 e o separador tem 1.38:1 sobre o
+ * `surface` nesta paleta — invisível. O primitivo `Button` do shadcn delimita
+ * a variante `outline` com `border-border`, e punha a correcção numa utility
+ * `dark:border-input` que esta paleta desligou (ver `tokens.css`).
+ *
+ * Estas regras têm de ganhar a uma utility, e **nenhuma camada ganha a
+ * `utilities`** — por isso não vão em `@layer base`: CSS sem camada vence
+ * qualquer `@layer`. É a mesma mecânica que a página de comparação das
+ * identidades usava, agora que a identidade é uma só. Os selectores são os
+ * `data-slot`/`data-variant` que os primitivos já emitem, e não classes
+ * minhas: `src/components/ui/` não se edita à mão (DESIGN.md §3).
+ * ------------------------------------------------------------------------- */
+
+[data-slot="button"][data-variant="outline"] {
+  border-color: var(--color-border-strong);
+}
+
+/* O `disabled` do input é o único estado em que o preenchimento comunica algo
+ * ("isto não se escreve"), e o primitivo resolve-o com `bg-input/50` — 50% da
+ * fronteira, que nesta paleta fica mais claro que o campo activo e diz o
+ * contrário. Um degrau de superfície diz "inerte" sem iluminar nada. */
+[data-slot="input"]:disabled {
+  background-color: var(--color-surface-2);
 }

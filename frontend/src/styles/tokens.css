@@ -1,11 +1,28 @@
 /* ---------------------------------------------------------------------------
  * tokens.css — fonte da verdade do sistema visual (DESIGN.md §2).
  *
- * Os valores de cor são copiados do DESIGN.md §2 sem alteração. Foram medidos
- * (oklch -> sRGB -> WCAG 2.1) contra a pior das três superfícies, que é o
- * `surface-2` nos dois modos: 4.80-4.84:1 para texto e 3.21-3.22:1 para bordas
- * de componente. Não arredondar "para valores mais bonitos" — perde-se a
- * margem que impede um arredondamento de falhar a barra.
+ * Identidade **"Cabine"**, escolhida pelo dono do produto a 2026-10-01: preto
+ * de monitor como tela, painéis um degrau acima, cromado visível, grotesca
+ * industrial na UI e mono a sério nos dados. A referência é o Bloomberg
+ * Terminal e os ecrãs de cozinha (KDS) do Toast e do Square.
+ *
+ * **Uma paleta, e é escura.** Não há `prefers-color-scheme` aqui: a decisão é
+ * "escuro primário, claro depois", e o modo claro é dívida nomeada no
+ * DESIGN.md §2 — entra quando estiver completo e medido, não a meio. O
+ * `scripts/check-design-tokens.mjs` já não exige paridade entre dois modos
+ * (com um modo só, essa paridade é vazia); exige uma paleta completa, medida,
+ * e **falha** se aparecer um bloco `prefers-color-scheme` com uma paleta
+ * parcial.
+ *
+ * Os valores de cor são os mesmos que o dono viu, e são os mesmos do
+ * DESIGN.md §2 sem alteração. Medidos (oklch -> sRGB -> WCAG 2.1) contra a
+ * pior das três superfícies, que é o `surface-2` (o mais claro dos três
+ * pretos, logo o pior fundo para texto claro): texto de 5.535:1
+ * (`muted-foreground`) a 14.864:1 (`foreground`), fronteiras de componente de
+ * 3.349:1 (`border-strong`) a 4.960:1 (`warning-border`), e `foreground`
+ * sobre as tintas de estado de 11.670:1 a 12.814:1. Não arredondar "para
+ * valores mais bonitos" — perde-se a margem que impede um arredondamento de
+ * falhar a barra.
  *
  * `@theme static` e não `@theme`: o Tailwind v4 só emite em `:root` as
  * variáveis de tema que alguma utility usa, e as pontes para o shadcn abaixo
@@ -14,6 +31,32 @@
  * resolvia para nada.
  * ------------------------------------------------------------------------- */
 
+/* ---------------------------------------------------------------------------
+ * O variant `dark:` não tem nada para selecionar, e é por isso que casa com
+ * nada.
+ *
+ * Os primitivos do shadcn trazem nove utilities `dark:` (`dark:bg-input/30`,
+ * `dark:border-input`, `dark:hover:bg-muted/50`, ...). No default do Tailwind
+ * v4 o `dark:` é `prefers-color-scheme: dark` — e com uma paleta escura única
+ * isso passava a significar "o aspecto do input depende da configuração do
+ * sistema de quem olha", que é um bug e não um tema: o mesmo ecrã, a mesma
+ * paleta, dois aspectos.
+ *
+ * Deixá-las **sempre** activas (`@custom-variant dark (&)`) foi medido e
+ * rejeitado: `dark:bg-input/30` compõe 30% de `--color-input` sobre o
+ * `surface`, e o placeholder (`muted-foreground`) cai de 6.302:1 para
+ * **4.512:1** — 0.012 acima da barra dos 4.5, que é a margem que o DESIGN.md
+ * §2 diz explicitamente para não aceitar. Com o `dark:` inerte vale o ramo
+ * único dos primitivos, que já está escrito em tokens desta paleta.
+ *
+ * `:not(*)` não casa com elemento nenhum, e vai dentro de `:where()` para não
+ * mexer na especificidade das utilities. As duas correcções de substância que
+ * a identidade propunha e que viviam no `dark:` (a fronteira do input e do
+ * botão `outline` em `border-strong` e não no separador decorativo) estão no
+ * `base.css`, fora de `@layer`, porque nenhuma camada ganha a `utilities`.
+ * ------------------------------------------------------------------------- */
+@custom-variant dark (&:where(:not(*)));
+
 @theme static {
   /* A paleta default do Tailwind (`bg-red-500`, `bg-zinc-800`, ...) é removida
    * de propósito: com ela fora, uma cor que não seja um token do DESIGN.md
@@ -21,35 +64,39 @@
    * valores estáticos da utility, e continuam a funcionar. */
   --color-*: initial;
 
-  /* Superfícies */
-  --color-background:  oklch(0.985 0.002 250);
-  --color-surface:     oklch(1 0 0);
-  --color-surface-2:   oklch(0.965 0.003 250);
+  /* Superfícies — três degraus de preto frio. O `surface-2` é o mais claro dos
+   * três e portanto a pior superfície para texto: é contra ele que se mede. */
+  --color-background:  oklch(0.145 0.008 240);
+  --color-surface:     oklch(0.19 0.009 240);
+  --color-surface-2:   oklch(0.245 0.01 240);
 
   /* Bordas — dois papéis distintos */
-  --color-border:        oklch(0.90 0.004 250);   /* separador decorativo; isento dos 3:1 */
-  --color-border-strong: oklch(0.626 0.008 250);  /* fronteira de componente (input): 3.2:1 */
+  --color-border:        oklch(0.305 0.011 240);  /* separador decorativo; isento dos 3:1 */
+  --color-border-strong: oklch(0.55 0.013 240);   /* fronteira de componente (input): 3.3:1 */
 
   /* Texto */
-  --color-foreground:       oklch(0.20 0.01 250);
-  --color-muted-foreground: oklch(0.528 0.01 250);
+  --color-foreground:       oklch(0.97 0.003 240);
+  --color-muted-foreground: oklch(0.675 0.016 240);
 
-  /* Marca — UMA cor de acento, usada com parcimónia */
-  --color-primary:            oklch(0.514 0.105 165);  /* verde-azulado; único acento */
-  --color-primary-foreground: oklch(0.99 0 0);
+  /* Marca — UMA cor de acento: ciano de lâmpada de painel. A gama de estado já
+   * tem o verde, o âmbar e o vermelho, e o §5 proíbe o roxo. */
+  --color-primary:            oklch(0.76 0.13 225);
+  --color-primary-foreground: oklch(0.19 0.02 240);
 
-  /* Estado — texto / preenchimento suave / borda */
-  --color-success:         oklch(0.512 0.14 150);
-  --color-success-surface: oklch(0.95 0.035 150);
-  --color-success-border:  oklch(0.610 0.15 150);
+  /* Estado — sinais, não tintas: croma e luminosidade altas, para a excepção
+   * se ver de longe num ecrã numa copa. Três papéis por cor: texto /
+   * preenchimento suave / borda. */
+  --color-success:         oklch(0.76 0.17 148);
+  --color-success-surface: oklch(0.3 0.05 148);
+  --color-success-border:  oklch(0.6 0.15 148);
 
-  --color-warning:         oklch(0.532 0.11 80);
-  --color-warning-surface: oklch(0.95 0.038 80);
-  --color-warning-border:  oklch(0.630 0.13 80);
+  --color-warning:         oklch(0.82 0.15 85);
+  --color-warning-surface: oklch(0.32 0.05 85);
+  --color-warning-border:  oklch(0.65 0.13 85);
 
-  --color-danger:          oklch(0.552 0.20 25);
-  --color-danger-surface:  oklch(0.95 0.020 25);
-  --color-danger-border:   oklch(0.650 0.20 25);
+  --color-danger:          oklch(0.7 0.185 25);
+  --color-danger-surface:  oklch(0.3 0.06 25);
+  --color-danger-border:   oklch(0.58 0.19 25);
 
   /* -----------------------------------------------------------------------
    * Pontes para os primitivos shadcn. Não são tokens novos: são os nomes que
@@ -73,43 +120,56 @@
   --color-ring:                 var(--color-primary);
 
   /* -----------------------------------------------------------------------
-   * Tipografia (DESIGN.md §2). IBM Plex servido do próprio bundle — a CSP de
-   * produção é `font-src 'self'` e um @import do Google Fonts seria bloqueado.
-   * Inter/Roboto/Open Sans/Poppins são proibidos.
+   * Tipografia (DESIGN.md §2). Archivo na UI e IBM Plex Mono nos dados,
+   * servidas do próprio bundle — a CSP de produção é `font-src 'self'` e um
+   * @import do Google Fonts seria bloqueado. Inter/Roboto/Open Sans/Poppins
+   * são proibidos.
+   *
+   * A Archivo entra sem peso 400: o corpo é 500 (ver `base.css`). O algarismo
+   * mono é mais largo e mais escuro que a palavra ao lado, e é isso que se
+   * quer — numa coluna de quantidades o que se compara são os números.
    * --------------------------------------------------------------------- */
-  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-sans: "Archivo", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  /* Títulos são a mesma família em peso 600 — `font-heading` é o nome que os
-   * primitivos usam. Uma família, não duas. */
-  --font-heading: "IBM Plex Sans", system-ui, sans-serif;
+  /* Títulos são a mesma família em peso 600/700 — `font-heading` é o nome que
+   * os primitivos usam. Uma família, não duas. */
+  --font-heading: "Archivo", system-ui, sans-serif;
 
-  /* Escala fechada: 0.75 · 0.875 · 1 · 1.125 · 1.25 · 1.5 · 2 · 2.5 · 3.25rem.
+  /* Escala fechada: 0.8125 · 0.9375 · 1 · 1.125 · 1.25 · 1.5 · 2 · 2.5 ·
+   * 3.25rem. Um degrau acima da escala anterior: a célula da tabela
+   * (`text-sm`) é 15px e o rótulo de coluna (`text-xs`) é 13px, porque o ecrã
+   * também é lido de dois metros.
    * O `initial` remove os degraus 6xl-9xl do Tailwind: nove passos bastam e um
    * décimo seria uma decisão tomada por omissão. */
   --text-*: initial;
-  --text-xs: 0.75rem;
-  --text-xs--line-height: 1.5;
-  --text-sm: 0.875rem;
-  --text-sm--line-height: 1.5;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.4;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.45;
   --text-base: 1rem;
   --text-base--line-height: 1.5;
   --text-lg: 1.125rem;
   --text-lg--line-height: 1.5;
   --text-xl: 1.25rem;
-  --text-xl--line-height: 1.5;
-  /* Títulos: 1.2 de line-height e tracking negativo a partir daqui. */
+  --text-xl--line-height: 1.4;
+  /* Títulos: line-height curto e tracking negativo a partir daqui. */
   --text-2xl: 1.5rem;
   --text-2xl--line-height: 1.2;
-  --text-2xl--letter-spacing: -0.02em;
+  --text-2xl--letter-spacing: -0.01em;
   --text-3xl: 2rem;
-  --text-3xl--line-height: 1.2;
+  --text-3xl--line-height: 1.15;
   --text-3xl--letter-spacing: -0.02em;
   --text-4xl: 2.5rem;
-  --text-4xl--line-height: 1.2;
+  --text-4xl--line-height: 1.1;
   --text-4xl--letter-spacing: -0.02em;
   --text-5xl: 3.25rem;
-  --text-5xl--line-height: 1.2;
+  --text-5xl--line-height: 1.05;
   --text-5xl--letter-spacing: -0.02em;
+
+  /* O microrótulo do cromado: cabeçalho de coluna e etiqueta de secção em
+   * caixa alta, peso 700 e este tracking. Em caixa alta sem tracking as
+   * letras colam-se; 0.08em é o que a identidade mediu. */
+  --tracking-microrotulo: 0.08em;
 
   /* -----------------------------------------------------------------------
    * Espaçamento: grelha de 4px. A escala usada é `1 2 3 4 6 8 12 16 24 32`
@@ -118,30 +178,51 @@
   --spacing: 0.25rem;
 
   /* -----------------------------------------------------------------------
-   * Forma: um valor base (6px) e dois derivados, sm = base-2 e lg = base+4.
-   * Mapeados para os nomes que os primitivos usam: controlos são `rounded-lg`
-   * (6px, a base), cards são `rounded-xl` (10px) e chips pequenos `rounded-md`
-   * (4px). Tudo acima de `xl` é fixado em 10px para que nenhum componente
-   * escape à escala — `rounded-2xl` em tudo é anti-padrão (DESIGN.md §5).
+   * Densidade da identidade, em nomes e não em números soltos pelo JSX. Vivem
+   * no namespace `--spacing-*` de propósito: é ele que alimenta `h-*`, `p-*`,
+   * `gap-*` e `w-*`, logo `h-linha` e `px-celula-x` existem sem uma linha de
+   * CSS à mão, e mudar a densidade é mudar aqui.
+   *
+   * A tabela é densa mas a linha é alta: 44px é ao mesmo tempo o alvo de toque
+   * mínimo do §4 e a altura que deixa a mesma tabela servir num tablet na copa
+   * sem um segundo desenho.
    * --------------------------------------------------------------------- */
-  --radius: 6px;
-  --radius-xs: 4px;
-  --radius-sm: 4px;
-  --radius-md: 4px;
-  --radius-lg: 6px;
-  --radius-xl: 10px;
-  --radius-2xl: 10px;
-  --radius-3xl: 10px;
-  --radius-4xl: 10px;
+  --spacing-linha: 2.75rem;      /* 44px — altura da linha de tabela */
+  --spacing-celula-y: 0.75rem;   /* 12px — padding vertical da célula */
+  --spacing-celula-x: 1rem;      /* 16px — padding horizontal da célula */
+  --spacing-ritmo: 1.5rem;       /* 24px — distância entre painéis */
+  --spacing-controlo: 2.5rem;    /* 40px — altura de input e botão */
+  --spacing-chip: 1.75rem;       /* 28px — altura mínima de badge */
+  --spacing-cabecalho: 3.5rem;   /* 56px — altura da barra de topo */
+  --spacing-trilho: 0.25rem;     /* 4px — trilho de acento da linha activa */
+  --container-sidebar: 16rem;    /* 256px — sidebar aberta (ADR 0009) */
 
   /* -----------------------------------------------------------------------
-   * Sombras: dois níveis, `sm` para cards e `lg` para popovers. Sem sombras
-   * coloridas — a sombra é preto com alfa, nada de tinta da marca. Preferir
-   * uma borda de 1px a uma sombra para separar superfícies.
+   * Forma: um valor base (8px) e derivados — `sm` 4px, `md` 6px, `xl` 12px.
+   * Painéis com canto, como os cartões de um KDS. Mapeados para os nomes que
+   * os primitivos usam: controlos são `rounded-lg` (8px, a base), painéis
+   * `rounded-xl` (12px) e chips pequenos `rounded-md` (6px). Tudo acima de
+   * `xl` é fixado em 12px para que nenhum componente escape à escala —
+   * `rounded-2xl` em tudo é anti-padrão (DESIGN.md §5).
+   * --------------------------------------------------------------------- */
+  --radius: 8px;
+  --radius-xs: 4px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
+  --radius-3xl: 12px;
+  --radius-4xl: 12px;
+
+  /* -----------------------------------------------------------------------
+   * Sombras: dois níveis, `sm` para painéis e `lg` para o que flutua. Num
+   * fundo preto a sombra não separa — o que separa é um fio de luz na aresta
+   * de cima, e é essa a primeira camada do `sm`. Nenhuma é colorida.
    * --------------------------------------------------------------------- */
   --shadow-*: initial;
-  --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 0.06), 0 1px 3px 0 oklch(0 0 0 / 0.08);
-  --shadow-lg: 0 8px 16px -4px oklch(0 0 0 / 0.12), 0 2px 6px -2px oklch(0 0 0 / 0.10);
+  --shadow-sm: inset 0 1px 0 0 oklch(1 0 0 / 0.05), 0 10px 28px -16px oklch(0 0 0 / 0.75);
+  --shadow-lg: 0 16px 40px -12px oklch(0 0 0 / 0.8);
 
   /* -----------------------------------------------------------------------
    * Movimento: 120ms micro, 200ms transições, 320ms entrada de painéis.
@@ -157,51 +238,20 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Modo escuro — os 18 tokens redefinidos por inteiro (DESIGN.md §2). As
- * pontes para o shadcn e o resto da escala não se repetem: apontam para estes
- * e seguem-nos sozinhas.
+ * `color-scheme: dark` — a linha que faz o browser alinhar o que não é nosso.
  *
- * `prefers-color-scheme` e não uma classe `.dark`: é o que o DESIGN.md
- * especifica, e é também o default do variant `dark:` do Tailwind v4 — a linha
- * `@custom-variant dark (&:is(.dark *))` que o `shadcn init` escreve foi
- * removida por isso.
- * ------------------------------------------------------------------------- */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-background:  oklch(0.18 0.006 250);
-    --color-surface:     oklch(0.21 0.006 250);
-    --color-surface-2:   oklch(0.25 0.007 250);
-
-    --color-border:        oklch(0.30 0.008 250);
-    --color-border-strong: oklch(0.544 0.008 250);
-
-    --color-foreground:       oklch(0.96 0.003 250);
-    --color-muted-foreground: oklch(0.644 0.01 250);
-
-    --color-primary:            oklch(0.628 0.13 165);
-    --color-primary-foreground: oklch(0.16 0.01 250);
-
-    --color-success:         oklch(0.628 0.15 150);
-    --color-success-surface: oklch(0.26 0.030 150);
-    --color-success-border:  oklch(0.528 0.145 150);
-
-    --color-warning:         oklch(0.648 0.134 80);
-    --color-warning-surface: oklch(0.26 0.032 80);
-    --color-warning-border:  oklch(0.548 0.113 80);
-
-    --color-danger:          oklch(0.668 0.20 25);
-    --color-danger-surface:  oklch(0.26 0.035 25);
-    --color-danger-border:   oklch(0.568 0.20 25);
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Aliases sem o prefixo `--color-`. Dois primitivos do shadcn referem
- * `var(--secondary)` e `var(--foreground)` diretamente dentro de um
- * `color-mix()`, e não através da utility. Sem estes, esse `color-mix` fica
+ * Sem ela, as barras de scroll, o caret, o autofill, os controlos nativos e os
+ * menus de `<select>` vêm do modo claro por cima de uma página preta. É o
+ * detalhe que trai uma app escura feita a meio, e é também por isso que é
+ * `dark` e não `light dark`: não há dois modos para o sistema escolher.
+ *
+ * Os dois aliases sem o prefixo `--color-` são para dois primitivos do shadcn
+ * que referem `var(--secondary)` e `var(--foreground)` diretamente dentro de
+ * um `color-mix()`, e não através da utility. Sem eles, esse `color-mix` fica
  * inválido e o estado de hover desaparece sem erro nenhum.
  * ------------------------------------------------------------------------- */
 :root {
+  color-scheme: dark;
   --foreground: var(--color-foreground);
   --secondary: var(--color-surface-2);
 }

@@ -32,19 +32,23 @@ separadas por vírgula). Por pedido há também `?_fixture=vazio` e `?_fixture=e
 - **`src/shell/`** — `AppShell`, `SidebarNav`, `TabBar`, `AppHeader`, `nav-items.ts` e os três
   estados de rota. Uma árvore só: a sidebar e a tab bar estão ambas no DOM, escondidas por
   breakpoint (`hidden md:flex` / `md:hidden`), nunca por `useMediaQuery`. Os itens de navegação são
-  **um** array, e os quatro de mobile são uma tupla de quatro que o `pnpm typecheck` verifica.
+  **um** array, e os quatro de mobile são uma tupla de quatro que o `pnpm typecheck` verifica — a
+  tab bar sai com o shell de ERP da ADR 0009, que é a tarefa seguinte e não esta.
 - **`src/features/<módulo>/`** — produto, com os nomes dos módulos do backend (`inventory`,
   `purchasing`, …), não nomes de ecrã. Dentro: `screens/`, `components/`, `hooks/`, `api.ts`,
   `schemas.ts`. As quatro fronteiras entre `routes/`, `features/`, `shell/` e `lib/`+`components/`
   são quatro blocos `no-restricted-imports` no `eslint.config.js`, cada um medido com uma sonda.
 - **`src/styles/tokens.css`** — os 18 tokens de cor do DESIGN.md §2, a escala tipográfica, a
-  grelha de 4px, os três raios, as duas sombras e o movimento. Modo escuro por
-  `prefers-color-scheme`, com os 18 tokens redefinidos. **Nenhuma cor vive fora deste ficheiro.**
+  grelha de 4px, as medidas de densidade, os raios, as duas sombras e o movimento. **Uma paleta só,
+  escura** (identidade "Cabine", escolhida a 2026-10-01): não há `prefers-color-scheme`, há
+  `color-scheme: dark`, e o modo claro é dívida nomeada no DESIGN.md §2 — o `pnpm lint` falha se
+  alguém começar um segundo modo e o deixar a meio. **Nenhuma cor vive fora deste ficheiro.**
 - `src/styles/base.css` — liga os tokens aos elementos: alvos de toque ≥ 44px em
   `pointer: coarse`, `prefers-reduced-motion`, `tabular-nums` em `[data-numeric]`.
-- `src/styles/fonts.css` — IBM Plex Sans 400/500/600 e Mono 400, subconjunto latin, `woff2`,
-  servidas do bundle. A CSP de produção é `font-src 'self'`: um `@import` do Google Fonts
-  compilaria, passaria em dev e seria bloqueado em produção.
+- `src/styles/fonts.css` — Archivo 500/600/700 (a família não tem 400) e IBM Plex Mono 400,
+  subconjunto latin, `woff2`, servidas do bundle. A CSP de produção é `font-src 'self'`: um
+  `@import` do Google Fonts compilaria, passaria em dev e seria bloqueado em produção. O gate falha
+  se um token de fonte apontar para uma família sem `@font-face`.
 - `src/components/ui/` — shadcn via CLI. Não editar à mão: personaliza-se pelos tokens.
 - `src/lib/api/` — cliente HTTP (cookie de sessão, `X-CSRFToken`, `X-Tenant-ID`), chaves de
   query por tenant, paginação (50/página) e os tipos gerados.
@@ -73,9 +77,11 @@ de `fixtures/`, se o plugin perder o `apply: "serve"`, se um fixture não trouxe
 
 Rota só de desenvolvimento (`import.meta.env.DEV` + `lazyRouteComponent`, com o `import()` dentro
 do ramo morto, eliminada do bundle de produção).
-Mostra os 18 tokens como o browser os resolve, **mede** o contraste WCAG de cada par no modo
-ativo, e exibe os três papéis de cada cor de estado, as duas bordas lado a lado, a escala
+Mostra os 18 tokens como o browser os resolve, **mede** o contraste WCAG de cada par na paleta em
+vigor, e exibe os três papéis de cada cor de estado, as duas bordas lado a lado, a escala
 tipográfica, o espaçamento, os dois níveis de sombra e os estados de componente e de dados.
+As duas rotas de comparação de identidade (`/dev/identidade-a` e `-b`) foram apagadas quando o dono
+do produto escolheu a "Cabine": a proposta vencedora é o `tokens.css`.
 
 ## O que está deliberadamente ausente
 

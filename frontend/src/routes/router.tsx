@@ -31,17 +31,20 @@ import { rotaDeStock } from "./stock";
  */
 
 /**
- * As rotas de desenvolvimento mantêm a propriedade que a `/dev/tokens` já
- * tinha: a rota só entra no array de filhos dentro do ramo
- * `import.meta.env.DEV` **e o `import()` fica dentro desse ramo**. No build o
- * `import.meta.env.DEV` é substituído por `false`, o ramo morre e o Rollup
- * elimina o chunk — a página não existe no bundle de produção, e isso é
- * verificado por varredura do `dist/`.
+ * A rota de desenvolvimento mantém a propriedade que teve desde o início: só
+ * entra no array de filhos dentro do ramo `import.meta.env.DEV` **e o
+ * `import()` fica dentro desse ramo**. No build o `import.meta.env.DEV` é
+ * substituído por `false`, o ramo morre e o Rollup elimina o chunk — a página
+ * não existe no bundle de produção, e isso é verificado por varredura do
+ * `dist/`.
  *
- * As duas rotas de identidade importam o **mesmo** módulo com nomes de export
- * diferentes, de propósito: dá um chunk só, logo uma sentinela só
- * (`identidades-page`) para a varredura do `dist/`, e garante que as duas
- * propostas mostram o mesmo conteúdo — o que varia é o invólucro.
+ * As duas rotas de comparação de identidade (`/dev/identidade-a` e `-b`)
+ * saíram a 2026-10-01: o dono do produto escolheu a "Cabine", que passou a ser
+ * a paleta do `tokens.css`. Uma candidata que perdeu e fica no repositório
+ * volta por distração. Com elas saem duas sentinelas da varredura do `dist/`
+ * no CI (`identidades-page` e `data-identidade`), que ficam a grep de um padrão
+ * que não existe em sítio nenhum — e um gate vazio é pior que nenhum, porque
+ * parece cobertura.
  */
 const rotasDeDesenvolvimento = import.meta.env.DEV
   ? [
@@ -49,16 +52,6 @@ const rotasDeDesenvolvimento = import.meta.env.DEV
         getParentRoute: () => rotaRaiz,
         path: "/dev/tokens",
         component: lazyRouteComponent(() => import("@/dev/tokens-page")),
-      }),
-      createRoute({
-        getParentRoute: () => rotaRaiz,
-        path: "/dev/identidade-a",
-        component: lazyRouteComponent(() => import("@/dev/identidades-page"), "IdentidadeA"),
-      }),
-      createRoute({
-        getParentRoute: () => rotaRaiz,
-        path: "/dev/identidade-b",
-        component: lazyRouteComponent(() => import("@/dev/identidades-page"), "IdentidadeB"),
       }),
     ]
   : [];

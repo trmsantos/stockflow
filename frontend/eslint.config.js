@@ -32,7 +32,7 @@ const REGRAS_DE_DESIGN = [
   {
     selector: "Literal[value=/\\b(?:Inter|Roboto|Poppins|Open Sans|Geist|Figtree)\\b/]",
     message:
-      "Fonte proibida como default (DESIGN.md §2). As fontes do projeto são IBM Plex Sans e IBM Plex Mono.",
+      "Fonte proibida como default (DESIGN.md §2). As fontes do projeto são Archivo e IBM Plex Mono.",
   },
   {
     selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",

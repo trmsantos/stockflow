@@ -3,7 +3,7 @@
  *
  * Existe por uma razão: o DESIGN.md §2 exige contraste AA verificado, e
  * "verificado" não pode querer dizer "o documento diz que sim". Isto lê os
- * tokens tal como o browser os resolve — no modo em que a página está — e
+ * tokens tal como o browser os resolve — a paleta em vigor, que é uma só — e
  * calcula o contraste WCAG 2.1 real.
  *
  * Um `oklch()` fora do gamut sRGB é mapeado pelo browser em silêncio, e o
