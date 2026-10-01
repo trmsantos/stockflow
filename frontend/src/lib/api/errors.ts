@@ -60,3 +60,17 @@ export class ResponseShapeError extends Error {
 export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
+
+/**
+ * A frase que se mostra a quem está à frente do ecrã.
+ *
+ * O `detail` do backend já vem pronto para mostrar e já diz o passo seguinte
+ * (`middleware.py`), por isso a UI não o reescreve — só garante que **há**
+ * sempre uma frase, e que essa frase inclui o que fazer a seguir. Um erro de
+ * rede não tem `detail` nenhum, e é o caso mais provável numa cozinha.
+ */
+export function mensagemDeErro(error: unknown): string {
+  if (error instanceof ApiError && error.detail !== null) return error.detail;
+  if (error instanceof Error && error.message !== "") return error.message;
+  return "Verifique a ligação e tente outra vez.";
+}

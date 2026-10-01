@@ -319,10 +319,16 @@ const ORDEM_DO_ESTADO = new Map<EstadoNivel, number>([
  * para tipar. Um valor desconhecido degrada para "todas" em vez de explodir.
  */
 function lojasPedidas(ctx: Contexto): readonly Loja[] {
-  const todas = LOCALIZACOES.map((local) => local.slug);
   const pedida = ctx.parametros.get("loja");
-  const encontrada = todas.find((slug) => slug === pedida);
-  return encontrada === undefined ? todas : [encontrada];
+  // Casa pelo **id** e pelo slug. O id porque é o único identificador de
+  // localização que a API manda ao cliente (`localizacaoSchema` é `{id, name}`,
+  // sem slug): o `?loja=` que sai do ecrã de Stock só pode ser o id, senão o
+  // frontend passava a guardar um catálogo de lojas que não é dele. O slug
+  // porque é o que se escreve à mão num `curl` e já estava documentado como tal.
+  const encontrada = LOCALIZACOES.find(
+    (local) => local.id === pedida || local.slug === pedida,
+  );
+  return encontrada === undefined ? LOCALIZACOES.map((local) => local.slug) : [encontrada.slug];
 }
 
 function niveis(ctx: Contexto): NivelDeStock[] {

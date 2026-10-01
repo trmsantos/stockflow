@@ -20,3 +20,22 @@ export function getActiveTenantId(): string | null {
 export function setActiveTenantId(tenantId: string | null): void {
   activeTenantId = tenantId;
 }
+
+/**
+ * O estabelecimento à cabeça das chaves de query (`query-keys.ts`).
+ *
+ * Enquanto não há autenticação, o cliente não sabe qual é o estabelecimento da
+ * sessão — e não tem de saber: quem escolhe o âmbito é a sessão do servidor e
+ * quem o concede é a política de RLS (ADR 0007). O que a cache precisa é de um
+ * nome estável para "o estabelecimento desta sessão, qualquer que ele seja",
+ * para que no dia em que o login existir as chaves passem a levar o id real e
+ * as entradas antigas deixem de casar — que é exactamente o efeito desejado.
+ *
+ * Não é uma credencial nem viaja em pedido nenhum: o header `X-Tenant-ID` sai
+ * do `getActiveTenantId()`, e quando é `null` não é enviado.
+ */
+const TENANT_DA_SESSAO = "sessao";
+
+export function tenantDaCache(): string {
+  return activeTenantId ?? TENANT_DA_SESSAO;
+}

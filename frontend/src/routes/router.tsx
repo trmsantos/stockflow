@@ -3,6 +3,7 @@ import { createRoute, createRouter, lazyRouteComponent } from "@tanstack/react-r
 import { ErroDeEcra, EsqueletoDeEcra, NaoEncontrado } from "@/shell/estados-de-rota";
 
 import { rotaDeAlertas } from "./alertas";
+import { rotaDeArtigo } from "./artigo";
 import { rotaDeContar } from "./contar";
 import { rotaInicial } from "./inicio";
 import { rotaDeReceber } from "./receber";
@@ -49,6 +50,7 @@ const rotasDeDesenvolvimento = import.meta.env.DEV
 const arvoreDeRotas = rotaRaiz.addChildren([
   rotaInicial,
   rotaDeStock,
+  rotaDeArtigo,
   rotaDeReceber,
   rotaDeContar,
   rotaDeAlertas,
