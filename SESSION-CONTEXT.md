@@ -17,8 +17,14 @@ relatório de desperdício em euros — e não um chatbot de suporte.
   notifications, shared`), módulos só se importam via `api.py`, outbox para eventos. Ver ARCHITECTURE.md e ADR 0001.
 - Stock é um **ledger** append-only de `StockMovement`; quantidades são projeções. Nunca editáveis.
 - A IA só produz **drafts**; um humano confirma antes de qualquer escrita no ledger.
-- Sem estética genérica de IA: DESIGN.md define IBM Plex, um único acento verde-azulado, densidade
-  compacta, tab bar mobile (Stock · Receber · Contar · Alertas).
+- Sem estética genérica de IA: DESIGN.md define a identidade **"Cabine"** (escolhida pelo dono em
+  2026-10-01 entre duas propostas opostas): paleta **escura única**, Archivo em UI e IBM Plex Mono nos
+  números, um só acento ciano, densidade densa de ERP. **Desktop-primeiro** (1440 de desenho, 1280
+  obrigatório); o telemóvel serve os fluxos de campo (contar, receber) e **não** há tab bar — ela
+  saiu do §4 com a mudança de direcção, e o `src/shell/tab-bar.tsx` ainda existe à espera da tarefa
+  do shell. Dependência concreta para quem a fizer: o `receber.tsx` tem um
+  `bottom-[calc(3.5rem+env(safe-area-inset-bottom))]` em que os `3.5rem` **são** a altura da tab
+  bar, e tem de sair com ela.
 - Segurança e encriptação conforme SECURITY.md; `security-reviewer` tem de dar PASS no fim de cada feature.
 
 **Como trabalhamos:**

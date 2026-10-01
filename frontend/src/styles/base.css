@@ -135,3 +135,17 @@
 [data-slot="input"]:disabled {
   background-color: var(--color-surface-2);
 }
+
+/* O popover do `Select` flutuava **sem sombra nenhuma**. O primitivo pede
+ * `shadow-md`, e esta paleta declara `--shadow-*: initial` com apenas `sm` e
+ * `lg` — medido no CSS compilado: a classe `.shadow-md` não existe, logo o
+ * painel ficava a separar-se do fundo só com `ring-1 ring-foreground/10`. Sobre
+ * um fundo preto isso quase não se vê, e um menu aberto que não se distingue do
+ * que está atrás dele é o tipo de defeito que ninguém encontra a ler o JSX.
+ *
+ * `--shadow-lg` é a sombra profunda da identidade, que é precisamente o papel
+ * que um popover tem (`DESIGN.md` §2: duas sombras, e a maior é para o que
+ * flutua). Vai aqui e não no primitivo pela mesma razão das duas regras acima. */
+[data-slot="select-content"] {
+  box-shadow: var(--shadow-lg);
+}
