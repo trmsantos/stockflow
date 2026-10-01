@@ -1,10 +1,14 @@
-"""Defesa do login: os dois ganchos que o `django-axes` nos deixa (SECURITY.md §5).
+"""Defesa do login: os três ganchos que o `django-axes` nos deixa (SECURITY.md §5).
 
 1. `progressive_cooloff` — `AXES_COOLOFF_TIME`: quanto tempo dura o bloqueio.
 2. `axes_username` — `AXES_USERNAME_CALLABLE`: **qual é a conta** a que uma
    tentativa pertence. Sem ele o contador por conta fragmenta-se pela caixa do
    email e o lockout deixa de trancar; a segunda metade deste docstring explica
    o que o axes faz de facto.
+3. `lockout_response` — `AXES_LOCKOUT_CALLABLE`: **o corpo do 429**. Fecha o
+   item de dívida que o `SECURITY.md` §5 nomeava e que a ADR 0010 fechou com um
+   código estável; a terceira metade deste docstring explica o que o axes
+   responderia sem ele.
 
 ## 1. `progressive_cooloff`
 
@@ -98,6 +102,37 @@ fragmenta-se exatamente da mesma forma.
 de uma vez: é a **primeira** coisa que o `get_client_username` consulta, logo
 todos os caminhos que perguntam "de quem é esta tentativa?" passam por aqui — a
 decisão de lockout, o registo da falha, as chaves de cache e a resposta 429.
+
+## 3. `lockout_response`, e o que o axes responderia sem ele
+
+O `AxesMiddleware` não recusa o pedido: deixa a view responder e, se o axes
+marcou o pedido (`request.axes_locked_out`), **substitui** a resposta pelo
+`get_lockout_response`. Sem `AXES_LOCKOUT_CALLABLE`, esse helper responde o
+`AXES_COOLOFF_MESSAGE` — uma string de texto, em `text/plain`, com o status 429.
+Um corpo JSON só sairia dele com `X-Requested-With: XMLHttpRequest` no pedido
+(que o `fetch` do cliente React não manda) ou com um `AXES_LOCKOUT_TEMPLATE`
+configurado. Resultado: o cliente recebia um 429 que não sabia distinguir do 429
+do throttle do DRF, e o `errors.ts` ficava sem `code` para ramificar.
+
+Com este gancho o corpo é `{"code": "conta_bloqueada", "detail": ...}`, a mesma
+forma do `TenantMiddleware`, e o status continua a vir do
+`AXES_HTTP_RESPONSE_CODE` — a setting mantém-se a fonte de verdade em vez de
+aparecer aqui um 429 literal.
+
+**Armadilha a conhecer antes de mexer nesta função:** o `get_lockout_response`
+chama-a com três argumentos e, se isso levantar `TypeError`, **volta a chamá-la
+com dois** (compatibilidade com assinaturas antigas, `axes/helpers.py:476`). Um
+`TypeError` levantado *dentro* do corpo é, para o axes, indistinguível de uma
+assinatura errada: a função é chamada duas vezes e o erro que aparece é o
+segundo. Daí o corpo não construir nada que possa levantar.
+
+**O que o corpo não diz: quanto tempo falta.** A única duração disponível neste
+caminho é a da escada (`progressive_cooloff`), e aqui ela está calculada com o
+número real de falhas — mas o bloqueio **aplicado** é sempre o primeiro degrau,
+porque na decisão de lockout o número de falhas ainda não existe (ver a parte 1).
+Pôr o valor da escada no corpo era anunciar "4 horas" sobre um bloqueio de 30
+minutos; escrever "30 minutos" à mão era uma segunda fonte de verdade para o
+`COOLOFF_STEPS[0]`. Fica sem número, e é dívida que se paga com a escada.
 """
 
 from __future__ import annotations
@@ -107,9 +142,21 @@ from typing import Any
 
 from axes.helpers import get_failure_limit
 from django.conf import settings
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse, JsonResponse
 
 from apps.accounts.api import normalizar_email
+
+#: Código estável do 429 do lockout (ADR 0010). Vive aqui e não no `accounts`
+#: porque quem o devolve é o `AxesMiddleware` através de uma setting do axes, e
+#: esta é a configuração do axes — mas é contrato público, como os códigos do
+#: `TenantMiddleware`, e o frontend ramifica por ele.
+CODIGO_CONTA_BLOQUEADA = "conta_bloqueada"
+
+#: A frase que acompanha o código. Sem número: ver a parte 3 do docstring.
+DETALHE_CONTA_BLOQUEADA = (
+    "Demasiadas tentativas de entrada falhadas. "
+    "Esta conta está temporariamente bloqueada; tente mais tarde."
+)
 
 #: Escada de espera, a partir do momento em que `AXES_FAILURE_LIMIT` é atingido.
 #: A última entrada é o teto: a partir daí não cresce mais.
@@ -250,3 +297,33 @@ def _corpo(request: HttpRequest | None) -> Any:
         return None
     dados = getattr(request, "data", None)
     return getattr(request, "POST", None) if dados is None else dados
+
+
+def lockout_response(
+    request: HttpRequest | None = None,
+    original_response: HttpResponse | None = None,
+    credentials: dict[str, Any] | None = None,
+) -> JsonResponse:
+    """O 429 do lockout, com corpo JSON e `code` estável (ADR 0010).
+
+    É o `AXES_LOCKOUT_CALLABLE`. A assinatura tem de aceitar os **três**
+    argumentos positionais com que o `get_lockout_response` chama primeiro: com
+    dois, a primeira chamada levanta `TypeError`, o axes engole-o e repete com
+    dois — funciona, mas por acidente, e o `TypeError` do meio esconde qualquer
+    outro.
+
+    Não lê o request e não faz query nenhuma. Em particular **não** põe o nome
+    da conta no corpo (o `get_lockout_response` do axes põe-no no seu contexto):
+    quem recebe esta resposta acabou de escrever o email, logo não ganha
+    informação, e um email no corpo de uma resposta a um pedido não autenticado
+    é um oráculo gratuito para quem está a varrer contas.
+
+    O status vem do `AXES_HTTP_RESPONSE_CODE` para a setting continuar a ser a
+    fonte de verdade: com o callable configurado, o ramo do axes que a lê deixa
+    de correr, e um 429 literal aqui fazia a setting passar a não ter efeito
+    nenhum sem deixar rasto.
+    """
+    return JsonResponse(
+        {"code": CODIGO_CONTA_BLOQUEADA, "detail": DETALHE_CONTA_BLOQUEADA},
+        status=settings.AXES_HTTP_RESPONSE_CODE,
+    )

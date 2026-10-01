@@ -2,7 +2,8 @@
 
 A API vive toda sob `/api/v1/` (ARCHITECTURE.md §5). As rotas de cada módulo
 entram em `api_v1_patterns` com um `include("apps.<m>.urls")` quando a feature
-correspondente for construída — por agora só existe o schema.
+correspondente for construída — hoje existem o schema e os quatro endpoints de
+autenticação do `accounts` (ADR 0010).
 
 Fora do `/api/v1/` vivem três coisas, e cada uma por uma razão diferente: o
 admin (path não óbvio, SECURITY.md §5), o `/healthz` e o `/readyz`. Os dois
@@ -21,6 +22,12 @@ from config.health import healthz, readyz
 
 api_v1_patterns = [
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
+    # As quatro rotas de `/api/v1/auth/`. São dispensadas de âmbito de tenant, e
+    # a dispensa é declarada nas views (`apps/accounts/views.py`), não aqui: o
+    # `dispensar_ambito` abaixo existe só para o admin, cujas views não são
+    # nossas para lhes pôr um atributo. A lista fechada das dispensas está em
+    # `tests/test_rls_isolation.py` e falha nos dois sentidos.
+    path("", include("apps.accounts.urls")),
 ]
 
 if settings.API_DOCS_ENABLED:

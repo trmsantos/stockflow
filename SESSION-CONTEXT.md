@@ -76,7 +76,7 @@ DESIGN.md afirma, em vez de os deixar em prosa.
   `test_db_roles.py`.
 
 **Dívida nomeada:** a escada de lockout acima dos 30 min não tem efeito (limitação estrutural do
-axes — ver `SECURITY.md` §5); o 429 do lockout não tem corpo JSON útil; sem beat não há quem drene a
+axes — ver `SECURITY.md` §5); sem beat não há quem drene a
 outbox; **não há MFA** (o `SECURITY.md` §5 di-lo, e a afirmação contrária já estava em cinco
 ficheiros antes de ser caçada nos cinco); encriptação campo-a-campo e o `nif` do tenant ficaram para
 a sua própria sessão; a CSP de dev autoriza o `unpkg` globalmente por causa do Swagger; `testpaths`

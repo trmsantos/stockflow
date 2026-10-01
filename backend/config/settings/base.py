@@ -265,6 +265,13 @@ AXES_RESET_ON_SUCCESS = True
 AXES_USE_ATTEMPT_EXPIRATION = True
 AXES_LOCK_OUT_AT_FAILURE = True
 AXES_HTTP_RESPONSE_CODE = 429
+# O corpo do 429, que sem este gancho não é JSON: o `get_lockout_response` do
+# axes responde o `AXES_COOLOFF_MESSAGE` em `text/plain`, e o cliente ficava sem
+# `code` para distinguir o lockout do 429 do throttle do DRF. A ADR 0010 fecha
+# essa dívida (nomeada no SECURITY.md §5) com o código `conta_bloqueada`. Path em
+# string pela razão do `AXES_COOLOFF_TIME`; o callable está em
+# `config/lockout.py`, ao lado dos outros dois ganchos do axes.
+AXES_LOCKOUT_CALLABLE = "config.lockout.lockout_response"
 # `username` e `ip_address` são limpos dos dados de pedido antes de irem para o
 # log de tentativas (SECURITY.md §1, "Exposição de dados em logs").
 AXES_SENSITIVE_PARAMETERS = ["username", "ip_address", "password"]

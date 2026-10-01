@@ -209,6 +209,25 @@ devolve zero linhas — falha fechada.
   não o path, que é só ruído a menos no varrimento.
 - MFA (TOTP) obrigatória para admins: **não implementada**, dívida nomeada. Sem ela, o que sobra
   contra credenciais roubadas de um operador é o lockout.
+- **Um endpoint dispensado de âmbito dispensa-se do âmbito e não do CSRF**, e isto não é uma
+  precaução teórica: o `as_view()` do DRF aplica `csrf_exempt`, e o `SessionAuthentication` só
+  verifica o token de CSRF quando **encontra** um utilizador na sessão. Num `POST /auth/login` o
+  pedido é anónimo por definição, logo o endpoint de login deste projeto nasceu **sem protecção de
+  CSRF nenhuma** até ter `csrf_protect` reposto à mão — o ataque é *login CSRF*: o atacante faz o
+  browser da vítima entrar na **conta dele**, e tudo o que ela fizer a seguir vai para a conta do
+  atacante. Medido nas duas metades com `enforce_csrf_checks=True` (sem token 403, com token 200), e
+  o teste é load-bearing: tirar os decoradores põe-no vermelho. **Vale para qualquer endpoint anónimo
+  de escrita** que este repositório venha a ter — activação, reposição de password, e um eventual
+  registo.
+- Corpos JSON por decisão, não por gosto: as views de escrita da autenticação levam
+  `parser_classes = [JSONParser]`, porque um `<form>` de outro domínio faz `POST` de
+  `multipart/form-data` **sem preflight** e um corpo JSON não. Efeito lateral útil — com corpos JSON
+  o `request.POST` fica vazio, logo nenhuma password passa pela coluna `post_data` do
+  `axes_accessattempt`.
+- O corpo do 429 do lockout **não diz quanto tempo falta**, e é consequência directa da escada
+  inerte acima: a única duração disponível naquele caminho é a da escada calculada com o número real
+  de falhas, e o bloqueio aplicado é sempre o primeiro degrau. Anunciar "4 horas" sobre um bloqueio
+  de 30 minutos era mentir, e escrever "30 minutos" à mão era uma segunda fonte de verdade.
 
 ## 6. Agentes e LLMs
 

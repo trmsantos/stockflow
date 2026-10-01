@@ -45,7 +45,13 @@ pnpm exec openapi-typescript "${SCHEMA}" \
   --alphabetize \
   --output "${TYPES}"
 
-paths=$(grep -c "^    \"/" "${SCHEMA}" || true)
+# `^  /` e não `^    "/`: o contador antigo procurava um formato com aspas e
+# indentação de JSON, e a saída do `spectacular` é YAML (`  /api/v1/auth/login:`).
+# Resultado medido: dizia "0 path(s) no schema" e a seguir "o cliente gerado fica
+# vazio" **havendo 4 paths e 365 linhas de types.ts**. É a classe de defeito do
+# SECURITY.md §9 — uma linha de cobertura que mente — e aqui mentia na direcção
+# mais perigosa: a de alarme falso, que ensina quem a lê a ignorá-la.
+paths=$(grep -cE "^  /" "${SCHEMA}" || true)
 echo "gen:api: pronto — ${paths} path(s) no schema."
 if [ "${paths}" -eq 0 ]; then
   echo "gen:api: o schema não tem paths. É o esperado enquanto nenhum módulo"

@@ -71,6 +71,32 @@ campo de **estado**, para que um segundo factor seja mais um estado no mesmo end
 novo (MFA é dívida do `SECURITY.md` §5). E o 429 do lockout passa a ter corpo JSON com
 `code: conta_bloqueada`, que fecha um item de dívida nomeado.
 
+**O `SessaoOut`, acrescentado em 2026-10-01 quando a sessão foi implementada.** Esta ADR fixava o
+*campo* de estado e não a forma da resposta, e a forma veio por mensagem — ou seja, o registo
+vinculativo não continha o contrato que foi construído, e o próximo agente iria procurá-lo aqui e não
+o encontraria. Fica:
+
+```
+SessaoOut { estado, utilizador, tenant_ativo, tenants, menu }
+estado: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa"
+```
+
+Os quatro valores derivam dos quatro fins de login da ADR 0007. **Não** há `mfa_pendente`: um valor
+de enum que nada produz é uma promessa no `types.ts` que ninguém cumpre, e acrescenta-se no dia em
+que existir um segundo factor — que é precisamente a propriedade que o campo de estado compra. O
+`menu` viaja vazio e **sem forma de item declarada** até a ADR 0009 existir em código: declarar a
+tupla dela aqui era inventar o contrato de outra ADR. O invariante que o cliente pode assumir está
+testado: `estado == "ativa"` ⟺ `tenant_ativo != null`.
+
+**Uma consequência de segurança que esta ADR não previu e que a implementação encontrou.** O
+`as_view()` do DRF aplica `csrf_exempt`, e o `SessionAuthentication` só verifica o token de CSRF
+quando **encontra** um utilizador na sessão. Num `POST /auth/login` o pedido é anónimo por definição,
+logo o endpoint de login nasceria **sem protecção de CSRF nenhuma** — *login CSRF*, em que o atacante
+faz o browser da vítima entrar na conta dele. Reposto com `csrf_protect` e medido nas duas metades.
+Isto vale para **qualquer endpoint anónimo de escrita** que este repositório venha a ter, e por isso
+está também no `SECURITY.md` §5: o padrão certo para um endpoint dispensado de âmbito é dispensá-lo
+do âmbito e **não** do CSRF.
+
 **Alternativas.** Convites sem política, na lista fechada — é a forma que o pedido assumia, e é a que
 esta ADR recusa: punha email, papel e `tenant_id` de **todos** os convites pendentes de **todos** os
 clientes legíveis por qualquer ligação da app, que é a ameaça "acesso a dados de outro tenant" do

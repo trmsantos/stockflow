@@ -88,6 +88,13 @@ anónimos e o frontend tem de ramificar pelo código e não pelo status. O esque
 a lista de dispensas de hoje está fechada num teste: admin, healthcheck, login, logout, registo,
 listagem de tenants e troca de tenant.
 
+(**Correcção de 2026-10-01, quando a autenticação foi implementada.** Esta enumeração divergiu do que
+existe: não há **registo**, porque a ADR 0010 recusou o self-service no v1, e a "listagem de tenants"
+é hoje o `GET /api/v1/auth/sessao`, que devolve os candidatos dentro do próprio `SessaoOut`. A lista
+que **vale** é a do `tests/test_rls_isolation.py`, que falha quando divergir — e é por isso que a
+enumeração em prosa aqui é informação e não mecanismo. Fica corrigida em vez de apagada: uma ADR
+registra o que se decidiu, e o que se decidiu incluía um registo que depois não se fez.)
+
 O login corre `authenticate()` (com o `AxesStandaloneBackend` à frente), depois `login()`, e só depois
 o tenant. A ordem é obrigatória: o `login()` do Django roda a chave de sessão — `cycle_key()`, ou
 `flush()` se a sessão anterior era de outro utilizador (SECURITY.md §5) — e escrever o `tenant_id`

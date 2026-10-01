@@ -707,10 +707,19 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
     """As dispensas de hoje, nos dois sentidos, sobre o `ROOT_URLCONF` real.
 
     A ADR 0007 lista as dispensas que vão existir — admin, healthcheck, login,
-    logout, registo, listagem de tenants e troca de tenant. Hoje existem duas
-    famílias: o admin e os dois endpoints de saúde (`config/health.py`). As
-    outras nascem na sessão da autenticação e este teste é o que as obriga a
+    logout, registo, listagem de tenants e troca de tenant. Hoje existem três
+    famílias: o admin, os dois endpoints de saúde (`config/health.py`) e os
+    quatro da autenticação de sessão (`apps/accounts/views.py`, ADR 0010). As
+    que faltam — activação de convite e as duas de reposição de password —
+    nascem na tarefa seguinte da ADR 0010, e é este teste que as obriga a
     aparecer aqui quando nascerem.
+
+    As quatro da autenticação estão aqui porque correm **antes** de existir
+    tenant na sessão: é a condição do login da ADR 0007, e o `tenant-ativo` é o
+    caso que mostra porque é que a dispensa tem de ser declarada e não inferida
+    — sem ela, o middleware teria aberto o âmbito **antigo** antes da view e a
+    troca levantaria `TenantScopeConflict`. O que cada uma delas toca em dados de
+    tenant é aberto por elas, uma transação curta por candidato.
 
     As duas da saúde estão aqui pelo mesmo critério das outras, e não por serem
     inofensivas: não abrem âmbito porque não leem dados de tenant nenhum, e não
@@ -727,7 +736,14 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
 
     assert dispensadas, "nenhuma view dispensada: o admin deixou de o estar?"
     fora_do_admin = [rota for rota in dispensadas if not rota.startswith(settings.ADMIN_URL)]
-    assert fora_do_admin == ["healthz", "readyz"], (
+    assert fora_do_admin == [
+        "api/v1/auth/login",
+        "api/v1/auth/logout",
+        "api/v1/auth/sessao",
+        "api/v1/auth/tenant-ativo",
+        "healthz",
+        "readyz",
+    ], (
         "views dispensadas de âmbito fora do admin. A dispensa é uma decisão de "
         "isolamento: passa pelo security-reviewer e entra neste teste."
     )

@@ -3,10 +3,249 @@
  * Do not make direct changes to the file.
  */
 
-export type paths = Record<string, never>;
+export interface paths {
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Iniciar sessão
+         * @description `POST /api/v1/auth/login` — email e password, devolve a sessão.
+         *
+         *     `AllowAny` e não o `IsAuthenticated` do default: é o endpoint por onde se
+         *     passa a estar autenticado.
+         *
+         *     Quem está autenticado e volta a fazer login é servido normalmente, e o
+         *     `login()` do Django faz `flush()` à sessão anterior se for outra conta — o
+         *     que fecha o caminho em que uma sessão de A ficava com o `tenant_id` de A e o
+         *     utilizador B.
+         */
+        post: operations["auth_login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Terminar sessão
+         * @description `POST /api/v1/auth/logout` — fecha a sessão e devolve o estado `anonimo`.
+         *
+         *     `IsAuthenticated`: só se termina uma sessão que existe. Um anónimo leva o
+         *     403 do DRF, que é correcto e não precisa de código próprio — repetir o
+         *     logout é um bug do cliente, não um caso de uso.
+         *
+         *     `POST` e não `GET`, apesar de não levar corpo: um `GET` que fecha a sessão é
+         *     disparável por um `<img>` numa página qualquer, e a protecção de CSRF não se
+         *     aplica a métodos seguros.
+         */
+        post: operations["auth_logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sessao": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Estado da sessão
+         * @description `GET /api/v1/auth/sessao` — quem está autenticado, onde, e onde mais pode.
+         *
+         *     `AllowAny` e 200 com `estado = anonimo` para um pedido sem sessão: o
+         *     arranque da SPA tem de poder perguntar "há sessão?" sem ter sessão. Com
+         *     `IsAuthenticated`, a pergunta respondia 403 e o cliente passava a distinguir
+         *     dois 403 diferentes no seu caminho mais crítico.
+         *
+         *     `ensure_csrf_cookie` é o que dispensa um endpoint de CSRF próprio (ADR
+         *     0010): a SPA chama isto no arranque, o cookie `csrftoken` vem na resposta, e
+         *     o `POST /auth/login` já tem com que o assinar. Note-se que o `login()` do
+         *     Django **roda** o token (`rotate_token`), pelo que o cookie muda na resposta
+         *     do login — o cliente lê-o do cookie a cada pedido e não o guarda, logo isso
+         *     é transparente para ele.
+         */
+        get: operations["auth_sessao"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/tenant-ativo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Escolher o estabelecimento ativo
+         * @description `POST /api/v1/auth/tenant-ativo` — escolhe o estabelecimento da sessão.
+         *
+         *     O `tenant_id` do corpo é **argumento e não credencial**: quem o verifica é a
+         *     política, dentro do `tenant_scope` que o service abre, contra a pertença de
+         *     quem pede. Esta view não o compara com nada — se comparasse, haveria duas
+         *     verificações e uma delas acabaria por ser a única.
+         */
+        post: operations["auth_tenant_ativo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: never;
+    schemas: {
+        /**
+         * @description O corpo de uma recusa: `code` estável para ramificar, `detail` para ler.
+         *
+         *     É a mesma forma que o `TenantMiddleware` já devolve (`sem_sessao`,
+         *     `tenant_desconhecido`, `tenant_divergente`), e está aqui para entrar no
+         *     `schema.yml`: sem isto, o cliente gerado conhecia as respostas de sucesso e
+         *     tratava as recusas como `unknown`, que é precisamente onde o frontend tem de
+         *     ramificar.
+         *
+         *     O `code` é uma string e não um enum fechado de propósito: o conjunto de
+         *     códigos é **por endpoint** (`credenciais_invalidas` só no login,
+         *     `conta_bloqueada` só no 429) e um enum único com a união de todos sugeria ao
+         *     frontend ramos que aquele endpoint nunca devolve. Os códigos de cada resposta
+         *     estão nos docstrings do `views.py`.
+         */
+        ErroOut: {
+            code: string;
+            detail: string;
+        };
+        /**
+         * @description * `anonimo` - sem sessão
+         *     * `sem_estabelecimento` - sem estabelecimento associado
+         *     * `escolha_pendente` - à espera da escolha do estabelecimento
+         *     * `ativa` - sessão com estabelecimento ativo
+         * @enum {string}
+         */
+        EstadoEnum: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa";
+        /**
+         * @description O corpo do `POST /auth/login`: um email e uma password, e nada mais.
+         *
+         *     O `max_length` do email é o do `EmailField` do modelo (254, o limite do
+         *     RFC 5321) e o da password é um teto de sanidade, não uma regra de força: a
+         *     força é dos `AUTH_PASSWORD_VALIDATORS`, e **não** se valida aqui. Validar a
+         *     força no login seria dizer a quem tenta entrar que a password que escreveu
+         *     não poderia ser a desta conta — um oráculo barato sobre a política de
+         *     passwords do sistema e, pior, uma recusa diferente da recusa genérica.
+         *
+         *     `trim_whitespace=False` na password: um espaço final é um carácter da
+         *     password de quem o escreveu, e o DRF corta-o por omissão nos `CharField`.
+         *     No email o default (cortar) é o que se quer — ninguém tem um email com
+         *     espaços nas pontas e um teclado de telemóvel acrescenta-os.
+         */
+        LoginInRequest: {
+            /** Format: email */
+            email: string;
+            password: string;
+        };
+        /**
+         * @description * `owner` - dono
+         *     * `manager` - gerente
+         *     * `staff` - colaborador
+         * @enum {string}
+         */
+        PapelEnum: "owner" | "manager" | "staff";
+        /**
+         * @description A resposta dos quatro endpoints de autenticação. Sempre esta forma.
+         *
+         *     Uma forma só para login, logout, leitura da sessão e troca de
+         *     estabelecimento: o cliente guarda-a numa entrada de cache e qualquer das
+         *     quatro respostas a substitui, em vez de quatro formas e quatro ramos de Zod.
+         *
+         *     `utilizador` e `tenant_ativo` são `null` em vez de ausentes, e isso é
+         *     deliberado: um campo que às vezes não existe obriga o cliente a distinguir
+         *     "não sei" de "não há", e aqui o servidor sabe sempre.
+         */
+        SessaoOut: {
+            estado: components["schemas"]["EstadoEnum"];
+            menu: unknown[];
+            tenant_ativo: components["schemas"]["TenantOut"] | null;
+            tenants: components["schemas"]["TenantOut"][];
+            utilizador: components["schemas"]["UtilizadorOut"] | null;
+        };
+        /**
+         * @description O corpo do `POST /auth/tenant-ativo`: o estabelecimento a activar.
+         *
+         *     É um **argumento e não uma credencial** (ADR 0007). O que este serializer
+         *     garante é só que o valor é um UUID — quem verifica se quem pede tem pertença
+         *     ativa lá é a política, dentro do `tenant_scope` que o service abre. Um
+         *     `PrimaryKeyRelatedField` sobre `Tenant.objects` seria errado por duas razões
+         *     e vale dizê-las: a queryset corre **fora** de âmbito, logo a política
+         *     devolveria zero linhas e nenhum uuid passaria nunca; e com âmbito devolveria
+         *     uma mensagem de validação a distinguir "não existe" de "não é teu".
+         */
+        TenantAtivoInRequest: {
+            /** Format: uuid */
+            tenant_id: string;
+        };
+        /**
+         * @description Um estabelecimento como o seletor o mostra: id, nome e o papel de quem vê.
+         *
+         *     Serve as duas posições da resposta — o `tenant_ativo` e cada entrada de
+         *     `tenants` — porque são a mesma coisa em dois estados, e duas classes
+         *     idênticas davam dois componentes iguais no OpenAPI.
+         *
+         *     O `papel` é o do par (utilizador, estabelecimento) e vem do `Membership`
+         *     confirmado pela política: a mesma pessoa é dona de um e colaboradora noutro.
+         *     Sai como enum fechado no OpenAPI, logo a união chega ao `types.ts`.
+         */
+        TenantOut: {
+            /** Format: uuid */
+            id: string;
+            nome: string;
+            papel: components["schemas"]["PapelEnum"];
+        };
+        /**
+         * @description Quem está autenticado: id e email, e mais nada.
+         *
+         *     O `UserOut` do `api.py` traz também `is_active` e `is_staff`, e os dois
+         *     ficam de fora. O `is_active` porque uma conta inativa não autentica, logo o
+         *     campo só poderia valer `true` — um campo constante é ruído no contrato. O
+         *     `is_staff` porque não há nada no frontend que dele dependa: o admin é uma
+         *     aplicação à parte, num path próprio, e o que decide o que um pedido pode
+         *     fazer é o papel do `Membership` (ADR 0007), nunca esta flag.
+         *
+         *     O nome da pessoa também não está aqui: vive no `Membership`, é por
+         *     estabelecimento ("Ana Silva (contabilidade)" num, "Ana" noutro) e entra no
+         *     contrato quando houver um ecrã que o mostre.
+         */
+        UtilizadorOut: {
+            /** Format: email */
+            email: string;
+            /** Format: uuid */
+            id: string;
+        };
+    };
     responses: never;
     parameters: never;
     requestBodies: never;
@@ -14,4 +253,113 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    auth_login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessaoOut"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+    auth_logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessaoOut"];
+                };
+            };
+        };
+    };
+    auth_sessao: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessaoOut"];
+                };
+            };
+        };
+    };
+    auth_tenant_ativo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TenantAtivoInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessaoOut"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+}
