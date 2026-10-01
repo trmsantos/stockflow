@@ -46,6 +46,155 @@ const REGRAS_DE_DESIGN = [
   },
 ];
 
+/**
+ * O segundo caminho de dados do TanStack Router — `loader`, `loaderDeps`,
+ * `useLoaderData` — não se usa nesta casa: a única camada de dados é o TanStack
+ * Query (ADR 0008, decisão 1). Sem este selector, a API do router tem tudo o
+ * que é preciso para uma segunda cache aparecer numa rota com pressa, e a
+ * partir daí haveria dois sítios onde um ecrã pode ir buscar a mesma lista.
+ *
+ * No dia em que uma rota precisar de `ensureQueryData` no `beforeLoad`, tirar
+ * estas duas linhas é um diff visível, com uma razão escrita — que é
+ * exactamente a diferença entre uma decisão e um acidente.
+ */
+const REGRAS_DE_ROTEAMENTO = [
+  {
+    selector: "Property[key.name=/^(?:loader|loaderDeps)$/]",
+    message:
+      "Sem `loader`/`loaderDeps` (ADR 0008, decisão 1): os dados são do TanStack Query, não do router.",
+  },
+  {
+    selector: "Identifier[name='useLoaderData']",
+    message:
+      "Sem `useLoaderData` (ADR 0008, decisão 1): um ecrã lê dados por um hook de `api.ts`, não da rota.",
+  },
+];
+
+/**
+ * As fronteiras do frontend (ADR 0008, decisão 2), em quatro blocos.
+ *
+ * No backend o import-linter protege a integridade transacional e a extração
+ * futura; aqui o que se protege é a **apagabilidade**: os dados falsos só são
+ * removíveis por apagamento se o conjunto de sítios que toca em cada camada for
+ * finito e conhecido. Não se instala ferramenta nova — quem impõe é o
+ * `no-restricted-imports` do ESLint core, que já corre.
+ *
+ * Os padrões seguem a semântica do `.gitignore` (é o pacote `ignore` que o
+ * ESLint usa por baixo): dois asteriscos atravessam barras, um asterisco não, e
+ * a última linha que casa é a que decide — por isso as negações vêm no fim. Em
+ * cada bloco há também um padrão que apanha o segmento `features` em qualquer
+ * posição do caminho, para o mesmo import escrito em relativo
+ * (`../features/...`) não escapar pela porta do lado.
+ *
+ * Os quatro blocos foram medidos com uma sonda por bloco — um import proibido
+ * posto de propósito, exit 1 confirmado, e removido a seguir. Quatro blocos de
+ * configuração que ninguém mediu não são um gate.
+ */
+const FRONTEIRAS = [
+  {
+    files: ["src/routes/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/features/**", "**/features/**", "!@/features/*/screens/*"],
+              message:
+                "Uma rota é o caminho e renderiza **um** ecrã: só `@/features/<módulo>/screens/<ecrã>`. " +
+                "Se precisas de um componente, de um hook ou do `api.ts` de uma feature numa rota, a " +
+                "lógica está no sítio errado (ADR 0008, decisão 2).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/features/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/features/**", "**/features/**", "!@/features/*/api"],
+              message:
+                "De outra feature só se importa `@/features/<módulo>/api` — o `api.py` do frontend. " +
+                "Dentro da própria feature os imports são relativos (`./components/...`), logo um " +
+                "`@/features/…` aqui é cross-feature por construção (ADR 0008, decisão 2).",
+            },
+            {
+              group: ["@/routes/**", "**/routes/**", "@/shell/**", "**/shell/**"],
+              message:
+                "Uma feature é produto: não conhece o encaminhamento (`routes/`) nem o invólucro " +
+                "(`shell/`). O que for para partilhar entre features desce para `src/components/`.",
+            },
+            {
+              // O padrão do alias não apanha o mesmo import escrito em
+              // relativo: de `features/inventory/screens/` o caminho
+              // `../../purchasing/screens/receber` nunca diz "features", e foi
+              // assim que a sonda deste bloco passou à primeira tentativa.
+              // Dois níveis acima é sempre fora da feature; um nível acima
+              // (`../components/...`) continua a ser dentro dela.
+              group: ["../../**", "../../*"],
+              message:
+                "Dois níveis acima saem da feature. De outra feature importa-se `@/features/<módulo>/api`, " +
+                "e o que for partilhado desce para `src/components/` (ADR 0008, decisão 2).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/shell/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/features/**", "**/features/**", "@/routes/**", "**/routes/**"],
+              message:
+                "O shell conhece caminhos de rota, nunca domínios: sem `@/features/*` e sem " +
+                "`@/routes/*` (ADR 0008, decisão 2). Os links são tipados pela augmentação global do " +
+                "router, que não precisa de import.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/lib/**/*.{ts,tsx}", "src/components/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "@/features/**",
+                "**/features/**",
+                "@/routes/**",
+                "**/routes/**",
+                "@/shell/**",
+                "**/shell/**",
+                "@/dev/**",
+                "**/dev/**",
+              ],
+              message:
+                "`lib/` e `components/` são o `apps/shared` do frontend: não importam nada de cima. " +
+                "Uma dependência nesse sentido é um ciclo à espera de acontecer (ADR 0008, decisão 2).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+];
+
 export default tseslint.config(
   {
     ignores: [
@@ -108,7 +257,7 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["error", { allowConstantExport: true }],
-      "no-restricted-syntax": ["error", ...REGRAS_DE_DESIGN],
+      "no-restricted-syntax": ["error", ...REGRAS_DE_DESIGN, ...REGRAS_DE_ROTEAMENTO],
       "no-restricted-globals": [
         "error",
         { name: "localStorage", message: "SECURITY.md §7: nada de estado de sessão em storage." },
@@ -139,9 +288,16 @@ export default tseslint.config(
     files: ["src/components/ui/**/*.tsx"],
     rules: {
       "react-refresh/only-export-components": "off",
-      "no-restricted-syntax": ["error", ...REGRAS_DE_DESIGN.filter((r) => !r.selector.includes("-\\["))],
+      "no-restricted-syntax": [
+        "error",
+        ...REGRAS_DE_DESIGN.filter((r) => !r.selector.includes("-\\[")),
+        ...REGRAS_DE_ROTEAMENTO,
+      ],
     },
   },
+  // As quatro fronteiras. Ficam depois dos blocos de linguagem para nenhum
+  // `rules` posterior as apagar por omissão.
+  ...FRONTEIRAS,
   {
     files: ["vite.config.ts"],
     languageOptions: { globals: globals.node },

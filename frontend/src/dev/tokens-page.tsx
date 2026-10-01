@@ -785,62 +785,58 @@ export default function TokensPage() {
   const snapshot = useTokenSnapshot();
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
-      <a
-        href="#conteudo"
-        className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-2 focus-visible:left-2 focus-visible:z-10 focus-visible:rounded-lg focus-visible:bg-surface focus-visible:px-3 focus-visible:py-2"
-      >
-        Saltar para o conteúdo
-      </a>
+    // Desde o ADR 0008 esta página é um ecrã dentro do `AppShell`, e não uma
+    // página solta: o `<main id="conteudo">` e o atalho "saltar para o
+    // conteúdo" são do shell. Dois landmarks `main` na mesma página, e dois
+    // elementos com o mesmo `id`, são um defeito de acessibilidade — e seria o
+    // defeito mais irónico possível na página que mede a acessibilidade.
+    <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6">
+      <header className="flex flex-col gap-2">
+        <p className="font-mono text-xs text-muted-foreground">/dev/tokens</p>
+        <h1 className="text-3xl font-semibold text-balance">Sistema visual</h1>
+        <p className="max-w-2xl text-sm text-pretty text-muted-foreground">
+          Ferramenta de desenvolvimento, não UI de produto. Mostra os tokens do DESIGN.md §2 tal
+          como o browser os resolve e mede o contraste real de cada par. Não entra no build de
+          produção.
+        </p>
+        <p className="max-w-2xl text-sm">
+          Modo ativo: <strong className="font-medium">{scheme}</strong>. Troca o tema do sistema
+          para ver o outro — os dois modos vêm de{" "}
+          <span className="font-mono">prefers-color-scheme</span>, não de uma classe.
+        </p>
+      </header>
 
-      <main id="conteudo" className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6">
-        <header className="flex flex-col gap-2">
-          <p className="font-mono text-xs text-muted-foreground">/dev/tokens</p>
-          <h1 className="text-3xl font-semibold text-balance">Sistema visual</h1>
-          <p className="max-w-2xl text-sm text-pretty text-muted-foreground">
-            Ferramenta de desenvolvimento, não UI de produto. Mostra os tokens do DESIGN.md §2 tal
-            como o browser os resolve e mede o contraste real de cada par. Não entra no build de
-            produção.
-          </p>
-          <p className="max-w-2xl text-sm">
-            Modo ativo: <strong className="font-medium">{scheme}</strong>. Troca o tema do sistema
-            para ver o outro — os dois modos vêm de{" "}
-            <span className="font-mono">prefers-color-scheme</span>, não de uma classe.
-          </p>
-        </header>
+      <Section id="cor" title="Cor — 18 tokens">
+        <ColorSection snapshot={snapshot} />
+      </Section>
 
-        <Section id="cor" title="Cor — 18 tokens">
-          <ColorSection snapshot={snapshot} />
-        </Section>
+      <Section id="contraste" title="Contraste medido">
+        <ContrastSection snapshot={snapshot} scheme={scheme} />
+      </Section>
 
-        <Section id="contraste" title="Contraste medido">
-          <ContrastSection snapshot={snapshot} scheme={scheme} />
-        </Section>
+      <Section id="estados" title="Os três papéis de cada estado">
+        <StateRolesSection />
+      </Section>
 
-        <Section id="estados" title="Os três papéis de cada estado">
-          <StateRolesSection />
-        </Section>
+      <Section id="bordas" title="As duas bordas, lado a lado">
+        <BordersSection />
+      </Section>
 
-        <Section id="bordas" title="As duas bordas, lado a lado">
-          <BordersSection />
-        </Section>
+      <Section id="tipografia" title="Tipografia">
+        <TypographySection />
+      </Section>
 
-        <Section id="tipografia" title="Tipografia">
-          <TypographySection />
-        </Section>
+      <Section id="forma" title="Espaçamento, forma e sombra">
+        <SpacingShapeSection />
+      </Section>
 
-        <Section id="forma" title="Espaçamento, forma e sombra">
-          <SpacingShapeSection />
-        </Section>
+      <Section id="componentes" title="Estados dos componentes">
+        <ComponentStatesSection />
+      </Section>
 
-        <Section id="componentes" title="Estados dos componentes">
-          <ComponentStatesSection />
-        </Section>
-
-        <Section id="dados" title="Estados de dados">
-          <DataStatesSection />
-        </Section>
-      </main>
-    </div>
+      <Section id="dados" title="Estados de dados">
+        <DataStatesSection />
+      </Section>
+    </section>
   );
 }

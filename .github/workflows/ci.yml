@@ -161,6 +161,36 @@ jobs:
         working-directory: frontend
       - run: pnpm build
         working-directory: frontend
+      - name: O artefacto não contém dados falsos nem ecrãs de desenvolvimento
+        # A terceira peça do gate da ADR 0008, decisão 3. As outras duas já
+        # existem: nada em `src/` importa `fixtures/` (o que impede os dados
+        # falsos de entrarem no grafo de módulos) e o `check-fixtures.mjs` do
+        # `pnpm lint` exige que **todo** o ficheiro de fixture carregue a
+        # sentinela. Esta fecha o circuito pelo outro lado: se alguém ligar um
+        # fixture à app, a sentinela viaja com ele até ao `dist/` e isto fica
+        # vermelho.
+        #
+        # A `/dev/tokens` vai ao lado pela mesma razão e com outra história: o
+        # Rollup elimina o chunk dela porque a rota e o `import()` vivem dentro
+        # do ramo `import.meta.env.DEV`, e isso era uma afirmação num comentário
+        # do `router.tsx`. Medido nesta build: 7 chunks, um por ecrã, e nenhum
+        # da página de tokens.
+        #
+        # `grep -rl` sem `-q` para a saída nomear o ficheiro culpado, e a
+        # condição está invertida porque o `grep` devolve 1 quando não encontra,
+        # que aqui é o caso bom.
+        working-directory: frontend
+        run: |
+          falhou=0
+          for padrao in "dados-falsos-stockflow" "Pastelaria Aurora" "tokens-page"; do
+            if grep -rl "$padrao" dist/ 2>/dev/null; then
+              echo "::error::'$padrao' chegou ao dist/"
+              falhou=1
+            else
+              echo "  ok: '$padrao' não está no dist/"
+            fi
+          done
+          exit "$falhou"
       - run: pnpm audit --audit-level=high
         working-directory: frontend
 

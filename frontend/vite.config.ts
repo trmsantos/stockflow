@@ -3,6 +3,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 
+import { servidorDeFixtures } from "./fixtures/servidor.ts";
+
 // Portas do ADR 0002 — nenhuma default, para não colidir com outros projetos na
 // mesma máquina. Dentro do compose o contentor ouve na porta canónica (5173) e é
 // publicado em 5183 no host, por isso a porta é sobreponível por ambiente. A
@@ -11,8 +13,38 @@ import { fileURLToPath } from "node:url";
 const DEV_PORT = Number(process.env.FRONTEND_DEV_PORT ?? 5183);
 const API_ORIGIN = process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8010";
 
+/**
+ * Os dados falsos do shell (ADR 0008, decisão 3). O plugin vive em
+ * `fixtures/`, fora de `src/`, e tem `apply: "serve"` — não participa em
+ * `vite build` e não há artefacto de produção que o contenha. No dia em que o
+ * último fixture sair, sai a pasta e sai esta linha.
+ *
+ * Os três controlos são lidos aqui, no Node, porque é neste ficheiro que o
+ * `process.env` é permitido (SECURITY.md §7): nenhum deles tem prefixo `VITE_`
+ * e nenhum entra no bundle. Os estados do DESIGN.md §3 pedem-se por caminho:
+ *   FIXTURES_ERRO=/api/v1/stock/levels pnpm dev   → 500 naquele caminho
+ *   FIXTURES_VAZIO=/api/v1/stock/levels pnpm dev  → results: []
+ *   FIXTURES_ATRASO_MS=1500 pnpm dev              → para ver os skeletons
+ */
+const ATRASO_DE_FIXTURES = Number(process.env.FIXTURES_ATRASO_MS ?? 250);
+
+function caminhos(valor: string | undefined): string[] {
+  return (valor ?? "")
+    .split(",")
+    .map((caminho) => caminho.trim())
+    .filter((caminho) => caminho !== "");
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    servidorDeFixtures({
+      atrasoMs: ATRASO_DE_FIXTURES,
+      vazios: caminhos(process.env.FIXTURES_VAZIO),
+      erros: caminhos(process.env.FIXTURES_ERRO),
+    }),
+  ],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
