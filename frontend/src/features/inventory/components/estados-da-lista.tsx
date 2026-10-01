@@ -5,6 +5,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { EstadoVazio } from "./estado-vazio";
+
 /**
  * Os três estados que a lista tem sempre (DESIGN.md §3) — e não são um extra:
  * "o que aparece quando não há nada?" é uma das perguntas da sessão 0, logo o
@@ -19,12 +21,22 @@ import { Skeleton } from "@/components/ui/skeleton";
  * Pendente: **skeleton, não spinner**. Sete linhas porque sete é o que cabe nos
  * ~530px úteis de um 360×640 (guião §0), e com a altura certa para a lista não
  * saltar quando os dados chegarem.
+ *
+ * O rótulo entra por propriedade porque os três ecrãs de inventário usam o
+ * mesmo esqueleto e quem ouve o ecrã tem de saber o que está a carregar — "a
+ * carregar o stock" num ecrã de alertas é pior do que não dizer nada.
  */
-export function EsqueletoDaLista() {
+export function EsqueletoDaLista({
+  rotulo = "A carregar o stock…",
+  linhas = 7,
+}: {
+  readonly rotulo?: string;
+  readonly linhas?: number;
+} = {}) {
   return (
     <div aria-busy="true" className="flex flex-col">
-      <span className="sr-only">A carregar o stock…</span>
-      {[0, 1, 2, 3, 4, 5, 6].map((indice) => (
+      <span className="sr-only">{rotulo}</span>
+      {Array.from({ length: linhas }, (_, indice) => indice).map((indice) => (
         <div
           key={indice}
           className="flex min-h-14 flex-col justify-center gap-1.5 border-b border-border px-4 py-2"
@@ -45,9 +57,11 @@ export function EsqueletoDaLista() {
 
 /** Erro: com retry, porque numa cozinha a causa mais provável é o Wi-Fi. */
 export function ErroDaLista({
+  titulo = "Não foi possível carregar o stock",
   mensagem,
   aoTentarOutraVez,
 }: {
+  readonly titulo?: string;
   readonly mensagem: string;
   readonly aoTentarOutraVez: () => void;
 }) {
@@ -55,7 +69,7 @@ export function ErroDaLista({
     <div className="px-4 py-3">
       <Alert className="border-danger-border bg-danger-surface">
         <CircleAlert aria-hidden="true" className="text-danger" />
-        <AlertTitle>Não foi possível carregar o stock</AlertTitle>
+        <AlertTitle>{titulo}</AlertTitle>
         <AlertDescription className="flex flex-col items-start gap-2">
           <span>{mensagem}</span>
           <Button variant="outline" onClick={aoTentarOutraVez}>
@@ -76,14 +90,11 @@ export function ErroDaLista({
 export function ListaVazia({ comFiltros }: { readonly comFiltros: boolean }) {
   if (comFiltros) {
     return (
-      <div className="flex flex-col items-start gap-3 px-4 py-8">
-        <Search aria-hidden="true" className="size-6 text-muted-foreground" />
-        <div className="flex flex-col gap-1">
-          <p className="font-medium">Nenhum artigo corresponde</p>
-          <p className="text-pretty text-sm text-muted-foreground">
-            A procura e os filtros do topo não deixaram passar nada. O stock continua lá.
-          </p>
-        </div>
+      <EstadoVazio
+        icone={Search}
+        titulo="Nenhum artigo corresponde"
+        descricao="A procura e os filtros do topo não deixaram passar nada. O stock continua lá."
+      >
         <Button asChild variant="outline">
           {/* Um reducer que devolve o objeto vazio limpa os três filtros do URL
               de uma vez — e é um link, logo funciona com o clique do meio. */}
@@ -91,23 +102,19 @@ export function ListaVazia({ comFiltros }: { readonly comFiltros: boolean }) {
             Limpar filtros
           </Link>
         </Button>
-      </div>
+      </EstadoVazio>
     );
   }
 
   return (
-    <div className="flex flex-col items-start gap-3 px-4 py-8">
-      <PackageOpen aria-hidden="true" className="size-6 text-muted-foreground" />
-      <div className="flex flex-col gap-1">
-        <p className="font-medium">Ainda não há stock registado</p>
-        <p className="text-pretty text-sm text-muted-foreground">
-          O stock aparece aqui à medida que a mercadoria entra. Comece por uma entrada de
-          fornecedor.
-        </p>
-      </div>
+    <EstadoVazio
+      icone={PackageOpen}
+      titulo="Ainda não há stock registado"
+      descricao="O stock aparece aqui à medida que a mercadoria entra. Comece por uma entrada de fornecedor."
+    >
       <Button asChild>
         <Link to="/receber">Receber mercadoria</Link>
       </Button>
-    </div>
+    </EstadoVazio>
   );
 }

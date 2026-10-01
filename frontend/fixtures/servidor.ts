@@ -2,6 +2,8 @@ import type { ServerResponse } from "node:http";
 import type { Connect, Plugin } from "vite";
 import type { z } from "zod";
 
+import { ROTAS_DE_ALERTAS } from "./alertas.ts";
+import { ROTAS_DE_CONTAGEM } from "./contagem.ts";
 import { ROTAS_DE_STOCK } from "./stock.ts";
 
 /**
@@ -51,6 +53,11 @@ export interface Contexto {
   /** O caminho pedido, sem query string. */
   readonly caminho: string;
   readonly parametros: URLSearchParams;
+  /**
+   * Os segmentos nomeados do caminho (`:contagem` em
+   * `/stock/counts/:contagem/lines`). Vazio nas rotas sem parâmetros.
+   */
+  readonly variaveis: ReadonlyMap<string, string>;
   /** O corpo JSON do pedido, já parseado. `null` nos GET. */
   readonly corpo: unknown;
 }
@@ -75,7 +82,13 @@ export function resposta(estado: number, corpo: unknown, schema?: z.ZodType): Re
 
 export interface Rota {
   readonly metodo: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  /** Caminho exacto, com o prefixo `/api/v1`. */
+  /**
+   * Caminho com o prefixo `/api/v1`. Um segmento que comece por `:` é um
+   * parâmetro e chega ao `ctx.variaveis` — existe para os caminhos se
+   * escreverem na forma que o DRF lhes vai dar
+   * (`/stock/counts/<uuid>/lines`), e não numa forma de conveniência do
+   * servidor de fixtures que depois obrigasse a reescrever o `api.ts`.
+   */
   readonly caminho: string;
   /** Sobrepõe o atraso default deste caminho. */
   readonly atrasoMs?: number;
@@ -97,12 +110,51 @@ export interface OpcoesDeFixtures {
  * As rotas servidas. Uma linha por recurso, e a remoção é por recurso: no dia
  * em que o endpoint real existir, apaga-se o ficheiro e esta linha.
  */
-const ROTAS: readonly Rota[] = [...ROTAS_DE_STOCK];
+const ROTAS: readonly Rota[] = [...ROTAS_DE_STOCK, ...ROTAS_DE_CONTAGEM, ...ROTAS_DE_ALERTAS];
 
 function esperar(ms: number): Promise<void> {
   return new Promise((resolver) => {
     setTimeout(resolver, ms);
   });
+}
+
+interface Correspondencia {
+  readonly rota: Rota;
+  readonly variaveis: Map<string, string>;
+}
+
+function casarCaminho(rota: Rota, caminho: string): Map<string, string> | null {
+  const padrao = rota.caminho.split("/");
+  const pedido = caminho.split("/");
+  if (padrao.length !== pedido.length) return null;
+
+  const variaveis = new Map<string, string>();
+  for (const [indice, segmento] of padrao.entries()) {
+    const valor = pedido.at(indice) ?? "";
+    if (segmento.startsWith(":")) {
+      if (valor === "") return null;
+      variaveis.set(segmento.slice(1), decodeURIComponent(valor));
+      continue;
+    }
+    if (segmento !== valor) return null;
+  }
+  return variaveis;
+}
+
+/**
+ * A rota que responde a este pedido. Os caminhos **literais** são tentados
+ * primeiro: sem isso, uma rota futura `/stock/counts/open` ficaria à mercê da
+ * ordem de declaração contra `/stock/counts/:contagem`, e a ambiguidade só
+ * apareceria no dia em que alguém reordenasse a lista.
+ */
+function casar(metodo: string, caminho: string): Correspondencia | null {
+  const candidatas = ROTAS.filter((rota) => rota.metodo === metodo);
+  const literais = candidatas.filter((rota) => !rota.caminho.includes("/:"));
+  for (const rota of [...literais, ...candidatas.filter((rota) => rota.caminho.includes("/:"))]) {
+    const variaveis = casarCaminho(rota, caminho);
+    if (variaveis !== null) return { rota, variaveis };
+  }
+  return null;
 }
 
 /** Um header pode vir repetido; o que interessa é o primeiro. */
@@ -178,11 +230,12 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
       return;
     }
 
-    const rota = ROTAS.find((item) => item.metodo === metodo && item.caminho === caminho);
-    if (!rota) {
+    const correspondencia = casar(metodo, caminho);
+    if (!correspondencia) {
       next();
       return;
     }
+    const { rota, variaveis } = correspondencia;
 
     garantirCookieDeCsrf(req, res);
 
@@ -231,9 +284,12 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
        * reiniciar; nada em `src/` o envia, e no dia em que o Django servir o
        * caminho o parâmetro deixa de ter quem o leia.
        */
+      // Casa pelo caminho pedido **e** pelo padrão da rota: com um `:contagem`
+      // no meio, o caminho pedido traz um uuid que ninguém ia escrever à mão
+      // numa variável de ambiente.
       const pedido = url.searchParams.get("_fixture");
-      const comErro = pedido === "erro" || erros.has(caminho);
-      const comVazio = pedido === "vazio" || vazios.has(caminho);
+      const comErro = pedido === "erro" || erros.has(caminho) || erros.has(rota.caminho);
+      const comVazio = pedido === "vazio" || vazios.has(caminho) || vazios.has(rota.caminho);
 
       await esperar(atraso);
 
@@ -246,7 +302,7 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
         return;
       }
 
-      const ctx: Contexto = { caminho, parametros: url.searchParams, corpo };
+      const ctx: Contexto = { caminho, parametros: url.searchParams, variaveis, corpo };
       const resultado = comVazio && rota.vazio ? rota.vazio(ctx) : rota.responder(ctx);
 
       if (resultado.schema) {

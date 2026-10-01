@@ -152,6 +152,16 @@ Eventos que têm de estar nos dados — é neles que vive o §3:
 | 10 | Faturas ao NIF pessoal | **SHELL** | Badge discreto: "Makro · FS 2026/114 570 · **NIF diferente do da empresa**". Ninguém oferece isto em abstracto; um badge extrai-o em dois segundos. |
 | 11 | Grupos com N sociedades | CONVERSA | Segmentação de mercado, não uso de produto. |
 
+**Dois acidentes do seed que ficaram porque são úteis — e estão aqui para não surpreenderem quem
+conduz a sessão:**
+- **a contagem semeada tem o queijo a 2,100 kg numa loja que só tem 1,300.** Alguém contou a bola
+  consolidada no sítio errado. É verosímil e é exactamente a confusão da Q2 a aparecer no fecho da
+  contagem, com uma diferença de +0,800 kg / +6,32 €. Não foi desenhado;
+- **as zonas do percurso de contagem (Balcão → Frigorífico → Arca → Armazém) são a ordem do guião,
+  mas que artigo está em que zona foi inventado** e não passou pelo `domain-expert`. Os nomes das
+  zonas aparecem uma vez no texto do ecrã vazio, de propósito: se ele disser "não é essa a minha
+  ordem", é achado e não defeito.
+
 **Três perguntas que o shell responde de graça, e vale a pena ir buscar:**
 - **Até onde ele quer controlar.** As saquetas de açúcar e o leite ao ml: se ele vê e diz "isto não
   vale a pena", definiste o âmbito do catálogo v1 sem o discutir.
@@ -198,7 +208,13 @@ Eventos que têm de estar nos dados — é neles que vive o §3:
 Marcadas como hipótese e não como decisão. Nenhuma entra numa migração antes da sessão 0.
 
 - stock negativo é permitido **com aviso**, não bloqueado;
-- o dia de negócio começa às **05:00** na pastelaria (início da produção), configurável por tenant;
+- existe uma **fronteira de dia de negócio perto da madrugada** e ela não é a meia-noite. A hipótese
+  é essa; **a hora exacta é o que a pergunta 6 pede**, e por isso não há hipótese de hora. O seed usa
+  **04:00** porque o rótulo tem de mostrar uma hora concreta para ser contestável — "começa ao início
+  da produção" não se contesta, "desde as 04:00" contesta-se. (Este ficheiro teve `04:00` no §3 e
+  `05:00` aqui, e isso fez um agente ter de escolher entre duas secções do mesmo documento. Com
+  qualquer das duas a quebra das 05:10 cai dentro do dia, logo a sonda funcionava; a contradição é
+  que estava errada.);
 - `yield_factor` default 1.0, override por linha de receita, nunca obrigatório;
 - contagem com quantidade esperada **visível**;
 - um bloco de fermento meio usado conta-se em **g** (unidade base = g), não em "0,5 un";

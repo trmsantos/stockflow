@@ -4,7 +4,7 @@ import { ErroDeEcra, EsqueletoDeEcra, NaoEncontrado } from "@/shell/estados-de-r
 
 import { rotaDeAlertas } from "./alertas";
 import { rotaDeArtigo } from "./artigo";
-import { rotaDeContar } from "./contar";
+import { rotaDeContar, rotaDeFechoDeContagem } from "./contar";
 import { rotaInicial } from "./inicio";
 import { rotaDeReceber } from "./receber";
 import { rotaRaiz } from "./root";
@@ -53,6 +53,7 @@ const arvoreDeRotas = rotaRaiz.addChildren([
   rotaDeArtigo,
   rotaDeReceber,
   rotaDeContar,
+  rotaDeFechoDeContagem,
   rotaDeAlertas,
   ...rotasDeDesenvolvimento,
 ]);

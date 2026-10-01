@@ -136,12 +136,17 @@ export function horaDeHoje(hora: number, minuto: number): string {
   return dia.toISOString();
 }
 
-/** Ontem às `hora:minuto`, para o histórico não começar todo à mesma hora. */
-export function horaDeOntem(hora: number, minuto: number): string {
+/** `n` dias a contar de hoje, às `hora:minuto`. Negativo para o passado. */
+export function horaEmDias(dias: number, hora: number, minuto: number): string {
   const dia = inicioDeHoje();
-  dia.setDate(dia.getDate() - 1);
+  dia.setDate(dia.getDate() + dias);
   dia.setHours(hora, minuto, 0, 0);
   return dia.toISOString();
+}
+
+/** Ontem às `hora:minuto`, para o histórico não começar todo à mesma hora. */
+export function horaDeOntem(hora: number, minuto: number): string {
+  return horaEmDias(-1, hora, minuto);
 }
 
 /** Dias entre hoje e uma data `YYYY-MM-DD`. Negativo se já passou. */

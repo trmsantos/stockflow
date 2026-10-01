@@ -159,6 +159,241 @@ export const quebraParaRegistarSchema = z.object({
   location: z.uuid(),
   quantity: decimal,
   reason: motivoQuebraSchema,
+  /**
+   * O lote de onde sai, quando quem registra já o sabe — é o caso do ecrã
+   * Alertas, onde o alerta **é** sobre um lote ("L. 240928 · amanhã") e deitar
+   * fora outro seria deitar fora o lote errado. Omitido, o servidor escolhe por
+   * FEFO (`inventory-domain` §4), que é o que o ecrã de Stock faz: lá a ação
+   * parte do artigo e não de um lote.
+   */
+  lot_code: z.string().min(1).optional(),
+});
+
+/* ---------------------------------------------------------------------------
+ * Contagem física — o ecrã Contar.
+ *
+ * Uma contagem **não reescreve um nível**: ao fechar, cada diferença entra no
+ * ledger como um `adjustment` com justificação. É por isso que há aqui um
+ * campo numérico (o `counted` da linha) sem contradizer o "nenhum campo de
+ * quantidade editável": o que se escreve é o que está na prateleira, e o que o
+ * sistema diz continua a mudar só por movimento (ADR 0006, append-only).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Uma zona física **dentro** de uma localização: Balcão, Frigorífico, Arca,
+ * Armazém. Não é a loja (`localizacaoSchema`) — é a prateleira por onde se
+ * anda, e a `position` é a ordem do percurso. "Ordem por localização física …
+ * é regra, não preferência" (guião da sessão 0, §1): quem conta atravessa a
+ * cozinha, não o alfabeto.
+ *
+ * O `blind` é a sonda da contagem cega. Numa zona cega o `expected` da linha
+ * **não viaja na resposta**: esconder no cliente um número que o servidor
+ * mandou não é contagem cega, é um número à distância de um devtools — e a
+ * ancoragem que se queria evitar continuava a acontecer, só que no código.
+ */
+export const zonaSchema = z.object({
+  slug: z.string().min(1),
+  name: z.string().min(1),
+  position: z.number().int().nonnegative(),
+  blind: z.boolean(),
+});
+
+/** A mesma zona com o progresso. Vive na contagem, não repetida em cada linha. */
+export const progressoDeZonaSchema = zonaSchema.extend({
+  counted_lines: z.number().int().nonnegative(),
+  total_lines: z.number().int().nonnegative(),
+});
+
+export const estadoDeContagemSchema = z.enum(["open", "closed"]);
+
+export const contagemSchema = z.object({
+  id: z.uuid(),
+  location: localizacaoSchema,
+  status: estadoDeContagemSchema,
+  started_at: z.iso.datetime(),
+  closed_at: z.iso.datetime().nullable(),
+  /** O "12 de 34" do topo. Contado pelo servidor, como todo o resto. */
+  counted_lines: z.number().int().nonnegative(),
+  total_lines: z.number().int().nonnegative(),
+  /**
+   * A zona onde a contagem está: a primeira, na ordem do percurso, que ainda
+   * tem linhas por contar. `null` quando está tudo contado.
+   */
+  current_zone: progressoDeZonaSchema.nullable(),
+  zones: z.array(progressoDeZonaSchema),
+  /**
+   * Quem pode fechar, em texto — a sonda da Q7 ("uma ação visivelmente
+   * restrita"). É um **rótulo**, não uma permissão: o shell não bloqueia nada
+   * (guião §4, proibição 3), mostra a quem a ação pertence e observa-se se o
+   * dono acha que a Ana a podia fazer.
+   */
+  closing_role: z.string().min(1),
+  /** A justificação com que foi fechada, quando já foi. */
+  closing_reason: z.string().nullable(),
+});
+
+/**
+ * Uma linha de contagem: um artigo numa zona.
+ *
+ * `count_unit` é a unidade em que **ele** conta (kg na balança, un à mão), e é
+ * nessa unidade que o campo aceita o número e que o `counted` volta. A
+ * conversão para a unidade base é do servidor — converter unidades no cliente é
+ * a fonte nº 1 de bugs de stock (`inventory-domain` §2).
+ */
+export const linhaDeContagemSchema = z.object({
+  id: z.uuid(),
+  product: z.uuid(),
+  short_name: z.string().min(1),
+  zone: zonaSchema,
+  /** A ordem do percurso dentro da zona. Nunca alfabética. */
+  position: z.number().int().nonnegative(),
+  count_unit: z.string().min(1),
+  /** O que o sistema diz. `null` numa zona cega, e aí é ausência real. */
+  expected: quantidadeSchema.nullable(),
+  /** O que foi contado. `null` = por contar. */
+  counted: quantidadeSchema.nullable(),
+  /** `counted − expected`. `null` enquanto faltar um dos dois. */
+  difference: quantidadeSchema.nullable(),
+  /** A mesma diferença em euros, com sinal. Arredondada ao cêntimo pelo CMP. */
+  difference_eur: decimal.nullable(),
+  counted_by: z.string().nullable(),
+  counted_at: z.iso.datetime().nullable(),
+});
+
+/**
+ * O corpo de `POST /stock/counts/<id>/lines`: a quantidade contada de um
+ * artigo, **na unidade de contagem da linha**.
+ *
+ * É um POST na coleção e não um PATCH na linha porque contar é registar uma
+ * observação nova — a última substitui a anterior, e não há id de linha para
+ * quem está a andar pela cozinha com o telemóvel a saber.
+ */
+export const contagemDeLinhaSchema = z.object({
+  product: z.uuid(),
+  quantity: decimal,
+});
+
+/** O corpo de `POST /stock/counts`: contar é sempre contar **uma** localização. */
+export const contagemParaIniciarSchema = z.object({
+  location: z.uuid(),
+});
+
+/**
+ * O fecho da contagem: as diferenças em quantidade **e em euros**, e o limiar
+ * acima do qual a justificação é obrigatória.
+ *
+ * O limiar vem no payload para o ecrã o poder **mostrar** ("diferenças de 15 €
+ * — motivo obrigatório acima de 5 €"), que é a alternativa ao painel de
+ * configurações que o guião §4 nº 7 proíbe.
+ */
+export const fechoDeContagemSchema = z.object({
+  count: z.uuid(),
+  status: estadoDeContagemSchema,
+  counted_lines: z.number().int().nonnegative(),
+  total_lines: z.number().int().nonnegative(),
+  /** Só as linhas com diferença, a maior em euros primeiro. */
+  differences: z.array(linhaDeContagemSchema),
+  /** Perda e ganho separados, os dois positivos. */
+  loss_eur: decimal,
+  gain_eur: decimal,
+  /** `gain − loss`. Com sinal. */
+  net_eur: decimal,
+  /** `loss + gain` comparado com este valor decide se o motivo é obrigatório. */
+  reason_required_above_eur: decimal,
+  reason_required: z.boolean(),
+  closing_role: z.string().min(1),
+  closing_reason: z.string().nullable(),
+});
+
+/**
+ * O corpo de `POST /stock/counts/<id>/closing`. A justificação é texto livre —
+ * uma contagem não cai nos cinco motivos de um desperdício, e a razão de uma
+ * diferença é quase sempre uma frase ("faltou lançar a transferência").
+ *
+ * Opcional no contrato, obrigatório acima do limiar: é o servidor que recusa,
+ * não o botão que se desativa. Fechar uma contagem com diferenças tem de ser
+ * possível (guião §4, proibição 3).
+ */
+export const fechoParaRegistarSchema = z.object({
+  reason: z.string().trim().min(1).max(200).optional(),
+});
+
+/* ---------------------------------------------------------------------------
+ * Alertas — "o que expira? o que falta? quanto deitei fora?"
+ * ------------------------------------------------------------------------- */
+
+/** Porque é que esta linha está na lista. Três perguntas, uma lista. */
+export const motivoDeAlertaSchema = z.enum(["expiry", "missing"]);
+
+/**
+ * A gravidade, **decidida no servidor**, e com um tecto: um `best_before`
+ * nunca sai `danger`. É a regra que o ecrã de Stock já estabeleceu ("expira"
+ * contra "perde qualidade") levada ao contrato, para a amêndoa laminada não
+ * poder aparecer a vermelho por distração de um ecrã.
+ */
+export const gravidadeSchema = z.enum(["danger", "warning", "info"]);
+
+export const alertaSchema = z.object({
+  id: z.uuid(),
+  product: z.uuid(),
+  short_name: z.string().min(1),
+  reason: motivoDeAlertaSchema,
+  severity: gravidadeSchema,
+  /**
+   * Onde está. `null` num alerta de falta: o mínimo é do artigo e vale sobre o
+   * consolidado, logo não há uma localização a apontar.
+   */
+  location: localizacaoSchema.nullable(),
+  /** O que está em risco (o lote) ou o que resta (a falta). */
+  quantity: quantidadeSchema,
+  value_eur: decimal,
+  /** O lote em risco, com a distinção `use_by`/`best_before`. */
+  lot: validadeProximaSchema.nullable(),
+  /** O limiar de dias que fez este alerta aparecer. `null` numa falta. */
+  threshold_days: z.number().int().positive().nullable(),
+  /** O mínimo que fez este alerta aparecer. `null` numa validade. */
+  min_quantity: quantidadeSchema.nullable(),
+});
+
+/**
+ * Os três contadores do topo.
+ *
+ * O `business_day_starts_at` e o `wasted_since` são a sonda da Q6: o rótulo lê
+ * "Deitado fora — hoje (desde as 04:00)" e a fronteira do dia é **dado do
+ * servidor**, por estabelecimento. Na pastelaria o dia começa no início da
+ * produção (~4h) e não no fim do serviço (~2h) de um restaurante — e a resposta
+ * pode ser diferente por tipo de negócio, o que é em si um achado.
+ */
+export const resumoDeAlertasSchema = z.object({
+  expiring_count: z.number().int().nonnegative(),
+  expiring_within_days: z.number().int().positive(),
+  missing_count: z.number().int().nonnegative(),
+  /** Desde o início do dia de negócio. */
+  wasted_today_eur: decimal,
+  /** Os últimos sete dias de negócio. */
+  wasted_week_eur: decimal,
+  /** `"04:00"`, hora local do estabelecimento. */
+  business_day_starts_at: z.string().regex(/^\d\d:\d\d$/, "hora inválida"),
+  wasted_since: z.iso.datetime(),
+});
+
+/**
+ * Uma linha de desperdício — a vista do ledger que responde à terceira
+ * pergunta. É só leitura: um movimento não se edita nem se apaga (ADR 0006),
+ * e aqui não há ação nenhuma na linha de propósito.
+ */
+export const desperdicioSchema = z.object({
+  id: z.uuid(),
+  product: z.uuid(),
+  short_name: z.string().min(1),
+  lot_code: z.string().nullable(),
+  /** Positiva: o que saiu. O sinal do ledger já foi lido pelo servidor. */
+  quantity: quantidadeSchema,
+  value_eur: decimal,
+  reason: motivoQuebraSchema,
+  location: localizacaoSchema,
+  created_by: z.string().min(1),
+  occurred_at: z.iso.datetime(),
 });
 
 export type UnidadeBase = z.output<typeof unidadeBaseSchema>;
@@ -174,3 +409,17 @@ export type NivelDeStock = z.output<typeof nivelDeStockSchema>;
 export type ResumoDeStock = z.output<typeof resumoDeStockSchema>;
 export type Movimento = z.output<typeof movimentoSchema>;
 export type QuebraParaRegistar = z.output<typeof quebraParaRegistarSchema>;
+export type Zona = z.output<typeof zonaSchema>;
+export type ProgressoDeZona = z.output<typeof progressoDeZonaSchema>;
+export type EstadoDeContagem = z.output<typeof estadoDeContagemSchema>;
+export type Contagem = z.output<typeof contagemSchema>;
+export type LinhaDeContagem = z.output<typeof linhaDeContagemSchema>;
+export type ContagemDeLinha = z.output<typeof contagemDeLinhaSchema>;
+export type ContagemParaIniciar = z.output<typeof contagemParaIniciarSchema>;
+export type FechoDeContagem = z.output<typeof fechoDeContagemSchema>;
+export type FechoParaRegistar = z.output<typeof fechoParaRegistarSchema>;
+export type MotivoDeAlerta = z.output<typeof motivoDeAlertaSchema>;
+export type Gravidade = z.output<typeof gravidadeSchema>;
+export type Alerta = z.output<typeof alertaSchema>;
+export type ResumoDeAlertas = z.output<typeof resumoDeAlertasSchema>;
+export type Desperdicio = z.output<typeof desperdicioSchema>;

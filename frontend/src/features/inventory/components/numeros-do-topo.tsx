@@ -32,12 +32,18 @@ import type { ResumoDeStock } from "../schemas";
  */
 export type FiltroDeStock = "falta" | "validade" | undefined;
 
-const CLASSE_MOSAICO =
+/**
+ * As três classes do mosaico, exportadas porque o ecrã Alertas tem também três
+ * números no topo e têm de ser **os mesmos** três números: duas definições do
+ * mesmo mosaico divergem na primeira correção, e o dono vê dois ecrãs que não
+ * parecem do mesmo produto.
+ */
+export const CLASSE_MOSAICO =
   "flex min-h-14 flex-col items-end justify-center gap-0.5 rounded-xl border px-2.5 py-2 text-right";
 
-const CLASSE_NUMERO = "text-lg leading-none font-semibold sm:text-2xl";
+export const CLASSE_NUMERO = "text-lg leading-none font-semibold sm:text-2xl";
 
-const CLASSE_ROTULO = "text-xs leading-tight text-muted-foreground";
+export const CLASSE_ROTULO = "text-xs leading-tight text-muted-foreground";
 
 function Mosaicos({
   children,
