@@ -83,8 +83,27 @@ a sua própria sessão; a CSP de dev autoriza o `unpkg` globalmente por causa do
 deixaria cair testes em `apps/**` (hoje não há nenhum lá); a impersonation de suporte não tem ADR;
 OpenTelemetry não está provisionado.
 
-**A seguir: sessão 2, o catálogo** — mas lê o parágrafo abaixo primeiro, porque há seis decisões de
-domínio que o bloqueiam e que nenhum agente pode inventar.
+**Onde estamos agora (2026-10-01): a construir o shell, que não estava no plano, e a razão da
+inversão importa.** O plano punha a sessão 0 (validação com donos) antes de tudo e ela bloqueava há
+duas sessões. A inversão: construir um **shell navegável com dados falsos** e usá-lo como
+**instrumento** para obter as respostas — mostrar um ecrã em vez de perguntar no abstracto. O
+`domain-expert` validou-a: **seis das onze perguntas desenham-se para dentro do ecrã** (falta de
+stock, consumo por talão vs lote, stock em trânsito, `yield_factor`, hora do dia de negócio,
+faturas ao NIF pessoal), duas dão metade, três são conversa. O guião está em
+`docs/sessao-0-guiao.md` e tem dois leitores: o agente que constrói e quem conduz a conversa.
+
+Feito: ADR 0008 (TanStack Router, fronteiras do frontend, e a fronteira dos dados falsos), o shell
+com sidebar/tab bar, o servidor de fixtures (`frontend/fixtures/`, fora de `src/`, plugin com
+`apply: "serve"` — os dados falsos **não podem** entrar num build, não por disciplina mas por
+construção), e o ecrã de **Stock** completo com as sondas da Q1, Q2 e Q7 medidas a funcionar.
+Faltam Receber, Contar e Alertas.
+
+**Nada do frontend foi verificado num browser** — não há nenhum no ambiente dos agentes, e não há
+mecanismo visual no projeto. É a maior lacuna do frontend e só o utilizador a pode fechar.
+
+**A seguir, depois dos quatro ecrãs: a sessão 0 com o shell na mão**, e só então o catálogo. As onze
+decisões de domínio continuam a bloquear o catálogo e o ledger, e são caras de mudar depois de haver
+migrações aplicadas — que o CLAUDE.md proíbe editar.
 
 **Sessão 0 (validação com donos de restaurante) continua por confirmar, e agora custa.** O
 `domain-expert` marcou seis decisões como "não inventes default sem falar com um utilizador real":
@@ -102,6 +121,8 @@ estão no mercado-alvo ao lançamento (decide se `Organization` é fase 2 ou nun
 
 **Plano de sessões (README §2):** 0 validação com donos de restaurante · 1 `/kickoff` · 2 catálogo ·
 3 ledger de stock · 4 listagem + alertas · 5 contagem em telemóvel · 6–7 receção por fatura · 8 receitas + desperdício.
+O shell de validação entrou **entre** a 1 e a 0, e não estava no plano: é o instrumento que
+desbloqueia a 0, e termina por apagamento quando os endpoints reais existirem (ADR 0008, decisão 3).
 
 Antes de fazer qualquer coisa: lê CLAUDE.md, ARCHITECTURE.md, DESIGN.md e SECURITY.md, confirma-me em
 5 linhas que percebeste o produto e as regras, e diz-me qual é o próximo passo segundo o estado atual.
