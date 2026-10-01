@@ -4,6 +4,64 @@
  */
 
 export interface paths {
+    "/api/v1/auth/ativar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activar um convite
+         * @description `POST /api/v1/auth/ativar` — aceita um convite e devolve a sessão.
+         *
+         *     É a quinta view dispensada de âmbito, e a razão é a do login: corre **antes**
+         *     de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
+         *     esta view **abre** um âmbito, e o valor que o escolhe vem do **link**:
+         *     `/ativar#<uuid-do-tenant>.<token>`. O uuid é argumento e não credencial, e
+         *     quem concede é a política do `accounts_invitation`, que é uma política normal
+         *     porque o link nomeia o tenant.
+         *
+         *     `AllowAny` e não `IsAuthenticated`, e os dois casos são reais: uma conta nova
+         *     chega aqui anónima, e uma conta que já existe tem de chegar aqui **com**
+         *     sessão (`convite_exige_sessao`), porque a activação nunca define password
+         *     numa conta que já tem uma.
+         *
+         *     ## `csrf_protect` e `JSONParser`, pela razão do `SECURITY.md` §5
+         *
+         *     Esta é exatamente a forma de endpoint que o §5 descreve: **anónimo e de
+         *     escrita**. O `as_view()` do DRF embrulha a view em `csrf_exempt` e o
+         *     `SessionAuthentication` só verifica o token quando **encontra** um utilizador
+         *     na sessão — logo, sem estas duas linhas, um `POST /auth/ativar` anónimo
+         *     nasceria sem protecção de CSRF nenhuma, como o login nasceu. O ataque aqui
+         *     não é só *login CSRF*: é fazer o browser de quem tem o link queimar um token
+         *     de uso único, ou aceitar um convite para um estabelecimento do atacante com a
+         *     conta da vítima. Medido nas duas metades com `enforce_csrf_checks=True`.
+         *
+         *     **Um endpoint dispensado de âmbito dispensa-se do âmbito e não do CSRF.**
+         *
+         *     ## Códigos que esta view devolve
+         *
+         *     * `400 convite_invalido` — expirado, usado, revogado, inexistente, uuid de
+         *       tenant forjado e fragmento mal formado. **O mesmo código e o mesmo corpo**
+         *       nos seis casos: distinguir dizia a quem experimenta um link se aquele
+         *       estabelecimento existe e se aquele convite já foi usado;
+         *     * `409 convite_exige_sessao` — o email convidado já tem conta com password;
+         *     * `403 convite_de_outra_conta` — a sessão é de outra conta;
+         *     * `400` por campo (`{"password": [...]}`) — password em falta ou fraca. É a
+         *       segunda forma do 400 que o docstring deste módulo descreve, e sai assim
+         *       porque é o que um formulário mostra ao lado do input. Uma password fraca
+         *       **não** queima o convite.
+         */
+        post: operations["auth_ativar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -117,10 +175,207 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/convites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Convites do estabelecimento ativo
+         * @description Os convites do estabelecimento ativo, mais recentes primeiro, paginados. O `estado` é derivado e diz que acções fazem sentido: `reenviar` num `pendente` ou `expirado`, `revogar` em tudo o que não foi aceite. **Nunca** inclui o token — ele sai uma vez, na resposta do POST que criou o convite.
+         */
+        get: operations["convites_listar"];
+        put?: never;
+        /**
+         * Convidar alguém para o estabelecimento
+         * @description O token sai **aqui**, uma vez, e nunca mais (ADR 0010).
+         */
+        post: operations["convites_criar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/convites/{id}/reenviar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reenviar um convite, com um token novo
+         * @description Roda o token: o link anterior deixa de casar com alguma coisa.
+         */
+        post: operations["convites_reenviar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/convites/{id}/revogar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revogar um convite
+         * @description Sem corpo na resposta além do convite: não há token novo a mostrar.
+         */
+        post: operations["convites_revogar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description O corpo do `POST /auth/ativar`: o fragmento do link e, talvez, a password.
+         *
+         *     ## Um campo opaco, e o cliente não o divide
+         *
+         *     O `fragmento` é o que vem depois do `#` no link — `<uuid-do-tenant>.<token>`
+         *     — e viaja inteiro. A SPA lê-o do `location.hash` e põe-no no corpo sem o
+         *     interpretar: quem o divide é o service, logo o formato do segredo tem **uma**
+         *     definição e ela vive no servidor. Um contrato com `tenant_id` e `token`
+         *     separados obrigava o cliente a conhecer o formato, e o dia em que ele mudasse
+         *     eram dois sítios a mudar.
+         *
+         *     O fragmento não chega ao servidor por acidente nenhum: não entra no log de
+         *     acesso do proxy, não viaja em `Referer`, e um pre-fetch do cliente de email
+         *     não consegue queimar um token de uso único (ADR 0010). É o POST que o traz.
+         *
+         *     ## A password é opcional **porque o servidor é que sabe** se é precisa
+         *
+         *     `required=False` e não `required=True`: uma conta que já tem password
+         *     utilizável **não** a redefine ao aceitar um convite (ADR 0010) — a password é
+         *     global e a pertença é por tenant, pelo que "convite + definir password" dava
+         *     a quem pode convidar a tomada de uma conta existente, com os outros
+         *     estabelecimentos dela lá dentro. Nesse caso a activação exige sessão e este
+         *     campo é ignorado.
+         *
+         *     `required=False` e **não** `default=""`, e a diferença é toda no cliente
+         *     gerado: um campo com `default` chega ao `types.ts` como `password: string`
+         *     (obrigatório, com um valor por omissão), e um campo sem ele chega como
+         *     `password?: string`, que é a verdade — a activação de quem já tem conta não
+         *     manda password nenhuma. O preço é um `.get("password", "")` na view, que é
+         *     uma palavra.
+         *
+         *     Quem decide é o service, depois de casar o convite, porque só aí se sabe que
+         *     email está em jogo. A força da password também é validada lá, pelos
+         *     `AUTH_PASSWORD_VALIDATORS` — e não aqui, porque o
+         *     `UserAttributeSimilarityValidator` precisa do email do convite, que este
+         *     serializer não pode ver sem ser o oráculo que a ADR fecha.
+         *
+         *     `trim_whitespace=False` na password, como no login: um espaço final é um
+         *     carácter da password de quem o escreveu.
+         */
+        AtivacaoInRequest: {
+            fragmento: string;
+            password?: string;
+        };
+        /**
+         * @description A resposta de `criar` e de `reenviar`: o convite **e** o segredo, uma vez.
+         *
+         *     Duas peças e não uma, porque têm tempos de vida diferentes: o `convite` é o
+         *     que a listagem volta a mostrar sempre, e o `fragmento` é a única vez que
+         *     este valor existe fora da cabeça do servidor. A separação diz isso ao
+         *     cliente sem um comentário.
+         *
+         *     O `fragmento` é `<uuid-do-tenant>.<token>` e é o que vai **depois do `#`**:
+         *     o link é `${origin}/ativar#${fragmento}`. Quem o compõe é o frontend, porque
+         *     é quem conhece a sua origem — o backend devolver um URL absoluto obrigava-o
+         *     a conhecer o domínio da SPA, que é configuração que ele não tem e que em dev,
+         *     em CI e em produção é diferente.
+         *
+         *     E é o fragmento e não o path, por três razões que a ADR 0010 fixa: o
+         *     fragmento não chega ao servidor, logo não entra no log de acesso do proxy;
+         *     não viaja em `Referer`; e um pre-fetch do cliente de email não queima um
+         *     token de uso único.
+         */
+        ConviteCriadoOut: {
+            convite: components["schemas"]["ConviteOut"];
+            fragmento: string;
+        };
+        /**
+         * @description O corpo do `POST /convites`: quem, com que papel, e com que nome.
+         *
+         *     Os três campos são os que o `Membership` precisa no dia em que nascer, e
+         *     nenhum deles é o token: quem gera o token é o service, com `secrets`, e um
+         *     token que viesse do cliente era um token escolhido pelo cliente.
+         *
+         *     O `nome` é o `display_name` **neste** estabelecimento — a mesma pessoa é
+         *     "Ana Silva (contabilidade)" num e "Ana" noutro —, e quem o sabe é quem
+         *     convida. Por isso viaja aqui e não no corpo da activação: quem aceita não
+         *     escolhe como aparece na lista de membros de quem o convidou.
+         *
+         *     Não há validação de duplicados aqui, e é deliberado: "já existe um convite
+         *     pendente para este email" e "esta pessoa já é membro" são leituras à base de
+         *     dados dentro do âmbito do pedido, logo pertencem ao service, que é quem tem
+         *     a transação e quem as escreve. Validá-las aqui dava duas verificações, e a
+         *     de cá nunca é a que a corrida perde.
+         */
+        ConviteInRequest: {
+            /** Format: email */
+            email: string;
+            nome: string;
+            papel: components["schemas"]["PapelEnum"];
+        };
+        /**
+         * @description Um convite como a listagem o mostra. **Sem token, e sem forma de o ter.**
+         *
+         *     O token sai **uma vez**, na resposta do POST que o criou, como uma chave de
+         *     API (ADR 0010): um token mostrável depois teria de ser guardado em claro, e
+         *     o que esta tabela guarda é só o SHA-256. Esta classe é o sítio onde isso se
+         *     vê — a lista de campos é explícita e o `token_hash` não está nela. Não é um
+         *     `ModelSerializer`, logo nem um campo novo no modelo nem um `fields =
+         *     "__all__"` distraído o podem pôr aqui.
+         *
+         *     O `estado` é derivado dos três timestamps (ver `EstadoDoConvite`) e sai como
+         *     enum fechado no OpenAPI, pelo que a união chega ao `types.ts` e o `switch`
+         *     do frontend não pode esquecer um ramo. É o que o ecrã precisa para decidir
+         *     que botão mostrar: `reenviar` num pendente ou expirado, `revogar` em tudo o
+         *     que não foi aceite.
+         *
+         *     O `expira_em` vai como data e não como "faltam 3 dias": o cliente formata o
+         *     que quiser, e um número de dias calculado no servidor fica errado no ecrã de
+         *     quem o deixou aberto.
+         */
+        ConviteOut: {
+            /** Format: date-time */
+            criado_em: string;
+            /** Format: email */
+            email: string;
+            estado: components["schemas"]["ConviteOutEstadoEnum"];
+            /** Format: date-time */
+            expira_em: string;
+            /** Format: uuid */
+            id: string;
+            nome: string;
+            papel: components["schemas"]["PapelEnum"];
+        };
+        /**
+         * @description * `pendente` - à espera de activação
+         *     * `expirado` - expirou sem ser usado
+         *     * `aceite` - aceite, com pertença criada
+         *     * `revogado` - revogado por quem convidou
+         * @enum {string}
+         */
+        ConviteOutEstadoEnum: "pendente" | "expirado" | "aceite" | "revogado";
         /**
          * @description O corpo de uma recusa: `code` estável para ramificar, `detail` para ler.
          *
@@ -141,14 +396,6 @@ export interface components {
             detail: string;
         };
         /**
-         * @description * `anonimo` - sem sessão
-         *     * `sem_estabelecimento` - sem estabelecimento associado
-         *     * `escolha_pendente` - à espera da escolha do estabelecimento
-         *     * `ativa` - sessão com estabelecimento ativo
-         * @enum {string}
-         */
-        EstadoEnum: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa";
-        /**
          * @description O corpo do `POST /auth/login`: um email e uma password, e nada mais.
          *
          *     O `max_length` do email é o do `EmailField` do modelo (254, o limite do
@@ -167,6 +414,21 @@ export interface components {
             /** Format: email */
             email: string;
             password: string;
+        };
+        PaginatedConviteOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["ConviteOut"][];
         };
         /**
          * @description * `owner` - dono
@@ -187,12 +449,20 @@ export interface components {
          *     "não sei" de "não há", e aqui o servidor sabe sempre.
          */
         SessaoOut: {
-            estado: components["schemas"]["EstadoEnum"];
+            estado: components["schemas"]["SessaoOutEstadoEnum"];
             menu: unknown[];
             tenant_ativo: components["schemas"]["TenantOut"] | null;
             tenants: components["schemas"]["TenantOut"][];
             utilizador: components["schemas"]["UtilizadorOut"] | null;
         };
+        /**
+         * @description * `anonimo` - sem sessão
+         *     * `sem_estabelecimento` - sem estabelecimento associado
+         *     * `escolha_pendente` - à espera da escolha do estabelecimento
+         *     * `ativa` - sessão com estabelecimento ativo
+         * @enum {string}
+         */
+        SessaoOutEstadoEnum: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa";
         /**
          * @description O corpo do `POST /auth/tenant-ativo`: o estabelecimento a activar.
          *
@@ -254,6 +524,53 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    auth_ativar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AtivacaoInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessaoOut"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
     auth_login: {
         parameters: {
             query?: never;
@@ -353,6 +670,119 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+    convites_listar: {
+        parameters: {
+            query?: {
+                /** @description A page number within the paginated result set. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedConviteOutList"];
+                };
+            };
+        };
+    };
+    convites_criar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConviteInRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConviteCriadoOut"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+    convites_reenviar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this convite. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConviteCriadoOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+    convites_revogar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this convite. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConviteOut"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -38,9 +38,20 @@ estabelecimentos dela lá dentro. O comando diz que não a tocou.
 (sessão própria, `SECURITY.md` §3). Correr isto duas vezes cria dois
 estabelecimentos, e o uuid de cada um sai impresso — é a forma de os distinguir.
 
-**Não** imprime um link de activação. Isso é o convite da ADR 0010, que é a
-tarefa seguinte: enquanto não existir, a única forma de entrar é com uma password
-definida aqui.
+**Não** imprime um link de activação, e já não é por ele não existir. O convite
+da ADR 0010 está construído (`POST /api/v1/convites`), mas convidar exige um
+`owner` com sessão — e o primeiro `owner` de um estabelecimento novo é
+precisamente quem ainda não existe. Este comando é o arranque desse ciclo, e a
+password que ele pede é a credencial que o fecha; daí em diante quem entra é
+convidado por quem já está dentro.
+
+A ADR 0010 descreve uma variante deste comando que cria o `User` com
+`set_unusable_password()`, cria um `Invitation` com papel `owner` e imprime o
+URL de activação — é uma forma legítima de arrancar o mesmo ciclo, e troca "o
+operador escolhe a password do dono" por "o operador entrega um link de uso
+único". Fica nomeada como seguimento e não feita aqui: muda o fluxo do operador,
+que não foi o que esta tarefa pediu, e as duas formas não devem coexistir sem
+alguém decidir qual é a única.
 """
 
 from __future__ import annotations

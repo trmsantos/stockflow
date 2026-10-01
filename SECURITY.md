@@ -218,7 +218,28 @@ devolve zero linhas — falha fechada.
   atacante. Medido nas duas metades com `enforce_csrf_checks=True` (sem token 403, com token 200), e
   o teste é load-bearing: tirar os decoradores põe-no vermelho. **Vale para qualquer endpoint anónimo
   de escrita** que este repositório venha a ter — activação, reposição de password, e um eventual
-  registo.
+  registo. A **activação** já o tem, com os mesmos dois decoradores e medida nas mesmas duas
+  metades (`tests/test_convites.py`); confirmado por mutação: tirar o `csrf_protect` da
+  `AtivacaoView` faz o teste passar de 403 a 200. Faltam as duas da reposição de password, que
+  ainda não existem.
+- **O token de convite é a única credencial ao portador do sistema, e é tratada como tal**
+  (ADR 0010). O `tenant_id` da sessão não concede nada e é um UUID que o utilizador já
+  conhece; este token é a única coisa entre um estranho e um `Membership`. Logo: 32 bytes de
+  `secrets`, guardado **só** como SHA-256 e nunca em claro, uso único (um `UPDATE`
+  condicional, não uma verificação em Python), 7 dias, revogável, e mostrado **uma vez** na
+  resposta do POST que o criou. SHA-256 e não Argon2id de propósito — 256 bits de entropia
+  não são adivinháveis por dicionário e o fator de trabalho de um KDF não compraria nada.
+  Viaja no **fragmento** do URL (`/ativar#<uuid-do-tenant>.<token>`), que não chega ao
+  servidor: fora do log de acesso do proxy, fora do `Referer`, e imune a um pre-fetch do
+  cliente de email que queimaria um token de uso único. **Risco residual nomeado: um email de
+  convite roubado *é* uma pertença**, e o que o limita é o TTL, o uso único e a revogação.
+- **A activação nunca define password numa conta que já tem uma.** A password é global e a
+  pertença é por tenant, pelo que "convite + definir password" daria a quem pode convidar a
+  **tomada de uma conta existente**, com os outros estabelecimentos dela lá dentro. Email já
+  registado → a activação exige sessão (`convite_exige_sessao`, 409); sessão de outra conta →
+  `convite_de_outra_conta` (403). Medido em `tests/test_convites.py`, e o teste entra na conta
+  com a password antiga no fim — comparar hashes sozinho não distinguiria um
+  `set_unusable_password` acidental.
 - Corpos JSON por decisão, não por gosto: as views de escrita da autenticação levam
   `parser_classes = [JSONParser]`, porque um `<form>` de outro domínio faz `POST` de
   `multipart/form-data` **sem preflight** e um corpo JSON não. Efeito lateral útil — com corpos JSON

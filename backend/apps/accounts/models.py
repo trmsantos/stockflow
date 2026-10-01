@@ -1,13 +1,26 @@
-"""Identidade, tenants e pertenças — as três tabelas da ADR 0007.
+"""Identidade, tenants, pertenças e convites (ADR 0007 e ADR 0010).
 
-Três tabelas, três respostas diferentes à mesma pergunta ("o que é que uma
-ligação sem âmbito consegue ler?"), e nenhuma delas é "confia no código":
+Quatro tabelas, e a mesma pergunta respondida de três maneiras ("o que é que
+uma ligação sem âmbito consegue ler?"). Nenhuma das respostas é "confia no
+código":
 
-| Tabela                | Política RLS                  | Porquê                     |
-|-----------------------|-------------------------------|----------------------------|
-| `accounts_tenant`     | sim, sobre **`id`**           | a tabela *é* o tenant      |
-| `accounts_membership` | sim, sobre `tenant_id`        | é a tabela da autorização  |
-| `accounts_user`       | **não** — lista fechada       | o login lê antes do âmbito |
+| Tabela                 | Política RLS            | Porquê                      |
+|------------------------|-------------------------|-----------------------------|
+| `accounts_tenant`      | sim, sobre **`id`**     | a tabela *é* o tenant       |
+| `accounts_membership`  | sim, sobre `tenant_id`  | é a tabela da autorização   |
+| `accounts_invitation`  | sim, sobre `tenant_id`  | **o link nomeia o tenant**  |
+| `accounts_user`        | **não** — lista fechada | o login lê antes do âmbito  |
+
+A terceira linha é a que contraria o instinto, e é a decisão central da ADR
+0010. Um convite é lido **antes** de existir sessão, como o login — logo o
+reflexo é pô-lo na lista das tabelas sem política. Não é preciso: o link é
+`/ativar#<uuid-do-tenant>.<token>`, a view de activação abre
+`tenant_scope(uuid que vem do link)` e lê o convite **lá dentro**. É a inversão
+da ADR 0007 com o link no lugar da sessão — **o link escolhe o âmbito, a
+política concede-o** —, e o uuid é argumento e não credencial: forjá-lo escolhe
+um âmbito onde nenhum `token_hash` existe. A alternativa punha email, papel e
+`tenant_id` de todos os convites pendentes de **todos** os clientes legíveis por
+qualquer ligação da app, ao preço evitável de não pôr um uuid no link.
 
 O bootstrap de identidade é circular por natureza: resolver o tenant é ler o
 `Membership`, o `Membership` tem política, e uma leitura sem âmbito devolve
@@ -58,10 +71,19 @@ from django.contrib.auth.models import PermissionsMixin
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 from django.db.models.functions import Lower
+from django.utils import timezone
 
 from apps.shared.models import TenantModel
 
-__all__ = ["Membership", "Papel", "Tenant", "User", "UserManager"]
+__all__ = [
+    "EstadoDoConvite",
+    "Invitation",
+    "Membership",
+    "Papel",
+    "Tenant",
+    "User",
+    "UserManager",
+]
 
 
 class Papel(models.TextChoices):
@@ -450,3 +472,177 @@ class Membership(TenantModel):
 
     def __str__(self) -> str:
         return f"{self.display_name} ({self.role})"
+
+
+class EstadoDoConvite(models.TextChoices):
+    """Em que ponto da sua vida está um convite. **Derivado**, nunca guardado.
+
+    Não é uma coluna, e isso não é economia: uma coluna de estado ao lado dos
+    três timestamps que a determinam são duas fontes de verdade, e a que se
+    esquece de ser atualizada é sempre a coluna. `expirado` fecha a questão —
+    nenhum `UPDATE` acontece quando um convite expira, logo um estado guardado
+    estaria errado sete dias depois de ter sido escrito.
+
+    É um `TextChoices` para o `ChoiceField` do serializer o emitir como enum
+    fechado no OpenAPI: a união chega ao `types.ts` commitado e o `switch` do
+    frontend deixa de poder esquecer um ramo. A lista está fechada num teste.
+    """
+
+    PENDENTE = "pendente", "à espera de activação"
+    EXPIRADO = "expirado", "expirou sem ser usado"
+    ACEITE = "aceite", "aceite, com pertença criada"
+    REVOGADO = "revogado", "revogado por quem convidou"
+
+
+class Invitation(TenantModel):
+    """Um convite para pertencer a **este** tenant, com um token ao portador.
+
+    Herda de `TenantModel`, que lhe dá a chave UUID, o `tenant_id` que a
+    política compara, os timestamps e o índice `(tenant_id, -created_at)` da
+    listagem. Herdar daqui é também a declaração de que esta é uma tabela de
+    dados de um tenant e que a migração que a cria traz o bloco de RLS — ver a
+    tabela no topo do módulo para a decisão de a ter.
+
+    ## O token é uma credencial ao portador, e o `tenant_id` da sessão não é
+
+    A diferença obriga ao resto (ADR 0010). O `tenant_id` que a sessão guarda
+    não concede nada e é um UUID que o utilizador já conhece; **este token é a
+    única coisa entre um estranho e um `Membership`**. Logo: 32 bytes de
+    `secrets`, guardado **só** como SHA-256, uso único, 7 dias, revogável, e no
+    **fragmento** do URL.
+
+    **SHA-256 e não Argon2id**, ao contrário da password do `User`: o segredo
+    tem 256 bits de entropia e não é adivinhável por dicionário, pelo que o
+    fator de trabalho de um KDF não compra nada e paga-o em cada activação. O
+    que o hash entrega é a propriedade que interessa — quem lê a tabela (um
+    backup, um `pg_dump`, o `stockflow_owner`) não consegue usar nenhum convite.
+
+    **O hash é único, e a unicidade é global e atravessa a política de
+    propósito.** É a rede contra a única forma de este desenho falhar: o mesmo
+    token entregue a dois tenants. Não é um oráculo entre clientes porque
+    nenhum cliente escolhe um `token_hash` — o valor é gerado no servidor, e
+    quem activa manda o token em claro e nunca o hash. A unicidade dá também o
+    índice que a ADR 0010 pede para esta coluna, sem o declarar duas vezes.
+
+    ## `display_name` vem no convite, e não é adorno
+
+    O `Membership` nasce na aceitação e pelo `conceder_pertenca`, que exige um
+    `display_name` — o nome **neste** estabelecimento, que é um dado do tenant e
+    vive na tabela com política (ver o `Membership`). Quem o sabe é quem
+    convida, não quem aceita: é por isso que viaja no convite.
+
+    ## Uma pertença não nasce aqui
+
+    O convite não cria `Membership` nenhum (ADR 0010): seria uma concessão de
+    acesso que ninguém reclamou, e um `tenant_ids` a propor um âmbito sem pessoa
+    atrás. O que existe entre o convite e a aceitação é uma linha nesta tabela e
+    mais nada.
+
+    ## Três timestamps nulos, e o estado é a sua leitura
+
+    `accepted_at`, `revoked_at` e `expires_at` determinam o `estado`. A
+    unicidade do convite **pendente** por `(tenant, email)` é uma constraint
+    parcial sobre os dois primeiros — `expires_at` não pode entrar na condição
+    porque `now()` não é imutável e o Postgres recusa-o num índice. A
+    consequência é deliberada e está no `services.criar_convite`: um convite
+    expirado continua a ocupar o lugar, e a saída é reenviá-lo ou revogá-lo, não
+    um segundo convite para o mesmo email no mesmo estabelecimento.
+
+    ## `invited_by` não aparece na API
+
+    Guarda quem convidou, porque é a única resposta persistida à pergunta "quem
+    deu acesso a esta pessoa" — a ADR 0010 não o pede e os logs não são uma base
+    de dados. Não entra no `ConviteOut`: mostrá-lo como nome exigia o
+    `display_name` da pertença de quem convidou, que é um join que nenhum ecrã
+    pediu. `SET_NULL` e não `CASCADE`: apagar a conta de quem convidou não pode
+    apagar o registo de um convite que ela fez a outra pessoa.
+    """
+
+    email = models.EmailField(verbose_name="email convidado")
+    role = models.CharField(
+        max_length=20,
+        choices=Papel.choices,
+        verbose_name="papel",
+    )
+    display_name = models.CharField(max_length=150, verbose_name="nome exibido")
+    token_hash = models.CharField(
+        max_length=64,
+        editable=False,
+        verbose_name="SHA-256 do token",
+    )
+    expires_at = models.DateTimeField(verbose_name="expira em")
+    accepted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name="aceite em",
+    )
+    revoked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name="revogado em",
+    )
+    invited_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+        verbose_name="convidado por",
+    )
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "convite"
+        verbose_name_plural = "convites"
+        constraints = [
+            # Um convite pendente por (estabelecimento, email), com a caixa do
+            # email dobrada pela mesma regra do `accounts_user`: `Ana@x.pt` e
+            # `ana@x.pt` são a mesma conta (ver o `UserManager`), logo são também
+            # o mesmo convite. Os `services.py` normalizam na escrita; isto é a
+            # rede, como a RLS, e vale para uma escrita que não passe por lá.
+            #
+            # Expressões e `fields` são mutuamente exclusivos no
+            # `UniqueConstraint`, por isso o `tenant` vai como expressão — o
+            # Django converte a string em `F("tenant")`, que resolve para a
+            # coluna `tenant_id`.
+            models.UniqueConstraint(
+                "tenant",
+                Lower("email"),
+                condition=models.Q(accepted_at__isnull=True, revoked_at__isnull=True),
+                name="invitation_pendente_uniq",
+            ),
+            # O índice que a activação usa, e a rede contra o mesmo token em
+            # dois estabelecimentos. É uma `UniqueConstraint` e **não**
+            # `unique=True` no campo por uma razão medida: num campo de texto, o
+            # `unique=True` faz o Django criar também um índice
+            # `varchar_pattern_ops` para servir `LIKE`, e ninguém procura um
+            # token por prefixo — era um segundo índice pago em cada convite
+            # criado e em cada reenvio, para zero consultas.
+            models.UniqueConstraint(
+                fields=["token_hash"],
+                name="invitation_token_hash_uniq",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.email} ({self.role})"
+
+    @property
+    def estado(self) -> str:
+        """O `EstadoDoConvite` desta linha, lido dos três timestamps.
+
+        A ordem dos ramos é a precedência: um convite aceite continua aceite
+        depois de a data de expiração passar, e um revogado continua revogado.
+        As duas primeiras condições são mutuamente exclusivas na base de dados —
+        o `UPDATE` que aceita exige `revoked_at IS NULL` e o que revoga exige
+        `accepted_at IS NULL`, ambos condicionais e portanto atómicos.
+        """
+        if self.accepted_at is not None:
+            return EstadoDoConvite.ACEITE
+        if self.revoked_at is not None:
+            return EstadoDoConvite.REVOGADO
+        if self.expires_at <= timezone.now():
+            return EstadoDoConvite.EXPIRADO
+        return EstadoDoConvite.PENDENTE

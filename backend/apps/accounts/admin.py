@@ -1,10 +1,16 @@
 """No admin registam-se só modelos **sem** política de RLS (ADR 0007).
 
-Ou seja: o `User` e os do Django. O `Tenant` e o `Membership` **não** são
-registados, e não é "registados e vazios" — o admin não tem âmbito de tenant,
-pelo que uma changelist de `Tenant` mostraria zero linhas e alguém concluiria
-que o cliente não tem dados. A não-inscrição diz a verdade; uma lista vazia é
-uma armadilha operacional.
+Ou seja: o `User` e os do Django. O `Tenant`, o `Membership` e o `Invitation`
+**não** são registados, e não é "registados e vazios" — o admin não tem âmbito
+de tenant, pelo que uma changelist de `Tenant` mostraria zero linhas e alguém
+concluiria que o cliente não tem dados. A não-inscrição diz a verdade; uma lista
+vazia é uma armadilha operacional.
+
+O `Invitation` tem uma segunda razão para não estar aqui, além da política: uma
+changelist dele seria um sítio onde se cria uma concessão de acesso a um
+estabelecimento sem passar pelo `owner` desse estabelecimento — e o
+`token_hash` que ela mostrasse não serviria para nada a ninguém, porque o token
+só existe na resposta do POST que o criou (ADR 0010).
 
 Acesso operacional a dados de um tenant é por comando `manage.py` com
 `--tenant`, que abre `tenant_scope` explicitamente e cujo `tenant_id` sai nos

@@ -97,6 +97,64 @@ Isto vale para **qualquer endpoint anónimo de escrita** que este repositório v
 está também no `SECURITY.md` §5: o padrão certo para um endpoint dispensado de âmbito é dispensá-lo
 do âmbito e **não** do CSRF.
 
+**O contrato dos convites, acrescentado em 2026-10-01 quando eles foram implementados.** Pela
+mesma razão que o `SessaoOut` acima: esta ADR fixou a mecânica e os três códigos, e o resto do
+contrato veio por mensagem ou foi decidido na implementação — ou seja, o registo vinculativo não
+continha o que foi construído, e o próximo agente iria procurá-lo aqui. Fica:
+
+```
+POST   /api/v1/auth/ativar          dispensado de âmbito, abre o do link
+GET    /api/v1/convites             owner
+POST   /api/v1/convites             owner  -> 201 ConviteCriadoOut
+POST   /api/v1/convites/<id>/reenviar  owner  -> 200 ConviteCriadoOut
+POST   /api/v1/convites/<id>/revogar   owner  -> 200 ConviteOut
+
+ConviteOut        { id, email, papel, nome, estado, expira_em, criado_em }   // sem token
+ConviteCriadoOut  { convite: ConviteOut, fragmento }                          // o segredo, uma vez
+AtivacaoIn        { fragmento, password? }                                    // fragmento opaco
+estado: "pendente" | "expirado" | "aceite" | "revogado"                       // derivado, não guardado
+```
+
+Sete decisões que esta ADR não cobria, e as razões em uma linha cada:
+
+1. **o segredo sai como `fragmento` (`<uuid>.<token>`) e não como URL absoluto** — quem conhece a
+   origem da SPA é a SPA, e o backend não tem essa configuração; o cliente compõe
+   `${origin}/ativar#${fragmento}`;
+2. **o corpo da activação leva o fragmento inteiro e opaco**, não `tenant_id` + `token` separados:
+   o formato do segredo tem uma definição e ela fica no servidor;
+3. **um quarto código, `convite_nao_pendente` (409)**, para reenviar ou revogar um convite que já
+   não o permite. Só existe nos endpoints de gestão, onde quem chama vê o estado na lista;
+4. **as recusas de *criação* são erros de validação do campo `email` (400 por campo)** e não códigos
+   estáveis — "já existe convite pendente" e "já é membro deste estabelecimento" são afirmações
+   sobre o email submetido, que um formulário mostra ao lado do input. O índice parcial é a rede, e
+   o `IntegrityError` dele sai como a mesma recusa;
+5. **criar nunca mexe num convite que já existe**, nem num expirado: o índice parcial não pode
+   incluir `expires_at > now()` (`now()` não é imutável), e a saída é `reenviar`, que é o único
+   sítio onde um token roda. Revogar é final — um convite revogado não ressuscita, e deixa de
+   bloquear um convite novo para o mesmo email;
+6. **a activação faz `login()` e devolve `SessaoOut`**, e activa o estabelecimento novo **só** se a
+   sessão não tiver nenhum: é a regra do login ("um candidato confirmado escreve-se na sessão")
+   aplicada a um terceiro ponto de entrada. Quem já estava a trabalhar noutro estabelecimento
+   continua lá. Não há `login()` quando a sessão já é da conta convidada — a rotação da chave é um
+   controlo ligado à autenticação (ADR 0007);
+7. **`invited_by` existe na tabela e não no contrato.** É a única resposta persistida a "quem deu
+   acesso a esta pessoa" e os logs não são uma base de dados; fora do `ConviteOut` porque
+   mostrá-lo como nome exigia o `display_name` da pertença de quem convidou, que é um join que
+   nenhum ecrã pediu. `SET_NULL`.
+
+**E uma assimetria que esta ADR deixava implícita e que vale ser explícita**, porque é a parte mais
+fácil de "corrigir" para o lado errado: a activação recusa uma sessão de outra conta quando a conta
+convidada **já existe com password**, e aceita quando a conta **não existe**. Não é incoerência — a
+recusa existe para proteger uma credencial que já existe, e no segundo caso não existe nenhuma: quem
+tem o link está a estabelecer a identidade, não a assumir uma.
+
+**O que ficou sem mecanismo, dito aqui para não se perder:** "nenhum convite concede papel acima do
+de quem convida" é verdadeiro hoje **por construção** (só o `owner` convida, e é o papel mais alto) e
+não tem código a impô-lo. Uma ordem entre papéis é a Q7, está marcada como "não inventes default sem
+falar com um utilizador real", e escrevê-la na implementação dos convites era responder à Q7 sem
+ninguém ter perguntado. O dia em que um `manager` puder convidar é o dia em que isto precisa de um
+mecanismo e de um teste.
+
 **Alternativas.** Convites sem política, na lista fechada — é a forma que o pedido assumia, e é a que
 esta ADR recusa: punha email, papel e `tenant_id` de **todos** os convites pendentes de **todos** os
 clientes legíveis por qualquer ligação da app, que é a ameaça "acesso a dados de outro tenant" do

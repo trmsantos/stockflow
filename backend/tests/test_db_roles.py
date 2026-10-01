@@ -31,7 +31,14 @@ gates:
   varredura de privilégios apanha-o aqui;
 * `APPEND_ONLY` é a lista fechada das tabelas onde `UPDATE`/`DELETE` estão
   revogados. Falha nos dois sentidos — se outra tabela os perder por acidente e
-  se uma destas os recuperar.
+  se uma destas os recuperar;
+* e o **predicado** de cada política, lido do `pg_policy`, tem de comparar
+  contra `NULLIF(current_setting('app.tenant_id', true), '')`. Sem o `NULLIF`, a
+  política existe, tem `ENABLE` e `FORCE`, passa nas duas igualdades de conjuntos
+  — e **levanta** `invalid input syntax for type uuid: ""` a partir da segunda
+  transação de cada ligação persistente, em vez de devolver zero linhas. Nenhuma
+  das outras varreduras lê o predicado, pelo que essa era a forma de escrever uma
+  política errada sem nenhum gate a ver.
 
 `TRUNCATE` não entra em nenhuma asserção, e não é esquecimento: nenhuma política
 o filtra, o `roles.sql` não o concede, e quem o concede é o `django_db_setup` do
@@ -152,6 +159,24 @@ SELECT c.relname,
    AND c.relkind IN ('r', 'p')
  ORDER BY c.relname
 """
+
+
+#: O predicado de cada política, como o Postgres o reescreve. Serve a asserção
+#: do `NULLIF`, que nenhuma das outras varreduras faz: elas olham para a
+#: *existência* da política e para as flags da tabela, não para o que ela compara.
+_PREDICADOS_DAS_POLITICAS = """
+SELECT c.relname, p.polname, pg_get_expr(p.polqual, p.polrelid)
+  FROM pg_policy p
+  JOIN pg_class c ON c.oid = p.polrelid
+ WHERE c.relnamespace = 'public'::regnamespace
+ ORDER BY c.relname, p.polname
+"""
+
+#: A forma exata em que o Postgres 16 devolve o predicado depois de o analisar:
+#: os literais ganham `::text` e a expressão ganha parênteses. É por isso que a
+#: asserção é por `in` sobre esta subcadeia e não uma igualdade com o SQL que a
+#: migração escreveu — são duas representações do mesmo predicado.
+_COMPARACAO_COM_NULLIF = "NULLIF(current_setting('app.tenant_id'::text, true), ''::text)"
 
 
 def _linhas(sql: str, params: list[object] | None = None) -> list[tuple[object, ...]]:
@@ -335,6 +360,18 @@ def test_as_tabelas_com_politica_sao_exatamente_as_de_dados_de_tenant(
     # Âncoras nos dois lados, para nenhuma das igualdades passar por vacuidade.
     assert TABELA_ANCORA in com_tenant_id
     assert "accounts_tenant" in com_politica
+    # E uma âncora que é também o registo de uma decisão. O pedido da feature dos
+    # convites assumia que `accounts_invitation` teria de ficar **sem** política,
+    # por ser lida antes de existir sessão; a ADR 0010 mostrou que não — o link é
+    # `/ativar#<uuid-do-tenant>.<token>`, a activação abre
+    # `tenant_scope(uuid que vem do link)` e lê o convite lá dentro. A igualdade
+    # acima já obrigaria a tabela a ter política, mas obrigaria em silêncio: esta
+    # linha é o que faz a decisão aparecer no diff, do lado certo.
+    assert "accounts_invitation" in com_politica, (
+        "o accounts_invitation perdeu a política. Se a ideia é voltar a pôr os "
+        "convites fora da RLS, isso reabre a ADR 0010: o link escolhe o âmbito, "
+        "a política concede-o."
+    )
 
 
 def test_as_tabelas_sem_politica_sao_uma_lista_fechada(
@@ -380,6 +417,47 @@ def test_toda_a_tabela_com_politica_tem_enable_e_force(
         "tabelas com política sem ENABLE + FORCE ROW LEVEL SECURITY: as três "
         "linhas andam juntas no RunSQL da migração que cria a tabela."
     )
+
+
+@pytest.mark.django_db
+def test_toda_a_politica_compara_contra_o_nullif_do_guc() -> None:
+    """O `NULLIF` em todas as políticas, medido no predicado e não na migração.
+
+    É o gate que faltava, e a forma de falhar que ele apanha é das caras:
+    `current_setting('app.tenant_id', true)` **não** é NULL fora do âmbito — é a
+    **string vazia**, porque é esse o valor de arranque de um placeholder (medido
+    no PostgreSQL 16.15, em `tests/test_tenant_scope.py`). Sem o `NULLIF`, o
+    `''::uuid` levanta `invalid input syntax for type uuid: ""` a partir da
+    segunda transação de cada ligação persistente, e o pedido *sem* tenant —
+    login, activação de convite, healthcheck, anónimo, 404 antes da view —
+    responde **500 em vez de ver zero linhas**, que é o oposto do que a ADR 0005
+    promete.
+
+    Uma política escrita sem ele passa em todas as outras asserções deste
+    ficheiro: existe, está `ENABLE`, está `FORCE`, e a tabela está do lado certo
+    das duas igualdades de conjuntos. Nenhuma delas lê o predicado.
+
+    O teste é sobre o catálogo e não sobre o texto das migrações, de propósito:
+    é o predicado **em vigor** que decide o comportamento, e uma política
+    substituída à mão numa base de dados não aparece em nenhum ficheiro.
+    """
+    politicas = _linhas(_PREDICADOS_DAS_POLITICAS)
+    assert politicas, "nenhuma política no esquema: a varredura não diz nada"
+
+    sem_nullif = [
+        (tabela, nome)
+        for tabela, nome, predicado in politicas
+        if _COMPARACAO_COM_NULLIF not in (predicado or "")
+    ]
+
+    assert sem_nullif == [], (
+        "políticas cujo predicado não compara contra "
+        "NULLIF(current_setting('app.tenant_id', true), ''): fora de âmbito "
+        "levantam erro em vez de devolver zero linhas (ADR 0005, SECURITY.md §3)."
+    )
+    # Âncora: a tabela mais recente a ganhar política tem de estar na varredura,
+    # senão este teste passava sobre um conjunto que não a inclui.
+    assert "accounts_invitation" in {tabela for tabela, _nome, _pred in politicas}
 
 
 # ---------------------------------------------------------------------------

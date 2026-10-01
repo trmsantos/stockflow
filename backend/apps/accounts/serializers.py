@@ -1,12 +1,15 @@
-"""O contrato HTTP da autenticação de sessão (ADR 0010).
+"""O contrato HTTP da autenticação, dos convites e da activação (ADR 0010).
 
 Leitura e escrita em classes separadas, e os campos de escrita listados um a um
 — nunca `fields = "__all__"` (CLAUDE.md, `SECURITY.md` §4). Aqui a separação
 sai de graça: **nenhum destes serializers é um `ModelSerializer`**. Os de
-escrita não têm modelo por trás (um pedido de login não cria uma linha), e os de
-leitura serializam os dataclasses congelados de `services.py` e do `api.py`, não
-instâncias de modelo. Não há, portanto, nenhum caminho por onde um campo novo de
-um modelo apareça sozinho numa resposta.
+escrita não têm modelo por trás (um pedido de login não cria uma linha, e o
+convite é criado pelo service a partir de três campos), e os de leitura
+serializam ou os dataclasses congelados de `services.py` e do `api.py`, ou — no
+caso do `ConviteOutSerializer` — um `Invitation`, com **todos** os campos
+declarados à mão. Não há, portanto, nenhum caminho por onde um campo novo de um
+modelo apareça sozinho numa resposta: o `token_hash` não está na lista e não
+pode passar a estar por acidente.
 
 ## Os nomes dos campos são portugueses, e é uma decisão
 
@@ -32,10 +35,14 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from apps.accounts.models import Papel
-from apps.accounts.services import EstadoDaSessao
+from apps.accounts.models import EstadoDoConvite, Papel
+from apps.accounts.services import LIMITE_DO_FRAGMENTO, EstadoDaSessao
 
 __all__ = [
+    "AtivacaoInSerializer",
+    "ConviteCriadoOutSerializer",
+    "ConviteInSerializer",
+    "ConviteOutSerializer",
     "ErroOutSerializer",
     "LoginInSerializer",
     "SessaoOutSerializer",
@@ -85,6 +92,82 @@ class TenantAtivoInSerializer(serializers.Serializer):
     """
 
     tenant_id = serializers.UUIDField()
+
+
+class ConviteInSerializer(serializers.Serializer):
+    """O corpo do `POST /convites`: quem, com que papel, e com que nome.
+
+    Os três campos são os que o `Membership` precisa no dia em que nascer, e
+    nenhum deles é o token: quem gera o token é o service, com `secrets`, e um
+    token que viesse do cliente era um token escolhido pelo cliente.
+
+    O `nome` é o `display_name` **neste** estabelecimento — a mesma pessoa é
+    "Ana Silva (contabilidade)" num e "Ana" noutro —, e quem o sabe é quem
+    convida. Por isso viaja aqui e não no corpo da activação: quem aceita não
+    escolhe como aparece na lista de membros de quem o convidou.
+
+    Não há validação de duplicados aqui, e é deliberado: "já existe um convite
+    pendente para este email" e "esta pessoa já é membro" são leituras à base de
+    dados dentro do âmbito do pedido, logo pertencem ao service, que é quem tem
+    a transação e quem as escreve. Validá-las aqui dava duas verificações, e a
+    de cá nunca é a que a corrida perde.
+    """
+
+    email = serializers.EmailField(max_length=254)
+    papel = serializers.ChoiceField(source="role", choices=Papel.choices)
+    nome = serializers.CharField(source="display_name", max_length=150)
+
+
+class AtivacaoInSerializer(serializers.Serializer):
+    """O corpo do `POST /auth/ativar`: o fragmento do link e, talvez, a password.
+
+    ## Um campo opaco, e o cliente não o divide
+
+    O `fragmento` é o que vem depois do `#` no link — `<uuid-do-tenant>.<token>`
+    — e viaja inteiro. A SPA lê-o do `location.hash` e põe-no no corpo sem o
+    interpretar: quem o divide é o service, logo o formato do segredo tem **uma**
+    definição e ela vive no servidor. Um contrato com `tenant_id` e `token`
+    separados obrigava o cliente a conhecer o formato, e o dia em que ele mudasse
+    eram dois sítios a mudar.
+
+    O fragmento não chega ao servidor por acidente nenhum: não entra no log de
+    acesso do proxy, não viaja em `Referer`, e um pre-fetch do cliente de email
+    não consegue queimar um token de uso único (ADR 0010). É o POST que o traz.
+
+    ## A password é opcional **porque o servidor é que sabe** se é precisa
+
+    `required=False` e não `required=True`: uma conta que já tem password
+    utilizável **não** a redefine ao aceitar um convite (ADR 0010) — a password é
+    global e a pertença é por tenant, pelo que "convite + definir password" dava
+    a quem pode convidar a tomada de uma conta existente, com os outros
+    estabelecimentos dela lá dentro. Nesse caso a activação exige sessão e este
+    campo é ignorado.
+
+    `required=False` e **não** `default=""`, e a diferença é toda no cliente
+    gerado: um campo com `default` chega ao `types.ts` como `password: string`
+    (obrigatório, com um valor por omissão), e um campo sem ele chega como
+    `password?: string`, que é a verdade — a activação de quem já tem conta não
+    manda password nenhuma. O preço é um `.get("password", "")` na view, que é
+    uma palavra.
+
+    Quem decide é o service, depois de casar o convite, porque só aí se sabe que
+    email está em jogo. A força da password também é validada lá, pelos
+    `AUTH_PASSWORD_VALIDATORS` — e não aqui, porque o
+    `UserAttributeSimilarityValidator` precisa do email do convite, que este
+    serializer não pode ver sem ser o oráculo que a ADR fecha.
+
+    `trim_whitespace=False` na password, como no login: um espaço final é um
+    carácter da password de quem o escreveu.
+    """
+
+    fragmento = serializers.CharField(max_length=LIMITE_DO_FRAGMENTO)
+    password = serializers.CharField(
+        max_length=128,
+        required=False,
+        allow_blank=True,
+        trim_whitespace=False,
+        style={"input_type": "password"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +234,60 @@ class SessaoOutSerializer(serializers.Serializer):
     # `unknown`, o que é exactamente a verdade: existe, está vazio, e a sua
     # forma ainda não é contrato.
     menu = serializers.ListField(child=serializers.JSONField())
+
+
+class ConviteOutSerializer(serializers.Serializer):
+    """Um convite como a listagem o mostra. **Sem token, e sem forma de o ter.**
+
+    O token sai **uma vez**, na resposta do POST que o criou, como uma chave de
+    API (ADR 0010): um token mostrável depois teria de ser guardado em claro, e
+    o que esta tabela guarda é só o SHA-256. Esta classe é o sítio onde isso se
+    vê — a lista de campos é explícita e o `token_hash` não está nela. Não é um
+    `ModelSerializer`, logo nem um campo novo no modelo nem um `fields =
+    "__all__"` distraído o podem pôr aqui.
+
+    O `estado` é derivado dos três timestamps (ver `EstadoDoConvite`) e sai como
+    enum fechado no OpenAPI, pelo que a união chega ao `types.ts` e o `switch`
+    do frontend não pode esquecer um ramo. É o que o ecrã precisa para decidir
+    que botão mostrar: `reenviar` num pendente ou expirado, `revogar` em tudo o
+    que não foi aceite.
+
+    O `expira_em` vai como data e não como "faltam 3 dias": o cliente formata o
+    que quiser, e um número de dias calculado no servidor fica errado no ecrã de
+    quem o deixou aberto.
+    """
+
+    id = serializers.UUIDField()
+    email = serializers.EmailField()
+    papel = serializers.ChoiceField(source="role", choices=Papel.choices)
+    nome = serializers.CharField(source="display_name", max_length=150)
+    estado = serializers.ChoiceField(choices=EstadoDoConvite.choices)
+    expira_em = serializers.DateTimeField(source="expires_at")
+    criado_em = serializers.DateTimeField(source="created_at")
+
+
+class ConviteCriadoOutSerializer(serializers.Serializer):
+    """A resposta de `criar` e de `reenviar`: o convite **e** o segredo, uma vez.
+
+    Duas peças e não uma, porque têm tempos de vida diferentes: o `convite` é o
+    que a listagem volta a mostrar sempre, e o `fragmento` é a única vez que
+    este valor existe fora da cabeça do servidor. A separação diz isso ao
+    cliente sem um comentário.
+
+    O `fragmento` é `<uuid-do-tenant>.<token>` e é o que vai **depois do `#`**:
+    o link é `${origin}/ativar#${fragmento}`. Quem o compõe é o frontend, porque
+    é quem conhece a sua origem — o backend devolver um URL absoluto obrigava-o
+    a conhecer o domínio da SPA, que é configuração que ele não tem e que em dev,
+    em CI e em produção é diferente.
+
+    E é o fragmento e não o path, por três razões que a ADR 0010 fixa: o
+    fragmento não chega ao servidor, logo não entra no log de acesso do proxy;
+    não viaja em `Referer`; e um pre-fetch do cliente de email não queima um
+    token de uso único.
+    """
+
+    convite = ConviteOutSerializer()
+    fragmento = serializers.CharField(max_length=LIMITE_DO_FRAGMENTO)
 
 
 class ErroOutSerializer(serializers.Serializer):

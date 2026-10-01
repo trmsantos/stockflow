@@ -69,7 +69,7 @@ from apps.accounts.middleware import (
     SESSION_TENANT_KEY,
     TENANT_HEADER,
 )
-from apps.accounts.models import Membership, Tenant, User
+from apps.accounts.models import Invitation, Membership, Tenant, User
 from apps.accounts.selectors import membership_no_ambito
 from apps.accounts.services import conceder_pertenca, criar_tenant, revogar_pertenca
 from apps.shared.db import (
@@ -604,13 +604,25 @@ def test_o_ambito_de_sistema_nao_e_um_passe_geral(transactional_db: None) -> Non
         assert OutboxEvent.objects.count() == 0
 
 
-def test_o_guarda_de_ambito_cobre_as_tres_tabelas_com_politica(transactional_db: None) -> None:
-    """A lista vem do `pg_policy`, logo cobre as três de hoje e as de amanhã.
+def test_o_guarda_de_ambito_cobre_as_tabelas_com_politica(transactional_db: None) -> None:
+    """A lista vem do `pg_policy`, logo cobre as de hoje e as de amanhã.
+
+    O `accounts_invitation` é a prova de que "as de amanhã" não era uma promessa:
+    entrou no guarda sozinho, sem ninguém acrescentar uma linha ao `conftest.py`,
+    porque a lista é lida do catálogo no arranque da sessão de testes. E tem de
+    estar coberto — é a tabela que a activação lê, e lê-la fora de
+    `tenant_scope` devolveria zero linhas em silêncio, que é exatamente a forma
+    silenciosa do bug que a ADR 0010 fecha.
 
     O `accounts_user` **não** está coberto, e é deliberado: é a tabela sem
     política, e é por lá que o login tem de entrar antes de existir âmbito.
     """
-    for consulta in (Membership.objects.count, Tenant.objects.count, OutboxEvent.objects.count):
+    for consulta in (
+        Membership.objects.count,
+        Tenant.objects.count,
+        Invitation.objects.count,
+        OutboxEvent.objects.count,
+    ):
         with pytest.raises(LeituraSemAmbito):
             consulta()
 
@@ -708,18 +720,28 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
 
     A ADR 0007 lista as dispensas que vão existir — admin, healthcheck, login,
     logout, registo, listagem de tenants e troca de tenant. Hoje existem três
-    famílias: o admin, os dois endpoints de saúde (`config/health.py`) e os
-    quatro da autenticação de sessão (`apps/accounts/views.py`, ADR 0010). As
-    que faltam — activação de convite e as duas de reposição de password —
-    nascem na tarefa seguinte da ADR 0010, e é este teste que as obriga a
+    famílias: o admin, os dois endpoints de saúde (`config/health.py`) e as
+    **cinco** de `/api/v1/auth/` (`apps/accounts/views.py`, ADR 0010). As que
+    faltam são as duas da reposição de password, e é este teste que as obriga a
     aparecer aqui quando nascerem.
 
-    As quatro da autenticação estão aqui porque correm **antes** de existir
-    tenant na sessão: é a condição do login da ADR 0007, e o `tenant-ativo` é o
-    caso que mostra porque é que a dispensa tem de ser declarada e não inferida
-    — sem ela, o middleware teria aberto o âmbito **antigo** antes da view e a
-    troca levantaria `TenantScopeConflict`. O que cada uma delas toca em dados de
+    As cinco de `/auth/` estão aqui porque correm **antes** de existir tenant na
+    sessão: é a condição do login da ADR 0007, e o `tenant-ativo` é o caso que
+    mostra porque é que a dispensa tem de ser declarada e não inferida — sem
+    ela, o middleware teria aberto o âmbito **antigo** antes da view e a troca
+    levantaria `TenantScopeConflict`. O que cada uma delas toca em dados de
     tenant é aberto por elas, uma transação curta por candidato.
+
+    O `ativar` é o caso que vale a pena ler duas vezes, porque é o único em que
+    "dispensado de âmbito" **não** significa "sem âmbito": ele abre
+    `tenant_scope(uuid que vem do fragmento do link)` e lê o convite lá dentro
+    (ADR 0010). É por isso que `accounts_invitation` tem política normal e
+    **não** entra no `SEM_POLITICA` do `tests/test_db_roles.py` — o link escolhe
+    o âmbito, a política concede-o.
+
+    E os três endpoints de **gestão** de convites aparecem no outro lado da
+    asserção, com âmbito, que é o default: criar, reenviar e revogar são
+    operações de dentro de um estabelecimento, feitas por quem tem sessão.
 
     As duas da saúde estão aqui pelo mesmo critério das outras, e não por serem
     inofensivas: não abrem âmbito porque não leem dados de tenant nenhum, e não
@@ -737,6 +759,7 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
     assert dispensadas, "nenhuma view dispensada: o admin deixou de o estar?"
     fora_do_admin = [rota for rota in dispensadas if not rota.startswith(settings.ADMIN_URL)]
     assert fora_do_admin == [
+        "api/v1/auth/ativar",
         "api/v1/auth/login",
         "api/v1/auth/logout",
         "api/v1/auth/sessao",
@@ -747,7 +770,16 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "views dispensadas de âmbito fora do admin. A dispensa é uma decisão de "
         "isolamento: passa pelo security-reviewer e entra neste teste."
     )
-    assert com_ambito == ["api/v1/schema/"], (
+    # As rotas dos convites vêm do `SimpleRouter`, que usa `re_path`: o padrão
+    # em cru traz os `^$` e o grupo nomeado do `pk`. Fica como o resolver o vê,
+    # porque é o resolver que o middleware consulta — normalizá-lo aqui era
+    # escrever uma segunda versão da verdade neste teste.
+    assert com_ambito == [
+        "api/v1/^convites$",
+        "api/v1/^convites/(?P<pk>[^/.]+)/reenviar$",
+        "api/v1/^convites/(?P<pk>[^/.]+)/revogar$",
+        "api/v1/schema/",
+    ], (
         "o conjunto das views com âmbito mudou. O default é ter âmbito, logo "
         "uma view nova aparece aqui — e é isso que se quer."
     )
