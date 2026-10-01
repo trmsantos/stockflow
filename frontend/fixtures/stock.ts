@@ -110,7 +110,11 @@ const LOTES: readonly LoteFalso[] = [
   { codigo: "L-AMD-0928", artigo: 11, dias: 4, tipo: "best_before" },
   { codigo: "L-MOR-0930", artigo: 12, dias: 2, tipo: "use_by" },
   { codigo: "L-FER-0929", artigo: 13, dias: 5, tipo: "use_by" },
-  { codigo: "L-QJF-0925", artigo: 14, dias: 7, tipo: "use_by" },
+  // Duas bolas da mesma ida ao Makro, abertas ontem em lojas diferentes: são
+  // duas vezes "7 dias depois de aberta" (guião §2) e portanto dois lotes, não
+  // um. Abertas ontem, logo expiram daqui a 6 dias e não a 7.
+  { codigo: "L-QJF-0925", artigo: 14, dias: 6, tipo: "use_by" },
+  { codigo: "L-QJF-0926", artigo: 14, dias: 6, tipo: "use_by" },
   { codigo: "L-FMB-0929", artigo: 15, dias: 3, tipo: "use_by" },
   { codigo: "L-BAC-0611", artigo: 21, dias: 300, tipo: "best_before" },
   // Produção própria: validade no **mesmo dia** (a sonda da Q6 do guião).
@@ -177,8 +181,16 @@ function semear(): MovimentoFalso[] {
     movimento("receipt", 11, "cozinha", "2000", "L-AMD-0928", AUTORES.rui, ontem(8, 40), "FT 2026/4502"),
     movimento("receipt", 12, "cozinha", "2000", "L-MOR-0930", AUTORES.rui, hoje(7, 5), "Fatura manuscrita"),
     movimento("receipt", 13, "cozinha", "1000", "L-FER-0929", AUTORES.rui, ontem(7, 30), "FT 2026/4471"),
-    // Peso variável na fatura: a bola veio a 3,480 kg e não a 3,5 (guião §2).
+    // Peso variável na fatura: duas bolas na mesma ida ao Makro, pesadas uma a
+    // uma — 3,480 kg e 2,960 kg, nenhuma a 3,5 (guião §2). Uma fica no Centro, a
+    // outra segue na carrinha para o Mercado: uma viagem, duas lojas, que é o
+    // caso normal de quem tem duas lojas e vai ao cash & carry. É daqui que vem
+    // o stock repartido da Q2 — e é esta linha que faz a Loja Mercado existir no
+    // seletor de loja, que o deriva das localizações que aparecem nos dados.
+    // Quem dá entrada é quem está na loja onde a mercadoria fica; no Mercado não
+    // há ninguém de balcão nos dados, é a gerência que o cobre.
     movimento("receipt", 14, "centro", "3480", "L-QJF-0925", AUTORES.ana, ontem(9, 10), "FS 2026/114570"),
+    movimento("receipt", 14, "mercado", "2960", "L-QJF-0926", AUTORES.dono, ontem(9, 40), "FS 2026/114570"),
     movimento("receipt", 15, "centro", "4120", "L-FMB-0929", AUTORES.ana, ontem(9, 10), "FS 2026/114570"),
     movimento("receipt", 16, "centro", "200", null, AUTORES.ana, ontem(9, 15), "FS 2026/114570"),
     movimento("receipt", 17, "cozinha", "10000", null, AUTORES.rui, ontem(9, 15), "FS 2026/114570"),
@@ -207,6 +219,16 @@ function semear(): MovimentoFalso[] {
     movimento("consumption", 8, "centro", "2200", null, AUTORES.ana, hoje(11, 2), "Vendas de hoje"),
     movimento("consumption", 20, "centro", "520", null, AUTORES.ana, hoje(11, 2), "Vendas de hoje"),
     movimento("consumption", 19, "centro", "22", null, AUTORES.ana, hoje(11, 2), "Vendas de hoje"),
+    // Tostas nas duas lojas, ~25 g de queijo cada (guião §2), cada uma do lote
+    // da bola aberta naquela loja. Sobram 1,300 kg no Centro e 0,800 kg no
+    // Mercado — 2,100 kg repartidos e **nenhuma parcela a zero**. É essa a
+    // condição da sonda da Q2: a linha lê-se "Loja Centro 1,300 kg · Loja
+    // Mercado 0,800 kg" e a pergunta "consolidado ou separado?" tem as duas
+    // respostas no ecrã ao mesmo tempo. Com um zero numa das parcelas não tinha.
+    movimento("consumption", 14, "centro", "1100", "L-QJF-0925", AUTORES.ana, ontem(13, 10), "Vendas de ontem"),
+    movimento("consumption", 14, "mercado", "1250", "L-QJF-0926", AUTORES.dono, ontem(13, 20), "Vendas de ontem"),
+    movimento("consumption", 14, "centro", "1080", "L-QJF-0925", AUTORES.ana, hoje(11, 2), "Vendas de hoje"),
+    movimento("consumption", 14, "mercado", "910", "L-QJF-0926", AUTORES.dono, hoje(11, 15), "Vendas de hoje"),
 
     // --- transferência em trânsito: saiu da Cozinha e ainda não entrou na loja
     // (guião §3, Q4). O `transfer_in` não existe de propósito.

@@ -70,6 +70,14 @@ Duas lojas + produção: **Loja Centro**, **Loja Mercado**, **Cozinha** (esta s�
 produção separada). Volume implícito ~300 pastéis/dia. **Validades relativas a hoje, nunca datas
 congeladas** — um "expirou há 3 meses" mata a credibilidade no primeiro ecrã.
 
+**A tabela fixa os casos, não as quantidades.** A coluna de stock do relatório
+original caiu quando condensei isto, e eu próprio me enganei depois a citar um valor que
+este ficheiro nunca teve — mandei repartir o queijo a partir de "2,1 kg no §2" que aqui
+não existe. A fonte de verdade das quantidades é `frontend/fixtures/`, que é o
+instrumento; uma tabela de quantidades num documento é o mesmo retrato que envelhece em
+silêncio e que já foi apagado do `SECURITY.md` §9 por essa razão. O que esta tabela
+garante é que **o caso** existe no seed.
+
 Artigos que têm de existir, cada um por uma razão:
 
 | Artigo | Compra → base | Consumo | Porque está aqui |
@@ -133,7 +141,7 @@ Eventos que têm de estar nos dados — é neles que vive o §3:
 | # | Pergunta | | Como |
 |---|---|---|---|
 | 1 | Bloquear ou avisar sem stock | **SHELL** | Nata a 0 L. O shell **deixa** registar a quebra de 2 L e mostra `−2,0 L` em vermelho com aviso suave. Não perguntes nada: ou ele passa ao lado (→ avisar), ou pára (→ bloquear). Só então: *"e se fosse a Ana às 8h, com o cliente à frente?"* |
-| 2 | Várias lojas: um NIF ou vários | MISTO | O ecrã responde à parte operacional: seletor de loja no header e stock repartido ("3,4 kg — Centro 2,0 · Mercado 1,4"). A parte jurídica é conversa. |
+| 2 | Várias lojas: um NIF ou vários | MISTO | Seletor de loja na barra do ecrã (não no header: o shell não conhece domínios) e **stock repartido**. No seed é o queijo flamengo: **2,100 kg — Centro 1,300 · Mercado 0,800**, as duas bolas compradas na mesma ida ao Makro, na mesma fatura simplificada que já era a sonda da Q10. **E o badge inverte-se:** consolidado lê `ok` (2,100 ≥ mínimo de 2,000), e filtrando por qualquer das lojas lê `baixo` (1,300 e 0,800 contra o mesmo mínimo) — medido. É a pergunta a aparecer no próprio badge: "então está ok ou está baixo?" é a conversa que se quer, e chega sem se perguntar nada. A parte jurídica continua a ser conversa. |
 | 3 | Consumo por talão ou em lote | **SHELL** | Duas variantes lado a lado: pastel com 14 linhas "Venda 11:02 — 6 un"; café com uma linha "Vendas de 29/09 — 312 un (fecho de caixa)". Pergunta: *"em qual destes notavas que faltava alguma coisa?"* Atalho técnico a perguntar: **"se eu pedisse o SAF-T do mês, isso chegava?"** — dispensa integração de POS no v1. |
 | 4 | Cozinha central e trânsito | **SHELL** (condicional) | Uma linha: "08:40 · Cozinha → Loja Centro · 40 un · **em trânsito**", e no Stock da loja esses 40 ainda não aparecem. Só mostrar a quem tem produção separada. |
 | 5 | `yield_factor` | **SHELL** | Ninguém responde a "qual é o teu fator de rendimento". Cartão de ficha técnica **só de leitura**: "morango: 1,20 kg limpo ← 1,50 kg comprado (80%)". Pergunta: *"como fazes esta conta hoje?"* Se a resposta é "não faço", é resposta: default 1.0 com override, nunca obrigatório. |
@@ -159,7 +167,7 @@ Eventos que têm de estar nos dados — é neles que vive o §3:
 ## 4. Proibido no shell
 
 **Porque ensina o modelo errado e mata o ledger:**
-1. **Campo de quantidade editável no Stock.** Um stepper ao lado do "3,4 kg" e perdeste a conversa:
+1. **Campo de quantidade editável no Stock.** Um stepper ao lado do "2,100 kg" e perdeste a conversa:
    ele passa a sessão a editar números e pede esse lápis para sempre.
 2. **Botão de editar ou apagar movimento.** Append-only; corrige-se com movimento inverso.
 3. **Bloqueio duro em qualquer sítio** — nem stock negativo, nem fechar contagem com diferenças, nem
