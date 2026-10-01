@@ -101,6 +101,22 @@ Faltam Receber, Contar e Alertas.
 **Nada do frontend foi verificado num browser** — não há nenhum no ambiente dos agentes, e não há
 mecanismo visual no projeto. É a maior lacuna do frontend e só o utilizador a pode fechar.
 
+**E quando ele olhou, rejeitou o visual nos quatro eixos** (2026-10-01): paleta e tom, densidade e
+tamanho, "parece genérico / shadcn por defeito", **e a estrutura dos ecrãs**. A dívida está escrita
+no topo do `DESIGN.md`, que é onde um agente de UI a lê antes de trabalhar, com a raiz suspeita
+nomeada: a referência visual do §1 é o **Linear**, uma ferramenta densa de developers feita para
+teclado, e o público usa isto de pé numa cozinha com pressa. Os tokens derivam dessa secção e a
+estrutura dos ecrãs deriva do princípio de UX dela — logo o redesenho começa no §1.
+
+Decisão: **registar e continuar.** A estrutura e as sondas sobrevivem a uma mudança visual, e o que
+a sessão 0 ensinar muda a estrutura **e** o visual — redesenhar antes é redesenhar duas vezes. **O
+risco aceite:** um visual que desagrada pode contaminar a própria sessão 0, com o dono a reagir ao
+aspecto em vez do fluxo. Se isso acontecer, nota-o: é informação sobre o visual, não sobre o produto.
+
+**Consequência para o guião:** o §1 do `docs/sessao-0-guiao.md` (o que cada ecrã mostra) passa a ser
+**provisório**. Foi derivado do orçamento de ecrã e do domínio, mas a estrutura está contestada, e o
+que o dono procurar e não encontrar vale mais do que o que lá está escrito.
+
 **A seguir, depois dos quatro ecrãs: a sessão 0 com o shell na mão**, e só então o catálogo. As onze
 decisões de domínio continuam a bloquear o catálogo e o ledger, e são caras de mudar depois de haver
 migrações aplicadas — que o CLAUDE.md proíbe editar.

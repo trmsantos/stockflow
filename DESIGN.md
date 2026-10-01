@@ -8,6 +8,36 @@ concretas (abaixo), não com adjetivos.
 
 ---
 
+> ## ⚠ O visual deste ficheiro NÃO está aprovado
+>
+> **2026-10-01.** O dono do produto viu o shell dos quatro ecrãs e rejeitou o visual nos **quatro**
+> eixos que lhe apresentei: a paleta e o tom, a densidade e o tamanho, "parece genérico / shadcn por
+> defeito", **e a estrutura dos ecrãs**. Não é um retoque de tokens — é um redesenho, e a decisão foi
+> registá-lo como dívida e continuar a construir produto em cima dele, porque a estrutura e as sondas
+> sobrevivem a uma mudança visual.
+>
+> **A raiz suspeita é a secção 1, não a 2.** A referência visual que lá está é o **Linear** —
+> uma ferramenta de developers, densa, feita para teclado, usada sentado num ecrã grande. O público
+> deste produto usa-o **de pé, numa cozinha, com pressa**. Os tokens do §2 derivam desta secção, e a
+> estrutura dos ecrãs deriva do princípio de UX que ela fixa: logo o redesenho começa **aqui** e não
+> na paleta. Mudar o verde sem mudar a referência dá o mesmo produto noutra cor.
+>
+> **O que sobrevive, e é deliberado:** a arquitectura dos tokens (uma fonte, um gate que falha se um
+> ecrã tiver uma cor literal) e o gate que mede contraste, gamut e a paridade do §2 com o
+> `tokens.css`. Um redesenho troca **valores**, não o mecanismo — foi exactamente para isto que o
+> mecanismo existe.
+>
+> **Como alimentar o redesenho, porque "boas ideias de UI" não é accionável:** uma **app com nome**,
+> um **ecrã concreto** e a **razão**. "O cartão de topo do X", "a forma como o Y mostra validades".
+> A biblioteca de referência do dono do produto é o **mobbin.com** — está atrás de login e o valor
+> dela são as imagens, que um agente não vê. O caminho é ele apontar e o agente traduzir em tokens e
+> composição.
+>
+> **Quando:** depois da sessão 0. O que o dono de pastelaria fizer com estes ecrãs muda a estrutura
+> **e** o visual, e redesenhar antes é redesenhar duas vezes. O risco aceite em troca está nomeado no
+> `SESSION-CONTEXT.md`: um visual que desagrada pode contaminar a conversa, com o dono a reagir ao
+> aspecto em vez do fluxo.
+
 ## 1. Identidade (preencher por projeto)
 
 | Campo | Valor |
