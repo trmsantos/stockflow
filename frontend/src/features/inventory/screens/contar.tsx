@@ -2,6 +2,7 @@ import { Link, useSearch } from "@tanstack/react-router";
 import { ClipboardCheck, ClipboardList, Lock, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { EstadoVazio } from "@/components/estado-vazio";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -23,7 +24,6 @@ import {
   useUltimaContagemFechada,
 } from "../api";
 import { ErroDaLista, EsqueletoDaLista } from "../components/estados-da-lista";
-import { EstadoVazio } from "../components/estado-vazio";
 import { LinhaDeContagem } from "../components/linha-de-contagem";
 import {
   EsqueletoDoProgresso,

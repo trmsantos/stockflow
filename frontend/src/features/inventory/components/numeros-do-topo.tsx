@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { CircleAlert, Funnel, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { CLASSE_MOSAICO, CLASSE_NUMERO, CLASSE_ROTULO } from "@/components/mosaico";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -31,19 +32,6 @@ import type { ResumoDeStock } from "../schemas";
  * cêntimo em vez do desperdício.
  */
 export type FiltroDeStock = "falta" | "validade" | undefined;
-
-/**
- * As três classes do mosaico, exportadas porque o ecrã Alertas tem também três
- * números no topo e têm de ser **os mesmos** três números: duas definições do
- * mesmo mosaico divergem na primeira correção, e o dono vê dois ecrãs que não
- * parecem do mesmo produto.
- */
-export const CLASSE_MOSAICO =
-  "flex min-h-14 flex-col items-end justify-center gap-0.5 rounded-xl border px-2.5 py-2 text-right";
-
-export const CLASSE_NUMERO = "text-lg leading-none font-semibold sm:text-2xl";
-
-export const CLASSE_ROTULO = "text-xs leading-tight text-muted-foreground";
 
 function Mosaicos({
   children,

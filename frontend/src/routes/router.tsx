@@ -6,7 +6,7 @@ import { rotaDeAlertas } from "./alertas";
 import { rotaDeArtigo } from "./artigo";
 import { rotaDeContar, rotaDeFechoDeContagem } from "./contar";
 import { rotaInicial } from "./inicio";
-import { rotaDeReceber } from "./receber";
+import { rotaDeFotografar, rotaDeRececao, rotaDeReceber } from "./receber";
 import { rotaRaiz } from "./root";
 import { rotaDeStock } from "./stock";
 
@@ -52,6 +52,8 @@ const arvoreDeRotas = rotaRaiz.addChildren([
   rotaDeStock,
   rotaDeArtigo,
   rotaDeReceber,
+  rotaDeFotografar,
+  rotaDeRececao,
   rotaDeContar,
   rotaDeFechoDeContagem,
   rotaDeAlertas,

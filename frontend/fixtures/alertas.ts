@@ -7,14 +7,16 @@ import {
   type Gravidade,
 } from "../src/features/inventory/schemas.ts";
 import { paginated } from "../src/lib/api/pagination.ts";
-import { LOCALIZACOES, dataEmDias, diasAte, inicioDeHoje } from "./aurora.ts";
+import { LOCALIZACOES, dataEmDias, diasAte } from "./aurora.ts";
 import { milesimosDe, stringDeCentimos } from "./decimal.ts";
 import {
   HORIZONTE_DE_VALIDADE_EM_DIAS,
+  INICIO_DO_DIA,
   LOTES,
   artigoDe,
   centimosDoArtigo,
   ledger,
+  inicioDoDiaDeNegocio,
   localizacaoDe,
   niveis,
   numeroDoArtigo,
@@ -37,41 +39,8 @@ import { resposta, type Contexto, type Rota } from "./servidor.ts";
  * apaga-se este ficheiro e a sua linha no `servidor.ts`.
  */
 
-/**
- * A hora a que o dia de negócio começa — a sonda da Q6, e **dado do servidor**,
- * não constante do cliente.
- *
- * Numa pastelaria a fronteira é o **início da produção** (~4h) e não o fim do
- * serviço (~2h) de um restaurante: os pastéis que sobraram ao fecho de ontem
- * são deitados fora às 05:10, antes de o dia abrir, e com uma fronteira à
- * meia-noite apareciam como desperdício de hoje — o que faz o dono dizer "isso
- * é de ontem" e responder à pergunta sem ela ser feita. Que a resposta possa
- * ser diferente por tipo de negócio é, em si, o achado.
- *
- * O §5 do guião marca a hipótese às 05:00 e o §3 escreve o rótulo com 04:00. Às
- * 04:00 a quebra das 05:10 fica dentro do dia, que é a condição da sonda; às
- * 05:00 também, por dez minutos. Fica 04:00, que é o que o rótulo diz.
- */
-const INICIO_DO_DIA_EM_HORAS = 4;
-
-/** `"04:00"` — o rótulo que o ecrã mostra, derivado da mesma constante. */
-const INICIO_DO_DIA = `${String(INICIO_DO_DIA_EM_HORAS).padStart(2, "0")}:00`;
-
 /** Os sete dias de negócio que "esta semana" cobre. */
 const DIAS_DA_SEMANA = 7;
-
-/**
- * O instante em que o dia de negócio corrente começou. Antes das 04:00 ainda
- * se está no dia de negócio anterior — é essa a diferença entre um dia civil e
- * um dia de negócio, e é toda a pergunta.
- */
-function inicioDoDiaDeNegocio(): Date {
-  const agora = new Date();
-  const inicio = inicioDeHoje();
-  inicio.setHours(INICIO_DO_DIA_EM_HORAS, 0, 0, 0);
-  if (agora.getTime() < inicio.getTime()) inicio.setDate(inicio.getDate() - 1);
-  return inicio;
-}
 
 function inicioDaSemanaDeNegocio(): Date {
   const inicio = inicioDoDiaDeNegocio();

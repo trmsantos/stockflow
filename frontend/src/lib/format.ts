@@ -29,6 +29,16 @@ const dinheiroRedondo = new Intl.NumberFormat(LOCALE, {
 
 const inteiro = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 0 });
 
+const taxa = new Intl.NumberFormat(LOCALE, {
+  style: "percent",
+  maximumFractionDigits: 1,
+});
+
+const pontos = new Intl.NumberFormat(LOCALE, {
+  maximumFractionDigits: 0,
+  signDisplay: "exceptZero",
+});
+
 const data = new Intl.DateTimeFormat(LOCALE, {
   day: "2-digit",
   month: "2-digit",
@@ -73,6 +83,33 @@ export function formatMoney(value: string | number): string {
  */
 export function formatMoneyRounded(value: string | number): string {
   return dinheiroRedondo.format(Number(value));
+}
+
+/**
+ * `23 %` — uma taxa que vem do servidor como **fração** decimal (`"0.230"`).
+ *
+ * A fração é a forma em que uma taxa de IVA viaja no contrato (é um `Decimal`
+ * no Django, como o resto); a percentagem é só a forma de a ler. A conversão
+ * é do `Intl`, pela mesma razão que o `formatMoney` não multiplica nada à mão.
+ */
+export function formatRate(value: string | number): string {
+  return taxa.format(Number(value));
+}
+
+/**
+ * `+21 %` — uma **variação** já em pontos percentuais inteiros, com sinal.
+ *
+ * O sinal faz parte do número e não da cor: "+21 %" lê-se igual a preto e
+ * branco. Os pontos vêm inteiros do servidor de propósito — uma variação de
+ * preço com casas decimais convida a discutir a casa decimal.
+ */
+export function formatPercentChange(points: number): string {
+  return `${pontos.format(points)}${NBSP}%`;
+}
+
+/** `10 %` — pontos percentuais **sem** sinal, para um limiar. */
+export function formatPercentPoints(points: number): string {
+  return `${inteiro.format(points)}${NBSP}%`;
 }
 
 /** `360 un` — para unidades que não se contam em frações. */

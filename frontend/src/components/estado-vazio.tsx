@@ -12,6 +12,15 @@ import type { ReactNode } from "react";
  * seguir.
  *
  * O ícone é decoração (`aria-hidden`): quem lê por áudio ouve o título.
+ *
+ * **Vivia em `features/inventory/components/` e desceu para cá** quando o ecrã
+ * Receber passou a ser a segunda feature a precisar dele. É a descida que o ADR
+ * 0008 (decisão 2) deixou pré-aprovada para o primeiro caso real: "se o
+ * primeiro caso real quiser um *componente* partilhado, desce-se uma camada, e
+ * decide-se com o caso à frente". A alternativa era uma segunda cópia em
+ * `purchasing`, e a frase acima — sobre vazios que divergem na primeira
+ * correção — é o argumento contra ela. Não tem domínio nenhum: não conhece
+ * stock, nem receções, nem rotas.
  */
 export function EstadoVazio({
   icone: Icone,

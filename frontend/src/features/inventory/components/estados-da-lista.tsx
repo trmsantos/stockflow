@@ -1,11 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { CircleAlert, PackageOpen, RotateCcw, Search } from "lucide-react";
+import { PackageOpen, Search } from "lucide-react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ErroAoCarregar } from "@/components/erro-ao-carregar";
+import { EstadoVazio } from "@/components/estado-vazio";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-
-import { EstadoVazio } from "./estado-vazio";
 
 /**
  * Os três estados que a lista tem sempre (DESIGN.md §3) — e não são um extra:
@@ -55,7 +54,14 @@ export function EsqueletoDaLista({
   );
 }
 
-/** Erro: com retry, porque numa cozinha a causa mais provável é o Wi-Fi. */
+/**
+ * Erro: com retry, porque numa cozinha a causa mais provável é o Wi-Fi.
+ *
+ * O bloco desceu para `@/components/erro-ao-carregar` quando o ecrã Receber
+ * passou a precisar do mesmo (ADR 0008, decisão 2). O que fica aqui é só o
+ * **default do título** deste módulo: lá o título é obrigatório, de propósito,
+ * para um ecrã de faturas não poder dizer "não foi possível carregar o stock".
+ */
 export function ErroDaLista({
   titulo = "Não foi possível carregar o stock",
   mensagem,
@@ -66,19 +72,7 @@ export function ErroDaLista({
   readonly aoTentarOutraVez: () => void;
 }) {
   return (
-    <div className="px-4 py-3">
-      <Alert className="border-danger-border bg-danger-surface">
-        <CircleAlert aria-hidden="true" className="text-danger" />
-        <AlertTitle>{titulo}</AlertTitle>
-        <AlertDescription className="flex flex-col items-start gap-2">
-          <span>{mensagem}</span>
-          <Button variant="outline" onClick={aoTentarOutraVez}>
-            <RotateCcw aria-hidden="true" />
-            Tentar outra vez
-          </Button>
-        </AlertDescription>
-      </Alert>
-    </div>
+    <ErroAoCarregar titulo={titulo} mensagem={mensagem} aoTentarOutraVez={aoTentarOutraVez} />
   );
 }
 

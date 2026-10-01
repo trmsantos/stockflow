@@ -1,13 +1,13 @@
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, Funnel, RotateCcw } from "lucide-react";
 
+import { CLASSE_MOSAICO, CLASSE_NUMERO, CLASSE_ROTULO } from "@/components/mosaico";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatMoneyRounded, formatTime } from "@/lib/format";
 
 import type { ResumoDeAlertas } from "../schemas";
-import { CLASSE_MOSAICO, CLASSE_NUMERO, CLASSE_ROTULO } from "./numeros-do-topo";
 
 /**
  * Os três contadores do topo dos Alertas — e a razão de este ecrã não ser três

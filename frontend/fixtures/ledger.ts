@@ -16,6 +16,7 @@ import {
   horaDeHoje,
   horaDeOntem,
   horaEmDias,
+  inicioDeHoje,
   type ArtigoFalso,
 } from "./aurora.ts";
 import {
@@ -95,14 +96,14 @@ export function sinalDe(mov: MovimentoFalso): number {
  * legal) / `best_before` (qualidade) é a condição para o dono confiar nos
  * alertas — a amêndoa laminada está aqui só por causa dela.
  */
-interface LoteFalso {
+export interface LoteFalso {
   readonly codigo: string;
   readonly artigo: number;
   readonly dias: number;
   readonly tipo: TipoValidade;
 }
 
-export const LOTES: readonly LoteFalso[] = [
+const lotes: LoteFalso[] = [
   { codigo: "L-T65-1142", artigo: 1, dias: 180, tipo: "best_before" },
   { codigo: "L-OVL-0914", artigo: 3, dias: 3, tipo: "use_by" },
   { codigo: "L-MNT-0902", artigo: 5, dias: 38, tipo: "best_before" },
@@ -132,8 +133,32 @@ export const LOTES: readonly LoteFalso[] = [
   { codigo: "L-PN-D3", artigo: 22, dias: -3, tipo: "use_by" },
 ];
 
+/**
+ * Os lotes, em leitura. A lista cresce: uma receção confirmada cria lotes novos
+ * (`registarLote`), e é a mesma lista que os alertas e o FEFO leem — senão a
+ * mercadoria que acabou de entrar não tinha validade em sítio nenhum.
+ */
+export const LOTES: readonly LoteFalso[] = lotes;
+
 export function loteDe(codigo: string): LoteFalso | undefined {
   return LOTES.find((lote) => lote.codigo === codigo);
+}
+
+/**
+ * Registar um lote novo — o que uma receção faz quando alguém escreve o lote e
+ * a validade que estão na embalagem.
+ *
+ * Idempotente pelo código: dois pedidos iguais não criam dois lotes, e um
+ * código que já existe mantém a validade com que foi criado. Um lote sem
+ * movimentos atrás é invisível em todos os ecrãs (as três derivações filtram
+ * por stock > 0), e é por isso que registar o lote antes de o movimento existir
+ * não inventa nada.
+ */
+export function registarLote(lote: LoteFalso): LoteFalso {
+  const existente = loteDe(lote.codigo);
+  if (existente !== undefined) return existente;
+  lotes.push(lote);
+  return lote;
 }
 
 function id(n: number): string {
@@ -426,6 +451,44 @@ export function pesoDoEstado(estado: EstadoNivel): number {
 
 /** O limiar viaja com o número para o ecrã o poder mostrar (guião §4, nº 7). */
 export const HORIZONTE_DE_VALIDADE_EM_DIAS = 3;
+
+/**
+ * A hora a que o dia de negócio começa — a sonda da Q6, e **dado do servidor**,
+ * não constante do cliente.
+ *
+ * Numa pastelaria a fronteira é o **início da produção** (~4h) e não o fim do
+ * serviço (~2h) de um restaurante: os pastéis que sobraram ao fecho de ontem
+ * são deitados fora às 05:10, antes de o dia abrir, e com uma fronteira à
+ * meia-noite apareciam como desperdício de hoje — o que faz o dono dizer "isso
+ * é de ontem" e responder à pergunta sem ela ser feita. Que a resposta possa
+ * ser diferente por tipo de negócio é, em si, o achado.
+ *
+ * O §5 do guião marca a hipótese às 05:00 e o §3 escreve o rótulo com 04:00. Às
+ * 04:00 a quebra das 05:10 fica dentro do dia, que é a condição da sonda; às
+ * 05:00 também, por dez minutos. Fica 04:00, que é o que o rótulo diz.
+ *
+ * Vive **aqui** e não no `alertas.ts` porque passou a ter dois leitores: o
+ * "deitado fora — hoje" dos alertas e o "confirmadas hoje" das receções. Duas
+ * cópias da fronteira do dia seriam dois dias de negócio diferentes no mesmo
+ * ecrã de telemóvel, e a pergunta que a Q6 faz deixava de ser uma pergunta.
+ */
+const INICIO_DO_DIA_EM_HORAS = 4;
+
+/** `"04:00"` — o rótulo que os ecrãs mostram, derivado da mesma constante. */
+export const INICIO_DO_DIA = `${String(INICIO_DO_DIA_EM_HORAS).padStart(2, "0")}:00`;
+
+/**
+ * O instante em que o dia de negócio corrente começou. Antes das 04:00 ainda
+ * se está no dia de negócio anterior — é essa a diferença entre um dia civil e
+ * um dia de negócio, e é toda a pergunta.
+ */
+export function inicioDoDiaDeNegocio(): Date {
+  const agora = new Date();
+  const inicio = inicioDeHoje();
+  inicio.setHours(INICIO_DO_DIA_EM_HORAS, 0, 0, 0);
+  if (agora.getTime() < inicio.getTime()) inicio.setDate(inicio.getDate() - 1);
+  return inicio;
+}
 
 /** Todas as lojas, na ordem em que `aurora.ts` as declara. */
 export function todasAsLojas(): readonly Loja[] {

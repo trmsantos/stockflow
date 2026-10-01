@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import { apiRequest } from "@/lib/api/http";
 import { paginated, type Paginated } from "@/lib/api/pagination";
@@ -100,6 +101,32 @@ function invalidarRecursos(
       queryClient.invalidateQueries({ queryKey: queryKeys.resource(tenant, recurso) }),
     ),
   );
+}
+
+/**
+ * Invalidar **tudo o que depende do ledger**, para quem muda o ledger de fora
+ * deste módulo.
+ *
+ * Existe porque o ledger não é só do `inventory`: uma receção confirmada em
+ * `purchasing` cria movimentos de entrada, e a partir desse instante o nível do
+ * artigo, os três números do topo, o histórico, o esperado de uma contagem a
+ * meio e a lista de alertas estão todos errados na cache. A alternativa era o
+ * outro módulo conhecer os nomes dos sete recursos deste — e no dia em que
+ * aparecesse o oitavo, ficava um ecrã a mostrar um número que já não é verdade.
+ * Aqui o número errado mandava comprar o que já tinha chegado.
+ *
+ * É a única coisa que este `api.ts` exporta para ser usada por outra feature, e
+ * é a porta que as fronteiras do ADR 0008 (decisão 2) deixam aberta: de outro
+ * módulo importa-se `@/features/inventory/api`, nunca os seus schemas nem os
+ * seus componentes.
+ */
+export function useInvalidarLedger(): () => Promise<void> {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useCallback(async () => {
+    await invalidarRecursos(queryClient, tenant, RECURSOS_DO_LEDGER);
+  }, [queryClient, tenant]);
 }
 
 /** O que a lista e o resumo partilham: o âmbito de localização. */

@@ -1,6 +1,7 @@
 import { Link, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, CircleCheck, ClipboardList } from "lucide-react";
 
+import { EstadoVazio } from "@/components/estado-vazio";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,7 +9,6 @@ import { mensagemDeErro } from "@/lib/api/errors";
 
 import { useContagemAberta, useFecharContagem, useFechoDeContagem } from "../api";
 import { ErroDaLista } from "../components/estados-da-lista";
-import { EstadoVazio } from "../components/estado-vazio";
 import { FormularioDeFecho, ResumoDoFecho } from "../components/fecho-de-contagem";
 
 /**

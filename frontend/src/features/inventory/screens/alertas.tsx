@@ -2,6 +2,7 @@ import { Link, useSearch } from "@tanstack/react-router";
 import { CircleCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 
+import { EstadoVazio } from "@/components/estado-vazio";
 import { Button } from "@/components/ui/button";
 import { mensagemDeErro } from "@/lib/api/errors";
 import { formatMoneyRounded } from "@/lib/format";
@@ -13,7 +14,6 @@ import {
   useResumoDeAlertas,
 } from "../api";
 import { ErroDaLista, EsqueletoDaLista } from "../components/estados-da-lista";
-import { EstadoVazio } from "../components/estado-vazio";
 import { LinhaDeAlerta } from "../components/linha-de-alerta";
 import { LinhaDeDesperdicio } from "../components/linha-de-desperdicio";
 import {

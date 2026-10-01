@@ -118,7 +118,28 @@ const FRONTEIRAS = [
         {
           patterns: [
             {
-              group: ["@/features/**", "**/features/**", "!@/features/*/api"],
+              // **`regex` e não `group`, e a razão foi medida.** A forma
+              // natural — `group: ["@/features/**", "!@/features/*/api"]` —
+              // bloqueia *também* a porta que a ADR 0008 deixou aberta: os
+              // padrões de `group` seguem a semântica do `.gitignore`, onde
+              // "não é possível re-incluir um ficheiro se um directório pai
+              // está excluído". Como `@/features/**` casa o próprio
+              // `@/features/inventory`, a negação `!@/features/*/api` nunca
+              // chega a valer, e o primeiro import legítimo entre features
+              // (`purchasing` a invalidar o ledger de `inventory`) dava exit 1
+              // com a mensagem a dizer que esse era precisamente o import
+              // permitido. Medido com uma sonda de seis imports e quatro
+              // formulações de `group`: nenhuma consegue abrir a excepção.
+              //
+              // O `regex` não tem a regra do directório pai, logo diz
+              // exactamente o que a ADR diz: tudo o que atravesse um segmento
+              // `features/` é proibido **excepto** um especificador que termine
+              // em `<módulo>/api`. Fica mais apertado do que a versão anterior,
+              // não menos: `@/features/inventory` (um index implícito) e
+              // `@/features/inventory/api/interno` continuam bloqueados, e a
+              // forma relativa (`../../inventory/api`) é bloqueada pelo padrão
+              // `../../**` mais abaixo — o alias é a única porta.
+              regex: "(?:^|/)features/(?![^/]+/api$)",
               message:
                 "De outra feature só se importa `@/features/<módulo>/api` — o `api.py` do frontend. " +
                 "Dentro da própria feature os imports são relativos (`./components/...`), logo um " +

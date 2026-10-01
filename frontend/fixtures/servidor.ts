@@ -4,6 +4,7 @@ import type { z } from "zod";
 
 import { ROTAS_DE_ALERTAS } from "./alertas.ts";
 import { ROTAS_DE_CONTAGEM } from "./contagem.ts";
+import { ROTAS_DE_RECECOES } from "./rececoes.ts";
 import { ROTAS_DE_STOCK } from "./stock.ts";
 
 /**
@@ -110,7 +111,12 @@ export interface OpcoesDeFixtures {
  * As rotas servidas. Uma linha por recurso, e a remoção é por recurso: no dia
  * em que o endpoint real existir, apaga-se o ficheiro e esta linha.
  */
-const ROTAS: readonly Rota[] = [...ROTAS_DE_STOCK, ...ROTAS_DE_CONTAGEM, ...ROTAS_DE_ALERTAS];
+const ROTAS: readonly Rota[] = [
+  ...ROTAS_DE_STOCK,
+  ...ROTAS_DE_CONTAGEM,
+  ...ROTAS_DE_ALERTAS,
+  ...ROTAS_DE_RECECOES,
+];
 
 function esperar(ms: number): Promise<void> {
   return new Promise((resolver) => {
