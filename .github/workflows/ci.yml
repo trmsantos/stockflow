@@ -182,7 +182,13 @@ jobs:
         working-directory: frontend
         run: |
           falhou=0
-          for padrao in "dados-falsos-stockflow" "Pastelaria Aurora" "tokens-page"; do
+          # `identidades-page` e `data-identidade` cobrem as rotas de comparação
+          # de identidade visual, e a segunda não é redundante: o CSS viaja por
+          # outro caminho que o JS, e o `tokens-page` nunca exercitou esse lado
+          # porque não traz CSS próprio. As duas foram **sondadas** (guard
+          # forçado a verdadeiro, build, grep, reverter) e disparam as duas.
+          for padrao in "dados-falsos-stockflow" "Pastelaria Aurora" \
+                        "tokens-page" "identidades-page" "data-identidade"; do
             if grep -rl "$padrao" dist/ 2>/dev/null; then
               echo "::error::'$padrao' chegou ao dist/"
               falhou=1

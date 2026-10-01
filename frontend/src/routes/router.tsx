@@ -31,11 +31,17 @@ import { rotaDeStock } from "./stock";
  */
 
 /**
- * A `/dev/tokens` mantém a propriedade que já tinha: a rota só entra no array
- * de filhos dentro do ramo `import.meta.env.DEV` **e o `import()` fica dentro
- * desse ramo**. No build o `import.meta.env.DEV` é substituído por `false`, o
- * ramo morre e o Rollup elimina o chunk — a página não existe no bundle de
- * produção, e isso é verificado por varredura do `dist/`.
+ * As rotas de desenvolvimento mantêm a propriedade que a `/dev/tokens` já
+ * tinha: a rota só entra no array de filhos dentro do ramo
+ * `import.meta.env.DEV` **e o `import()` fica dentro desse ramo**. No build o
+ * `import.meta.env.DEV` é substituído por `false`, o ramo morre e o Rollup
+ * elimina o chunk — a página não existe no bundle de produção, e isso é
+ * verificado por varredura do `dist/`.
+ *
+ * As duas rotas de identidade importam o **mesmo** módulo com nomes de export
+ * diferentes, de propósito: dá um chunk só, logo uma sentinela só
+ * (`identidades-page`) para a varredura do `dist/`, e garante que as duas
+ * propostas mostram o mesmo conteúdo — o que varia é o invólucro.
  */
 const rotasDeDesenvolvimento = import.meta.env.DEV
   ? [
@@ -43,6 +49,16 @@ const rotasDeDesenvolvimento = import.meta.env.DEV
         getParentRoute: () => rotaRaiz,
         path: "/dev/tokens",
         component: lazyRouteComponent(() => import("@/dev/tokens-page")),
+      }),
+      createRoute({
+        getParentRoute: () => rotaRaiz,
+        path: "/dev/identidade-a",
+        component: lazyRouteComponent(() => import("@/dev/identidades-page"), "IdentidadeA"),
+      }),
+      createRoute({
+        getParentRoute: () => rotaRaiz,
+        path: "/dev/identidade-b",
+        component: lazyRouteComponent(() => import("@/dev/identidades-page"), "IdentidadeB"),
       }),
     ]
   : [];
