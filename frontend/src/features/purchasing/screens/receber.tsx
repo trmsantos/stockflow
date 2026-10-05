@@ -35,7 +35,7 @@ import {
  * recente. O cliente não reordena, como em todos os outros ecrãs.
  */
 export function EcraDeReceber() {
-  const busca = useSearch({ from: "/receber" });
+  const busca = useSearch({ from: "/app/receber" });
   const vista = busca.estado;
 
   const resumo = useResumoDeRececoes();

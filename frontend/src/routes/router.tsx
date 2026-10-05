@@ -1,11 +1,16 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { createRoute, createRouter, lazyRouteComponent } from "@tanstack/react-router";
 
 import { ErroDeEcra, EsqueletoDeEcra, NaoEncontrado } from "@/shell/estados-de-rota";
 
 import { rotaDeAlertas } from "./alertas";
+import { rotaDaApp } from "./app";
 import { rotaDeArtigo } from "./artigo";
+import { rotaDeAtivacao } from "./ativar";
 import { rotaDeContar, rotaDeFechoDeContagem } from "./contar";
+import { rotaDeEntrada } from "./entrar";
 import { rotaInicial } from "./inicio";
+import { rotaPublica } from "./publico";
 import { rotaDeFotografar, rotaDeRececao, rotaDeReceber } from "./receber";
 import { rotaRaiz } from "./root";
 import { rotaDeStock } from "./stock";
@@ -25,9 +30,22 @@ import { rotaDeStock } from "./stock";
  * Não há `loader`, `loaderDeps` nem `useLoaderData` em sítio nenhum: a única
  * camada de dados é o TanStack Query. O `no-restricted-syntax` do
  * `eslint.config.js` tem um selector contra os três, para o segundo caminho de
- * dados não apodrecer aqui dentro por distração. No dia em que uma rota
- * precisar de `ensureQueryData`, tirar o selector é um diff visível com uma
- * razão.
+ * dados não apodrecer aqui dentro por distração. **Esse selector continua como
+ * estava**, e a ADR 0010 explica porquê: há agora dois `beforeLoad` a chamar
+ * `ensureQueryData`, mas o que a ADR 0008 recusou foi a **segunda** cache do
+ * router, não ler a única que existe.
+ *
+ * ## Dois ramos por baixo da raiz, desde a ADR 0010
+ *
+ * A raiz deixou de ser o `AppShell` (ver `root.tsx`) e passou a ter dois filhos
+ * sem caminho próprio:
+ *
+ *  - `rotaPublica` → `/entrar` e `/ativar`, num painel centrado, **sem** sessão;
+ *  - `rotaDaApp` → o `AppShell` e os sete ecrãs, com o `beforeLoad` que exige
+ *    sessão ativa.
+ *
+ * Os URLs dos ecrãs não mudaram: uma rota de layout sem `path` não acrescenta
+ * segmento nenhum.
  */
 
 /**
@@ -38,18 +56,18 @@ import { rotaDeStock } from "./stock";
  * não existe no bundle de produção, e isso é verificado por varredura do
  * `dist/`.
  *
- * As duas rotas de comparação de identidade (`/dev/identidade-a` e `-b`)
- * saíram a 2026-10-01: o dono do produto escolheu a "Cabine", que passou a ser
- * a paleta do `tokens.css`. Uma candidata que perdeu e fica no repositório
- * volta por distração. Com elas saem duas sentinelas da varredura do `dist/`
- * no CI (`identidades-page` e `data-identidade`), que ficam a grep de um padrão
- * que não existe em sítio nenhum — e um gate vazio é pior que nenhum, porque
- * parece cobertura.
+ * Fica **dentro** do ramo da app, e portanto atrás do portão de sessão. É uma
+ * escolha e tem um custo: ver a `/dev/tokens` passa a exigir um tenant semeado e
+ * um login. A alternativa — pendurá-la na raiz, fora dos dois invólucros — era
+ * pior por uma razão irónica: a página não tem `<main>` nem atalho de "saltar
+ * para o conteúdo" porque os herda do `AppShell`, e tirá-la de lá produzia um
+ * defeito de acessibilidade exactamente na página que mede acessibilidade. O
+ * custo do login em dev já estava nomeado nas consequências da ADR 0010.
  */
 const rotasDeDesenvolvimento = import.meta.env.DEV
   ? [
       createRoute({
-        getParentRoute: () => rotaRaiz,
+        getParentRoute: () => rotaDaApp,
         path: "/dev/tokens",
         component: lazyRouteComponent(() => import("@/dev/tokens-page")),
       }),
@@ -57,36 +75,57 @@ const rotasDeDesenvolvimento = import.meta.env.DEV
   : [];
 
 const arvoreDeRotas = rotaRaiz.addChildren([
-  rotaInicial,
-  rotaDeStock,
-  rotaDeArtigo,
-  rotaDeReceber,
-  rotaDeFotografar,
-  rotaDeRececao,
-  rotaDeContar,
-  rotaDeFechoDeContagem,
-  rotaDeAlertas,
-  ...rotasDeDesenvolvimento,
+  rotaPublica.addChildren([rotaDeEntrada, rotaDeAtivacao]),
+  rotaDaApp.addChildren([
+    rotaInicial,
+    rotaDeStock,
+    rotaDeArtigo,
+    rotaDeReceber,
+    rotaDeFotografar,
+    rotaDeRececao,
+    rotaDeContar,
+    rotaDeFechoDeContagem,
+    rotaDeAlertas,
+    ...rotasDeDesenvolvimento,
+  ]),
 ]);
 
-export const router = createRouter({
-  routeTree: arvoreDeRotas,
-  // Os três estados obrigatórios do DESIGN.md §3, uma vez para todas as rotas.
-  defaultPendingComponent: EsqueletoDeEcra,
-  defaultErrorComponent: ErroDeEcra,
-  defaultNotFoundComponent: NaoEncontrado,
-  // Pré-carrega o **chunk** da rota ao passar o rato ou ao tocar: não há
-  // loaders, logo não há dados a pré-carregar aqui. Numa cozinha com Wi-Fi mau
-  // é a diferença entre tocar numa tab e esperar pelo JavaScript.
-  defaultPreload: "intent",
-  // Voltar atrás numa lista longa devolve a posição onde se estava — e a lista
-  // está ordenada por "o que está pior primeiro", logo perder a posição é
-  // perder o lugar na fila de problemas.
-  scrollRestoration: true,
-});
+/**
+ * O router, criado a partir do `QueryClient` da aplicação.
+ *
+ * É uma **fábrica** e não um `const` de módulo desde a ADR 0010, e a razão é o
+ * `beforeLoad`: ele precisa do `QueryClient` no `context`, e o cliente é criado
+ * no `App.tsx` (uma vez por montagem, não por render). As duas alternativas
+ * foram rejeitadas por serem a mesma coisa pior: um `queryClient` global de
+ * módulo tira ao `App` o controlo do ciclo de vida da cache, e um
+ * `context: { queryClient: undefined! }` com o valor real injectado no
+ * `RouterProvider` precisa de uma asserção não-nula, que o
+ * `typescript-eslint/strict` recusa — e bem, porque é uma mentira ao
+ * compilador durante o intervalo em que ela é verdade.
+ */
+export function criarRouter(queryClient: QueryClient) {
+  return createRouter({
+    routeTree: arvoreDeRotas,
+    context: { queryClient },
+    // Os três estados obrigatórios do DESIGN.md §3, uma vez para todas as
+    // rotas. O ramo público sobrepõe o pendente e o de erro, rota a rota,
+    // porque o painel dele não tem sidebar nem header.
+    defaultPendingComponent: EsqueletoDeEcra,
+    defaultErrorComponent: ErroDeEcra,
+    defaultNotFoundComponent: NaoEncontrado,
+    // Pré-carrega o **chunk** da rota ao passar o rato ou ao tocar: não há
+    // loaders, logo não há dados a pré-carregar aqui. Numa cozinha com Wi-Fi mau
+    // é a diferença entre tocar numa tab e esperar pelo JavaScript.
+    defaultPreload: "intent",
+    // Voltar atrás numa lista longa devolve a posição onde se estava — e a lista
+    // está ordenada por "o que está pior primeiro", logo perder a posição é
+    // perder o lugar na fila de problemas.
+    scrollRestoration: true,
+  });
+}
 
 declare module "@tanstack/react-router" {
   interface Register {
-    router: typeof router;
+    router: ReturnType<typeof criarRouter>;
   }
 }

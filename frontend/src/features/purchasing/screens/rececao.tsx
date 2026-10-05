@@ -67,8 +67,8 @@ function ficamDeFora(linhas: readonly LinhaDeRececao[]): LinhaDeRececao[] {
 }
 
 export function EcraDeRececao() {
-  const { rececao: id } = useParams({ from: "/receber/$rececao" });
-  const busca = useSearch({ from: "/receber/$rececao" });
+  const { rececao: id } = useParams({ from: "/app/receber/$rececao" });
+  const busca = useSearch({ from: "/app/receber/$rececao" });
 
   const documento = useRececao(id);
   const linhas = useLinhasDaRececao(id);

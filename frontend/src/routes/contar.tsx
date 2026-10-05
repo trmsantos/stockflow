@@ -1,10 +1,10 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 
+import { rotaDaApp } from "./app";
 import { buscaDeContagemSchema, buscaDeFechoSchema } from "./busca-de-contagem";
-import { rotaRaiz } from "./root";
 
 export const rotaDeContar = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/contar",
   validateSearch: buscaDeContagemSchema,
   component: lazyRouteComponent(
@@ -24,7 +24,7 @@ export const rotaDeContar = createRoute({
  * navegação com botão de voltar, e o resultado tem URL próprio.
  */
 export const rotaDeFechoDeContagem = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/contar/fechar",
   validateSearch: buscaDeFechoSchema,
   component: lazyRouteComponent(

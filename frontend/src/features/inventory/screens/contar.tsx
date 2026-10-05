@@ -159,7 +159,7 @@ function SemContagem() {
 }
 
 export function EcraDeContar() {
-  const busca = useSearch({ from: "/contar" });
+  const busca = useSearch({ from: "/app/contar" });
   const contagem = useContagemAberta();
   const aberta = contagem.data ?? null;
 

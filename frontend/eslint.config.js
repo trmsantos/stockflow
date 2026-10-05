@@ -90,20 +90,89 @@ const REGRAS_DE_ROTEAMENTO = [
  * posto de propósito, exit 1 confirmado, e removido a seguir. Quatro blocos de
  * configuração que ninguém mediu não são um gate.
  */
+/**
+ * A mesma fronteira das rotas, para `import()` dinâmico.
+ *
+ * **O `no-restricted-imports` não inspecciona `import()`** — só declarações
+ * estáticas. E as rotas carregam os ecrãs exclusivamente por
+ * `lazyRouteComponent(() => import(...))`, pelo que a fronteira rotas→features
+ * estava a ser atravessada por todos os imports que de facto existem e a ser
+ * verificada em nenhum. Medido: o mesmo `@/features/accounts/schemas` dá exit 1
+ * estático e **exit 0** dinâmico.
+ *
+ * O padrão é o **mesmo** do `no-restricted-imports` abaixo (as duas portas:
+ * `screens/*` e `api`), com as barras escapadas porque o esquery delimita o
+ * valor por `/`. Duplicar um regex é mau; duplicá-lo aqui é menos mau do que
+ * ter uma fronteira que só vale para a forma de import que o código não usa.
+ */
+const IMPORT_DINAMICO_DE_ROTA = {
+  selector:
+    "ImportExpression > Literal[value=/(?:^|\\/)features\\/(?!(?:[^\\/]+\\/screens\\/[^\\/]+|[^\\/]+\\/api)$)/]",
+  message:
+    "Uma rota importa de uma feature apenas `screens/<ecra>` ou `api` (ADR 0008 decisão 2, ADR 0010). Vale também para `import()` — o `no-restricted-imports` não o vê.",
+};
+
 const FRONTEIRAS = [
   {
     files: ["src/routes/**/*.{ts,tsx}"],
     rules: {
+      // **`no-restricted-syntax` repetido aqui de propósito.** Em flat config
+      // um `rules` posterior **substitui** a entrada da regra em vez de a somar,
+      // e este bloco vem depois do bloco de linguagem — sem re-espalhar os dois
+      // arrays, as regras de cor literal e as de routing deixavam de valer
+      // dentro de `src/routes/**`, em silêncio. Há uma sonda que o prova.
+      "no-restricted-syntax": [
+        "error",
+        ...REGRAS_DE_DESIGN,
+        ...REGRAS_DE_ROTEAMENTO,
+        IMPORT_DINAMICO_DE_ROTA,
+      ],
       "no-restricted-imports": [
         "error",
         {
           patterns: [
             {
-              group: ["@/features/**", "**/features/**", "!@/features/*/screens/*"],
+              // **Duas portas e não uma, desde a ADR 0010.** A original era
+              // `screens/*` e só: "uma rota é o caminho e renderiza um ecrã".
+              // Continua a ser verdade para tudo o que é JSX — o que mudou é
+              // que uma rota passou a ter um `beforeLoad`, e ele não renderiza
+              // nada: a ADR 0010 decide que a rota do shell "ganha o
+              // `beforeLoad` que a ADR 0008 deixou em aberto; ele lê a sessão
+              // da cache do TanStack Query". Essa leitura vive no `api.ts` do
+              // `accounts`, porque é lá que vive o schema Zod que a valida e a
+              // chave de query que a identifica — pô-la em `src/lib/` era dar
+              // ao `apps/shared` do frontend conhecimento de um domínio.
+              //
+              // `@/features/*/api` é a **mesma** porta que a ADR 0008 já tinha
+              // aberto entre features ("o `api.py` do frontend"), e não uma
+              // porta nova: o que é novo é quem a pode atravessar. O que
+              // continua fechado é tudo o resto — `schemas`, `components`,
+              // `hooks`, `erros` —, e a mensagem abaixo diz-no.
+              //
+              // **`regex` e não `group`, e a razão foi medida — duas vezes.** A
+              // forma anterior era `group: ["@/features/**",
+              // "!@/features/*/screens/*"]`, e essa negação **nunca
+              // funcionou**: os padrões de `group` seguem a semântica do
+              // `.gitignore`, onde "não é possível re-incluir um ficheiro se um
+              // directório pai está excluído", e `@/features/**` exclui o
+              // próprio `@/features/accounts`. Sonda: um `import` estático de
+              // `@/features/accounts/screens/entrar` num ficheiro de
+              // `src/routes/` dá exit 1 com esta mensagem — isto é, com a
+              // formulação antiga a excepção que a regra anuncia era recusada.
+              //
+              // Não se notava por uma segunda razão, também medida: **o
+              // `no-restricted-imports` não inspecciona `import()` dinâmico**, e
+              // as rotas carregam os ecrãs exclusivamente por
+              // `lazyRouteComponent(() => import(...))`. A negação era, na
+              // prática, decorativa. O `regex` não tem a regra do directório
+              // pai, logo diz exactamente o que a ADR diz — e as duas portas
+              // passam a estar abertas de facto, não só na mensagem.
+              regex: "(?:^|/)features/(?!(?:[^/]+/screens/[^/]+|[^/]+/api)$)",
               message:
-                "Uma rota é o caminho e renderiza **um** ecrã: só `@/features/<módulo>/screens/<ecrã>`. " +
-                "Se precisas de um componente, de um hook ou do `api.ts` de uma feature numa rota, a " +
-                "lógica está no sítio errado (ADR 0008, decisão 2).",
+                "Uma rota é o caminho e renderiza **um** ecrã: só `@/features/<módulo>/screens/<ecrã>` " +
+                "e, para o `beforeLoad`, `@/features/<módulo>/api` (ADR 0010). Se precisas dos " +
+                "`schemas`, de um `components/` ou de um hook de uma feature numa rota, a lógica está " +
+                "no sítio errado (ADR 0008, decisão 2).",
             },
           ],
         },

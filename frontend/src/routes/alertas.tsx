@@ -1,10 +1,10 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 
+import { rotaDaApp } from "./app";
 import { buscaDeAlertasSchema } from "./busca-de-alertas";
-import { rotaRaiz } from "./root";
 
 export const rotaDeAlertas = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/alertas",
   validateSearch: buscaDeAlertasSchema,
   component: lazyRouteComponent(

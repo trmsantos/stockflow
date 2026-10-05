@@ -1,9 +1,9 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 
-import { rotaRaiz } from "./root";
+import { rotaDaApp } from "./app";
 
 export const rotaInicial = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/",
   component: lazyRouteComponent(() => import("@/shell/screens/inicio"), "EcraInicial"),
 });

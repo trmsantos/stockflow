@@ -1,11 +1,11 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 
+import { rotaDaApp } from "./app";
 import { buscaDeRececoesSchema } from "./busca-de-rececoes";
-import { rotaRaiz } from "./root";
 
 /** `/receber` — "o que chegou, e está certo?". */
 export const rotaDeReceber = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/receber",
   validateSearch: buscaDeRececoesSchema,
   component: lazyRouteComponent(
@@ -26,7 +26,7 @@ export const rotaDeReceber = createRoute({
  * `/receber/fotografar` nunca é lido como o id de uma receção.
  */
 export const rotaDeFotografar = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/receber/fotografar",
   validateSearch: buscaDeRececoesSchema,
   component: lazyRouteComponent(
@@ -43,7 +43,7 @@ export const rotaDeFotografar = createRoute({
  * sem depender do histórico do browser.
  */
 export const rotaDeRececao = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/receber/$rececao",
   validateSearch: buscaDeRececoesSchema,
   component: lazyRouteComponent(

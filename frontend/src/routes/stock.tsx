@@ -1,7 +1,7 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 
+import { rotaDaApp } from "./app";
 import { buscaDeStockSchema } from "./busca-de-stock";
-import { rotaRaiz } from "./root";
 
 /**
  * `/stock` — o URL é em português porque é copy de produto; a pasta da feature
@@ -13,7 +13,7 @@ import { rotaRaiz } from "./root";
  * `busca-de-stock.ts` para a forma e para a razão de cada campo.
  */
 export const rotaDeStock = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/stock",
   validateSearch: buscaDeStockSchema,
   component: lazyRouteComponent(() => import("@/features/inventory/screens/stock"), "EcraDeStock"),

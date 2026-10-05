@@ -56,7 +56,7 @@ function frasePorRegisto(alerta: Alerta, motivo: MotivoQuebra): string {
 }
 
 export function EcraDeAlertas() {
-  const busca = useSearch({ from: "/alertas" });
+  const busca = useSearch({ from: "/app/alertas" });
   const vista = busca.ver;
   const periodo = busca.periodo ?? "hoje";
 

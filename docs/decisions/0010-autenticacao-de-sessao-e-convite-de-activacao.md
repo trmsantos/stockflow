@@ -179,7 +179,7 @@ comentada — e ambas aparecem no diff. `APPEND_ONLY` não muda: `accepted_at` �
 ganha o primeiro `views.py`, `urls.py` e `serializers.py` do repositório, e a API deixa de ter zero
 endpoints de domínio. No frontend, a árvore de rotas ganha um ramo público (`/entrar`, `/ativar`,
 `/password/...`) **fora** do `AppShell`, e a rota de layout do shell ganha o `beforeLoad` que a ADR 0008
-deixou em aberto; ele lê a sessão da cache do TanStack Query (`ensureQueryData`), e o selector do
+deixou em aberto; ele lê a sessão da cache do TanStack Query, e o selector do
 `no-restricted-syntax` não precisa de mudar — o que a ADR 0008 recusou foi a **segunda** cache do
 router, não ler a única que existe. **O ciclo de desenvolvimento muda, e isto é o custo prático:** o
 servidor de fixtures **não** finge a sessão, porque uma sessão falsa é a única mentira que muda
@@ -191,3 +191,15 @@ corpo; a aceitação por um email com password utilizável não toca na password
 `conftest.py` fica calado porque o convite é lido dentro do âmbito. Risco residual nomeado: um email de
 convite roubado **é** uma pertença, e o que o limita é o TTL, o uso único e a revogação, não mais nada.
 **Consultar `domain-expert`:** o conjunto de papéis (Q7) e se um `manager` pode convidar.
+
+**Correcção de 2026-10-05, quando o `beforeLoad` foi implementado.** Esta ADR escrevia
+`ensureQueryData`, e essa frase **não compila**: a versão instalada do `@tanstack/react-query`
+(5.104.0) marca-o `@deprecated` e o `@typescript-eslint/no-deprecated` do `pnpm lint` recusa-o —
+medido, exit 1. O substituto é o que a própria deprecação indica,
+`queryClient.query({ ...opções, staleTime: "static" })`, e **o `staleTime` não é decoração**: medido
+no código da biblioteca, `query()` sem ele espera por um `fetch` quando a entrada passa dos 30 s, o
+que bloquearia a navegação num round-trip a cada minuto; com ele devolve a cache sempre que exista,
+que é a semântica exacta do `ensureQueryData`.
+
+Uma ADR que nomeia uma API deve nomear uma que exista. A decisão — *o portão lê a sessão da cache,
+não faz um pedido próprio* — não muda; o nome da função mudou e estava errado no registo.

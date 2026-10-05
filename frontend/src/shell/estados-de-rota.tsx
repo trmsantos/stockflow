@@ -56,10 +56,26 @@ export function ErroDeEcra({ error, reset }: { error: unknown; reset: () => void
   );
 }
 
-/** Não encontrado: um URL que não existe. Dentro do shell, com saída. */
+/**
+ * Não encontrado: um URL que não existe, **com saída**.
+ *
+ * Desde a ADR 0010 este componente renderiza em dois contextos diferentes, e é
+ * por isso que se centra a si mesmo em vez de contar com o invólucro. Um URL
+ * que não casa com rota nenhuma não casa também com nenhum dos dois ramos — nem
+ * o público nem o do `AppShell` —, logo o router monta-o directamente debaixo da
+ * raiz, que não tem componente nenhum. Antes desta sessão a raiz *era* o
+ * `AppShell` e este bloco aparecia sempre dentro dele.
+ *
+ * Mostrá-lo fora do shell é o comportamento certo e não um acidente: um 404
+ * dentro do shell dava uma sidebar inteira a quem pode não ter sessão, com
+ * todos os links a ressaltar para `/entrar`.
+ *
+ * O `m-auto` centra tanto numa página vazia como dentro do `<main>` do shell
+ * (que é `flex flex-1 flex-col`), e não precisa de saber em qual dos dois está.
+ */
 export function NaoEncontrado() {
   return (
-    <div className="flex w-full max-w-md flex-col items-start gap-3 px-4 py-8">
+    <div className="m-auto flex w-full max-w-md flex-col items-start gap-3 px-4 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Este ecrã não existe</h1>
       <p className="text-pretty text-muted-foreground">
         O endereço que abriu não corresponde a nenhum ecrã do StockFlow.

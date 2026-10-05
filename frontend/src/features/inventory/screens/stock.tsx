@@ -83,7 +83,7 @@ function filtrar(
 }
 
 export function EcraDeStock() {
-  const busca = useSearch({ from: "/stock" });
+  const busca = useSearch({ from: "/app/stock" });
   const navegar = useNavigate({ from: "/stock" });
 
   // Duas observações da mesma consulta quando não há loja escolhida (a chave é

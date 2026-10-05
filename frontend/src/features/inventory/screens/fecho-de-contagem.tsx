@@ -36,7 +36,7 @@ function Voltar() {
 }
 
 export function EcraDeFechoDeContagem() {
-  const busca = useSearch({ from: "/contar/fechar" });
+  const busca = useSearch({ from: "/app/contar/fechar" });
   // Sem `?contagem=` no URL — alguém que escreveu `/contar/fechar` à mão —, a
   // contagem aberta é o palpite certo, e vem da mesma entrada de cache que o
   // ecrã de contar já tem.

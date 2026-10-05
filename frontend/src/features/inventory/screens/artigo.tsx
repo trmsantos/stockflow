@@ -110,7 +110,7 @@ function Cabecalho({ nivel, limiarEmDias }: { nivel: NivelDeStock; limiarEmDias:
 }
 
 export function EcraDeArtigo() {
-  const { artigo } = useParams({ from: "/stock/$artigo" });
+  const { artigo } = useParams({ from: "/app/stock/$artigo" });
 
   const nivel = useArtigoEmStock(artigo);
   const movimentos = useMovimentosDoArtigo(artigo);

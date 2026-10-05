@@ -1,7 +1,7 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 
+import { rotaDaApp } from "./app";
 import { buscaDeStockSchema } from "./busca-de-stock";
-import { rotaRaiz } from "./root";
 
 /**
  * `/stock/<id do artigo>` — o detalhe de um artigo.
@@ -14,7 +14,7 @@ import { rotaRaiz } from "./root";
  * todas as localizações, porque é de uma delas que se registará o desperdício.
  */
 export const rotaDeArtigo = createRoute({
-  getParentRoute: () => rotaRaiz,
+  getParentRoute: () => rotaDaApp,
   path: "/stock/$artigo",
   validateSearch: buscaDeStockSchema,
   component: lazyRouteComponent(

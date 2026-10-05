@@ -27,7 +27,7 @@ import { useRececoes } from "../api";
  * ditar-me a encomenda", isso é o achado.
  */
 export function EcraDeFotografar() {
-  const busca = useSearch({ from: "/receber/fotografar" });
+  const busca = useSearch({ from: "/app/receber/fotografar" });
   const porRever = useRececoes("revisao");
   const primeira = porRever.data?.results[0];
 
