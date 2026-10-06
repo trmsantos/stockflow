@@ -65,13 +65,6 @@ const RECUSA_SEM_SESSAO = {
   detail: "Não há estabelecimento ativo nesta sessão.",
 } as const;
 
-/**
- * O estabelecimento falso. O `X-Tenant-ID` do cliente nunca escolhe âmbito —
- * só pode ser recusado (ADR 0007) —, e é esse 409 que este servidor sabe dar,
- * para o caminho de erro do `http.ts` existir em dev e não só em teoria.
- */
-const TENANT_FALSO = "a000a000-0000-4000-8000-000000000001";
-
 const METODOS_QUE_ESCREVEM = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export interface Contexto {
@@ -293,6 +286,7 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
       const comVazio = pedido === "vazio" || vazios.has(caminho) || vazios.has(rota.caminho);
       const comRecusaDeAmbito =
         pedido === "sem_sessao" || semSessao.has(caminho) || semSessao.has(rota.caminho);
+      const comTenantDivergente = pedido === "tenant_divergente";
 
       // Primeiro de todos, porque é o que o `TenantMiddleware` faz: a falta de
       // âmbito é decidida **antes** de o header ser comparado (um 409) e antes
@@ -304,9 +298,29 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
         return;
       }
 
-      // O header nunca seleciona âmbito; só pode divergir do da sessão.
-      const tenant = primeiro(req.headers["x-tenant-id"]);
-      if (tenant !== null && tenant !== TENANT_FALSO) {
+      /*
+       * O 409 de âmbito divergente é um **modo** (`?_fixture=tenant_divergente`)
+       * e não uma verificação ambiente, e isto foi um defeito a sério.
+       *
+       * Até 2026-10-06 este servidor comparava o `X-Tenant-ID` contra o
+       * `TENANT_FALSO` e recusava tudo o resto. Fazia sentido enquanto não havia
+       * sessão nenhuma: o header vinha ausente ou com o id inventado. **No
+       * momento em que a autenticação passou a ser real, todos os endpoints de
+       * fixtures começaram a responder 409** — o cliente passou a mandar o uuid
+       * verdadeiro do estabelecimento da sessão, que nunca pode bater com uma
+       * constante escrita aqui. Foi encontrado por olhos num browser, que é a
+       * única verificação que nenhum agente deste projeto consegue fazer.
+       *
+       * A lição é a mesma do `sem_sessao` logo acima: um servidor de dados
+       * falsos serve **formas de dados**, e tudo o que se parecer com
+       * autorização tem de ser opt-in. Uma recusa ambiente que dependia de uma
+       * constante era uma afirmação sobre o estado do mundo — e o mundo mudou
+       * três commits depois.
+       *
+       * O modo continua a existir porque o 409 de multi-tab do `http.ts` precisa
+       * de ser exercitável; o que muda é que agora se pede.
+       */
+      if (comTenantDivergente) {
         await esperar(atraso);
         enviar(res, 409, {
           code: "tenant_divergente",
