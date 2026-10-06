@@ -1,0 +1,14 @@
+# A casa das configurações do pnpm desde a v10, e **não** o `package.json`.
+#
+# O `pnpm.overrides` no `package.json` deixou de ser lido na v12 e o pnpm avisa-o
+# num `[WARN]` que passa fácil no meio da saída de um install. O sintoma era pior
+# do que o aviso: a auditoria continuava vermelha e o lockfile continuava com a
+# versão vulnerável, como se o override não existisse — porque, para o pnpm, não
+# existia.
+overrides:
+  # GHSA-68fv-2mgg-jv7q — negação de serviço no `source-map-js` abaixo da 1.2.2,
+  # que entra por `@tailwindcss/vite > @tailwindcss/node` e por `vite > postcss`.
+  # Dependência de build, nunca chega ao browser; corrige-se na mesma porque há
+  # versão corrigida a montante e um `audit` vermelho que se aprende a ignorar
+  # deixa de servir para alguma coisa.
+  source-map-js: ^1.2.2

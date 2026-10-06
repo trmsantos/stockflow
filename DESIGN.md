@@ -211,7 +211,19 @@ Números tabulares em tabelas e métricas (`font-variant-numeric: tabular-nums`)
 
 ## 3. Componentes
 
-Base: **shadcn/ui** em `src/components/ui/`. Instalados via CLI, nunca copiados à mão.
+Base: **shadcn/ui** em `src/components/ui/`. Instalados via CLI, nunca copiados à mão:
+
+```
+pnpm dlx shadcn@latest add <componente>
+```
+
+**`pnpm dlx` e não uma devDependency**, desde 2026-10-06. O `shadcn` é um CLI que
+se corre de vez em quando, nada o importa e nenhum script o chamava — e enquanto
+era dependência arrastava uma árvore transitiva (`ts-morph`, `fast-glob`,
+`micromatch`, `braces`) que a auditoria do CI lia a cada corrida. O `braces` tem
+um aviso `high` **sem versão corrigida a montante**, logo a única saída honesta era
+não ter o caminho: suprimir um aviso que não se pode corrigir ensina a ignorar a
+auditoria, e uma auditoria que se ignora não é um gate.
 Personalizados uma vez através dos tokens acima — não por componente.
 
 Regras de composição:

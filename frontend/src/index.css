@@ -5,8 +5,10 @@
  * ------------------------------------------------------------------------- */
 
 @import "tailwindcss";
-/* Variantes `data-open`, `data-checked`, ... que os primitivos shadcn usam. */
-@import "shadcn/tailwind.css";
+/* As variantes `data-*` dos primitivos shadcn — as três que usamos, nossas desde
+ * 2026-10-06. A razão (uma dependência de build com um aviso `high` sem correcção
+ * a montante, para usar vinte de 629 linhas) está no próprio ficheiro. */
+@import "./styles/variantes.css";
 @import "tw-animate-css";
 @import "./styles/fonts.css";
 @import "./styles/tokens.css";
