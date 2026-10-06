@@ -22,8 +22,10 @@ import { textoDeQuantidade } from "../vocabulario";
  *    a quebra de 2 L e o resultado aparece aqui: `−2,0 L` a vermelho, com um
  *    aviso **suave** — "ficou negativo" — e não um bloqueio nem um modal de
  *    erro. Quem conduz a sessão observa se o dono passa ao lado ou se pára.
- *  - **Q7 (papéis).** Toda a linha do histórico tem autor: "Desperdício
- *    −2,000 L · Ana (balcão) · quebra".
+ *  - **Q7 (papéis).** Toda a linha do histórico tem autor, e desde 2026-10-06
+ *    numa **coluna** — o que torna a sonda mais afiada do que era: numa coluna
+ *    vê-se se é sempre a mesma pessoa a registar, o que numa lista de cartões com
+ *    o autor no meio de um rodapé exigia ler as linhas uma a uma.
  *
  * Nada aqui edita um número e nada apaga um movimento. O stock muda porque se
  * acrescenta uma linha ao ledger, e é a única forma de o mudar.
@@ -120,7 +122,12 @@ export function EcraDeArtigo() {
   const limiarEmDias = resumo.data?.expiring_within_days ?? 0;
 
   return (
-    <section className="flex w-full max-w-2xl flex-col gap-4 py-3">
+    // Sem `max-w` na secção, **e com um cap no que é leitura**: o histórico é uma
+    // tabela de sete colunas e usa a largura toda (DESIGN.md §4), mas o cabeçalho
+    // do artigo e o formulário de desperdício são leitura e formulário, e o §4
+    // dá-lhes 72rem. Uma linha de "mínimo 4,000 kg, registado ao g" esticada a
+    // 1280px é pior do que a mesma linha a 1152.
+    <section className="flex w-full flex-col gap-4 py-3">
       <Voltar />
 
       {nivel.isPending ? <Esqueleto /> : null}
@@ -169,8 +176,10 @@ export function EcraDeArtigo() {
           ecrã a contradizer-se. */}
       {nivel.data === null || nivel.data === undefined ? null : (
         <>
-          <Cabecalho nivel={nivel.data} limiarEmDias={limiarEmDias} />
-          <FormularioDeDesperdicio nivel={nivel.data} />
+          <div className="flex w-full max-w-6xl flex-col gap-4">
+            <Cabecalho nivel={nivel.data} limiarEmDias={limiarEmDias} />
+            <FormularioDeDesperdicio nivel={nivel.data} />
+          </div>
           <HistoricoDeMovimentos
             movimentos={movimentos.data?.results}
             total={movimentos.data?.count ?? 0}

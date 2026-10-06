@@ -84,6 +84,10 @@ const SINAL_POR_TIPO = new Map<TipoMovimento, 1 | -1>([
   // `adjustment` entra aqui com -1 por defeito, mas quem o cria passa o sinal:
   // ver o campo `sinal` acima.
   ["adjustment", -1],
+  // As duas pernas de uma fornada (ADR 0014): o valor não sai do negócio, muda
+  // de forma. Os sinais são os do par `transfer_*`, e por uma razão igual.
+  ["production_in", 1],
+  ["production_out", -1],
 ]);
 
 export function sinalDe(mov: MovimentoFalso): number {
@@ -208,7 +212,7 @@ function semear(): MovimentoFalso[] {
     // Existe por uma razão só: sem ele "deitado fora esta semana" seria igual a
     // "deitado fora hoje", e dois números iguais ao lado um do outro leem-se
     // como um erro do ecrã em vez de como a pergunta da Q6.
-    movimento("receipt", 22, "cozinha", "300", "L-PN-D3", AUTORES.rui, horaEmDias(-3, 6, 30), "Produção do dia"),
+    movimento("production_in", 22, "cozinha", "300", "L-PN-D3", AUTORES.rui, horaEmDias(-3, 6, 30), "Produção do dia"),
     movimento("consumption", 22, "cozinha", "285", "L-PN-D3", AUTORES.rui, horaEmDias(-3, 19, 0), "Vendas do dia"),
     movimento("waste", 22, "cozinha", "15", "L-PN-D3", AUTORES.rui, horaEmDias(-2, 5, 5), null, "expired"),
 
@@ -248,22 +252,39 @@ function semear(): MovimentoFalso[] {
     movimento("receipt", 21, "centro", "5000", "L-BAC-0611", AUTORES.ana, ontem(9, 20), "FS 2026/114570"),
 
     // --- produção e venda
-    // A produção própria entra no ledger como entrada. O `tipoMovimentoSchema`
-    // não tem um `production` próprio, e **não** o invento aqui: se o domínio
-    // quiser distinguir "comprei" de "produzi", é decisão da sessão do backend
-    // e muda o schema, não o fixture (ADR 0008 — os fixtures são o rascunho do
-    // contrato, não a sua fonte).
-    movimento("receipt", 22, "cozinha", "300", "L-PN-HOJE", AUTORES.rui, hoje(6, 30), "Produção de hoje"),
-    movimento("consumption", 1, "cozinha", "18000", "L-T65-1142", AUTORES.rui, hoje(6, 30), "Produção de hoje"),
-    movimento("consumption", 3, "cozinha", "4500", "L-OVL-0914", AUTORES.rui, hoje(6, 30), "Produção de hoje"),
-    movimento("consumption", 5, "cozinha", "5200", "L-MNT-0902", AUTORES.rui, hoje(6, 30), "Produção de hoje"),
+    // **A fornada deixou de entrar como `receipt` a 2026-10-06.** Este bloco
+    // tinha um comentário a dizer que o `tipoMovimentoSchema` não tinha um tipo
+    // de produção e que inventá-lo aqui era decisão do backend e não do fixture.
+    // A decisão foi tomada (ADR 0014) e o comentário cumpriu-se: entram
+    // `production_out` nos ingredientes e `production_in` no produto acabado.
+    //
+    // O que isto corrige não era cosmético. Os pastéis entravam como `receipt`,
+    // que é o tipo das **compras a fornecedores**, e os ingredientes saíam como
+    // `consumption`, que é o tipo das **vendas** — logo o painel de gestão
+    // contaria o custo dos ingredientes *e* o do produto acabado, e contaria 300
+    // pastéis como mercadoria comprada a um fornecedor. Numa pastelaria isso
+    // acontece todas as manhãs.
+    //
+    // **O que fica simplificado, e é dito em vez de escondido:** as fornadas de
+    // ontem e de há três dias têm `production_in` sem as pernas de
+    // `production_out` correspondentes — os ingredientes daqueles dias não estão
+    // no ledger. Pôr-lhes as pernas mudava os níveis de stock de hoje, que estão
+    // afinados ao milésimo para as sondas da sessão 0 (a nata a zero, o queijo
+    // repartido por duas lojas sem nenhuma parcela a zero). O invariante "nenhuma
+    // perna sem a outra" é imposto no `inventory.services` e por teste (ADR 0014,
+    // decisão 4), não por este ficheiro — e o fixture do painel, que ainda não
+    // existe, nasce com as duas pernas desde o princípio.
+    movimento("production_in", 22, "cozinha", "300", "L-PN-HOJE", AUTORES.rui, hoje(6, 30), "Produção de hoje"),
+    movimento("production_out", 1, "cozinha", "18000", "L-T65-1142", AUTORES.rui, hoje(6, 30), "Produção de hoje"),
+    movimento("production_out", 3, "cozinha", "4500", "L-OVL-0914", AUTORES.rui, hoje(6, 30), "Produção de hoje"),
+    movimento("production_out", 5, "cozinha", "5200", "L-MNT-0902", AUTORES.rui, hoje(6, 30), "Produção de hoje"),
     // A nata fica a zero: 12 L entraram, 10 L foram à produção e 2 L vinham
     // furados. É a sonda da Q1 — o ecrã deixa registar mais uma quebra e mostra
     // o negativo com aviso suave, sem bloquear.
-    movimento("consumption", 6, "cozinha", "10000", "L-NAT-0921", AUTORES.rui, hoje(6, 35), "Produção de hoje"),
+    movimento("production_out", 6, "cozinha", "10000", "L-NAT-0921", AUTORES.rui, hoje(6, 35), "Produção de hoje"),
     movimento("waste", 6, "cozinha", "2000", "L-NAT-0921", AUTORES.rui, hoje(6, 40), null, "breakage"),
-    movimento("consumption", 2, "cozinha", "9000", null, AUTORES.rui, hoje(6, 35), "Produção de hoje"),
-    movimento("consumption", 12, "cozinha", "800", "L-MOR-0930", AUTORES.rui, hoje(7, 40), "Produção de hoje"),
+    movimento("production_out", 2, "cozinha", "9000", null, AUTORES.rui, hoje(6, 35), "Produção de hoje"),
+    movimento("production_out", 12, "cozinha", "800", "L-MOR-0930", AUTORES.rui, hoje(7, 40), "Produção de hoje"),
     movimento("consumption", 8, "centro", "2200", null, AUTORES.ana, hoje(11, 2), "Vendas de hoje"),
     movimento("consumption", 20, "centro", "520", null, AUTORES.ana, hoje(11, 2), "Vendas de hoje"),
     movimento("consumption", 19, "centro", "22", null, AUTORES.ana, hoje(11, 2), "Vendas de hoje"),
@@ -290,7 +311,7 @@ function semear(): MovimentoFalso[] {
     // transferência em trânsito de hoje ler-se como tal (guião §3, Q4) — e sem
     // ele a loja aparecia a deitar fora pastéis que nunca recebeu, que era um
     // negativo por acidente ao lado do negativo de propósito da nata.
-    movimento("receipt", 22, "cozinha", "300", "L-PN-ONTEM", AUTORES.rui, ontem(6, 30), "Produção de ontem"),
+    movimento("production_in", 22, "cozinha", "300", "L-PN-ONTEM", AUTORES.rui, ontem(6, 30), "Produção de ontem"),
     movimento("transfer_out", 22, "cozinha", "120", "L-PN-ONTEM", AUTORES.rui, ontem(8, 30), "Cozinha → Loja Centro"),
     movimento("transfer_in", 22, "centro", "120", "L-PN-ONTEM", AUTORES.ana, ontem(9, 5), "Cozinha → Loja Centro"),
     movimento("consumption", 22, "cozinha", "180", "L-PN-ONTEM", AUTORES.rui, ontem(19, 0), "Vendas de ontem"),

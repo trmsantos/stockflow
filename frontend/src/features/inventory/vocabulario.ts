@@ -33,6 +33,10 @@ const ROTULO_DE_MOVIMENTO = new Map<TipoMovimento, string>([
   ["transfer_out", "Transferência (saída)"],
   ["transfer_in", "Transferência (entrada)"],
   ["return", "Devolução"],
+  // As duas pernas de uma fornada (ADR 0014). "Produção" e não "Fabrico": é a
+  // palavra que se usa numa pastelaria, e é a que o guião da sessão 0 usa.
+  ["production_out", "Produção (consumo)"],
+  ["production_in", "Produção (entrada)"],
 ]);
 
 export function rotuloDeMovimento(tipo: TipoMovimento): string {
@@ -86,4 +90,27 @@ export function textoDeQuantidade(quantidade: Quantidade): string {
   return quantidade.display_unit === quantidade.base_unit
     ? formatCount(quantidade.display, quantidade.display_unit)
     : formatQuantity(quantidade.display, quantidade.display_unit);
+}
+
+/**
+ * Os tipos que **não são eventos económicos** (ADR 0014, decisão 2): pares de
+ * pernas que se anulam no total do tenant. Um valor que muda de sítio
+ * (transferência) ou de forma (produção) não é uma perda nem um ganho, e um
+ * histórico que os mostre com o mesmo peso de uma quebra ensina o produto
+ * errado — a lista de um artigo numa pastelaria é dominada por fornadas.
+ *
+ * Vive aqui e não no ecrã para a tabela de nove linhas da ADR 0014 ter **uma**
+ * tradução em código. Se um tipo novo entrar sem passar por aqui, entra como
+ * evento económico, que é o default seguro: um movimento a mais numa soma de
+ * perdas faz perguntar, um a menos passa.
+ */
+const SEM_EVENTO_ECONOMICO: ReadonlySet<TipoMovimento> = new Set([
+  "transfer_out",
+  "transfer_in",
+  "production_out",
+  "production_in",
+]);
+
+export function eEventoEconomico(tipo: TipoMovimento): boolean {
+  return !SEM_EVENTO_ECONOMICO.has(tipo);
 }

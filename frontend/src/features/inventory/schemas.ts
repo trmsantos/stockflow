@@ -65,6 +65,34 @@ export const tipoValidadeSchema = z.enum(["use_by", "best_before"]);
 export const estadoNivelSchema = z.enum(["ok", "baixo", "esgotado", "negativo"]);
 
 /** Tipos de movimento do ledger (`inventory-domain` §1). */
+/**
+ * Os nove tipos de movimento do ledger (ADR 0014).
+ *
+ * `production_out` e `production_in` entraram a 2026-10-06 e o argumento foi de
+ * **oportunidade**: hoje são dois valores num `z.enum` e duas linhas de
+ * vocabulário, porque o `inventory_stockmovement` ainda não existe. Depois de
+ * haver migração aplicada — que o CLAUDE.md proíbe editar — são uma migração
+ * nova *e* o reetiquetar de linhas mal classificadas num ledger append-only,
+ * onde uma linha errada não se corrige: corrige-se com outra linha.
+ *
+ * O que elas resolvem é uma **dupla contagem que já existia**: fazer pastéis sai
+ * como `consumption` dos ingredientes e entrava como `receipt` — o tipo das
+ * compras a fornecedores — e vender o pastel é outro `consumption`. Somar as
+ * saídas de stock contava o custo dos ingredientes **e** o do produto acabado.
+ * Numa pastelaria isso não é caso limite: é o fluxo de todos os dias.
+ *
+ * A forma é a do par `transfer_*` que já existia, e a simetria não é estética:
+ * numa transferência o valor não sai do negócio e muda de **sítio**; numa
+ * produção não sai e muda de **forma**. Os dois são pares de pernas que se
+ * anulam no total do tenant e **não são eventos económicos** — a ADR 0014 tem a
+ * tabela de nove linhas que diz, por tipo, o que entra em "mercadoria consumida"
+ * e o que entra em "compras", e é essa tabela que impede cada agregação futura de
+ * inventar a sua própria lista de exclusões.
+ *
+ * Um tipo e não uma `reference` excluída pela agregação: um `reference` é filtro
+ * por convenção, e esquecê-lo devolve um número errado em silêncio. Uma união
+ * fechada chega ao `Record` do frontend e um ramo esquecido **não compila**.
+ */
 export const tipoMovimentoSchema = z.enum([
   "receipt",
   "consumption",
@@ -73,6 +101,8 @@ export const tipoMovimentoSchema = z.enum([
   "transfer_out",
   "transfer_in",
   "return",
+  "production_out",
+  "production_in",
 ]);
 
 /** Motivo obrigatório de um `waste` (`inventory-domain` §8). */

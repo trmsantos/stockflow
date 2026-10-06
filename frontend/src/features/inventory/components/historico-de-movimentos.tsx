@@ -1,12 +1,22 @@
-import { CircleAlert, RotateCcw, ScrollText } from "lucide-react";
+import { ScrollText } from "lucide-react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ErroAoCarregar } from "@/components/erro-ao-carregar";
+import {
+  CLASSE_CELULA,
+  CLASSE_LINHA,
+  EsqueletoDeTabela,
+  MolduraDeTabela,
+  type ColunaDeTabela,
+} from "@/components/tabela";
 import { formatDate, formatDaysAway, formatTime } from "@/lib/format";
 
 import type { Movimento } from "../schemas";
-import { rotuloDeMotivo, rotuloDeMovimento, textoDeQuantidade } from "../vocabulario";
+import {
+  eEventoEconomico,
+  rotuloDeMotivo,
+  rotuloDeMovimento,
+  textoDeQuantidade,
+} from "../vocabulario";
 
 /**
  * O histórico de movimentos de um artigo — o ledger, tal como está.
@@ -20,6 +30,29 @@ import { rotuloDeMotivo, rotuloDeMovimento, textoDeQuantidade } from "../vocabul
  * append-only na própria base de dados (ADR 0006: `REVOKE UPDATE, DELETE` em
  * `inventory_stockmovement`) e corrige-se com um movimento inverso. O servidor
  * de fixtures também não tem rota para alterar — de propósito.
+ *
+ * ## Tabela desde 2026-10-06, e o que a conversão arrumou
+ *
+ * Era uma `<ul>` de cartões com dois rodapés de factos juntos por pontos médios:
+ * "07:40 · Rui (produção) · Cozinha · quebra" e "lote L-MOR-0930 · Produção de
+ * hoje". Sete factos em três linhas empilhadas, e nenhum comparável com o da
+ * linha acima — para saber se foi sempre a mesma pessoa a registar, tinha de se
+ * ler as sete linhas inteiras. Em colunas isso vê-se de uma vez, e é precisamente
+ * a sonda da Q7.
+ *
+ * **O agrupamento por dia sobreviveu**, como uma linha de cabeçalho com
+ * `colSpan` em vez de um `<h3>` entre listas: a data repetida doze vezes gastava
+ * a largura que o autor e o motivo precisam, e isso continua verdade.
+ *
+ * ## As pernas de produção lêem-se mais fracas, e é a ADR 0014
+ *
+ * Uma fornada escreve duas linhas que se anulam — os ingredientes saem
+ * (`production_out`) e o produto acabado entra (`production_in`) — e **não são
+ * eventos económicos**: o valor não sai do negócio, muda de forma. Numa
+ * pastelaria o histórico de um artigo é dominado por elas, e mostrá-las com o
+ * mesmo peso de uma quebra ensina o produto errado a quem o lê. Ficam em
+ * `muted-foreground`, com o predicado `eEventoEconomico` do `vocabulario.ts` a
+ * decidir — não uma segunda lista de tipos aqui dentro.
  */
 
 /** A diferença em dias civis entre um instante e hoje, hora local. */
@@ -63,31 +96,67 @@ function agrupar(movimentos: readonly Movimento[]): readonly Grupo[] {
   return [...porDia.entries()].map(([rotulo, lista]) => ({ rotulo, movimentos: lista }));
 }
 
+const COLUNAS: readonly ColunaDeTabela[] = [
+  { chave: "hora", rotulo: "Hora", classe: "w-24 text-right" },
+  { chave: "movimento", rotulo: "Movimento", classe: "w-52" },
+  { chave: "quantidade", rotulo: "Quantidade", classe: "w-32 text-right" },
+  { chave: "motivo", rotulo: "Motivo", classe: "w-32" },
+  { chave: "quem", rotulo: "Quem" },
+  { chave: "onde", rotulo: "Onde" },
+  { chave: "lote", rotulo: "Lote", classe: "w-32" },
+];
+
+const LARGURA_MINIMA = "min-w-4xl";
+const ROTULO = "Movimentos do artigo, do mais recente para o mais antigo";
+
 function LinhaDeMovimento({ movimento }: { readonly movimento: Movimento }) {
-  const rodape = [
-    movimento.lot_code === null ? null : `lote ${movimento.lot_code}`,
-    movimento.reference,
-  ].filter((parte): parte is string => parte !== null);
+  // Uma perna de produção ou de transferência não é perda nem ganho (ADR 0014).
+  const economico = eEventoEconomico(movimento.movement_type);
 
   return (
-    <li className="flex flex-col gap-0.5 border-b border-border px-4 py-2 last:border-b-0">
-      <span className="flex items-baseline gap-3">
-        <span className="min-w-0 flex-1 truncate font-medium">
-          {rotuloDeMovimento(movimento.movement_type)}
-        </span>
-        <span data-numeric className="shrink-0 text-sm">
-          {textoDeQuantidade(movimento.quantity)}
-        </span>
-      </span>
-      <span className="truncate text-xs text-muted-foreground">
-        {formatTime(movimento.occurred_at)} · {movimento.created_by} ·{" "}
-        {movimento.location.name}
-        {movimento.reason === null ? "" : ` · ${rotuloDeMotivo(movimento.reason)}`}
-      </span>
-      {rodape.length === 0 ? null : (
-        <span className="truncate text-xs text-muted-foreground">{rodape.join(" · ")}</span>
-      )}
-    </li>
+    <tr className={`${CLASSE_LINHA} transition-colors hover:bg-surface-2`}>
+      <td data-numeric className={`${CLASSE_CELULA} w-24 text-right text-muted-foreground`}>
+        {formatTime(movimento.occurred_at)}
+      </td>
+
+      {/* A `reference` ("Produção de hoje", "FT 2026/4471") fica no `title` e não
+          numa coluna: é o identificador da operação que gerou o movimento, e a
+          sete colunas não sobra largura para ele sem apertar o autor. Quando as
+          fornadas existirem em dados reais, uma coluna "Operação" entra aqui — e
+          fica nomeado em vez de esquecido. */}
+      <td
+        className={`${CLASSE_CELULA} w-52 ${economico ? "" : "text-muted-foreground"}`}
+        {...(movimento.reference === null ? {} : { title: movimento.reference })}
+      >
+        {rotuloDeMovimento(movimento.movement_type)}
+      </td>
+
+      <td
+        data-numeric
+        className={`${CLASSE_CELULA} w-32 text-right ${economico ? "" : "text-muted-foreground"}`}
+      >
+        {textoDeQuantidade(movimento.quantity)}
+      </td>
+
+      <td className={`${CLASSE_CELULA} w-32 text-muted-foreground`}>
+        {movimento.reason === null ? "" : rotuloDeMotivo(movimento.reason)}
+      </td>
+
+      {/* Toda a linha tem autor, e é a sonda da Q7: numa coluna vê-se se é sempre
+          a mesma pessoa a registar, o que numa lista de cartões exigia ler sete
+          linhas inteiras. */}
+      <td className={`${CLASSE_CELULA} max-w-0`}>
+        <span className="block truncate">{movimento.created_by}</span>
+      </td>
+
+      <td className={`${CLASSE_CELULA} max-w-0 text-muted-foreground`}>
+        <span className="block truncate">{movimento.location.name}</span>
+      </td>
+
+      <td data-numeric className={`${CLASSE_CELULA} w-32 text-left text-muted-foreground`}>
+        {movimento.lot_code ?? ""}
+      </td>
+    </tr>
   );
 }
 
@@ -107,41 +176,29 @@ export function HistoricoDeMovimentos({
 }) {
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="px-4 text-sm font-semibold">Movimentos</h2>
+      <h2 className="px-celula-x text-sm font-semibold">Movimentos</h2>
 
       {aCarregar ? (
-        <div aria-busy="true" className="flex flex-col">
-          <span className="sr-only">A carregar os movimentos…</span>
-          {[0, 1, 2, 3].map((indice) => (
-            <div key={indice} className="flex flex-col gap-1.5 border-b border-border px-4 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-4 w-20" />
-              </div>
-              <Skeleton className="h-3 w-48" />
-            </div>
-          ))}
-        </div>
+        <EsqueletoDeTabela
+          colunas={COLUNAS}
+          larguraMinima={LARGURA_MINIMA}
+          rotulo="A carregar os movimentos…"
+          linhas={4}
+        />
       ) : null}
 
       {mensagemDeErro === null ? null : (
-        <div className="px-4">
-          <Alert className="border-danger-border bg-danger-surface">
-            <CircleAlert aria-hidden="true" className="text-danger" />
-            <AlertTitle>Não foi possível carregar os movimentos</AlertTitle>
-            <AlertDescription className="flex flex-col items-start gap-2">
-              <span>{mensagemDeErro}</span>
-              <Button variant="outline" onClick={aoTentarOutraVez}>
-                <RotateCcw aria-hidden="true" />
-                Tentar outra vez
-              </Button>
-            </AlertDescription>
-          </Alert>
+        <div className="px-celula-x">
+          <ErroAoCarregar
+            titulo="Não foi possível carregar os movimentos"
+            mensagem={mensagemDeErro}
+            aoTentarOutraVez={aoTentarOutraVez}
+          />
         </div>
       )}
 
       {movimentos === undefined ? null : movimentos.length === 0 ? (
-        <div className="flex flex-col items-start gap-2 px-4 py-6">
+        <div className="flex flex-col items-start gap-2 px-celula-x py-6">
           <ScrollText aria-hidden="true" className="size-6 text-muted-foreground" />
           <p className="font-medium">Sem movimentos</p>
           <p className="text-pretty text-sm text-muted-foreground">
@@ -150,20 +207,29 @@ export function HistoricoDeMovimentos({
         </div>
       ) : (
         <>
-          {agrupar(movimentos).map((grupo) => (
-            <div key={grupo.rotulo} className="flex flex-col">
-              <h3 className="bg-surface-2 px-4 py-1 text-xs font-medium text-muted-foreground">
-                {grupo.rotulo}
-              </h3>
-              <ul className="flex flex-col">
+          <MolduraDeTabela colunas={COLUNAS} larguraMinima={LARGURA_MINIMA} rotulo={ROTULO}>
+            {agrupar(movimentos).map((grupo) => (
+              // Um `<tbody>` por dia: é o agrupamento que o HTML de tabelas tem
+              // para isto, e dá o cabeçalho do dia sem o fingir com uma linha de
+              // dados. O `colSpan` atravessa as sete colunas.
+              <tbody key={grupo.rotulo}>
+                <tr>
+                  <th
+                    scope="colgroup"
+                    colSpan={COLUNAS.length}
+                    className="bg-surface-2 px-celula-x py-1 text-left text-xs font-medium text-muted-foreground"
+                  >
+                    {grupo.rotulo}
+                  </th>
+                </tr>
                 {grupo.movimentos.map((movimento) => (
                   <LinhaDeMovimento key={movimento.id} movimento={movimento} />
                 ))}
-              </ul>
-            </div>
-          ))}
+              </tbody>
+            ))}
+          </MolduraDeTabela>
           {total > movimentos.length ? (
-            <p className="px-4 py-2 text-xs text-muted-foreground">
+            <p className="px-celula-x py-2 text-xs text-muted-foreground">
               Os {movimentos.length} movimentos mais recentes, de {total}.
             </p>
           ) : null}
