@@ -489,3 +489,41 @@ export function useDesperdicio(
     enabled: ativo,
   });
 }
+
+/* ---------------------------------------------------------------------------
+ * A leitura de uma linha, para quem a desenha de fora deste módulo.
+ *
+ * ## Porque é que isto atravessa a fronteira, e o que **não** atravessa
+ *
+ * A porta do ADR 0008 (decisão 2) é este ficheiro, e até 2026-10-06 só saía por
+ * ela um hook (`useInvalidarLedger`) — "o que viaja entre módulos são hooks, não
+ * a forma do payload". Continua a sair só isso: o que se acrescenta aqui são
+ * **funções puras de leitura**, não schemas, não componentes e não tipos de
+ * payload. Quem as chama recebe o tipo por inferência dos hooks acima, logo
+ * nenhum ecrã de outro módulo passa a importar a forma do `Alerta`.
+ *
+ * A razão é o ecrã Início, que desde 2026-10-06 é uma **grelha de miniaturas**
+ * dos ecrãs: as três piores linhas de validade, as três piores faltas, as três
+ * piores linhas de stock. São linhas a sério — nome, quantidade, a frase da
+ * validade e o trilho de 4px — e cada uma dessas quatro coisas tem exactamente
+ * **uma** definição nesta casa:
+ *
+ *  - `textoDeQuantidade` decide as casas decimais pela unidade (o menor dígito
+ *    visível é a unidade base). Uma segunda cópia escrevia "1500,000 g";
+ *  - `leituraDaValidade` é a distinção `use_by`/`best_before` — "expira hoje"
+ *    contra "perde qualidade em 2 dias" — e o tecto de cor do `best_before`. É a
+ *    regra que o guião da sessão 0 §2 nomeia como condição para o dono confiar
+ *    nos alertas, e a última coisa nesta casa que pode ter duas versões;
+ *  - os dois `tintaDoTrilho*` são a cor do sinal, e a miniatura tem de dar
+ *    exactamente a mesma que a tabela que ela previsualiza. Uma linha marcada no
+ *    Início e apagada nos Alertas é pior do que uma linha sem marca nenhuma.
+ *
+ * A alternativa era copiar as quatro para o `reporting` — foi o que o
+ * `purchasing/vocabulario.ts` fez com o `textoDeQuantidade`, e lá o argumento
+ * era outro: aquele módulo tem **as suas** quantidades, vindas do seu contrato.
+ * Aqui não: o Início desenha as linhas **deste** módulo.
+ * ------------------------------------------------------------------------- */
+export { leituraDe as leituraDaValidade } from "./leitura-da-validade";
+export { tintaDoTrilhoDoNivel } from "./leitura-da-validade";
+export { tintaDoTrilhoDeGravidade } from "./tinta-do-estado";
+export { textoDeQuantidade } from "./vocabulario";

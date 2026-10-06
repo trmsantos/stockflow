@@ -1,7 +1,12 @@
 import { formatDate, formatDayMonth, formatDaysAway } from "@/lib/format";
 
-import type { ValidadeProxima } from "./schemas";
-import type { Urgencia } from "./tinta-do-estado";
+import type { EstadoNivel, ValidadeProxima } from "./schemas";
+import {
+  piorUrgencia,
+  tintaDoTrilhoDeUrgencia,
+  urgenciaDoEstado,
+  type Urgencia,
+} from "./tinta-do-estado";
 
 /**
  * A leitura de uma validade: a palavra, a tinta do texto, e a **urgência**.
@@ -107,4 +112,29 @@ export function urgenciaDaValidade(
   if (cor === "text-danger") return "grave";
   if (cor === "text-warning") return "aviso";
   return null;
+}
+
+/**
+ * O trilho de 4px de **uma linha de stock**, com as suas duas razões compostas.
+ *
+ * A composição `piorUrgencia(estado, validade)` vivia escrita dentro da
+ * `tabela-de-stock.tsx` e passou a estar aqui a 2026-10-06, quando apareceu o
+ * segundo sítio que desenha uma linha de stock: a miniatura do ecrã Início. Duas
+ * cópias de uma composição de três funções divergem na primeira correcção feita
+ * só numa — e o sintoma seria o pior possível, porque é silencioso: a mesma
+ * linha com goteira acesa num ecrã e apagada no outro, sem nada a falhar.
+ *
+ * Fica neste módulo, e não no `tinta-do-estado.ts`, porque é aqui que a
+ * **validade** já é legível fora do componente (foi a razão de este ficheiro
+ * existir). O inverso obrigava o `tinta-do-estado.ts` a importar a leitura da
+ * validade, e os dois passavam a importar-se um ao outro.
+ */
+export function tintaDoTrilhoDoNivel(
+  estado: EstadoNivel,
+  validade: ValidadeProxima | null,
+  limiarEmDias: number,
+): string {
+  return tintaDoTrilhoDeUrgencia(
+    piorUrgencia(urgenciaDoEstado(estado), urgenciaDaValidade(validade, limiarEmDias)),
+  );
 }

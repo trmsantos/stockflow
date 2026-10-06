@@ -143,8 +143,20 @@ def main():
     altura = int(sys.argv[4]) if len(sys.argv) > 4 else 900
     ficheiro_de_cookies = sys.argv[5] if len(sys.argv) > 5 else None
 
+    # **`--headless=new` e não `--headless`, e isto custou uma medição inteira.**
+    # No headless antigo a página nunca é "visível", logo o `requestAnimationFrame`
+    # não dispara — e é dentro de um rAF que o `src/lib/arranque.ts` esconde o ecrã
+    # de arranque do `index.html`. Resultado, a 2026-10-06: a fotografia era o
+    # splash com a marca ao centro, em qualquer largura e com qualquer `ESPERA`.
+    #
+    # O que torna isto o pior tipo de falha é o JSON ao lado: o `Runtime.evaluate`
+    # lê o DOM, não o pixel, por isso trazia o `h1` certo, `esqueletos: 0` e uma
+    # altura plausível. As medidas diziam que estava tudo bem **sobre uma imagem
+    # do ecrã de arranque**, e um ensaio que confirma o que não fotografou não é
+    # um ensaio. A `altura` era a única pista, e passava por normal: 1200px num
+    # viewport de 1200 lê-se como "o conteúdo cabe".
     proc = subprocess.Popen(
-        [CHROME, "--headless", "--disable-gpu", f"--remote-debugging-port={PORTA}",
+        [CHROME, "--headless=new", "--disable-gpu", f"--remote-debugging-port={PORTA}",
          "--user-data-dir=/tmp/perfil-cdp-stockflow", "--hide-scrollbars",
          "--force-color-profile=srgb", "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -196,7 +208,12 @@ def main():
             altura: document.documentElement.scrollHeight,
             esqueletos: document.querySelectorAll('[aria-busy="true"]').length,
             graficos: document.querySelectorAll('figure').length,
-            tabelas: document.querySelectorAll('table').length
+            tabelas: document.querySelectorAll('table').length,
+            /* `true` quando o ecrã de arranque do index.html ainda tapa tudo —
+               ou seja, quando a fotografia é do splash e não da aplicação. Sem
+               este campo a falha é silenciosa: o resto do JSON lê o DOM, que
+               está montado por baixo, e diz que está tudo bem. */
+            arranque: document.getElementById('arranque')?.hasAttribute('hidden') === false
           })
         """, returnByValue=True)
         print(medidas["result"]["value"])

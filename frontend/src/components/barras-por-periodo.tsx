@@ -77,6 +77,7 @@ export function BarrasPorPeriodo({
   maximo,
   rotulo,
   empilhado = false,
+  compacto = false,
 }: {
   /** Os rótulos curtos de cada intervalo: "12/02", "sem. 7". */
   readonly intervalos: readonly string[];
@@ -86,10 +87,28 @@ export function BarrasPorPeriodo({
   readonly rotulo: string;
   /** Empilhadas (partes de um todo) ou lado a lado (grandezas a comparar). */
   readonly empilhado?: boolean;
+  /**
+   * **Miniatura**: metade da altura, sem legenda e sem rótulos de intervalo.
+   *
+   * Entrou a 2026-10-06 com a grelha de cartões do ecrã Início, onde este
+   * gráfico é a pré-visualização do painel dentro de uma vidraça de ~340px. Não
+   * é "o mesmo mais pequeno": é o mesmo **sem as três camadas de texto**, e as
+   * três saem por medida e não por gosto. A legenda de duas séries com os totais
+   * parte em quatro linhas a essa largura; os rótulos de intervalo são sete
+   * datas de 13px em 300px, que colidem mesmo com o `passoDosRotulos`; e a
+   * altura de 160px fazia este cartão ser 60px mais alto do que os outros cinco,
+   * o que numa grelha estica a linha toda.
+   *
+   * O que **não** sai é a régua do máximo (é o eixo, e é um número do servidor)
+   * nem a tabela só para áudio, que é o equivalente textual do desenho: quem
+   * ouve o ecrã continua a ter os valores todos, e é precisamente aí que eles
+   * deixaram de caber a olho.
+   */
+  readonly compacto?: boolean;
 }) {
   const idDaTabela = useId();
   const passo = passoDosRotulos(intervalos.length);
-  const comLegenda = series.length > 1;
+  const comLegenda = series.length > 1 && !compacto;
 
   return (
     <figure className="m-0 flex flex-col gap-2" aria-labelledby={idDaTabela}>
@@ -118,7 +137,7 @@ export function BarrasPorPeriodo({
           <span className="h-px flex-1 bg-border" />
         </div>
 
-        <div className="flex h-40 items-end gap-1">
+        <div className={`flex items-end gap-1 ${compacto ? "h-20" : "h-40"}`}>
           {intervalos.map((intervalo, indice) => (
             // `flex-col-reverse` e não `flex-col`, e **isto estava ao contrário**:
             // numa coluna normal o primeiro filho fica em cima, logo a série
@@ -188,16 +207,18 @@ export function BarrasPorPeriodo({
         {/* A base: um fio contínuo, porque as colunas assentam nele. */}
         <div className="h-px bg-border-strong" />
 
-        <div className="flex gap-px pt-1">
-          {intervalos.map((intervalo, indice) => (
-            <span
-              key={intervalo}
-              className="min-w-0 flex-1 truncate text-center text-xs text-muted-foreground"
-            >
-              {indice % passo === 0 ? intervalo : " "}
-            </span>
-          ))}
-        </div>
+        {compacto ? null : (
+          <div className="flex gap-px pt-1">
+            {intervalos.map((intervalo, indice) => (
+              <span
+                key={intervalo}
+                className="min-w-0 flex-1 truncate text-center text-xs text-muted-foreground"
+              >
+                {indice % passo === 0 ? intervalo : " "}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Os números a sério, para quem ouve o ecrã e para quem quer o valor

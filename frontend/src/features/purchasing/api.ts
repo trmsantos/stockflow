@@ -238,3 +238,23 @@ export function useConfirmarRececao() {
     },
   });
 }
+
+/* ---------------------------------------------------------------------------
+ * A tinta de um documento, para quem o desenha de fora deste módulo.
+ *
+ * Mesma razão, e mesmo limite, que o bloco equivalente do
+ * `features/inventory/api.ts`: o ecrã Início é desde 2026-10-06 uma grelha de
+ * miniaturas, e uma delas é o documento por rever. O trilho de 4px dessa linha
+ * tem de ser **o mesmo** que a tabela do Receber lhe dá — um documento marcado
+ * num ecrã e apagado no outro é pior do que não marcar nenhum.
+ *
+ * Sai uma função pura de leitura, e mais nada: nem schemas, nem componentes,
+ * nem o tipo `Rececao`. Quem a chama recebe o `status` por inferência dos hooks
+ * acima.
+ *
+ * A alternativa era o Início escrever `bg-warning` à mão, que foi o que a fila
+ * de linhas fazia até aqui. Era uma segunda afirmação sobre o domínio ("um
+ * documento por rever é um aviso") escrita num ecrã que não é desta feature, e
+ * sobreviveria intacta ao dia em que esta decidisse outra coisa.
+ * ------------------------------------------------------------------------- */
+export { tintaDoTrilhoDoEstado } from "./tinta-do-estado";

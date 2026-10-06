@@ -10,12 +10,7 @@ import {
 } from "@/components/tabela";
 
 import type { NivelDeStock } from "../schemas";
-import { urgenciaDaValidade } from "../leitura-da-validade";
-import {
-  piorUrgencia,
-  tintaDoTrilhoDeUrgencia,
-  urgenciaDoEstado,
-} from "../tinta-do-estado";
+import { tintaDoTrilhoDoNivel } from "../leitura-da-validade";
 import { textoDeQuantidade } from "../vocabulario";
 import { EstadoDoNivel } from "./estado-do-nivel";
 import { TextoDeValidade } from "./validade";
@@ -145,15 +140,13 @@ function LinhaDeStock({
           quantidade contra o mínimo — e uma linha a expirar hoje ficava com a
           goteira apagada ao lado de uma linha "baixo" com a validade folgada a
           levar âmbar. Visto num screenshot do ecrã a correr: "Pastéis de nata ·
-          expira hoje" a vermelho, sem marca. O §1 pede as duas pela letra. */}
-      <TrilhoDaLinha
-        tinta={tintaDoTrilhoDeUrgencia(
-          piorUrgencia(
-            urgenciaDoEstado(nivel.status),
-            urgenciaDaValidade(nivel.nearest_expiry, limiarEmDias),
-          ),
-        )}
-      />
+          expira hoje" a vermelho, sem marca. O §1 pede as duas pela letra.
+
+          A composição das duas razões **saiu daqui** para o
+          `leitura-da-validade.ts` a 2026-10-06, quando a miniatura do Início
+          passou a desenhar linhas de stock: duas cópias dela divergiriam em
+          silêncio, com a mesma linha marcada num ecrã e apagada no outro. */}
+      <TrilhoDaLinha tinta={tintaDoTrilhoDoNivel(nivel.status, nivel.nearest_expiry, limiarEmDias)} />
 
       <th scope="row" className={`${CLASSE_CELULA} max-w-0 text-left font-medium`}>
         <Link
