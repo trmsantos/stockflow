@@ -1,6 +1,8 @@
+import { useIsFetching } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 
 import { Badge } from "@/components/ui/badge";
+import { IndicadorDeCarga } from "@/components/indicador-de-carga";
 
 import { GavetaDeNavegacao } from "./gaveta-de-navegacao";
 import { localizarNoMenu, type GrupoDeMenu } from "./menu";
@@ -27,6 +29,18 @@ import type { SessaoDoShell } from "./sessao-do-shell";
  * invólucro dava dois títulos de página a quem navega por cabeçalhos, e o que o
  * leitor de ecrã deve anunciar é o do ecrã — não o do cromado.
  *
+ * **O indicador de carga**, desde 2026-10-06: três traços que acendem enquanto
+ * houver **qualquer** pedido em voo, do `useIsFetching` do TanStack Query. É o
+ * sinal que faltava e que o dono do produto pediu duas vezes — os esqueletos
+ * dizem que forma vem, e não diziam nada quando a forma já está no ecrã e os
+ * dados estão a ser revalidados por trás.
+ *
+ * Um contador global e não um por ecrã: o shell não sabe que consultas existem
+ * (não conhece domínios, ADR 0008 d2) e não precisa de saber — a pergunta que ele
+ * responde é "está a acontecer alguma coisa?", que é global por natureza. E
+ * porque é uma contagem, não há estado a sincronizar: quando a última consulta
+ * assenta, o indicador desaparece sozinho.
+ *
  * **O que não está aqui**: o seletor de estabelecimento (é do pé da sidebar,
  * DESIGN.md §4) e o seletor de loja (é da barra do **ecrã** — parecem a mesma
  * coisa e não são).
@@ -38,7 +52,10 @@ export function AppHeader({
   readonly menu: readonly GrupoDeMenu[];
   readonly sessao: SessaoDoShell;
 }) {
-  const caminho = useRouterState({ select: (estado) => estado.location.pathname });
+  const caminho = useRouterState({
+    select: (estado) => estado.location.pathname,
+  });
+  const aCarregar = useIsFetching() > 0;
   const local = localizarNoMenu(menu, caminho);
   // Um item escondido pela projecção continua a ter rota e a ter nome: o
   // registo é a rede (ver `registo-de-rotas.ts`).
@@ -55,7 +72,10 @@ export function AppHeader({
               <span className="hidden shrink-0 text-xs font-bold tracking-microrotulo text-muted-foreground uppercase md:inline">
                 {local.grupo}
               </span>
-              <span aria-hidden="true" className="hidden shrink-0 text-muted-foreground md:inline">
+              <span
+                aria-hidden="true"
+                className="hidden shrink-0 text-muted-foreground md:inline"
+              >
                 /
               </span>
             </>
@@ -64,15 +84,22 @@ export function AppHeader({
         </p>
       )}
 
-      {import.meta.env.DEV ? (
-        // Em desenvolvimento os dados de domínio vêm do servidor de fixtures
-        // (ADR 0008, decisão 3) — a autenticação, não: essa é o backend a
-        // sério. Dizê-lo no ecrã é a mesma honestidade da abertura da sessão 0.
-        // Em produção este ramo não existe.
-        <Badge variant="outline" className="ml-auto shrink-0">
-          dados de demonstração
-        </Badge>
-      ) : null}
+      {/* `ml-auto` aqui e não no badge: o indicador é o primeiro elemento da
+          direita e tem de o ser com ou sem o badge, que só existe em
+          desenvolvimento. */}
+      <span className="ml-auto flex shrink-0 items-center gap-3">
+        {aCarregar ? <IndicadorDeCarga /> : null}
+
+        {import.meta.env.DEV ? (
+          // Em desenvolvimento os dados de domínio vêm do servidor de fixtures
+          // (ADR 0008, decisão 3) — a autenticação, não: essa é o backend a
+          // sério. Dizê-lo no ecrã é a mesma honestidade da abertura da sessão 0.
+          // Em produção este ramo não existe.
+          <Badge variant="outline" className="shrink-0">
+            dados de demonstração
+          </Badge>
+        ) : null}
+      </span>
     </header>
   );
 }

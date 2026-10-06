@@ -261,7 +261,24 @@ Regras de composição:
 - Um `<Button>` tem no máximo estas variantes: `default | secondary | outline | ghost | destructive`.
   Se precisas de uma sexta, provavelmente precisas de outro componente.
 - Estados obrigatórios em tudo o que é interativo: hover, focus-visible, active, disabled, loading.
-- Estados obrigatórios em tudo o que carrega dados: loading (skeleton, não spinner), empty, error.
+- Estados obrigatórios em tudo o que carrega dados: loading, empty, error.
+- **Esqueleto e indicador são dois trabalhos, não duas opções.** Esta linha dizia
+  "skeleton, **não** spinner" e a razão continua verdadeira — um esqueleto com a
+  forma do conteúdo impede o layout de saltar quando os dados chegam, e um
+  indicador não reserva espaço nenhum. O que mudou a 2026-10-06, a pedido do dono
+  do produto, é que a regra era exclusiva e passou a ser uma divisão:
+  - o **esqueleto** diz *que forma vem* (tabela de sete colunas, régua de três
+    campos) e vive onde o conteúdo vai aparecer;
+  - o **indicador** (`components/indicador-de-carga.tsx`) diz *que alguma coisa
+    está a acontecer* e vive onde não há forma a reservar: a barra de topo, um
+    botão à espera da resposta, o ecrã de arranque do `index.html`. Era a parte
+    que faltava — uma revalidação em segundo plano não tem esqueleto nenhum e,
+    até aqui, não tinha sinal nenhum.
+- **O indicador são três traços que acendem em sequência, e não um anel a rodar.**
+  Um anel é o elemento mais genérico de qualquer interface; três traços são o
+  trilho de sinal das tabelas a dizer que o produto está a trabalhar. O ecrã de
+  arranque desenha **os mesmos** em CSS puro, antes de o React existir: um produto
+  com dois indicadores de carga diferentes tem dois produtos lá dentro.
 - Tabelas: densas, alinhamento numérico à direita, sem zebra stripes por default. A moldura, as
   classes de célula e de linha, o cabeçalho e o esqueleto vivem **num** módulo
   (`src/components/tabela.tsx`), usado pelas duas features que têm tabelas: duas tabelas com a mesma

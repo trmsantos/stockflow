@@ -9,8 +9,115 @@
          `theme-color` é escrita em runtime a partir do token `--color-background`
          (src/lib/theme-color.ts) — não há cores literais no HTML. -->
     <title>StockFlow</title>
+
+    <!-- O ícone é um SVG: desenha-se nítido em qualquer tamanho e **lê-se** — o
+         ficheiro explica de que tokens é feito. O `apple-touch-icon` é PNG
+         porque o iOS não aceita SVG, e é gerado a partir dos mesmos valores pelo
+         `scripts/gerar-marca.py`. -->
+    <!-- **A folha de estilos entra por aqui e não por um `import` do
+         `main.tsx`.** Um `<link>` no `<head>` bloqueia a pintura, logo os tokens
+         existem antes do primeiro pixel; um `import` em JavaScript só os injecta
+         quando o módulo corre, e em desenvolvimento isso é depois da primeira
+         pintura — o ecrã de arranque aparecia sem fundo, preto sobre branco, num
+         produto escuro. Visto num screenshot, não deduzido.
+         O Vite processa esta referência nos dois modos: em `dev` serve o ficheiro
+         e mantém o HMR, no `build` substitui-a pelo ficheiro com hash. -->
+    <link rel="stylesheet" href="/src/index.css" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <style>
+      /* O ecrã de arranque, e porque vive aqui e não em React.
+       *
+       * Entre o primeiro byte e a montagem do React há uma janela em que o
+       * `<div id="root">` está vazio: num portátil lento com a rede da copa são
+       * uns bons segundos de preto absoluto, que se lê como "não abriu". Um
+       * esqueleto não serve aqui — não há forma a reservar, porque ainda não se
+       * sabe que ecrã vem — e é exactamente por isso que **este** é o sítio onde
+       * um indicador de carga é a coisa certa, e não dentro da aplicação.
+       *
+       * **Sem uma única cor literal, nem sequer como fallback.** Escrevi-o à
+       * primeira com `var(--color-background, #0a0c0e)` e isso é precisamente o
+       * que o DESIGN.md proíbe: um fallback é uma segunda definição da mesma cor,
+       * e é a que ninguém actualiza quando o token muda.
+       *
+       * Tirar os fallbacks obrigou a corrigir a causa em vez de a contornar, e
+       * foi um screenshot que a mostrou: com a folha a entrar por um `import` do
+       * `main.tsx`, em desenvolvimento este ecrã aparecia **preto sobre branco**,
+       * sem fundo, porque o CSS só existe depois de o módulo correr. Um flash
+       * branco num produto escuro, a cada recarga, na máquina de quem o está a
+       * construir. A folha passou a `<link>` (ver acima) e os tokens passaram a
+       * existir antes da primeira pintura nos dois modos.
+       *
+       * O indicador são três traços que acendem em sequência — o mesmo vocabulário
+       * do trilho de sinal das tabelas, e não um anel a rodar. Com
+       * `prefers-reduced-motion` fica um pulso de opacidade, que é o que o
+       * DESIGN.md §2 deixa passar ("desligar tudo excepto opacidade").
+       */
+      #arranque {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 28px;
+        background: var(--color-background);
+        z-index: 50;
+      }
+      #arranque[hidden] { display: none; }
+      #arranque .marca { display: flex; align-items: center; gap: 14px; }
+      #arranque .trilho {
+        width: 6px;
+        height: 34px;
+        border-radius: 2px;
+        background: var(--color-primary);
+      }
+      #arranque .nome {
+        font-family: var(--font-sans, system-ui, sans-serif);
+        font-weight: 700;
+        font-size: 28px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--color-foreground);
+      }
+      #arranque .tracos { display: flex; gap: 6px; }
+      #arranque .traco {
+        width: 4px;
+        height: 14px;
+        border-radius: 2px;
+        background: var(--color-border-strong);
+        animation: arranque-acende 1.05s ease-in-out infinite;
+      }
+      #arranque .traco:nth-child(2) { animation-delay: 0.14s; }
+      #arranque .traco:nth-child(3) { animation-delay: 0.28s; }
+      @keyframes arranque-acende {
+        0%, 70%, 100% { background: var(--color-border-strong); }
+        35% { background: var(--color-primary); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #arranque .traco {
+          animation: arranque-pulsa 1.6s ease-in-out infinite;
+          background: var(--color-primary);
+        }
+        #arranque .traco:nth-child(n) { animation-delay: 0s; }
+        @keyframes arranque-pulsa { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+      }
+    </style>
   </head>
   <body>
+    <!-- `aria-hidden` e sem texto para leitores de ecrã: quem ouve a página não
+         ganha nada com "StockFlow, a carregar" repetido, e o `aria-busy` do
+         conteúdo a seguir diz-lho no momento certo. -->
+    <div id="arranque" aria-hidden="true">
+      <span class="marca">
+        <span class="trilho"></span>
+        <span class="nome">StockFlow</span>
+      </span>
+      <span class="tracos">
+        <span class="traco"></span><span class="traco"></span><span class="traco"></span>
+      </span>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

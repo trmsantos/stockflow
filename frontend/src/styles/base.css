@@ -166,3 +166,59 @@
 [data-slot="sheet-overlay"] {
   background-color: color-mix(in oklab, var(--color-background) 72%, transparent);
 }
+
+/* ---------------------------------------------------------------------------
+ * O indicador de carga: três traços que acendem em sequência.
+ *
+ * As keyframes vivem aqui e não num `@theme` porque são o par da animação que o
+ * `index.html` declara para o ecrã de arranque — e os dois têm de parecer a
+ * mesma coisa, porque **são** a mesma coisa: o produto a dizer que está a
+ * trabalhar. Um anel a rodar seria o elemento mais genérico que existe numa
+ * interface; três traços são o trilho de sinal das tabelas, a piscar.
+ *
+ * `prefers-reduced-motion` troca a sequência por um pulso de opacidade, que é o
+ * que o DESIGN.md §2 deixa passar ("desligar tudo excepto opacidade").
+ * ------------------------------------------------------------------------- */
+@keyframes traco-acende {
+  0%,
+  70%,
+  100% {
+    background-color: var(--color-border-strong);
+  }
+  35% {
+    background-color: var(--color-primary);
+  }
+}
+
+@keyframes traco-pulsa {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.traco-de-carga {
+  background-color: var(--color-border-strong);
+  animation: traco-acende 1.05s ease-in-out infinite;
+}
+
+.traco-de-carga:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.traco-de-carga:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .traco-de-carga,
+  .traco-de-carga:nth-child(2),
+  .traco-de-carga:nth-child(3) {
+    background-color: var(--color-primary);
+    animation: traco-pulsa 1.6s ease-in-out infinite;
+    animation-delay: 0s;
+  }
+}

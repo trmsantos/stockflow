@@ -204,4 +204,8 @@ def main():
         proc.terminate()
 
 
-main()
+# Guardado para o `gerar-marca.py` poder importar o cliente CDP sem disparar uma
+# captura: duas cópias de um cliente WebSocket escrito à mão divergiam na
+# primeira correcção feita só numa delas.
+if __name__ == "__main__":
+    main()
