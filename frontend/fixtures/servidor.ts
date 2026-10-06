@@ -118,17 +118,87 @@ export interface Rota {
    * A variante **restrita**: o 403 de quem não tem o papel que este caminho
    * exige (ADR 0013, decisão 6).
    *
-   * É `opt-in` por rota e não ambiente, pela lição que o 409 de tenant
-   * divergente deixou escrita mais abaixo: um servidor de dados falsos serve
-   * **formas de dados**, e tudo o que se pareça com autorização tem de se
-   * pedir. Hoje só o `/reporting/month` a tem, porque é o único caminho cuja
-   * permissão é de um papel só.
+   * Sai **sozinho** quando a sessão a correr não tem um dos `papeis` declarados
+   * na rota, e continua a poder pedir-se à mão com `?_fixture=restrito` — que é
+   * como se sonda o ramo estando autenticado como dono. Hoje só o
+   * `/reporting/month` o tem, porque é o único caminho cuja permissão é de um
+   * papel só.
+   *
+   * **Era `opt-in` e só `opt-in`, e isso era um defeito**: com uma sessão `staff`
+   * real este caminho devolvia 200 com a folha salarial. A razão inteira está no
+   * `papelDaSessao`.
    *
    * E não é fingir uma sessão (que a ADR 0010 proíbe): é devolver uma recusa,
    * na mesma direcção do `RECUSA_SEM_SESSAO`. Uma sessão falsa **concede** o
    * que o servidor recusaria; uma recusa não concede nada.
    */
   readonly restrito?: (ctx: Contexto) => Resposta;
+  /**
+   * Os papéis que o endpoint **real** aceita, segundo a ADR que o especifica
+   * (para o `/reporting/month`, `{owner}`). Com isto declarado, o 403 de papel
+   * deixa de ser `opt-in` e passa a sair sozinho quando a sessão a correr não
+   * tem o papel — ver `papelDaSessao`.
+   */
+  readonly papeis?: readonly string[];
+}
+
+/**
+ * O papel da sessão a correr, **perguntado ao backend** e não inferido daqui.
+ *
+ * ## Porque isto existe, e porque não contradiz a lição do 409
+ *
+ * Medido a 2026-10-06 com uma sessão `staff` real: o `/reporting/month` devolvia
+ * **200 com a folha salarial inteira**, porque o 403 de papel era `opt-in` por
+ * bandeira. O cliente fazia o certo (não dispara o pedido sem o papel), mas a
+ * fixture era **mais permissiva do que a realidade** — e isso é a família de
+ * defeito que este repositório já pagou duas vezes: o `z.iso.datetime()` nu
+ * esteve 11 dias invisível porque os dados falsos eram mais complacentes do que
+ * o Django. Um ramo de 403 que só se exercita com uma bandeira que ninguém põe é
+ * um ramo que apodrece.
+ *
+ * O comentário do `restrito` dizia que "tudo o que se pareça com autorização tem
+ * de se pedir", e vinha da lição do 409 de tenant divergente. Essa lição é
+ * verdadeira e é sobre **inventar**: aquela fixture comparava um header contra
+ * uma constante que ela própria fabricou, e rejeitava tudo quando a autenticação
+ * a sério chegou. Perguntar o papel à sessão real é o oposto de inventar — é
+ * deferir para a autoridade, que é exactamente o que o endpoint real faz.
+ *
+ * E **não** se lê o papel de um header do cliente: isso seria tratar a sessão
+ * como credencial, que é a regra que o CLAUDE.md põe em primeiro lugar. O papel
+ * vem de onde ele vive.
+ *
+ * ## A ausência de resposta não é uma recusa
+ *
+ * Se o backend não responder, ou se não houver sessão, devolve-se `null` e a rota
+ * **serve normalmente**. Não saber o papel não é o mesmo que saber que ele não
+ * serve, e inventar um 403 por falta de informação era repetir o 409 com outro
+ * número. É também o que mantém o `curl` sem cookies a funcionar como sonda de
+ * forma de dados, que é para o que ele serve.
+ */
+async function papelDaSessao(
+  origem: string,
+  cookie: string | undefined,
+): Promise<string | null> {
+  if (cookie === undefined || cookie === "") return null;
+  try {
+    // Sem barra a abrir o caminho: o `PREFIXO` **já termina em `/`**, e a barra
+    // dupla que eu escrevi à primeira dava 404 no Django — o que, pela regra de
+    // "não saber não é recusar" logo acima, se lia como "não há papel" e deixava
+    // passar tudo. Um defeito silencioso a corrigir um defeito silencioso.
+    const resposta = await fetch(`${origem}${PREFIXO}auth/sessao`, {
+      headers: { cookie },
+    });
+    if (!resposta.ok) return null;
+    const corpo: unknown = await resposta.json();
+    if (typeof corpo !== "object" || corpo === null) return null;
+    const ativo = (corpo as { tenant_ativo?: unknown }).tenant_ativo;
+    if (typeof ativo !== "object" || ativo === null) return null;
+    const papel = (ativo as { papel?: unknown }).papel;
+    return typeof papel === "string" ? papel : null;
+  } catch {
+    // O backend em baixo não é uma recusa: ver o bloco acima.
+    return null;
+  }
 }
 
 export interface OpcoesDeFixtures {
@@ -142,6 +212,16 @@ export interface OpcoesDeFixtures {
   readonly semSessao?: readonly string[];
   /** Caminhos que respondem 403 de **papel** — o painel do dono visto por outro. */
   readonly restritos?: readonly string[];
+  /**
+   * A origem do Django, para o `papelDaSessao` perguntar o papel a quem o tem.
+   *
+   * Entra por opção e não por `process.env`: o `no-restricted-properties` do
+   * `eslint.config.js` recusa — e bem — `process.env` em código do projecto, e a
+   * razão está no SECURITY.md §7. A origem já é calculada uma vez no
+   * `vite.config.ts` (é a mesma do proxy), logo passá-la daí é o que impede duas
+   * definições de onde está o backend.
+   */
+  readonly origemDoBackend?: string;
 }
 
 /**
@@ -263,6 +343,7 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
   const erros = new Set(opcoes.erros ?? []);
   const semSessao = new Set(opcoes.semSessao ?? []);
   const restritos = new Set(opcoes.restritos ?? []);
+  const origemDoBackend = opcoes.origemDoBackend ?? "http://127.0.0.1:8010";
 
   const middleware: Connect.NextHandleFunction = (req, res, next) => {
     const metodo = req.method ?? "GET";
@@ -307,8 +388,19 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
       const comRecusaDeAmbito =
         pedido === "sem_sessao" || semSessao.has(caminho) || semSessao.has(rota.caminho);
       const comTenantDivergente = pedido === "tenant_divergente";
+      // O papel só se pergunta quando a rota declara exigir um: uma chamada ao
+      // backend por pedido em todas as rotas era um custo sem leitor.
+      const papel =
+        rota.papeis === undefined
+          ? null
+          : await papelDaSessao(origemDoBackend, req.headers.cookie);
+      const papelInsuficiente =
+        papel !== null && rota.papeis !== undefined && !rota.papeis.includes(papel);
       const comRecusaDePapel =
-        pedido === "restrito" || restritos.has(caminho) || restritos.has(rota.caminho);
+        pedido === "restrito" ||
+        papelInsuficiente ||
+        restritos.has(caminho) ||
+        restritos.has(rota.caminho);
 
       // Primeiro de todos, porque é o que o `TenantMiddleware` faz: a falta de
       // âmbito é decidida **antes** de o header ser comparado (um 409) e antes

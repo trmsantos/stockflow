@@ -1171,6 +1171,14 @@ export const ROTAS_DO_PAINEL: readonly Rota[] = [
     // A **terceira** variante, e é só deste caminho: o painel do dono visto por
     // quem não é dono. É a rede do deep link e da pertença revogada a meio da
     // sessão, que é o caso que a ADR 0007 fez ser verificado por pedido.
+    //
+    // `papeis` é o que faz esta variante sair **sozinha** com uma sessão que não
+    // seja de dono, em vez de esperar por `?_fixture=restrito`. Sem ele, medido a
+    // 2026-10-06 com uma sessão `staff` real, este caminho devolvia 200 com a
+    // folha salarial inteira — uma fixture mais permissiva do que o endpoint que
+    // vai substituí-la, que é a família de defeito que o `z.iso.datetime()` nu já
+    // deixou escondida 11 dias. O valor é o `{owner}` da ADR 0013, decisão 6.
+    papeis: ["owner"],
     restrito: () => resposta(403, RECUSA_DE_PAPEL),
   },
 ];

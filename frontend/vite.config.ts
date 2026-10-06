@@ -50,6 +50,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
     servidorDeFixtures({
+      // A mesma origem do proxy, para não haver duas definições de onde está o
+      // Django: é dela que o servidor de fixtures pergunta o papel da sessão.
+      origemDoBackend: API_ORIGIN,
       atrasoMs: ATRASO_DE_FIXTURES,
       vazios: caminhos(process.env.FIXTURES_VAZIO),
       erros: caminhos(process.env.FIXTURES_ERRO),
