@@ -5,24 +5,38 @@ import { mensagemDeErro } from "@/lib/api/errors";
 
 import { useNiveisDeStock, useResumoDeStock } from "../api";
 import { BarraDeFiltros } from "../components/barra-de-filtros";
-import { ErroDaLista, EsqueletoDaLista, ListaVazia } from "../components/estados-da-lista";
-import { LinhaDeStock } from "../components/linha-de-stock";
+import { ErroDaLista, ListaVazia } from "../components/estados-da-lista";
 import {
   ErroDosNumeros,
   EsqueletoDosNumeros,
   NumerosDoTopo,
 } from "../components/numeros-do-topo";
+import { EsqueletoDaTabelaDeStock, TabelaDeStock } from "../components/tabela-de-stock";
 import type { Localizacao, NivelDeStock } from "../schemas";
 
 /**
  * O ecrã Stock — "o que é que eu tenho, e quanto?".
  *
- * Três números no topo, uma barra *sticky* para procurar e escolher a
- * localização, e uma linha por artigo com quatro dados: nome curto, quantidade
- * com unidade, estado e validade mais próxima. **A ordem é a do servidor: o que
+ * Uma barra *sticky* de âmbito (procurar, escolher localização), uma régua de
+ * contadores, e uma **tabela densa à largura toda** com seis colunas: artigo,
+ * quantidade, mínimo, estado, validade e onde. **A ordem é a do servidor: o que
  * está pior primeiro, nunca alfabética** — filtrar e procurar preserva-a, e o
  * cliente nunca reordena, senão ganhava uma segunda definição de "pior" que
  * divergiria da dos alertas.
+ *
+ * ## A largura toda, desde 2026-10-06
+ *
+ * Este ecrã abria com `max-w-2xl` — 672px alinhados à esquerda numa área de
+ * conteúdo de 1024px — e as linhas eram cartões de 56px com quatro dados. Foi
+ * desenhado a 360px, quando o produto era mobile-first, e o DESIGN.md §4
+ * carregava a dívida por escrito com a ordem de a pagar depois da sessão 0.
+ *
+ * A ordem inverteu-se por decisão do dono do produto, e a razão não estava
+ * prevista: aquele desenho **lê-se como UI gerada por IA**, e um ecrã que o dono
+ * não quer mostrar não serve de instrumento para a sessão 0 que depende dele. A
+ * dívida estava a bloquear o que a havia de resolver. O que a sessão 0 ainda
+ * decide são as *colunas*, não a forma — e trocar uma coluna numa tabela que
+ * existe é uma linha num array.
  *
  * **Não há um único campo de quantidade editável neste ecrã**, e é a decisão que
  * o define: stock é um ledger, e um lápis ao lado do "3,4 kg" ensinaria o
@@ -115,10 +129,15 @@ export function EcraDeStock() {
   const truncada = niveis.data !== undefined && total > niveis.data.results.length;
 
   return (
-    <section className="flex w-full max-w-2xl flex-col">
-      {/* O nome do ecrã já está no header do shell; repeti-lo em grande custava
-          uma das sete linhas do orçamento de 360×640. O documento continua a ter
-          um `h1`, para quem navega por cabeçalhos. */}
+    // Sem `max-w`: a tabela usa a largura toda da área de conteúdo (DESIGN.md
+    // §4), e as três regiões — barra, régua, tabela — encostam às arestas e
+    // separam-se por réguas de 1px. É o painel de operação do §1, não três
+    // cartões a flutuar.
+    <section className="flex w-full flex-col">
+      {/* O nome do ecrã está no header do shell, com o grupo ("Inventário /
+          Stock"). Aqui fica o `h1` do documento, para quem navega por
+          cabeçalhos — visível seria a mesma palavra duas vezes a 40px de
+          distância. */}
       <h1 className="sr-only">Stock — o que tenho, e quanto</h1>
 
       <BarraDeFiltros
@@ -151,7 +170,7 @@ export function EcraDeStock() {
         <NumerosDoTopo resumo={resumo.data} filtroAtivo={busca.filtro} />
       )}
 
-      {niveis.isPending ? <EsqueletoDaLista /> : null}
+      {niveis.isPending ? <EsqueletoDaTabelaDeStock /> : null}
 
       {niveis.isError ? (
         <ErroDaLista
@@ -174,19 +193,13 @@ export function EcraDeStock() {
             <ListaVazia comFiltros={comFiltros} />
           ) : (
             <>
-              <ul className="flex flex-col">
-                {linhas.map((nivel) => (
-                  <li key={nivel.product}>
-                    <LinhaDeStock nivel={nivel} limiarEmDias={limiarEmDias} />
-                  </li>
-                ))}
-              </ul>
+              <TabelaDeStock niveis={linhas} limiarEmDias={limiarEmDias} />
               {/* A regra de ordenação fica no fim, onde não paga pixéis acima da
-                  dobra: quem chega ao fundo da lista é quem precisa de saber
+                  dobra: quem chega ao fundo da tabela é quem precisa de saber
                   porque é que ela não está por ordem alfabética. */}
-              <p className="px-4 py-3 text-xs text-muted-foreground">
+              <p className="px-celula-x py-3 text-xs text-muted-foreground">
                 {linhas.length === 1 ? "1 artigo" : `${String(linhas.length)} artigos`}
-                {truncada ? ` de ${String(total)}` : ""} · ordenados pelo que está pior primeiro
+                {truncada ? ` de ${String(total)}` : ""}, ordenados pelo que está pior primeiro
               </p>
             </>
           )}

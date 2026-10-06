@@ -193,12 +193,11 @@ Números tabulares em tabelas e métricas (`font-variant-numeric: tabular-nums`)
 - Bordas de 1px com `--color-border` são preferíveis a sombras para separar superfícies. O cromado
   desta identidade é **visível e contado**: cromado (sidebar e cabeçalho) no `surface` e a tela de
   conteúdo no `background` — **ao contrário do que esta linha dizia**, e a razão é medida: os quatro
-  ecrãs desenham painéis e mosaicos em `bg-surface`, logo com a sidebar em `background` e a tela em
+  ecrãs desenham os seus painéis em `bg-surface`, logo com a sidebar em `background` e a tela em
   `surface` os painéis **desapareciam na própria tela**. Honrar a ordem original exige subir todos os
   ecrãs um degrau de superfície, que é obra própria e fica nomeada; até lá o documento descreve o que
-  existe,
-  cabeçalho de tabela no `surface-2`, réguas verticais de 1px entre colunas, e um trilho de 4px em
-  `--color-primary` na linha e no item de menu activos.
+  existe: cabeçalho de tabela no `surface-2`, réguas verticais de 1px entre colunas, e um trilho de
+  4px em `--color-primary` na linha e no item de menu activos.
 
 ### Movimento
 
@@ -221,7 +220,29 @@ Regras de composição:
   Se precisas de uma sexta, provavelmente precisas de outro componente.
 - Estados obrigatórios em tudo o que é interativo: hover, focus-visible, active, disabled, loading.
 - Estados obrigatórios em tudo o que carrega dados: loading (skeleton, não spinner), empty, error.
-- Tabelas: densas, alinhamento numérico à direita, sem zebra stripes por default.
+- Tabelas: densas, alinhamento numérico à direita, sem zebra stripes por default. A moldura, as
+  classes de célula e de linha, o cabeçalho e o esqueleto vivem **num** módulo
+  (`src/components/tabela.tsx`), usado pelas duas features que têm tabelas: duas tabelas com a mesma
+  intenção em dois ficheiros divergem na primeira correção feita só numa delas.
+- **Larguras de coluna explícitas nas colunas de largura previsível** (quantidades, estado). O
+  layout automático dá espaço a quem tem o conteúdo mais largo, e numa coluna numérica o conteúdo
+  mais largo é o **cabeçalho**: "QUANTIDADE" em caixa alta com tracking de 0.08em é mais largo do que
+  "24,400 kg". Medido: 246px para a quantidade e 140px para "Onde", que truncava nomes reais com
+  espaço de sobra ao lado.
+- **O trilho de sinal de 4px na aresta esquerda da linha, e uma linha saudável não o tem.** É onde a
+  ousadia desta identidade está gasta, e é o que faz a leitura de dois metros do §1 funcionar: todos
+  os trilhos estão na mesma vertical, logo o olho corre uma coluna de 4px em vez de quinze linhas. Um
+  trilho em todas as linhas é uma coluna pintada que não distingue nada.
+- **O estado é a palavra, não um chip.** Um badge de 28px com tinta e borda próprias dentro de uma
+  célula de 44px é um cartão pequeno a competir com a régua de 1px que já delimita a célula. A cor
+  vem do primeiro papel do §2 (cor de texto) e a palavra é quem cumpre a regra de não comunicar só
+  por cor — nunca foi o ícone. Um estado saudável devolve a palavra **só para áudio**: silêncio
+  visual, não silêncio total.
+- **Números no topo: uma régua de campos, não uma grelha de cartões.** Sem radius, sem borda
+  individual, sem sombra, sem `gap` — o que separa é a régua vertical de 1px, e o microrótulo do
+  campo usa o mesmo tratamento do `<th>` da tabela que vem abaixo. É essa rima que faz o topo e a
+  tabela lerem-se como um instrumento só. Os campos empacotam à esquerda e **não esticam**: três
+  células a dividir 1024px dariam 340px cada para um número de dois dígitos.
 - **O "cabeçalho sticky" saiu desta linha, e a razão é de CSS e não de preguiça.** Uma tabela de ERP
   a 360px desliza na horizontal (`overflow-x-auto`, que o §4 aceita e manda declarar), e esse
   invólucro torna-se o *scrollport* do `position: sticky`. Como ele não rola na **vertical**, um
@@ -246,13 +267,19 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
 - Largura máxima: `72rem` para **formulários e leitura**, `42rem` para texto corrido. **Tabelas usam
   a largura toda da área de conteúdo** — um cap de 72rem numa tabela de ERP é espaço desperdiçado à
   direita.
-- **Os quatro ecrãs de produto ainda não cumprem a linha acima, e é deliberado.** Todos abrem com um
-  cap de `42rem`: a 1280px a área de conteúdo tem ~1024px e o ecrã ocupa 672 alinhados à esquerda.
-  Foram desenhados para 360px, quando o produto era mobile-first. **Alargar o cap sem passar as
-  linhas a tabela densa é pior do que o que está** — dava linhas de 1024px com um nome à esquerda, um
-  número à direita e um vazio no meio. A reestruturação é uma obra só, e a ADR 0009 recomenda
-  explicitamente fazê-la **depois** da sessão 0, porque o que o dono fizer com estes ecrãs muda a
-  estrutura e refazê-los antes é refazê-los duas vezes.
+- **O Stock cumpre a linha acima desde 2026-10-06; os outros três ainda não.** Este documento
+  carregava a dívida por escrito — os quatro ecrãs com um cap de `42rem`, 672px numa área de 1024 —
+  e a ordem de a pagar **depois** da sessão 0 (ADR 0009), porque refazer antes das respostas era
+  refazer duas vezes.
+  A ordem inverteu-se por decisão do dono do produto, e a razão não estava prevista: aquele desenho
+  **lê-se como UI gerada por IA**, e um ecrã que o dono não quer mostrar não serve de instrumento
+  para a sessão 0 que depende dele. A dívida estava a bloquear o que a havia de resolver. O que a
+  sessão 0 ainda decide são as **colunas** (unidades, mínimo por artigo ou por artigo-e-loja), e
+  trocar uma coluna numa tabela que existe é uma linha num array — logo o argumento de "duas vezes"
+  caiu com a forma, não com as respostas.
+  **Alargar o cap sem passar as linhas a tabela densa continua a ser pior do que não alargar.** É
+  por isso que Alertas, Contar e Receber mantêm o cap: a conversão é por ecrã e cada um paga a sua.
+  Contar e Receber são rotas de campo e a prioridade delas é 360px, não 1440.
 - Densidade: **compacta** em desktop; em mobile mantém-se compacta e os alvos de toque são ≥ 44px
   (a regra está no `base.css` por `pointer: coarse`, não por breakpoint — um tablet com rato mantém a
   densidade).

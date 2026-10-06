@@ -1,5 +1,3 @@
-import { CircleAlert, CircleCheck, Clock, type LucideIcon } from "lucide-react";
-
 import { formatDate, formatDayMonth, formatDaysAway } from "@/lib/format";
 
 import type { ValidadeProxima } from "../schemas";
@@ -9,11 +7,18 @@ import type { ValidadeProxima } from "../schemas";
  *
  * Duas regras, e a segunda é a que decide se o dono confia nos alertas:
  *
- *  1. **semáforo por token e texto, nunca só cor.** O ícone e a palavra dizem o
- *     mesmo que a tinta, para quem não distingue vermelho de verde e para quem
- *     lê por áudio. Fora do horizonte o texto fica em `muted-foreground` e só o
- *     ícone leva o `success`: um prazo folgado não é um aviso, e pintar quinze
- *     linhas de verde faria perder as três que importam.
+ *  1. **semáforo por texto, nunca só cor.** A palavra diz o mesmo que a tinta,
+ *     para quem não distingue vermelho de verde e para quem lê por áudio. Fora
+ *     do horizonte o texto fica em `muted-foreground`: um prazo folgado não é um
+ *     aviso, e pintar quinze linhas de verde faria perder as três que importam.
+ *
+ *     **O ícone saiu a 2026-10-06**, e não por economia de pixéis. Dizia
+ *     exactamente o mesmo que a palavra ao lado — um relógio antes de "expira
+ *     amanhã" é a palavra outra vez, em desenho — e um ícone da Lucide por
+ *     célula, em três ecrãs, é o acessório que faz uma app parecer gerada
+ *     (DESIGN.md §5). A regra de não comunicar só por cor continua cumprida pela
+ *     **palavra**, que é quem sempre a cumpriu: o ícone nunca foi o que a
+ *     salvava, era redundância a fingir que era acessibilidade.
  *
  *  2. **`use_by` e `best_before` não se dizem com as mesmas palavras.**
  *     "Consumir até" é limite legal; "consumir de preferência antes de" é
@@ -28,8 +33,6 @@ import type { ValidadeProxima } from "../schemas";
 interface Leitura {
   readonly texto: string;
   readonly corDoTexto: string;
-  readonly icone: LucideIcon;
-  readonly corDoIcone: string;
 }
 
 function leituraDe(validade: ValidadeProxima, limiarEmDias: number): Leitura {
@@ -41,31 +44,23 @@ function leituraDe(validade: ValidadeProxima, limiarEmDias: number): Leitura {
       return {
         texto: `expirou ${relativo}`,
         corDoTexto: "text-danger",
-        icone: CircleAlert,
-        corDoIcone: "text-danger",
       };
     }
     if (dias === 0) {
       return {
         texto: "expira hoje",
         corDoTexto: "text-danger",
-        icone: CircleAlert,
-        corDoIcone: "text-danger",
       };
     }
     if (dias <= limiarEmDias) {
       return {
         texto: `expira ${relativo}`,
         corDoTexto: "text-warning",
-        icone: Clock,
-        corDoIcone: "text-warning",
       };
     }
     return {
       texto: `expira a ${formatDayMonth(validade.expires_at)}`,
       corDoTexto: "text-muted-foreground",
-      icone: CircleCheck,
-      corDoIcone: "text-success",
     };
   }
 
@@ -73,23 +68,17 @@ function leituraDe(validade: ValidadeProxima, limiarEmDias: number): Leitura {
     return {
       texto: `perdeu qualidade ${relativo}`,
       corDoTexto: "text-warning",
-      icone: Clock,
-      corDoIcone: "text-warning",
     };
   }
   if (dias <= limiarEmDias) {
     return {
       texto: `perde qualidade ${relativo}`,
       corDoTexto: "text-warning",
-      icone: Clock,
-      corDoIcone: "text-warning",
     };
   }
   return {
     texto: `melhor antes de ${formatDayMonth(validade.expires_at)}`,
     corDoTexto: "text-muted-foreground",
-    icone: CircleCheck,
-    corDoIcone: "text-success",
   };
 }
 
@@ -114,12 +103,10 @@ export function TextoDeValidade({
   }
 
   const leitura = leituraDe(validade, limiarEmDias);
-  const Icone = leitura.icone;
 
   return (
-    <span className={`flex min-w-0 items-center gap-1 ${leitura.corDoTexto}`} title={tituloDe(validade)}>
-      <Icone aria-hidden="true" className={`size-3.5 shrink-0 ${leitura.corDoIcone}`} />
-      <span className="truncate">{leitura.texto}</span>
+    <span className={`block min-w-0 truncate ${leitura.corDoTexto}`} title={tituloDe(validade)}>
+      {leitura.texto}
     </span>
   );
 }

@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { mensagemDeErro } from "@/lib/api/errors";
 
 import { useArtigoEmStock, useMovimentosDoArtigo, useResumoDeStock } from "../api";
-import { BadgeDeEstado } from "../components/badge-de-estado";
+import { EstadoDoNivel } from "../components/estado-do-nivel";
 import { FormularioDeDesperdicio } from "../components/formulario-de-desperdicio";
 import { HistoricoDeMovimentos } from "../components/historico-de-movimentos";
 import { TextoDeValidade } from "../components/validade";
@@ -67,14 +67,14 @@ function Cabecalho({ nivel, limiarEmDias }: { nivel: NivelDeStock; limiarEmDias:
         >
           {textoDeQuantidade(nivel.quantity)}
         </span>
-        <BadgeDeEstado estado={nivel.status} />
+        <EstadoDoNivel estado={nivel.status} />
       </div>
 
       {/* O limiar de "baixo" fica **dentro** do ecrã e não num painel de
           configurações, para o dono o contestar em voz alta (guião §4, nº 7). A
           unidade de registo também está à vista: é a pergunta do leite ao ml. */}
       <p className="text-xs text-muted-foreground">
-        mínimo {textoDeQuantidade(nivel.min_quantity)} · unidade de registo:{" "}
+        mínimo {textoDeQuantidade(nivel.min_quantity)}, registado ao{" "}
         {nivel.quantity.base_unit}
       </p>
 
@@ -86,7 +86,7 @@ function Cabecalho({ nivel, limiarEmDias }: { nivel: NivelDeStock; limiarEmDias:
         <p className="text-sm text-muted-foreground">
           {nivel.by_location.map((parcela, indice) => (
             <span key={parcela.location.id}>
-              {indice === 0 ? "" : " · "}
+              {indice === 0 ? "" : ", "}
               {parcela.location.name} <span data-numeric>{textoDeQuantidade(parcela.quantity)}</span>
             </span>
           ))}

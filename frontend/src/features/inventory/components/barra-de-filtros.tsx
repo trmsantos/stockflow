@@ -15,9 +15,20 @@ import type { Localizacao } from "../schemas";
 /**
  * A barra *sticky* do topo: procurar e escolher a localização.
  *
- * É a única coisa que fica colada ao ecrã quando a lista corre, porque é a
- * ação principal do guião §1 — e porque o orçamento de 360×640 não paga mais
- * do que uma linha colada. Os três números e a lista correm por baixo dela.
+ * É a única coisa que fica colada ao ecrã quando a tabela corre, e é também o
+ * único cabeçalho que acompanha de facto o scroll: um `thead` sticky não
+ * funciona dentro do invólucro que desliza na horizontal, e a razão está escrita
+ * no `components/tabela.tsx`.
+ *
+ * **Não tem título.** O nome do ecrã está no header do shell, com o grupo
+ * ("Inventário / Stock"), e um segundo título aqui era a mesma palavra duas
+ * vezes a 40px de distância. O peso visual deste ecrã vive nas figuras da régua
+ * de contadores, que são mono e são o que se compara — não num cabeçalho grande,
+ * que é o tratamento default de qualquer página gerada.
+ *
+ * O campo de procura tem um tecto de 320px (`sm:max-w-xs`). Sem ele esticava até
+ * aos ~1024px da área de conteúdo em desktop, o que é uma caixa de texto da
+ * largura de um monitor para escrever "acucar".
  *
  * **O seletor de localização é a parte operacional da Q2** ("uma loja ou
  * várias"): ver consolidado ou separado, e observar qual é que ele procura. As
@@ -28,8 +39,9 @@ import type { Localizacao } from "../schemas";
  * aqui, porque não há (ainda) endpoint que liste localizações.
  *
  * O guião põe este seletor no header. O header é do shell, e o shell não
- * conhece domínios (ADR 0008, decisão 2) — por isso vive aqui, à mão do
- * polegar, colado ao campo de procurar.
+ * conhece domínios (ADR 0008, decisão 2) — por isso vive aqui, colado ao campo
+ * de procurar: os dois definem o **âmbito** do que a tabela mostra, e controlos
+ * que fazem a mesma coisa ficam juntos.
  */
 
 /** Radix reserva a string vazia; "todas" é o sentinela só do seletor. */
@@ -64,10 +76,10 @@ export function BarraDeFiltros({
     // orçamento de ecrã da sessão 0, que a ADR 0009 retirou. Com o número
     // antigo esta barra ficava 8px por baixo do cabeçalho e desaparecia-lhe por
     // trás ao deslizar. Agora é o mesmo token nos dois sítios.
-    <div className="sticky top-cabecalho z-10 flex items-center gap-2 border-b border-border bg-background px-4 py-2">
+    <div className="sticky top-cabecalho z-10 flex items-center gap-2 border-b border-border bg-background px-celula-x py-2">
       {/* `role="search"` e não um `<form>`: não há submissão — o filtro aplica-se
           a cada tecla e o estado vive no URL, logo não há nada para enviar. */}
-      <div role="search" className="relative min-w-0 flex-1">
+      <div role="search" className="relative min-w-0 flex-1 sm:max-w-xs">
         <Label htmlFor="procurar-artigo" className="sr-only">
           Procurar artigo
         </Label>

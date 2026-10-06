@@ -1,8 +1,14 @@
 import { Ban, RefreshCw } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
+import {
+  CLASSE_CELULA,
+  CLASSE_LINHA,
+  EsqueletoDeTabela,
+  MolduraDeTabela,
+  type ColunaDeTabela,
+} from "@/components/tabela";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate, formatDayMonth } from "@/lib/format";
 
 import { nomeDoEstadoDoConvite, nomeDoPapel, type Convite } from "../schemas";
@@ -69,21 +75,27 @@ import { ValidadeDoConvite } from "./validade-do-convite";
  */
 
 /** As sete colunas, e o que cada uma é. Uma lista só, usada pelas três formas. */
-const COLUNAS = [
-  { chave: "email", rotulo: "Email", classe: "" },
-  { chave: "nome", rotulo: "Nome", classe: "" },
-  { chave: "papel", rotulo: "Papel", classe: "" },
-  { chave: "estado", rotulo: "Estado", classe: "" },
-  { chave: "validade", rotulo: "Link", classe: "" },
+const COLUNAS: readonly ColunaDeTabela[] = [
+  { chave: "email", rotulo: "Email" },
+  { chave: "nome", rotulo: "Nome" },
+  { chave: "papel", rotulo: "Papel" },
+  { chave: "estado", rotulo: "Estado" },
+  { chave: "validade", rotulo: "Link" },
   { chave: "criado", rotulo: "Criado", classe: "text-right" },
   { chave: "accoes", rotulo: "Acções", classe: "text-right" },
-] as const;
-
-const CLASSE_CELULA = "border-r border-border px-celula-x align-middle last:border-r-0";
-const CLASSE_LINHA = "h-linha border-b border-border last:border-b-0";
+];
 
 /**
- * A moldura da tabela: o invólucro que desliza, a largura mínima e o cabeçalho.
+ * A moldura, as classes de célula e de linha e o esqueleto vêm de
+ * `@/components/tabela`.
+ *
+ * **Viviam aqui**, e desceram a 2026-10-06 quando o ecrã Stock passou de lista
+ * de cartões a tabela densa: as convenções do cromado — altura de linha, réguas
+ * verticais, cabeçalho em `surface-2`, microrótulo em caixa alta — passaram a ser
+ * precisas em duas features, e a descida é a que a ADR 0008 (decisão 2) deixou
+ * pré-aprovada para o primeiro caso real. O argumento não é reutilização: duas
+ * tabelas com a mesma intenção em dois ficheiros divergem na primeira correção
+ * feita só num deles.
  *
  * `min-w-4xl` (56rem) é o que garante que as sete colunas não se esmagam. A
  * 1280px a área de conteúdo tem ~1024px (64rem), logo não há scroll nenhum em
@@ -91,31 +103,9 @@ const CLASSE_LINHA = "h-linha border-b border-border last:border-b-0";
  * defeito. Esconder colunas em mobile foi a alternativa rejeitada: numa lista de
  * quem tem acesso a uma casa, a coluna que se esconde é a que faltava.
  */
-function MolduraDaTabela({ children }: { readonly children: ReactNode }) {
-  return (
-    // `overscroll-x-contain`: a tabela desliza na horizontal a 360px, e sem isto
-    // chegar ao fim do deslize passava o gesto à página — que num iOS é a
-    // navegação para trás. Quem está a ler a sétima coluna não quer sair do ecrã.
-    <div className="w-full overflow-x-auto overscroll-x-contain">
-      <table className="w-full min-w-4xl border-collapse text-sm">
-        <thead>
-          <tr className="h-linha border-b border-border bg-surface-2 text-left">
-            {COLUNAS.map((coluna) => (
-              <th
-                key={coluna.chave}
-                scope="col"
-                className={`${CLASSE_CELULA} ${coluna.classe} text-xs font-bold tracking-microrotulo text-muted-foreground uppercase`}
-              >
-                {coluna.rotulo}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        {children}
-      </table>
-    </div>
-  );
-}
+const LARGURA_MINIMA = "min-w-4xl";
+
+const ROTULO = "Convites enviados, do mais recente para o mais antigo";
 
 export function TabelaDeConvites({
   convites,
@@ -133,7 +123,7 @@ export function TabelaDeConvites({
   readonly aoRevogar: (convite: Convite) => void;
 }) {
   return (
-    <MolduraDaTabela>
+    <MolduraDeTabela colunas={COLUNAS} larguraMinima={LARGURA_MINIMA} rotulo={ROTULO}>
       <tbody>
         {convites.map((convite) => (
           <LinhaDeConvite
@@ -147,7 +137,7 @@ export function TabelaDeConvites({
           />
         ))}
       </tbody>
-    </MolduraDaTabela>
+    </MolduraDeTabela>
   );
 }
 
@@ -338,21 +328,11 @@ function LinhaDeConvite({
  */
 export function EsqueletoDeConvites({ linhas = 3 }: { readonly linhas?: number }) {
   return (
-    <div aria-busy="true">
-      <span className="sr-only">A carregar os convites…</span>
-      <MolduraDaTabela>
-        <tbody>
-          {Array.from({ length: linhas }, (_, indice) => (
-            <tr key={indice} className={CLASSE_LINHA}>
-              {COLUNAS.map((coluna) => (
-                <td key={coluna.chave} className={CLASSE_CELULA}>
-                  <Skeleton className="h-4 w-full" />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </MolduraDaTabela>
-    </div>
+    <EsqueletoDeTabela
+      colunas={COLUNAS}
+      larguraMinima={LARGURA_MINIMA}
+      rotulo="A carregar os convites…"
+      linhas={linhas}
+    />
   );
 }
