@@ -128,7 +128,32 @@ export function RodapeDaSidebar({
                 <span className="truncate text-left">{nomeDoAtivo}</span>
               )}
             </SelectTrigger>
-            <SelectContent>
+            {/* `position="popper"` e `side="top"`, e não o default do Radix.
+                O default é `item-aligned`, que posiciona a lista para o **item
+                seleccionado ficar por cima do trigger**. Este seletor vive no
+                **fundo** da sidebar, encostado ao fundo da janela: com o activo
+                a ser o primeiro da lista, os restantes eram desenhados abaixo do
+                trigger, ou seja fora do ecrã — a lista abria e a outra opção não
+                se alcançava. O `popper` tem detecção de colisão e abre para
+                cima quando não há espaço abaixo.
+
+                Foi encontrado por olhos num browser (a combobox "não
+                funcionava"), depois de o código do cliente, os dados do
+                servidor e o estado `disabled` terem sido todos verificados e
+                estarem certos. Nenhum gate deste projeto vê geometria. */}
+            <SelectContent
+              position="popper"
+              side="top"
+              sideOffset={4}
+              // A largura mínima do trigger, aqui e não no primitivo: o ramo
+              // `position === "popper"` do `select.tsx` gerado pelo CLI está
+              // **vazio** (`&& ""`), logo as classes que o modo popper precisa
+              // não vêm de lá. A colocação em si é do Radix por estilo inline e
+              // funciona; o que faltava era a lista não encolher para menos do
+              // que o botão. `src/components/ui/` não se edita à mão
+              // (DESIGN.md §3), por isso vai por `className`.
+              className="min-w-[var(--radix-select-trigger-width)]"
+            >
               {estabelecimentos.map((estabelecimento) => (
                 <SelectItem key={estabelecimento.id} value={estabelecimento.id}>
                   <span className="truncate">{estabelecimento.nome}</span>
