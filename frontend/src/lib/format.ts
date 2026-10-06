@@ -27,6 +27,12 @@ const dinheiroRedondo = new Intl.NumberFormat(LOCALE, {
   maximumFractionDigits: 0,
 });
 
+const dinheiroComSinal = new Intl.NumberFormat(LOCALE, {
+  style: "currency",
+  currency: "EUR",
+  signDisplay: "exceptZero",
+});
+
 const inteiro = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 0 });
 
 const taxa = new Intl.NumberFormat(LOCALE, {
@@ -46,6 +52,10 @@ const data = new Intl.DateTimeFormat(LOCALE, {
 });
 
 const diaEMes = new Intl.DateTimeFormat(LOCALE, { day: "2-digit", month: "2-digit" });
+
+const mesEAno = new Intl.DateTimeFormat(LOCALE, { month: "long", year: "numeric" });
+
+const diaEMesCurto = new Intl.DateTimeFormat(LOCALE, { day: "numeric", month: "short" });
 
 const hora = new Intl.DateTimeFormat(LOCALE, { hour: "2-digit", minute: "2-digit" });
 
@@ -83,6 +93,24 @@ export function formatMoney(value: string | number): string {
  */
 export function formatMoneyRounded(value: string | number): string {
   return dinheiroRedondo.format(Number(value));
+}
+
+/**
+ * `+1 150,00 €` — um valor **com sinal**, para uma variação.
+ *
+ * Existe para a variação de stock do painel (ADR 0013, decisão 4), e o sinal é
+ * do número e não da cor: `+1 150,00 €` lê-se igual a preto e branco, e a
+ * palavra ao lado ("encheu-se a despensa") é que diz o significado. É a mesma
+ * regra do `formatPercentChange`.
+ *
+ * Com cêntimos, ao contrário do `formatMoneyRounded`: este número aparece na
+ * linha que o ecrã usa para **mostrar a identidade a fechar**
+ * (`variação == compras − consumo − quebra`), e com os três termos arredondados
+ * ao euro a soma podia divergir num euro à vista de quem está a verificá-la.
+ * Onde o valor é uma leitura e não uma prova, continua a usar-se o arredondado.
+ */
+export function formatMoneyChange(value: string | number): string {
+  return dinheiroComSinal.format(Number(value));
 }
 
 /**
@@ -125,6 +153,23 @@ export function formatDate(value: Date | string): string {
 /** `29/09` — numa linha de 56px a validade não tem espaço para o ano. */
 export function formatDayMonth(value: Date | string): string {
   return diaEMes.format(paraData(value));
+}
+
+/**
+ * `setembro de 2026` — o mês de negócio de que o fecho fala.
+ *
+ * Aceita o `"2026-09"` do contrato, que **não** é uma data: `new Date("2026-09")`
+ * é lido como UTC e num fuso a oeste de Greenwich devolve agosto. O dia 1 às
+ * 12:00 locais é seguro em qualquer fuso, e o dia nunca é mostrado.
+ */
+export function formatMonth(month: string): string {
+  const [ano, mes] = month.split("-").map(Number);
+  return mesEAno.format(new Date(ano ?? 0, (mes ?? 1) - 1, 1, 12));
+}
+
+/** `1 set` — a fronteira de um mês de negócio, onde o ano é redundante. */
+export function formatDayMonthShort(value: Date | string): string {
+  return diaEMesCurto.format(paraData(value));
 }
 
 /** `06:40` — a hora a que um movimento aconteceu. */

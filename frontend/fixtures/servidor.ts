@@ -4,6 +4,7 @@ import type { z } from "zod";
 
 import { ROTAS_DE_ALERTAS } from "./alertas.ts";
 import { ROTAS_DE_CONTAGEM } from "./contagem.ts";
+import { ROTAS_DO_PAINEL } from "./painel.ts";
 import { ROTAS_DE_RECECOES } from "./rececoes.ts";
 import { ROTAS_DE_STOCK } from "./stock.ts";
 
@@ -113,6 +114,21 @@ export interface Rota {
   readonly responder: (ctx: Contexto) => Resposta;
   /** A variante vazia, para "o que aparece quando não há nada?". */
   readonly vazio?: (ctx: Contexto) => Resposta;
+  /**
+   * A variante **restrita**: o 403 de quem não tem o papel que este caminho
+   * exige (ADR 0013, decisão 6).
+   *
+   * É `opt-in` por rota e não ambiente, pela lição que o 409 de tenant
+   * divergente deixou escrita mais abaixo: um servidor de dados falsos serve
+   * **formas de dados**, e tudo o que se pareça com autorização tem de se
+   * pedir. Hoje só o `/reporting/month` a tem, porque é o único caminho cuja
+   * permissão é de um papel só.
+   *
+   * E não é fingir uma sessão (que a ADR 0010 proíbe): é devolver uma recusa,
+   * na mesma direcção do `RECUSA_SEM_SESSAO`. Uma sessão falsa **concede** o
+   * que o servidor recusaria; uma recusa não concede nada.
+   */
+  readonly restrito?: (ctx: Contexto) => Resposta;
 }
 
 export interface OpcoesDeFixtures {
@@ -124,6 +140,8 @@ export interface OpcoesDeFixtures {
   readonly erros?: readonly string[];
   /** Caminhos que respondem 403 `sem_sessao` — a sessão que expira a meio. */
   readonly semSessao?: readonly string[];
+  /** Caminhos que respondem 403 de **papel** — o painel do dono visto por outro. */
+  readonly restritos?: readonly string[];
 }
 
 /**
@@ -135,6 +153,7 @@ const ROTAS: readonly Rota[] = [
   ...ROTAS_DE_CONTAGEM,
   ...ROTAS_DE_ALERTAS,
   ...ROTAS_DE_RECECOES,
+  ...ROTAS_DO_PAINEL,
 ];
 
 function esperar(ms: number): Promise<void> {
@@ -243,6 +262,7 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
   const vazios = new Set(opcoes.vazios ?? []);
   const erros = new Set(opcoes.erros ?? []);
   const semSessao = new Set(opcoes.semSessao ?? []);
+  const restritos = new Set(opcoes.restritos ?? []);
 
   const middleware: Connect.NextHandleFunction = (req, res, next) => {
     const metodo = req.method ?? "GET";
@@ -273,7 +293,7 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
        * Os estados do DESIGN.md §3 (e a recusa de âmbito) pedem-se de duas
        * formas, e nenhuma delas é um `if` dentro da app: por caminho, ao
        * arrancar o `pnpm dev` (`FIXTURES_ERRO=/api/v1/stock/levels pnpm dev`),
-       * ou por pedido, com `?_fixture=erro|vazio|sem_sessao`. O segundo existe
+       * ou por pedido, com `?_fixture=erro|vazio|sem_sessao|restrito`. O segundo existe
        * para sondar com `curl` sem reiniciar; nada em `src/` o envia, e no dia
        * em que o Django servir o caminho o parâmetro deixa de ter quem o leia.
        *
@@ -287,6 +307,8 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
       const comRecusaDeAmbito =
         pedido === "sem_sessao" || semSessao.has(caminho) || semSessao.has(rota.caminho);
       const comTenantDivergente = pedido === "tenant_divergente";
+      const comRecusaDePapel =
+        pedido === "restrito" || restritos.has(caminho) || restritos.has(rota.caminho);
 
       // Primeiro de todos, porque é o que o `TenantMiddleware` faz: a falta de
       // âmbito é decidida **antes** de o header ser comparado (um 409) e antes
@@ -337,6 +359,26 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
           detail: "Pedido sem token CSRF. Recarregue a página e tente outra vez.",
         });
         registar(metodo, caminho, 403, Date.now() - inicio);
+        return;
+      }
+
+      // Depois do âmbito e do CSRF, e antes de a view correr: é a ordem do
+      // Django e do DRF — o `TenantMiddleware` resolve o âmbito, o
+      // `CsrfViewMiddleware` verifica o token, e só então o
+      // `permission_classes` da view recusa o papel. Uma rota sem variante
+      // `restrito` ignora o modo e responde normalmente: o `/month` é o único
+      // caminho de um papel só, e inventar um 403 nos outros era afirmar uma
+      // permissão que nenhuma view tem.
+      if (comRecusaDePapel && rota.restrito) {
+        await esperar(atraso);
+        const recusa = rota.restrito({
+          caminho,
+          parametros: url.searchParams,
+          variaveis,
+          corpo: null,
+        });
+        enviar(res, recusa.estado, recusa.corpo);
+        registar(metodo, caminho, recusa.estado, Date.now() - inicio);
         return;
       }
 

@@ -30,6 +30,11 @@ const API_ORIGIN = process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8010";
  * responde **403 `sem_sessao`** naquele caminho, que é a sessão a expirar a
  * meio. Não é fingir uma sessão — é o contrário, e a razão está no
  * `fixtures/servidor.ts`.
+ *
+ * E um quinto, da mesma família: `FIXTURES_RESTRITO=/api/v1/reporting/month`
+ * responde o **403 de papel** daquele caminho — o painel do dono visto por quem
+ * não é dono (ADR 0013, decisão 6). Só as rotas que declaram a variante
+ * `restrito` o conhecem, e hoje é uma.
  */
 const ATRASO_DE_FIXTURES = Number(process.env.FIXTURES_ATRASO_MS ?? 250);
 
@@ -49,6 +54,7 @@ export default defineConfig({
       vazios: caminhos(process.env.FIXTURES_VAZIO),
       erros: caminhos(process.env.FIXTURES_ERRO),
       semSessao: caminhos(process.env.FIXTURES_SEM_SESSAO),
+      restritos: caminhos(process.env.FIXTURES_RESTRITO),
     }),
   ],
   resolve: {

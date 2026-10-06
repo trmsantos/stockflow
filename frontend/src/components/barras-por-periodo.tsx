@@ -130,10 +130,35 @@ export function BarrasPorPeriodo({
             // intervalos numa área de 990px cada coluna tinha 140px, e sete
             // blocos de 140px colados por 1px lêem-se como uma área cheia e não
             // como barras. Medido e visto.
+            //
+            // **Os dois modos declaram os dois eixos, e isto foi corrigido a
+            // 2026-10-06 com uma medição.** A forma anterior partilhava
+            // `items-center justify-end` e só sobrepunha `flex-col-reverse
+            // justify-start` no modo empilhado. Num `flex-col-reverse` isso
+            // está certo — `items-center` centra na horizontal e
+            // `justify-start` assenta as barras na base —, mas no modo **lado a
+            // lado** o eixo principal é horizontal e as mesmas duas classes
+            // querem dizer o contrário: `items-center` passou a centrar na
+            // **vertical** e `justify-end` a encostar à direita.
+            //
+            // Medido no banco de ensaio, com cinco intervalos numa área de
+            // 1024px: a coluna tinha 160px de altura, a barra de 70% tinha
+            // 112px e começava 24px **abaixo** do topo — ou seja, flutuava a
+            // meia altura em vez de assentar no fio da base — e o par de barras
+            // ficava encostado à direita da sua fatia, desalinhado do rótulo que
+            // está centrado por baixo. Um gráfico de barras cujas barras não
+            // tocam o eixo não é um gráfico de barras.
+            //
+            // Este painel é o primeiro consumidor do componente, e o defeito só
+            // podia aparecer aqui. Cada modo passa a declarar os dois eixos por
+            // inteiro, em vez de depender da ordem com que o Tailwind emite duas
+            // utilities do mesmo `justify-content`.
             <div
               key={intervalo}
-              className={`flex h-full min-w-0 flex-1 items-center justify-end ${
-                empilhado ? "flex-col-reverse justify-start" : "gap-px"
+              className={`flex h-full min-w-0 flex-1 ${
+                empilhado
+                  ? "flex-col-reverse items-center justify-start"
+                  : "items-end justify-center gap-px"
               }`}
             >
               {series.map((serie) => {

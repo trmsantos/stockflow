@@ -69,6 +69,23 @@ export interface BarraOrdenada {
 
 const CELULA = "px-celula-x align-middle";
 
+/**
+ * A largura da coluna do valor: **128px e não 112px, medido a 2026-10-06**.
+ *
+ * Era `w-28` (112px), o que deixa 80px de texto depois do `px-celula-x` dos dois
+ * lados. Chega para "18,40 €" — o desperdício por motivo, que foi o caso em que
+ * este componente nasceu — e **não** chega para um custo por cargo: no banco de
+ * ensaio, "2 880,12 €" em mono de 15px partiu em duas linhas ("2 880,12" e
+ * "€"), a linha cresceu acima dos 44px e o ritmo da tabela desfez-se. É a lição
+ * 3 do DESIGN.md §4 pela porta do lado: não foi uma sub-linha que cresceu a
+ * linha, foi o valor a não caber na coluna que lhe reservaram.
+ *
+ * 128px dão 96px de texto, que é o que um valor de milhares com cêntimos ocupa.
+ * Quem passa valores de leitura (o painel) arredonda-os ao euro de qualquer
+ * forma; esta largura é a rede para quem não o fizer.
+ */
+const VALOR = "w-32 text-right";
+
 export function BarrasOrdenadas({
   barras,
   campo,
@@ -102,7 +119,7 @@ export function BarrasOrdenadas({
           <th scope="col" className="w-1/2">
             <span className="sr-only">Proporção</span>
           </th>
-          <th scope="col" className={`${CELULA} w-28 text-right ${micro}`}>
+          <th scope="col" className={`${CELULA} ${VALOR} ${micro}`}>
             {rotuloDoValor}
           </th>
         </tr>
@@ -129,7 +146,7 @@ export function BarrasOrdenadas({
               </span>
             </td>
 
-            <td data-numeric className={`${CELULA} w-28 text-right`}>
+            <td data-numeric className={`${CELULA} ${VALOR}`}>
               {barra.valor}
             </td>
           </tr>
