@@ -13,7 +13,13 @@ FROM node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WORKDIR /app
 
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+# **Os três ficheiros de instalação, e o terceiro entrou a 2026-10-06.** O
+# `pnpm-workspace.yaml` é a casa dos `overrides` desde o pnpm v10 — deixou de ser
+# o `package.json` — e sem ele aqui o `--frozen-lockfile` falha com
+# `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`: dentro da imagem o pnpm não vê override
+# nenhum e o lockfile diz que há um. Foi exactamente o que aconteceu, e o
+# diagnóstico só é óbvio depois de se saber que a configuração mudou de ficheiro.
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN corepack enable && corepack install
 # `--frozen-lockfile` faz a build falhar se o lockfile não bater com o
 # package.json, em vez de resolver versões novas em silêncio.
