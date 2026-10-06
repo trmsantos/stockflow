@@ -3,6 +3,8 @@ import { formatCount, formatQuantity } from "@/lib/format";
 import type {
   Conservacao,
   EspecieDeLinha,
+  EstadoDeLinha,
+  EstadoDeRececao,
   LinhaDeRececao,
   Quantidade,
   TipoDeDocumento,
@@ -50,6 +52,42 @@ export function nomeDoDocumento(tipo: TipoDeDocumento): string {
   return NOME_DO_DOCUMENTO.get(tipo) ?? tipo;
 }
 
+/**
+ * O estado de um documento, **em palavra** — que é como o DESIGN.md §3 manda
+ * mostrar um estado numa tabela densa, e não num chip.
+ *
+ * As duas palavras vêm dos badges que a lista usava antes de ser tabela
+ * ("precisa de revisão", "no stock"), encurtadas para caberem numa célula de
+ * 44px sem truncar. Dizem o que o documento é para o **stock**, que é a pergunta
+ * do ecrã: "por rever" é mercadoria cujo stock ainda não existe.
+ */
+const ESTADO_DE_RECECAO = new Map<EstadoDeRececao, string>([
+  ["needs_review", "por rever"],
+  ["confirmed", "no stock"],
+]);
+
+export function rotuloDeEstadoDeRececao(estado: EstadoDeRececao): string {
+  return ESTADO_DE_RECECAO.get(estado) ?? estado;
+}
+
+/**
+ * O estado de uma linha. Três, e o terceiro é uma decisão e não um problema:
+ * `skipped` é a linha que alguém deixou **de fora** desta entrada.
+ *
+ * "revista" e não "confirmada": o que a linha ganhou foi revisão humana. O
+ * movimento no ledger só existe quando o documento inteiro é confirmado, e é a
+ * coluna do stock que o diz.
+ */
+const ESTADO_DE_LINHA = new Map<EstadoDeLinha, string>([
+  ["needs_review", "por rever"],
+  ["confirmed", "revista"],
+  ["skipped", "de fora"],
+]);
+
+export function rotuloDeEstadoDeLinha(estado: EstadoDeLinha): string {
+  return ESTADO_DE_LINHA.get(estado) ?? estado;
+}
+
 const CONSERVACAO = new Map<Conservacao, string>([
   ["frozen", "congelado"],
   ["chilled", "refrigerado"],
@@ -90,10 +128,25 @@ export function rotuloDeValidade(tipo: TipoValidade): string {
   return VALIDADE.get(tipo) ?? tipo;
 }
 
-/** A forma curta, para caber na linha de 360px. */
+/**
+ * A forma curta, para caber numa célula de tabela.
+ *
+ * **"melhor antes" e não "durabilidade mínima", desde 2026-10-06**, por duas
+ * razões que se somam. A primeira é de vocabulário: o módulo de inventário já diz
+ * "melhor antes de 03/03" nos ecrãs de Stock e de Alertas, e dois módulos com
+ * duas palavras para o mesmo conceito é exactamente o que estes ficheiros existem
+ * para impedir. A forma legal ("data de durabilidade mínima") continua no
+ * `rotuloDeValidade`, que é onde a validade é **escrita** e onde a precisão paga.
+ *
+ * A segunda é medida: com 19 caracteres, esta sub-linha forçava o `min-content`
+ * da coluna da validade a 152px apesar de ela declarar `w-32` (128) — e os 24px
+ * a mais saíam da coluna flexível do artigo, que já estava a truncar. Uma coluna
+ * de largura fixa **não é** largura fixa se o conteúdo dela pedir mais, e isto
+ * só se vê a medir.
+ */
 const VALIDADE_CURTA = new Map<TipoValidade, string>([
   ["use_by", "consumir até"],
-  ["best_before", "durabilidade mínima"],
+  ["best_before", "melhor antes"],
 ]);
 
 export function rotuloCurtoDeValidade(tipo: TipoValidade): string {

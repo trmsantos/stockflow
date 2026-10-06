@@ -267,8 +267,9 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
 - Largura máxima: `72rem` para **formulários e leitura**, `42rem` para texto corrido. **Tabelas usam
   a largura toda da área de conteúdo** — um cap de 72rem numa tabela de ERP é espaço desperdiçado à
   direita.
-- **O Stock e os Alertas cumprem a linha acima desde 2026-10-06; Contar e o Fecho de contagem
-  nunca a vão cumprir, e isso é a resposta certa para eles.** Este documento
+- **Todos os ecrãs de lista cumprem a linha acima desde 2026-10-06** — Stock, Alertas, o
+  desperdício, Receber, a receção e o histórico de movimentos de um artigo —, **e Contar e o Fecho de
+  contagem nunca a vão cumprir, porque não são listas.** Este documento
   carregava a dívida por escrito — os quatro ecrãs com um cap de `42rem`, 672px numa área de 1024 —
   e a ordem de a pagar **depois** da sessão 0 (ADR 0009), porque refazer antes das respostas era
   refazer duas vezes.
@@ -279,7 +280,22 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   trocar uma coluna numa tabela que existe é uma linha num array — logo o argumento de "duas vezes"
   caiu com a forma, não com as respostas.
   **Alargar o cap sem passar as linhas a tabela densa continua a ser pior do que não alargar.** A
-  conversão é por ecrã e cada um paga a sua.
+  conversão foi por ecrã e cada um pagou a sua.
+- **As larguras de coluna medem-se, não se somam.** A oito colunas numa área de 1024px todas as
+  larguras ficam no mínimo, e três coisas que só aparecem a medir decidiram o desenho final:
+  1. **uma coluna de largura fixa não é de largura fixa.** A sub-linha "durabilidade mínima" (19
+     caracteres) forçava o `min-content` da coluna da validade a 152px apesar de ela declarar `w-32`
+     (128), e os 24px a mais saíam da coluna flexível ao lado. O remédio foi encurtar a palavra — e
+     encurtá-la melhorou o vocabulário, porque o inventário já dizia "melhor antes de" para o mesmo
+     conceito;
+  2. **o cabeçalho é, muitas vezes, o conteúdo mais largo de uma coluna numérica.** "QUANTIDADE" em
+     caixa alta com tracking de 0.08em é mais largo do que "24,400 kg";
+  3. **uma sub-linha de 13px numa célula de 44px cresce a linha.** "aviso a 3 dias" na coluna do lote
+     punha metade das linhas dos Alertas a 62px numa tabela de 44, e o ritmo da tabela desfazia-se.
+  O tecto honesto a 1280px é oito colunas de dados; a nona não cabe. A **1440px**, que é a largura de
+  desenho deste documento, nenhuma das tabelas trunca. Um nome de artigo a cortar aos 1280 é aceite e
+  tem o texto completo no `title` e no ecrã de detalhe a que o nome liga — um nome truncado lê-se
+  mesmo assim, ao contrário da razão de um alerta ou de uma validade.
 - **Contar e o Fecho de contagem ficam como estão, e não é dívida.** Não são listas: são
   **formulários**. Uma linha de contagem é um campo numérico com salto de foco (`enterKeyHint="next"`)
   para o teclado ficar aberto do princípio ao fim da zona, e o `<label>` está ao lado do campo —

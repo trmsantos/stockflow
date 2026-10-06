@@ -1,5 +1,6 @@
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, CircleAlert, CircleCheck, FileQuestion, TriangleAlert } from "lucide-react";
+import { useState } from "react";
 
 import { ErroAoCarregar } from "@/components/erro-ao-carregar";
 import { EstadoVazio } from "@/components/estado-vazio";
@@ -19,8 +20,11 @@ import {
   CabecalhoDaRececao,
   TotaisDaRececao,
 } from "../components/cabecalho-da-rececao";
-import { EsqueletoDasLinhas, EsqueletoDoCabecalho } from "../components/esqueletos";
-import { LinhaDeFatura } from "../components/linha-de-fatura";
+import { EsqueletoDoCabecalho } from "../components/esqueletos";
+import {
+  EsqueletoDaTabelaDeLinhas,
+  TabelaDeLinhasDeFatura,
+} from "../components/tabela-de-linhas-de-fatura";
 import { TemperaturaAEntrega } from "../components/temperatura-a-entrega";
 import type { LinhaDeRececao } from "../schemas";
 import { textoNaUnidadeBase } from "../vocabulario";
@@ -45,6 +49,19 @@ import { textoNaUnidadeBase } from "../vocabulario";
  *  - **não fala de extração.** Não há percentagens de confiança nem "lido
  *    automaticamente": uma linha ou precisa de revisão ou está revista, e quem a
  *    reviu assina com nome e hora.
+ *
+ * ## Duas larguras no mesmo ecrã, desde 2026-10-06
+ *
+ * As linhas eram uma `<ul>` de cartões de até sete filas de texto dentro de um
+ * `max-w-2xl`; passaram a **tabela densa à largura toda**, como o Stock e os
+ * Alertas. O resto do ecrã **não** foi atrás: o cabeçalho do documento, os
+ * avisos, o rodapé de IVA e o bloco de confirmação são leitura e formulário, e o
+ * DESIGN.md §4 dá-lhes 72rem — uma frase a 1400px de largura não se lê, e um
+ * rodapé de totais com a etiqueta à esquerda e o número a 1300px de distância não
+ * é um rodapé, é dois textos. Tabelas usam a largura toda; prosa não.
+ *
+ * O rodapé de totais fica **alinhado à direita**, debaixo das colunas de
+ * dinheiro da tabela: é onde ele está no papel e é onde a vista já está.
  */
 
 /** O que vai entrar no stock quando se confirmar. Só o que já foi revisto. */
@@ -66,6 +83,11 @@ function ficamDeFora(linhas: readonly LinhaDeRececao[]): LinhaDeRececao[] {
   );
 }
 
+/** Como uma linha se chama em voz alta: o artigo, ou o que a fatura escreveu. */
+function nomeDaLinha(linha: LinhaDeRececao): string {
+  return linha.product_name ?? linha.description;
+}
+
 export function EcraDeRececao() {
   const { rececao: id } = useParams({ from: "/app/receber/$rececao" });
   const busca = useSearch({ from: "/app/receber/$rececao" });
@@ -77,6 +99,14 @@ export function EcraDeRececao() {
   const temperatura = useRegistarTemperatura();
   const confirmar = useConfirmarRececao();
 
+  // Um painel de linha aberto de cada vez: dois formulários de lote abertos
+  // empurram a tabela para fora do ecrã, e o segundo toque passa a ser um toque
+  // às cegas. É a mesma regra do painel de motivos do ecrã Alertas.
+  const [aberta, setAberta] = useState<string | null>(null);
+  // O resultado de uma revisão, para quem não está a olhar para o ecrã: o painel
+  // fecha-se e a linha muda de estado em silêncio.
+  const [ultimo, setUltimo] = useState<string | null>(null);
+
   const dados = documento.data;
   const resultados = linhas.data?.results;
   const porRever = dados?.status === "needs_review";
@@ -85,7 +115,10 @@ export function EcraDeRececao() {
   const foram = ficamDeFora(resultados ?? []);
 
   return (
-    <section className="flex w-full max-w-2xl flex-col gap-3 py-3">
+    // Sem `max-w` na secção: a tabela das linhas usa a largura toda da área de
+    // conteúdo (DESIGN.md §4). O cap de leitura está nos blocos de prosa, não
+    // aqui.
+    <section className="flex w-full flex-col gap-3 py-3">
       <Button asChild variant="ghost" className="self-start">
         {/* `search={busca}` devolve a lista no mesmo filtro em que estava. */}
         <Link to="/receber" search={busca}>
@@ -120,45 +153,60 @@ export function EcraDeRececao() {
         </EstadoVazio>
       ) : dados === undefined ? null : (
         <>
-          <CabecalhoDaRececao rececao={dados} />
-          <AvisoDeTotais rececao={dados} />
+          {/* Leitura e formulário: 72rem (DESIGN.md §4). */}
+          <div className="flex w-full max-w-6xl flex-col gap-3">
+            <CabecalhoDaRececao rececao={dados} />
+            <AvisoDeTotais rececao={dados} />
 
-          {dados.cold_chain ? (
-            <TemperaturaAEntrega
-              rececao={dados}
-              aGuardar={temperatura.isPending}
-              erroDoServidor={temperatura.isError ? mensagemDeErro(temperatura.error) : null}
-              aoGuardar={(celsius) => {
-                temperatura.mutate({ rececao: dados.id, celsius });
-              }}
-            />
-          ) : null}
+            {dados.cold_chain ? (
+              <TemperaturaAEntrega
+                rececao={dados}
+                aGuardar={temperatura.isPending}
+                erroDoServidor={temperatura.isError ? mensagemDeErro(temperatura.error) : null}
+                aoGuardar={(celsius) => {
+                  temperatura.mutate({ rececao: dados.id, celsius });
+                }}
+              />
+            ) : null}
 
-          {dados.status === "confirmed" ? (
-            <div className="px-4">
-              <Alert className="border-success-border bg-success-surface">
-                <CircleCheck aria-hidden="true" className="text-success" />
-                <AlertTitle>A mercadoria está no stock</AlertTitle>
-                <AlertDescription className="flex flex-col items-start gap-2 text-pretty">
-                  <span>
-                    Cada linha confirmada gerou um movimento de entrada com o lote, a validade e o
-                    autor. Nada se reescreve: para corrigir, registra-se um movimento novo.
-                  </span>
-                  <Button asChild variant="outline">
-                    <Link to="/stock" search={() => ({})}>
-                      Ver no stock
-                    </Link>
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            </div>
-          ) : null}
+            {dados.status === "confirmed" ? (
+              <div className="px-celula-x">
+                <Alert className="border-success-border bg-success-surface">
+                  <CircleCheck aria-hidden="true" className="text-success" />
+                  <AlertTitle>A mercadoria está no stock</AlertTitle>
+                  <AlertDescription className="flex flex-col items-start gap-2 text-pretty">
+                    <span>
+                      Cada linha confirmada gerou um movimento de entrada com o lote, a validade e
+                      o autor. Nada se reescreve: para corrigir, registra-se um movimento novo.
+                    </span>
+                    <Button asChild variant="outline">
+                      <Link to="/stock" search={() => ({})}>
+                        Ver no stock
+                      </Link>
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              </div>
+            ) : null}
+          </div>
 
-          <h2 className="bg-surface-2 px-4 py-1 text-xs font-medium text-muted-foreground">
+          {/* A faixa que abre a região da tabela: sem tinta própria e com uma
+              régua abaixo. Era `bg-surface-2`, que é o degrau do **cabeçalho de
+              coluna** da tabela — duas faixas da mesma tinta encostadas uma à
+              outra lêem-se como um bloco só, e o cabeçalho deixava de se ver
+              como cabeçalho. É a mesma razão do "cromado contado" do §2. */}
+          <h2 className="border-b border-border px-celula-x py-2 text-sm font-semibold">
             Linhas do documento
           </h2>
 
-          {linhas.isPending ? <EsqueletoDasLinhas /> : null}
+          {/* O resultado de cada revisão, anunciado uma vez: o painel fecha-se
+              quando o pedido passa, e sem isto quem ouve o ecrã só notava que
+              havia um painel a menos. */}
+          <p role="status" className="px-celula-x py-2 text-sm">
+            {ultimo}
+          </p>
+
+          {linhas.isPending ? <EsqueletoDaTabelaDeLinhas /> : null}
 
           {linhas.isError ? (
             <ErroAoCarregar
@@ -184,39 +232,72 @@ export function EcraDeRececao() {
             </EstadoVazio>
           ) : (
             <>
-              <ul className="flex flex-col">
-                {resultados.map((linha) => (
-                  <LinhaDeFatura
-                    key={linha.id}
-                    linha={linha}
-                    aRevisar={revisar.isPending && revisar.variables.linha === linha.id}
-                    erro={
-                      revisar.isError && revisar.variables.linha === linha.id
-                        ? mensagemDeErro(revisar.error)
-                        : null
-                    }
-                    aoConfirmar={(lote, validade) => {
-                      revisar.mutate({
-                        rececao: dados.id,
-                        linha: linha.id,
-                        ...(lote === undefined ? {} : { lot_code: lote }),
-                        ...(validade === undefined ? {} : { expires_at: validade }),
-                      });
-                    }}
-                    aoDeixarFora={() => {
-                      revisar.mutate({ rececao: dados.id, linha: linha.id, skip: true });
-                    }}
-                    aoVoltarARever={() => {
-                      revisar.mutate({ rececao: dados.id, linha: linha.id, skip: false });
-                    }}
-                  />
-                ))}
-              </ul>
+              <TabelaDeLinhasDeFatura
+                linhas={resultados}
+                abertaEm={aberta}
+                aoAlternar={(linhaId) => {
+                  setAberta((atual) => (atual === linhaId ? null : linhaId));
+                  // Um erro de um pedido anterior não pertence ao painel que se
+                  // acaba de abrir.
+                  revisar.reset();
+                }}
+                linhaARevisar={revisar.isPending ? revisar.variables.linha : null}
+                erro={revisar.isError ? mensagemDeErro(revisar.error) : null}
+                aoConfirmar={(linha, lote, validade) => {
+                  revisar.mutate(
+                    {
+                      rececao: dados.id,
+                      linha: linha.id,
+                      ...(lote === undefined ? {} : { lot_code: lote }),
+                      ...(validade === undefined ? {} : { expires_at: validade }),
+                    },
+                    // Escrito, o painel fecha-se: o que havia para fazer naquela
+                    // linha está feito, e o estado dela passa a ler-se na coluna.
+                    {
+                      onSuccess: () => {
+                        setAberta(null);
+                        setUltimo(`Linha revista: ${nomeDaLinha(linha)}.`);
+                      },
+                    },
+                  );
+                }}
+                aoDeixarFora={(linha) => {
+                  revisar.mutate(
+                    { rececao: dados.id, linha: linha.id, skip: true },
+                    {
+                      onSuccess: () => {
+                        setAberta(null);
+                        setUltimo(
+                          `${nomeDaLinha(linha)} fica fora desta entrada — não gera movimento.`,
+                        );
+                      },
+                    },
+                  );
+                }}
+                aoVoltarARever={(linha) => {
+                  revisar.mutate(
+                    { rececao: dados.id, linha: linha.id, skip: false },
+                    {
+                      onSuccess: () => {
+                        setAberta(null);
+                        setUltimo(`${nomeDaLinha(linha)} volta a precisar de revisão.`);
+                      },
+                    },
+                  );
+                }}
+              />
 
-              <TotaisDaRececao rececao={dados} />
+              {/* O rodapé do documento, alinhado à direita e com medida de
+                  leitura: é onde ele está no papel, debaixo das colunas de
+                  dinheiro. */}
+              <div className="flex w-full justify-end">
+                <div className="w-full max-w-md">
+                  <TotaisDaRececao rececao={dados} />
+                </div>
+              </div>
 
               {porRever ? (
-                <div className="flex flex-col items-start gap-3 border-t border-border px-4 py-4">
+                <div className="flex w-full max-w-6xl flex-col items-start gap-3 border-t border-border px-celula-x py-4">
                   <div className="flex flex-col gap-1">
                     <h2 className="text-sm font-semibold">
                       {entram.length === 0
@@ -229,21 +310,18 @@ export function EcraDeRececao() {
                         estão na embalagem, não no documento.
                       </p>
                     ) : (
+                      // Sem um visto verde por item: eram quinze ícones iguais
+                      // numa coluna a dizer o que a frase já diz, e é a terceira
+                      // linha do §5. A quantidade é que leva mono.
                       <ul className="flex flex-col text-sm">
                         {entram.map((linha) => (
-                          <li key={linha.id} className="flex items-baseline gap-2">
-                            <CircleCheck
-                              aria-hidden="true"
-                              className="mt-1 size-3.5 shrink-0 text-success"
-                            />
-                            <span className="min-w-0">
-                              <span data-numeric>
-                                {linha.stock_quantity === null
-                                  ? ""
-                                  : textoNaUnidadeBase(linha.stock_quantity)}
-                              </span>{" "}
-                              de {linha.product_name} em {linha.location.name}
-                            </span>
+                          <li key={linha.id} className="min-w-0">
+                            <span data-numeric>
+                              {linha.stock_quantity === null
+                                ? ""
+                                : textoNaUnidadeBase(linha.stock_quantity)}
+                            </span>{" "}
+                            de {linha.product_name} em {linha.location.name}
                           </li>
                         ))}
                       </ul>
@@ -293,8 +371,8 @@ export function EcraDeRececao() {
               ) : null}
 
               {/* O resultado anunciado uma vez, para quem não está a olhar para
-                  o ecrã: a lista de linhas muda de estado em silêncio. */}
-              <p role="status" className="px-4 text-sm">
+                  o ecrã: a tabela muda de estado em silêncio. */}
+              <p role="status" className="px-celula-x text-sm">
                 {confirmar.isSuccess ? "Receção confirmada: a mercadoria entrou no stock." : null}
               </p>
             </>
