@@ -283,7 +283,29 @@ jobs:
             --profile setup run --rm migrate
 
       - name: Subir a aplicação
-        run: docker compose --env-file backend/.env -f docker/compose.yml up -d --wait --wait-timeout 180
+        # **O `--wait` não alcança o worker, e tem de ser dito pelo nome.** Ele
+        # tem `healthcheck: disable: true` por uma razão escrita no
+        # `compose.yml` (herdava o healthcheck HTTP da imagem partilhada, que um
+        # worker Celery não serve), e o Compose do runner — mais antigo do que o
+        # de uma máquina de hoje — recusa esperar por um serviço sem healthcheck
+        # com `container … has no healthcheck configured`. Localmente o mesmo
+        # comando passa, que é precisamente o tipo de diferença que faz um gate
+        # só falhar no CI.
+        #
+        # A alternativa seria dar healthcheck ao worker, e o `compose.yml` já
+        # argumenta contra o `celery inspect ping`: custa um round-trip ao broker
+        # a cada verificação e responde `ok` com a fila parada, que é o modo de
+        # falha que interessava detectar. A liveness do worker continua a
+        # afirmar-se pelos logs, no passo seguinte.
+        #
+        # O `db-roles` e o `migrate` **não entram na lista**: são jobs de uma vez
+        # atrás do profile `setup` e já correram no passo anterior com
+        # `run --rm`. Pô-los aqui era pedir ao Compose para os levantar como
+        # serviços.
+        run: |
+          docker compose --env-file backend/.env -f docker/compose.yml \
+            up -d --wait --wait-timeout 180 db redis backend frontend proxy
+          docker compose --env-file backend/.env -f docker/compose.yml up -d worker
 
       - name: Nenhum serviço unhealthy, e o worker vivo
         # Duas asserções, porque a primeira **não pode** ver o worker: ele tem
@@ -306,7 +328,18 @@ jobs:
           # O worker não tem healthcheck: a liveness dele afirma-se pelos logs.
           # Um worker que não liga ao broker repete "Cannot connect" para sempre
           # e passaria as asserções acima.
-          logs=$(docker compose --env-file backend/.env -f docker/compose.yml logs worker 2>&1)
+          #
+          # **Com espera, e não um `logs` único.** O worker sobe sem `--wait`
+          # (ver o passo anterior), logo ligar ao broker pode levar uns segundos
+          # depois de o comando voltar. Um `grep` imediato falharia de vez em
+          # quando por o log ainda não ter a linha — uma intermitência que se
+          # aprende a reexecutar, que é o pior estado em que um gate pode ficar.
+          for _ in $(seq 1 30); do
+            logs=$(docker compose --env-file backend/.env -f docker/compose.yml logs worker 2>&1)
+            echo "$logs" | grep -qE "Connected to (redis|amqp)" && break
+            echo "$logs" | grep -q "Cannot connect" && break
+            sleep 2
+          done
           echo "$logs" | grep -q "Cannot connect" \
             && { echo "::error::o worker não liga ao broker"; echo "$logs" | tail -5; exit 1; }
           # `Connected to redis` e **não** `ready|celery@`: o `celery@` aparece

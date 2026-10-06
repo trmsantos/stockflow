@@ -34,6 +34,28 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------- runtime
 FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS runtime
 
+# Correcções de segurança do sistema base, **por pacote e com versão fixada**.
+#
+# A imagem está fixada por digest, o que é bom para reproduzir o que se constrói
+# e mau para CVE: o digest congela também os pacotes com falhas que o Debian já
+# corrigiu. O trivy do CI corre com `--ignore-unfixed`, logo o que ele reporta é
+# exactamente isto — falhas **com** correcção publicada que a imagem não tem.
+# Em 2026-10-06 eram oito (5 HIGH, 3 CRITICAL) nestes dois pacotes.
+#
+# Não é `apt-get upgrade`: o `hadolint` do mesmo job recusa-o (DL3005), e com
+# razão — uma actualização em bloco muda pacotes que ninguém reviu e torna a
+# build dependente do dia. Dois nomes com duas versões dizem o que mudou.
+#
+# **O pino envelhece de propósito.** Quando a próxima CVE sair, o trivy fica
+# vermelho e alguém sobe a versão aqui — e a subida aparece no diff, com o nome
+# do pacote e o número. É a mesma forma das outras listas fechadas deste
+# repositório: a manutenção é visível em vez de automática e silenciosa.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libpcre2-8-0=10.42-1+deb12u2 \
+      perl-base=5.36.0-7+deb12u4 \
+ && rm -rf /var/lib/apt/lists/*
+
 # Utilizador sem privilégios, com UID fixo: o default do Docker é root, e um
 # UID atribuído dinamicamente rebenta a posse de volumes montados.
 RUN groupadd --gid 10001 app \
