@@ -10,7 +10,12 @@ import {
 } from "@/components/tabela";
 
 import type { NivelDeStock } from "../schemas";
-import { tintaDoTrilho } from "../tinta-do-estado";
+import { urgenciaDaValidade } from "../leitura-da-validade";
+import {
+  piorUrgencia,
+  tintaDoTrilhoDeUrgencia,
+  urgenciaDoEstado,
+} from "../tinta-do-estado";
 import { textoDeQuantidade } from "../vocabulario";
 import { EstadoDoNivel } from "./estado-do-nivel";
 import { TextoDeValidade } from "./validade";
@@ -136,7 +141,19 @@ function LinhaDeStock({
 
   return (
     <tr className={`group ${CLASSE_LINHA} transition-colors hover:bg-surface-2`}>
-      <TrilhoDaLinha tinta={tintaDoTrilho(nivel.status)} />
+      {/* **As duas razões, não uma.** O trilho derivava só do `status` — a
+          quantidade contra o mínimo — e uma linha a expirar hoje ficava com a
+          goteira apagada ao lado de uma linha "baixo" com a validade folgada a
+          levar âmbar. Visto num screenshot do ecrã a correr: "Pastéis de nata ·
+          expira hoje" a vermelho, sem marca. O §1 pede as duas pela letra. */}
+      <TrilhoDaLinha
+        tinta={tintaDoTrilhoDeUrgencia(
+          piorUrgencia(
+            urgenciaDoEstado(nivel.status),
+            urgenciaDaValidade(nivel.nearest_expiry, limiarEmDias),
+          ),
+        )}
+      />
 
       <th scope="row" className={`${CLASSE_CELULA} max-w-0 text-left font-medium`}>
         <Link

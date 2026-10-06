@@ -28,7 +28,7 @@ import type { EstadoNivel, Gravidade } from "./schemas";
  * e são coisas diferentes: aquele é o que o servidor diz, este é o que a tinta
  * precisa de saber. Dois vocabulários do contrato colapsam neste.
  */
-type Urgencia = "grave" | "aviso";
+export type Urgencia = "grave" | "aviso";
 
 /**
  * O `ok` **não está aqui**, e é deliberado: um nível saudável não tem tinta
@@ -99,4 +99,29 @@ export function tintaDoTextoDeGravidade(gravidade: Gravidade): string {
 export function tintaDoTrilhoDeGravidade(gravidade: Gravidade): string {
   const urgencia = URGENCIA_DO_ALERTA.get(gravidade);
   return urgencia === undefined ? "" : (TINTA_DO_TRILHO.get(urgencia) ?? "");
+}
+
+/** A urgência de um estado de nível, para se poder compor com outras. */
+export function urgenciaDoEstado(estado: EstadoNivel): Urgencia | null {
+  return urgenciaDe(estado) ?? null;
+}
+
+/**
+ * A pior de duas urgências.
+ *
+ * Existe porque uma linha de stock tem **duas** razões independentes para pedir
+ * atenção — a quantidade e o prazo — e o trilho é um só. Sem isto o trilho
+ * derivava apenas da quantidade, e uma linha a expirar hoje ficava sem marca
+ * nenhuma ao lado de uma linha "baixo" com validade folgada (medido num
+ * screenshot a 2026-10-06). O DESIGN.md §1 pede as duas pela letra: "em falta
+ * **ou fora de prazo**".
+ */
+export function piorUrgencia(a: Urgencia | null, b: Urgencia | null): Urgencia | null {
+  if (a === "grave" || b === "grave") return "grave";
+  if (a === "aviso" || b === "aviso") return "aviso";
+  return null;
+}
+
+export function tintaDoTrilhoDeUrgencia(urgencia: Urgencia | null): string {
+  return urgencia === null ? "" : (TINTA_DO_TRILHO.get(urgencia) ?? "");
 }
