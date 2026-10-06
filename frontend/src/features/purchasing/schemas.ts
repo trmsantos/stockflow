@@ -217,7 +217,7 @@ export const linhaDeRececaoSchema = z.object({
    */
   expiry_kind: tipoValidadeSchema.nullable(),
   reviewed_by: z.string().min(1).nullable(),
-  reviewed_at: z.iso.datetime().nullable(),
+  reviewed_at: z.iso.datetime({ offset: true }).nullable(),
   /**
    * O movimento que esta linha criou no ledger. `null` enquanto não houver
    * confirmação humana — e é este campo que prova que a extração, por si, não
@@ -240,14 +240,14 @@ export const rececaoSchema = z.object({
   /** `null` numa fatura manuscrita sem número — e existem. */
   doc_number: z.string().min(1).nullable(),
   /** Quando a mercadoria chegou, segundo o documento. */
-  received_at: z.iso.datetime(),
+  received_at: z.iso.datetime({ offset: true }),
   /**
    * Quando foi revista e confirmada, que é quando os movimentos entraram no
    * ledger. `null` enquanto é rascunho. Não é o mesmo instante que o
    * `received_at`: a mercadoria entra de manhã e a fatura lança-se depois, e é
    * por isso que são dois campos e não um.
    */
-  confirmed_at: z.iso.datetime().nullable(),
+  confirmed_at: z.iso.datetime({ offset: true }).nullable(),
   confirmed_by: z.string().min(1).nullable(),
   status: estadoDeRececaoSchema,
   /** Quantas linhas faltam rever. É o número que o badge da lista mostra. */
@@ -307,7 +307,7 @@ export const resumoDeRececoesSchema = z.object({
   needs_review_lines: z.number().int().nonnegative(),
   confirmed_today_count: z.number().int().nonnegative(),
   business_day_starts_at: z.string().regex(/^\d\d:\d\d$/, "hora inválida"),
-  confirmed_since: z.iso.datetime(),
+  confirmed_since: z.iso.datetime({ offset: true }),
 });
 
 /**

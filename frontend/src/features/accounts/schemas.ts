@@ -203,6 +203,112 @@ export const ativacaoSchema = z.object({
   password: z.string().min(1).optional(),
 });
 
+/* ---------------------------------------------------------------------------
+ * Convites — o contrato da gestão, que é **outro** do contrato da activação.
+ *
+ * A activação (acima) é pública e anónima; isto é um recurso com âmbito, só do
+ * `owner`, e o que o distingue de tudo o resto deste ficheiro é a assimetria do
+ * segredo: o `ConviteCriadoOut` do POST traz o `fragmento` e o `ConviteOut` da
+ * listagem **não traz token nenhum, nem forma de o ter** (ADR 0010). Os dois
+ * schemas abaixo são essa assimetria escrita: se um dia a listagem começar a
+ * devolver um token, é aqui que se vê que ela não devia.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * O estado de um convite. `ConviteOutEstadoEnum`.
+ *
+ * **Derivado no servidor dos três timestamps, nunca guardado** (ADR 0010), e é
+ * por isso que chega como união fechada: é ele que diz que acções fazem sentido,
+ * e um `switch` sobre uma união fechada não pode esquecer um ramo.
+ *
+ * Medido contra o backend a correr, porque a prosa sobre isto divergia em dois
+ * sítios: `reenviar` é aceite num `pendente` **e num `expirado`**; `revogar` é
+ * **idempotente** e aceite em tudo o que não foi aceite (incluindo um já
+ * revogado, que volta como está, sem escrita). O 409 `convite_nao_pendente` só
+ * acontece sobre um convite **aceite** — e, no reenviar, também sobre um
+ * revogado. Os detalhes estão no relatório da sessão.
+ */
+export const estadoDoConviteSchema = z.enum(["pendente", "expirado", "aceite", "revogado"]);
+
+/**
+ * `ConviteOut` — um convite como a listagem o mostra. **Sem token.**
+ *
+ * ## `z.iso.datetime({ offset: true })` e não `z.iso.datetime()`
+ *
+ * Não é zelo: é a diferença entre este ecrã funcionar e não funcionar, e foi
+ * medida. O backend tem `TIME_ZONE = "Europe/Lisbon"` e o DRF serializa
+ * `2026-10-13T11:08:06.340331+01:00`; o `z.iso.datetime()` do Zod 4 recusa um
+ * offset que não seja `Z` (medido: `false` sem a opção, `true` com ela). Um
+ * schema sem o `offset: true` transformava a listagem num `ResponseShapeError`
+ * em cada resposta — e a mensagem ("o servidor devolveu algo inesperado") não
+ * apontaria para o fuso horário.
+ *
+ * O `email` é validado como string não vazia e não com `z.email()`, pela razão
+ * do `utilizadorSchema`: isto é uma **resposta**, e quem define o que é um email
+ * válido é o `EmailField` que já o guardou.
+ */
+export const conviteSchema = z.object({
+  id: z.uuid(),
+  email: z.string().min(1),
+  papel: papelSchema,
+  nome: z.string().min(1),
+  estado: estadoDoConviteSchema,
+  expira_em: z.iso.datetime({ offset: true }),
+  criado_em: z.iso.datetime({ offset: true }),
+});
+
+/**
+ * `ConviteCriadoOut` — a resposta de criar e de reenviar: o convite **e** o
+ * segredo, uma vez.
+ *
+ * Duas peças porque têm tempos de vida diferentes: o `convite` é o que a
+ * listagem volta a mostrar sempre, e o `fragmento` é a única vez que este valor
+ * existe fora da cabeça do servidor.
+ *
+ * O `fragmento` é `<uuid-do-tenant>.<token>` e é **opaco** aqui, como é no corpo
+ * da activação: não há regex a exigir o ponto nem `z.uuid()` sobre a primeira
+ * metade. Quem compõe o link é o cliente (`${origin}/ativar#${fragmento}`),
+ * porque quem conhece a origem da SPA é a SPA; quem conhece o **formato** do
+ * segredo é o servidor, e validá-lo aqui era passar a conhecê-lo nos dois sítios.
+ */
+export const conviteCriadoSchema = z.object({
+  convite: conviteSchema,
+  fragmento: z.string().min(1),
+});
+
+/**
+ * `ConviteInRequest` — o corpo do `POST /convites`: quem, com que papel, e com
+ * que nome.
+ *
+ * Tem os **dois** papéis do `credenciaisSchema`, e é por isso que as mensagens
+ * vivem aqui: valida o que o formulário submete (e aí as frases aparecem debaixo
+ * do input) e valida o corpo antes de ele sair (e aí nunca aparecem, porque o
+ * que chega ao segundo papel já passou pelo primeiro).
+ *
+ * Só **presença e comprimento**, e os dois limites são os do serializer (email
+ * 254, nome 150) — medidos, não adivinhados. O **formato** do email não se
+ * valida aqui, pela razão de sempre: tem uma definição e é a do Django, que
+ * responde 400 por campo com a frase pronta. Duas definições de "email válido"
+ * divergiriam na primeira pessoa com um domínio invulgar.
+ *
+ * E não se valida aqui **nada** sobre duplicados: "já existe um convite para
+ * este email" e "esta pessoa já é membro" são leituras à base de dados dentro do
+ * âmbito do pedido (ADR 0010, ponto 4) e chegam como erro do campo `email`. Uma
+ * verificação local seria a que a corrida perde.
+ *
+ * O `.trim()` está no email e no nome porque é o que o DRF faz por omissão aos
+ * dois: cortá-los aqui é mandar o mesmo valor que o servidor ia usar.
+ */
+export const conviteParaCriarSchema = z.object({
+  email: z.string().trim().min(1, "Escreva o email de quem quer convidar.").max(254),
+  nome: z
+    .string()
+    .trim()
+    .min(1, "Escreva o nome desta pessoa neste estabelecimento.")
+    .max(150, "O nome não pode ter mais de 150 caracteres."),
+  papel: papelSchema,
+});
+
 export type Papel = z.output<typeof papelSchema>;
 export type Estabelecimento = z.output<typeof estabelecimentoSchema>;
 export type Utilizador = z.output<typeof utilizadorSchema>;
@@ -212,6 +318,10 @@ export type Credenciais = z.output<typeof credenciaisSchema>;
 export type FormularioDeAtivacao = z.output<typeof formularioDeAtivacaoSchema>;
 export type EscolhaDeEstabelecimento = z.output<typeof escolhaDeEstabelecimentoSchema>;
 export type Ativacao = z.output<typeof ativacaoSchema>;
+export type EstadoDoConvite = z.output<typeof estadoDoConviteSchema>;
+export type Convite = z.output<typeof conviteSchema>;
+export type ConviteCriado = z.output<typeof conviteCriadoSchema>;
+export type ConviteParaCriar = z.output<typeof conviteParaCriarSchema>;
 
 /**
  * Os papéis por extenso, para o seletor de estabelecimento.
@@ -240,4 +350,88 @@ const NOMES_DOS_PAPEIS = new Map<string, string>(Object.entries(NOME_DO_PAPEL));
 
 export function nomeDoPapel(papel: Papel): string {
   return NOMES_DOS_PAPEIS.get(papel) ?? papel;
+}
+
+/**
+ * O papel que convida — **um**, e uma igualdade, nunca uma ordem.
+ *
+ * A ADR 0010 fixa "convidar é só do `owner` no v1" e diz porquê: o conjunto de
+ * papéis é a Q7, está marcado como "não inventes default sem falar com um
+ * utilizador real", e escrever uma **ordem** entre papéis na implementação dos
+ * convites era responder à Q7 sem ninguém ter perguntado. Por isso isto é uma
+ * constante e uma comparação por igualdade, e não um `>=` sobre um índice de
+ * hierarquia: no dia em que um `manager` puder convidar, isto passa a ser um
+ * conjunto de dois valores e continua a não haver ordem nenhuma.
+ *
+ * `satisfies Papel` e não `: Papel`: o tipo fica o literal `"owner"`, logo a
+ * comparação abaixo é verificada contra o `PapelEnum` gerado — se o backend
+ * alguma vez deixar de ter `owner`, isto não compila.
+ */
+export const PAPEL_QUE_CONVIDA = "owner" satisfies Papel;
+
+/**
+ * Este papel convida?
+ *
+ * **Não é autorização, e é por isso que aceita `null`/`undefined`.** Quem
+ * autoriza é o servidor: o `GET /api/v1/convites` responde 403 a quem não é
+ * `owner` — medido, com `detail` e **sem `code`**. Isto é a mesma verdade usada
+ * para duas coisas de apresentação: esconder a entrada do menu (ADR 0009:
+ * "esconder é apresentação, não autorização") e dizer a quem chega por deep link
+ * o que se passa, em vez de disparar um pedido que já se sabe recusado.
+ *
+ * Enquanto a sessão não chegou o papel é `undefined` e a resposta é `false`: o
+ * item do menu aparece quando a sessão aparece. Na prática é imediato, porque o
+ * `beforeLoad` da rota do shell já leu a sessão antes de montar o invólucro.
+ */
+export function podeConvidar(papel: Papel | null | undefined): boolean {
+  return papel === PAPEL_QUE_CONVIDA;
+}
+
+/**
+ * Os estados de um convite por extenso, e **o que cada um quer dizer**.
+ *
+ * O mesmo par `Record`/`Map` do `NOME_DO_PAPEL`, pelas mesmas duas razões: o
+ * `Record` sobre a união gerada falha o `pnpm typecheck` nos dois sentidos se o
+ * `ConviteOutEstadoEnum` ganhar ou perder um valor, e o `Map` é por onde se lê
+ * porque o `security/detect-object-injection` recusa — e bem — um `OBJETO[chave]`
+ * com chave dinâmica.
+ *
+ * A `explicacao` existe porque o `estado` é a coluna que decide que botões a
+ * linha tem, e quatro palavras sozinhas não dizem porquê: "aceite" não explica
+ * que já não há nada a reenviar. É texto e não um `title`, para estar à vista de
+ * quem lê e de quem ouve.
+ */
+interface NomeDoEstado {
+  readonly rotulo: string;
+  readonly explicacao: string;
+}
+
+const NOME_DO_ESTADO: Record<EstadoDoConvite, NomeDoEstado> = {
+  pendente: {
+    rotulo: "pendente",
+    explicacao: "O link está válido e à espera de ser usado.",
+  },
+  expirado: {
+    rotulo: "expirado",
+    explicacao: "Passaram os 7 dias. Reenviar cria um link novo.",
+  },
+  aceite: {
+    rotulo: "aceite",
+    explicacao: "Esta pessoa já entrou e já é membro. O convite não tem mais nada a fazer.",
+  },
+  revogado: {
+    rotulo: "revogado",
+    explicacao: "Foi cancelado e não volta atrás. Para dar acesso, convide outra vez.",
+  },
+};
+
+const NOMES_DOS_ESTADOS = new Map<string, NomeDoEstado>(Object.entries(NOME_DO_ESTADO));
+
+const ESTADO_DESCONHECIDO: NomeDoEstado = {
+  rotulo: "estado desconhecido",
+  explicacao: "Este estado é mais novo do que esta versão da aplicação. Recarregue a página.",
+};
+
+export function nomeDoEstadoDoConvite(estado: EstadoDoConvite): NomeDoEstado {
+  return NOMES_DOS_ESTADOS.get(estado) ?? ESTADO_DESCONHECIDO;
 }

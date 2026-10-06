@@ -8,6 +8,7 @@ import { rotaDaApp } from "./app";
 import { rotaDeArtigo } from "./artigo";
 import { rotaDeAtivacao } from "./ativar";
 import { rotaDeContar, rotaDeFechoDeContagem } from "./contar";
+import { rotaDeConvites } from "./convites";
 import { rotaDeEntrada } from "./entrar";
 import { rotaInicial } from "./inicio";
 import { rotaPublica } from "./publico";
@@ -41,8 +42,11 @@ import { rotaDeStock } from "./stock";
  * sem caminho próprio:
  *
  *  - `rotaPublica` → `/entrar` e `/ativar`, num painel centrado, **sem** sessão;
- *  - `rotaDaApp` → o `AppShell` e os sete ecrãs, com o `beforeLoad` que exige
- *    sessão ativa.
+ *  - `rotaDaApp` → o `AppShell` e os oito ecrãs, com o `beforeLoad` que exige
+ *    sessão ativa. O oitavo é `/convites` (ADR 0010), e é o primeiro que **não é
+ *    de todos os papéis** — o que isso muda não é a árvore (a rota existe para
+ *    todos, porque esconder é apresentação e não autorização) mas a projecção do
+ *    menu, que passou a ser calculada no `involucro.tsx`.
  *
  * Os URLs dos ecrãs não mudaram: uma rota de layout sem `path` não acrescenta
  * segmento nenhum.
@@ -86,6 +90,7 @@ const arvoreDeRotas = rotaRaiz.addChildren([
     rotaDeContar,
     rotaDeFechoDeContagem,
     rotaDeAlertas,
+    rotaDeConvites,
     ...rotasDeDesenvolvimento,
   ]),
 ]);

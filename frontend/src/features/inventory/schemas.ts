@@ -140,7 +140,20 @@ export const movimentoSchema = z.object({
   lot_code: z.string().nullable(),
   reason: motivoQuebraSchema.nullable(),
   created_by: z.string().min(1),
-  occurred_at: z.iso.datetime(),
+/* `{ offset: true }` e não `z.iso.datetime()` nu, e isto esteve 11 dias a ser uma
+ * bomba de relógio invisível. O Django corre com `TIME_ZONE = "Europe/Lisbon"` e
+ * o DRF serializa `2026-10-13T11:08:06.340331+01:00`; o `z.iso.datetime()` do
+ * Zod 4 **só aceita `Z`**. Medido: o formato real falha, o dos fixtures passa.
+ *
+ * Porque não se notou, e é a lição que importa: o servidor de fixtures usa
+ * `toISOString()`, que devolve sempre `Z`. E ele valida as respostas com **este
+ * mesmo schema** — o que a ADR 0008 decisão 3 celebra como "um fixture que não
+ * poderia sair do endpoint real falha alto". Esse mecanismo apanha um schema
+ * **demasiado largo**; não pode apanhar um schema **demasiado estreito**, porque
+ * o fixture é escrito para o satisfazer. Os dados falsos eram mais complacentes
+ * do que a realidade, e no dia em que estes endpoints existissem cada resposta
+ * virava um erro de forma com uma mensagem que não aponta para o fuso horário. */
+  occurred_at: z.iso.datetime({ offset: true }),
   /** Referência: fatura, contagem, transferência. Texto curto, para mostrar. */
   reference: z.string().nullable(),
 });
@@ -210,8 +223,8 @@ export const contagemSchema = z.object({
   id: z.uuid(),
   location: localizacaoSchema,
   status: estadoDeContagemSchema,
-  started_at: z.iso.datetime(),
-  closed_at: z.iso.datetime().nullable(),
+  started_at: z.iso.datetime({ offset: true }),
+  closed_at: z.iso.datetime({ offset: true }).nullable(),
   /** O "12 de 34" do topo. Contado pelo servidor, como todo o resto. */
   counted_lines: z.number().int().nonnegative(),
   total_lines: z.number().int().nonnegative(),
@@ -257,7 +270,7 @@ export const linhaDeContagemSchema = z.object({
   /** A mesma diferença em euros, com sinal. Arredondada ao cêntimo pelo CMP. */
   difference_eur: decimal.nullable(),
   counted_by: z.string().nullable(),
-  counted_at: z.iso.datetime().nullable(),
+  counted_at: z.iso.datetime({ offset: true }).nullable(),
 });
 
 /**
@@ -374,7 +387,7 @@ export const resumoDeAlertasSchema = z.object({
   wasted_week_eur: decimal,
   /** `"04:00"`, hora local do estabelecimento. */
   business_day_starts_at: z.string().regex(/^\d\d:\d\d$/, "hora inválida"),
-  wasted_since: z.iso.datetime(),
+  wasted_since: z.iso.datetime({ offset: true }),
 });
 
 /**
@@ -393,7 +406,7 @@ export const desperdicioSchema = z.object({
   reason: motivoQuebraSchema,
   location: localizacaoSchema,
   created_by: z.string().min(1),
-  occurred_at: z.iso.datetime(),
+  occurred_at: z.iso.datetime({ offset: true }),
 });
 
 export type UnidadeBase = z.output<typeof unidadeBaseSchema>;

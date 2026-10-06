@@ -1,8 +1,8 @@
 import { Outlet } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { AppHeader } from "./app-header";
-import { montarMenu, PROJECCAO_EM_CODIGO } from "./menu";
+import { montarMenu, type EntradaDaProjeccao } from "./menu";
 import type { SessaoDoShell } from "./sessao-do-shell";
 import { SidebarNav } from "./sidebar-nav";
 
@@ -50,17 +50,36 @@ import { SidebarNav } from "./sidebar-nav";
  */
 
 /**
- * O menu, montado **uma vez por módulo** a partir da projecção em código.
+ * ## A projecção entra por propriedade, desde 2026-10-06
  *
- * É esta linha — e só esta — que muda no dia em que a projecção chegar por HTTP
- * (`SessaoOut.menu`, ADR 0011): passa a `montarMenu(sessao.menu)` dentro do
- * componente, e nem o `MenuDeNavegacao`, nem a sidebar, nem a gaveta, nem a
- * barra de topo mudam uma linha. Era isto que a ADR 0009 queria com "estruturado
- * para a projecção por tenant substituir a fonte sem reescrever o shell".
+ * Era uma constante de módulo (`montarMenu(PROJECCAO_EM_CODIGO)`) com um
+ * comentário a dizer que *esta* linha era a única que mudava no dia em que a
+ * projecção deixasse de ser código. Esse dia chegou pela metade: a tabela
+ * `accounts_tenantmenuitem` da ADR 0011 continua a não existir e o `SessaoOut.menu`
+ * continua a viajar vazio, mas entrou a primeira rota que **não é de todos os
+ * papéis** — `/convites`, que a ADR 0010 dá ao `owner` — e esconder um item por
+ * papel é uma decisão que o shell não pode tomar: ele conhece caminhos de rota,
+ * nunca domínios (ADR 0008, decisão 2).
+ *
+ * Então a projecção passou a entrar por propriedade, e a mudança é exactamente a
+ * que estava prevista: quem a calcula é a rota (`routes/involucro.tsx`), que é a
+ * única camada que pode ver o shell e a feature ao mesmo tempo. O
+ * `MenuDeNavegacao`, a sidebar, a gaveta e a barra de topo não mudaram uma linha
+ * — que era a propriedade que a ADR 0009 pedia. No dia em que a projecção chegar
+ * por HTTP, muda o argumento na rota e não há nada a fazer aqui.
  */
-const MENU = montarMenu(PROJECCAO_EM_CODIGO);
+export function AppShell({
+  sessao,
+  projeccao,
+}: {
+  readonly sessao: SessaoDoShell;
+  readonly projeccao: readonly EntradaDaProjeccao[];
+}) {
+  // `useMemo` e não um `const` de render: o menu é a identidade que o
+  // `MenuDeNavegacao`, a sidebar e a gaveta recebem, e recalculá-lo a cada render
+  // dava três árvores novas de cada vez que a sidebar recolhe.
+  const menu = useMemo(() => montarMenu(projeccao), [projeccao]);
 
-export function AppShell({ sessao }: { readonly sessao: SessaoDoShell }) {
   // Em memória, e volta a aberta a cada recarregamento: a razão (e a dívida)
   // está no `sidebar-nav.tsx`.
   const [recolhida, setRecolhida] = useState(false);
@@ -77,7 +96,7 @@ export function AppShell({ sessao }: { readonly sessao: SessaoDoShell }) {
       </a>
 
       <SidebarNav
-        menu={MENU}
+        menu={menu}
         sessao={sessao}
         recolhida={recolhida}
         aoAlternar={() => {
@@ -86,7 +105,7 @@ export function AppShell({ sessao }: { readonly sessao: SessaoDoShell }) {
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <AppHeader menu={MENU} sessao={sessao} />
+        <AppHeader menu={menu} sessao={sessao} />
         <main id="conteudo" className="flex flex-1 flex-col">
           <Outlet />
         </main>

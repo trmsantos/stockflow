@@ -10,17 +10,30 @@ import {
 import { useNavigate, useRouter } from "@tanstack/react-router";
 
 import { apiRequest } from "@/lib/api/http";
+import { paginated, type Paginated } from "@/lib/api/pagination";
 import { queryKeys } from "@/lib/api/query-keys";
-import { setActiveTenantId } from "@/lib/api/tenant";
+import { setActiveTenantId, tenantDaCache } from "@/lib/api/tenant";
 
-import { codigoDaRecusa, CODIGO_TENANT_DESCONHECIDO, mensagemDaRecusa } from "./erros";
+import {
+  codigoDaRecusa,
+  CODIGO_CONVITE_NAO_PENDENTE,
+  CODIGO_TENANT_DESCONHECIDO,
+  mensagemDaRecusa,
+} from "./erros";
 import {
   ativacaoSchema,
+  conviteCriadoSchema,
+  conviteParaCriarSchema,
+  conviteSchema,
   credenciaisSchema,
   escolhaDeEstabelecimentoSchema,
   nomeDoPapel,
+  podeConvidar,
   sessaoSchema,
   type Ativacao,
+  type Convite,
+  type ConviteCriado,
+  type ConviteParaCriar,
   type Credenciais,
   type EscolhaDeEstabelecimento,
   type Estabelecimento,
@@ -70,6 +83,21 @@ const CAMINHO_LOGIN = "/auth/login";
 const CAMINHO_LOGOUT = "/auth/logout";
 const CAMINHO_TENANT_ATIVO = "/auth/tenant-ativo";
 const CAMINHO_ATIVAR = "/auth/ativar";
+const CAMINHO_CONVITES = "/convites";
+
+/**
+ * O recurso dos convites na cache.
+ *
+ * **O primeiro deste módulo a levar o estabelecimento à cabeça da chave**, e é
+ * a diferença que importa: os cinco endpoints de `/auth/` são
+ * `tenant_scope_exempt` e a sessão vive numa chave sem tenant (com a razão
+ * escrita no `query-keys.ts`); os convites são um recurso **com âmbito**, logo a
+ * chave é `["t", <tenant>, "convites", ...]` como a de qualquer lista de dados.
+ * Sem isso, trocar de estabelecimento no pé da sidebar mostrava os convites do
+ * anterior até a revalidação chegar — e a lista de quem tem acesso a uma casa é
+ * precisamente a que não se quer ver trocada.
+ */
+const RECURSO_CONVITES = "convites";
 
 /**
  * Alinhar o `X-Tenant-ID` com o que a sessão diz, a cada resposta de sessão.
@@ -344,6 +372,204 @@ export function esquecerSessao(queryClient: QueryClient): void {
   setActiveTenantId(null);
   queryClient.removeQueries({ queryKey: PREFIXO_DE_TENANT });
   queryClient.removeQueries({ queryKey: queryKeys.sessao() });
+}
+
+/* ---------------------------------------------------------------------------
+ * Convites — os quatro endpoints com âmbito deste módulo.
+ *
+ * Tudo o que está abaixo desta linha é diferente do que está acima em três
+ * coisas, e vale dizê-las juntas porque é o que explica a forma do código:
+ *
+ *  1. **têm âmbito.** São endpoints normais, com `tenant_id` na sessão e
+ *     política de RLS por baixo (ADR 0010: "criar, listar e revogar convites são
+ *     endpoints normais, com âmbito"). Logo levam o estabelecimento na chave de
+ *     query, e um 403 `sem_sessao` aqui dispara o caminho de perda de sessão do
+ *     `http.ts` — que os `/auth/` não disparam;
+ *  2. **a resposta não é `SessaoOut`.** São três formas (`PaginatedConviteOutList`,
+ *     `ConviteCriadoOut`, `ConviteOut`), logo não passam pelo `pedirSessao` e não
+ *     sincronizam o `X-Tenant-ID`;
+ *  3. **nenhuma é optimista, e a razão é a mesma para as três.** A regra da casa
+ *     é "optimista só em ações reversíveis": criar emite um token que só existe
+ *     nessa resposta, reenviar **roda** o token (o link anterior deixa de casar
+ *     com nada) e revogar é final. Mostrar qualquer das três antes de o servidor
+ *     a confirmar era mostrar um segredo que pode não existir, ou dizer que um
+ *     acesso foi cortado quando não foi — que é a pior forma de falhar que uma
+ *     operação de segurança tem.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Quem está nesta sessão convida?
+ *
+ * A **mesma** verdade em dois sítios, de propósito, e nenhum deles é
+ * autorização: o invólucro usa-a para esconder a entrada do menu (ADR 0009:
+ * "esconder é apresentação, não autorização") e o ecrã usa-a para dizer a quem
+ * chegou por deep link o que se passa, em vez de disparar um `GET /convites` que
+ * já se sabe que vai dar 403. Quem autoriza é o servidor, em cada pedido.
+ *
+ * Medido: `GET` e `POST /api/v1/convites` com sessão de um `staff` respondem 403
+ * com `detail` e **sem `code`** — logo quem lê o erro tem de ler o `code`
+ * defensivamente e cair no ramo genérico, que é o que o `erros.ts` já faz.
+ */
+export function usePodeConvidar(): boolean {
+  const sessao = useSessao();
+  return podeConvidar(sessao.data?.tenant_ativo?.papel);
+}
+
+/**
+ * A lista de convites do estabelecimento ativo, já ordenada **pelo servidor**
+ * (mais recentes primeiro — medido).
+ *
+ * Devolve a **página inteira** com o `count`, e não só as linhas, pela razão que
+ * o `inventory` já tinha: o servidor pagina a 50 e dizer "50 convites" como se
+ * fossem todos é mentira. Aqui passar de 50 é improvável e por isso ainda mais
+ * importante dizê-lo quando acontecer.
+ *
+ * O `ativo` existe porque um hook não se chama condicionalmente: quem não é
+ * `owner` não pode listar (403 medido), e sem isto o ecrã disparava o pedido só
+ * para mostrar a recusa que já sabia. Não é um controlo de acesso — é não bater
+ * numa porta fechada.
+ */
+export function useConvites(ativo: boolean): UseQueryResult<Paginated<Convite>> {
+  const tenant = tenantDaCache();
+
+  return useQuery({
+    queryKey: queryKeys.list(tenant, RECURSO_CONVITES, {}),
+    queryFn: ({ signal }) =>
+      apiRequest(CAMINHO_CONVITES, paginated(conviteSchema), { signal }),
+    enabled: ativo,
+  });
+}
+
+/**
+ * Invalidar a lista de convites — o recurso inteiro, não uma lista exacta.
+ *
+ * É sempre a mesma invalidação nas três mutações porque as três mudam a mesma
+ * lista e nada mais: um convite novo entra, um reenviado muda de `expira_em`
+ * (e, se estava `expirado`, de estado), um revogado muda de estado. Nada disto
+ * toca no ledger, no catálogo ou na sessão — e invalidar a sessão aqui era
+ * prometer uma mudança de pertenças que o convite ainda não fez (o `Membership`
+ * nasce na **aceitação**, ADR 0010).
+ */
+function invalidarConvites(queryClient: QueryClient, tenant: string): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: queryKeys.resource(tenant, RECURSO_CONVITES),
+  });
+}
+
+/**
+ * Um 409 `convite_nao_pendente` não é só uma frase: é a lista a estar errada.
+ *
+ * O código existe para um caso concreto — o estado mudou debaixo dos pés de quem
+ * tinha a página aberta (outro separador aceitou, outro dono revogou) —, logo a
+ * reacção certa é **reler**, e o próprio `detail` do servidor diz-no
+ * ("Recarregue a lista de convites"). Fazê-lo aqui é o que torna essa frase
+ * verdadeira sem a pessoa ter de a executar: quando ela acaba de a ler, a linha
+ * já mostra o estado novo e o botão que já não fazia sentido desapareceu.
+ *
+ * O `code` lê-se com o `codigoDaRecusa`, que devolve `null` para qualquer recusa
+ * sem corpo JSON — e há-as: a recusa de **papel** é 403 sem `code` (medido). Uma
+ * comparação directa com `erro.code` assumia um campo que nem sempre existe.
+ */
+function relerSeOEstadoMudou(queryClient: QueryClient, tenant: string, erro: unknown): void {
+  if (codigoDaRecusa(erro) === CODIGO_CONVITE_NAO_PENDENTE) {
+    void invalidarConvites(queryClient, tenant);
+  }
+}
+
+/**
+ * `POST /convites` — convidar alguém. **O token sai aqui, uma vez.**
+ *
+ * O corpo é validado à saída com o mesmo schema que valida o formulário: um
+ * corpo mal formado falha aqui, com o campo nomeado, em vez de voltar como um
+ * 400 que o ecrã tem de interpretar.
+ *
+ * Os ramos de recusa não são tratados aqui, e nesta mutação isso é mais do que
+ * uma convenção: as recusas de criação são **erros de validação do campo
+ * `email`** (ADR 0010, ponto 4) e o sítio onde elas aparecem é debaixo do input.
+ * Medido: "Já existe um convite para este email neste estabelecimento. Reenvie-o
+ * ou revogue-o." e "Esta pessoa já é membro deste estabelecimento." chegam as
+ * duas em `{"email": [...]}` com status 400, sem `code`.
+ *
+ * O que sai daqui é o `ConviteCriadoOut` **inteiro**, com o `fragmento`: é o ecrã
+ * que o guarda em estado de componente e compõe o link, e é a única vez que este
+ * valor existe fora do servidor. Não vai para a cache de queries de propósito —
+ * uma entrada de cache é uma cópia que sobrevive ao ecrã, e um segredo de uso
+ * único não deve sobreviver a nada.
+ */
+export function useConvidar(): UseMutationResult<ConviteCriado, Error, ConviteParaCriar> {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: (convite: ConviteParaCriar) =>
+      apiRequest(CAMINHO_CONVITES, conviteCriadoSchema, {
+        method: "POST",
+        body: conviteParaCriarSchema.parse(convite),
+      }),
+    onSuccess: async () => {
+      await invalidarConvites(queryClient, tenant);
+    },
+  });
+}
+
+/**
+ * `POST /convites/<id>/reenviar` — **roda o token** e devolve o segredo novo.
+ *
+ * O nome engana e vale dizê-lo: não há email a ser enviado em sítio nenhum (ADR
+ * 0010 — zero eventos, zero Celery, porque não há consumidor da outbox). O que
+ * isto faz é substituir o `token_hash`, pelo que **o link anterior deixa de
+ * casar com alguma coisa**. É a única operação deste ecrã que invalida algo que
+ * já estava na mão de outra pessoa, e é por isso que o ecrã o diz antes.
+ *
+ * Aceite num convite `pendente` **ou `expirado`** — medido nos dois. Um convite
+ * aceite ou revogado dá 409, e aí relê-se a lista.
+ */
+export function useReenviarConvite(): UseMutationResult<ConviteCriado, Error, string> {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`${CAMINHO_CONVITES}/${id}/reenviar`, conviteCriadoSchema, { method: "POST" }),
+    onSuccess: async () => {
+      await invalidarConvites(queryClient, tenant);
+    },
+    onError: (erro) => {
+      relerSeOEstadoMudou(queryClient, tenant, erro);
+    },
+  });
+}
+
+/**
+ * `POST /convites/<id>/revogar` — cancelar um convite. **É final.**
+ *
+ * `POST` e não `DELETE`, e a linha do contrato não é cosmética: o convite não é
+ * apagado, fica com `revoked_at` — "apagar um convite aceite apagaria o rasto da
+ * concessão de acesso", e o `invited_by` é a única resposta persistida a "quem
+ * deu acesso a esta pessoa" (ADR 0010, ponto 7). A resposta é o `ConviteOut`
+ * actualizado, sem token nenhum, porque não há token novo a mostrar. Medido:
+ * `DELETE /api/v1/convites/<id>` **não existe** (404).
+ *
+ * É **idempotente** no servidor (medido: revogar um já revogado devolve 200 e a
+ * linha como está, sem escrita), o que é exactamente o que um duplo clique num
+ * botão precisa. O 409 acontece só sobre um convite **aceite** — e aí a pertença
+ * já existe, quem a retira é outro caminho, e revogar aqui daria a impressão de
+ * ter cortado um acesso que continuava lá.
+ */
+export function useRevogarConvite(): UseMutationResult<Convite, Error, string> {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`${CAMINHO_CONVITES}/${id}/revogar`, conviteSchema, { method: "POST" }),
+    onSuccess: async () => {
+      await invalidarConvites(queryClient, tenant);
+    },
+    onError: (erro) => {
+      relerSeOEstadoMudou(queryClient, tenant, erro);
+    },
+  });
 }
 
 /** Um estabelecimento na forma que o invólucro mostra: o papel por extenso. */

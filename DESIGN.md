@@ -221,7 +221,14 @@ Regras de composição:
   Se precisas de uma sexta, provavelmente precisas de outro componente.
 - Estados obrigatórios em tudo o que é interativo: hover, focus-visible, active, disabled, loading.
 - Estados obrigatórios em tudo o que carrega dados: loading (skeleton, não spinner), empty, error.
-- Tabelas: densas, alinhamento numérico à direita, cabeçalho sticky, sem zebra stripes por default.
+- Tabelas: densas, alinhamento numérico à direita, sem zebra stripes por default.
+- **O "cabeçalho sticky" saiu desta linha, e a razão é de CSS e não de preguiça.** Uma tabela de ERP
+  a 360px desliza na horizontal (`overflow-x-auto`, que o §4 aceita e manda declarar), e esse
+  invólucro torna-se o *scrollport* do `position: sticky`. Como ele não rola na **vertical**, um
+  `thead` sticky ficaria colado ao topo de um contentor que nunca se move: a classe existiria e o
+  efeito não. O que acompanha de facto o scroll é a **barra do ecrã** (`sticky top-cabecalho`), e é
+  isso que está construído. Um cabeçalho de tabela a sério exige dar altura própria à região da
+  tabela com scroll vertical interno — decisão de produto, não de estilo, e fica por decidir.
 - Formulários: label acima do campo, erro abaixo em `--color-danger`, nunca só a cor a comunicar erro.
 
 ---

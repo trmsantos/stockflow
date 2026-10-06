@@ -64,7 +64,47 @@ export const PROJECCAO_EM_CODIGO: readonly EntradaDaProjeccao[] = [
   { route_id: "stock", grupo: "Inventário", ordem: 30, visivel: true },
   { route_id: "contar", grupo: "Inventário", ordem: 40, visivel: true },
   { route_id: "receber", grupo: "Compras", ordem: 50, visivel: true },
+  // "Equipa" é o quarto grupo, e fica no fim porque a sua ordem é a do seu
+  // primeiro item (ver `montarMenu`): quem administra entra aqui uma vez por
+  // contratação, não todas as manhãs. O nome não é um módulo do backend — os
+  // convites são do `accounts` —, e isso é deliberado: "Contas" é o nome do
+  // módulo e não do que a pessoa vai fazer ali, e este rótulo é copy de produto
+  // como os URLs são (ADR 0008, decisão 2). É também o grupo onde "Membros" e
+  // "Configuração" vão entrar sem um nome novo.
+  { route_id: "convites", grupo: "Equipa", ordem: 60, visivel: true },
 ];
+
+/**
+ * A projecção com alguns ids **escondidos** — o mecanismo, sem a razão.
+ *
+ * Esconder já era a forma do `visivel` e já era apresentação (ADR 0009:
+ * "esconder é apresentação, não autorização"). O que faltava era uma maneira de
+ * uma camada de cima dizer *quais*, sem que o shell passasse a saber **porquê**:
+ * o shell não conhece domínios (ADR 0008, decisão 2) e não tem nada que saber o
+ * que é um `owner`.
+ *
+ * Então a divisão é esta, e é a mesma inversão de dependência do
+ * `sessao-do-shell.ts`: o shell dá o mecanismo, a feature `accounts` dá o
+ * predicado (`usePodeConvidar`), e quem os liga é a **rota**
+ * (`routes/involucro.tsx`), que é a única camada que pode importar os dois. Aqui
+ * dentro, "esconder o item X" é uma transformação de dados e nada mais.
+ *
+ * Devolve uma projecção nova e não muta a recebida: a de entrada é uma constante
+ * de módulo partilhada por todos os renders.
+ */
+export function esconderNoMenu(
+  projeccao: readonly EntradaDaProjeccao[],
+  ids: readonly RotaId[],
+): readonly EntradaDaProjeccao[] {
+  // Um `Set` e não um `includes` por entrada: o `security/detect-object-injection`
+  // do `eslint.config.js` recusa leituras por chave dinâmica, e um `Set` é a
+  // forma que o resto do repositório já usa para pertença (`METHODS_WITHOUT_CSRF`
+  // do `http.ts`).
+  const escondidos = new Set<string>(ids);
+  return projeccao.map((entrada) =>
+    escondidos.has(entrada.route_id) ? { ...entrada, visivel: false } : entrada,
+  );
+}
 
 /** Um item já resolvido: a projecção do tenant por cima do registo de código. */
 export interface ItemDeMenu extends EntradaDoRegisto {

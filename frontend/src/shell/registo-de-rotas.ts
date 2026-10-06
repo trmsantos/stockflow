@@ -1,5 +1,13 @@
 import type { AbsoluteToPath, RegisteredRouter } from "@tanstack/react-router";
-import { Boxes, ClipboardCheck, House, TriangleAlert, Truck, type LucideIcon } from "lucide-react";
+import {
+  Boxes,
+  ClipboardCheck,
+  House,
+  MailPlus,
+  TriangleAlert,
+  Truck,
+  type LucideIcon,
+} from "lucide-react";
 
 /**
  * O registo de rotas — **a lista fechada do que existe para navegar**, e a
@@ -45,13 +53,21 @@ import { Boxes, ClipboardCheck, House, TriangleAlert, Truck, type LucideIcon } f
  * predicado paga-se onde é verdade, na frase que a gaveta mostra sobre o que ali
  * foi desenhado para o telemóvel. Está no relatório como contradição apontada.
  *
- * ## O que não está aqui: o papel
+ * ## O que não está aqui: o papel — e continua a não estar
  *
  * A ADR 0011 diz que o menu é filtrado **pelo papel** contra o papel mínimo que
  * o registo declara — e esse registo é o **do backend**, porque esconder um item
  * que um `staff` não pode usar é autorização. Um `papelMinimo` aqui era uma
  * segunda definição de autorização no cliente, que é o erro que a ADR 0009
  * nomeia ("esconder é apresentação, não autorização").
+ *
+ * A 2026-10-06 entrou a primeira rota que **é** de um papel só — `/convites`, que
+ * a ADR 0010 dá ao `owner` — e esta secção não mudou: o registo continua sem
+ * saber o que é um papel. Quem esconde o item é a **projecção** (`menu.ts`, pelo
+ * `visivel` que ela já tinha), e quem decide o que esconder é a camada que pode
+ * ver os dois lados — a rota (`routes/involucro.tsx`), com o predicado a vir do
+ * `features/accounts`, que é onde o domínio vive. O caminho é o mesmo por onde a
+ * tabela da ADR 0011 vai entrar, e é por isso que não houve campo novo aqui.
  */
 
 /**
@@ -75,7 +91,7 @@ import { Boxes, ClipboardCheck, House, TriangleAlert, Truck, type LucideIcon } f
 export type CaminhoDeRota = AbsoluteToPath<RegisteredRouter, "/">;
 
 /** Os ids de rota que o menu pode nomear. Hoje código, amanhã o enum gerado. */
-export type RotaId = "inicio" | "stock" | "alertas" | "receber" | "contar";
+export type RotaId = "inicio" | "stock" | "alertas" | "receber" | "contar" | "convites";
 
 export interface EntradaDoRegisto {
   readonly caminho: CaminhoDeRota;
@@ -123,6 +139,19 @@ export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
     icone: Truck,
     pergunta: "O que chegou, e está certo?",
     campo: true,
+  },
+  convites: {
+    caminho: "/convites",
+    rotulo: "Convites",
+    icone: MailPlus,
+    pergunta: "Quem tem acesso, e quem está por entrar?",
+    // **Não** é rota de campo, e isto não é uma omissão: o predicado marca as
+    // rotas desenhadas para 360px, que são Contar e Receber e só elas (DESIGN.md
+    // §1 e §4). Convidar é um acto de escritório — tem um formulário de três
+    // campos e uma tabela de sete colunas, e é feito ao computador. A 360px
+    // funciona (nenhuma rota é bloqueada em mobile) com a tabela a deslizar na
+    // horizontal, que é o que o §4 declara em vez de tratar como defeito.
+    campo: false,
   },
 };
 

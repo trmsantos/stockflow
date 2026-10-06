@@ -37,6 +37,22 @@ export const CODIGO_CONVITE_INVALIDO = "convite_invalido";
 export const CODIGO_CONVITE_EXIGE_SESSAO = "convite_exige_sessao";
 /** `convite_de_outra_conta` — 403: a sessão é de outra conta. */
 export const CODIGO_CONVITE_DE_OUTRA_CONTA = "convite_de_outra_conta";
+/**
+ * `convite_nao_pendente` — 409 do reenviar e do revogar.
+ *
+ * O quarto código da ADR 0010, e o único que **não** é uma recusa de uma
+ * credencial: é um estado que mudou debaixo dos pés de quem tinha a lista
+ * aberta. Só existe nos endpoints de gestão, onde quem chama vê o estado na
+ * lista — e é por isso que a reacção certa a ele é **reler a lista**, não só
+ * mostrar a frase. Quem o faz é o `api.ts`.
+ *
+ * As recusas de **criação** não têm código: são erros de validação do campo
+ * `email` (400 por campo), porque "já existe convite pendente" e "já é membro"
+ * são afirmações sobre o email submetido (ADR 0010, ponto 4). Medido: as quatro
+ * recusas de criação saem em `{"email": [...]}`, `{"nome": [...]}` e
+ * `{"papel": [...]}`, nenhuma com `code`.
+ */
+export const CODIGO_CONVITE_NAO_PENDENTE = "convite_nao_pendente";
 
 /**
  * O `code` de uma recusa, ou `null`.
