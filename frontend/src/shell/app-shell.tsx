@@ -50,23 +50,21 @@ import { SidebarNav } from "./sidebar-nav";
  */
 
 /**
- * ## A projecção entra por propriedade, desde 2026-10-06
+ * ## A projecção entra por propriedade, e desde 2026-10-06 vem do servidor
  *
  * Era uma constante de módulo (`montarMenu(PROJECCAO_EM_CODIGO)`) com um
  * comentário a dizer que *esta* linha era a única que mudava no dia em que a
- * projecção deixasse de ser código. Esse dia chegou pela metade: a tabela
- * `accounts_tenantmenuitem` da ADR 0011 continua a não existir e o `SessaoOut.menu`
- * continua a viajar vazio, mas entrou a primeira rota que **não é de todos os
- * papéis** — `/convites`, que a ADR 0010 dá ao `owner` — e esconder um item por
- * papel é uma decisão que o shell não pode tomar: ele conhece caminhos de rota,
- * nunca domínios (ADR 0008, decisão 2).
+ * projecção deixasse de ser código. Passou a propriedade na primeira metade
+ * desse dia (quando entrou a primeira rota de um papel só e a rota teve de a
+ * esconder) e a fonte chegou na segunda: o menu vem no `GET /auth/sessao`,
+ * filtrado pelo papel, com a configuração do tenant por cima dos defaults
+ * (ADR 0011).
  *
- * Então a projecção passou a entrar por propriedade, e a mudança é exactamente a
- * que estava prevista: quem a calcula é a rota (`routes/involucro.tsx`), que é a
- * única camada que pode ver o shell e a feature ao mesmo tempo. O
- * `MenuDeNavegacao`, a sidebar, a gaveta e a barra de topo não mudaram uma linha
- * — que era a propriedade que a ADR 0009 pedia. No dia em que a projecção chegar
- * por HTTP, muda o argumento na rota e não há nada a fazer aqui.
+ * A promessa cumpriu-se onde tinha de se cumprir: **este ficheiro não mudou uma
+ * linha de código** nas duas vezes, e o `MenuDeNavegacao`, a sidebar, a gaveta e
+ * a barra de topo também não. Mudou quem calcula o argumento, e esse é sempre o
+ * mesmo sítio — a rota (`routes/involucro.tsx`), a única camada que pode ver o
+ * shell e a feature ao mesmo tempo.
  */
 export function AppShell({
   sessao,

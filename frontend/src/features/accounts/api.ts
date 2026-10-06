@@ -37,6 +37,7 @@ import {
   type Credenciais,
   type EscolhaDeEstabelecimento,
   type Estabelecimento,
+  type ItemDeMenu,
   type Sessao,
 } from "./schemas";
 
@@ -173,6 +174,51 @@ export function opcoesDaSessao() {
 /** A sessão, para quem está dentro de um componente. */
 export function useSessao(): UseQueryResult<Sessao> {
   return useQuery(opcoesDaSessao());
+}
+
+/**
+ * Uma lista vazia **estável**, para o caso de a sessão ainda não ter chegado.
+ *
+ * Constante de módulo e não um `?? []` na expressão de retorno, e a razão é
+ * concreta: o `AppShell` memoiza `montarMenu(projeccao)` pela identidade da
+ * projecção, e um array literal novo a cada render recalculava o menu e entregava
+ * três árvores novas (sidebar, gaveta, barra de topo) de cada vez que a sidebar
+ * recolhe. Quando a sessão existe, a identidade vem da cache do TanStack Query,
+ * que a preserva enquanto a resposta não mudar.
+ */
+const SEM_MENU: readonly ItemDeMenu[] = [];
+
+/**
+ * O menu deste (estabelecimento, papel) — **a fonte real, desde 2026-10-06**.
+ *
+ * O menu viaja no `GET /auth/sessao` (ADR 0011: "resolve-se com exactamente o que
+ * a sessão já resolveu — o tenant activo —, pelo que não custa um round trip no
+ * caminho crítico do primeiro paint da sidebar"), logo isto **não** é um pedido:
+ * é uma leitura da entrada de cache que o `beforeLoad` da rota do shell já
+ * garantiu.
+ *
+ * Vem com `visivel` tal como está — esconder é apresentação e a rota continua a
+ * funcionar por deep link (ADR 0009) — e já **filtrado pelo papel** de quem pede,
+ * que é autorização e por isso é do servidor. Medido no backend a correr: a
+ * sessão de um `owner` da Pastelaria Aurora traz seis itens, a de um `staff` do
+ * mesmo estabelecimento traz cinco, sem o item dos convites. Foi isso que tornou
+ * o filtro de papel do cliente redundante, e é por isso que ele saiu
+ * (`routes/involucro.tsx`).
+ *
+ * ## O que esta leitura não faz, e a tarefa do painel vai precisar
+ *
+ * Não observa escritas de configuração. O menu é parte da resposta da sessão,
+ * que é **uma** entrada de cache com o `staleTime` de 30s do `query-client.ts`:
+ * um `PUT /menu` bem sucedido não muda nada no ecrã até essa entrada ser
+ * invalidada. Medido com `curl`: depois do `PUT`, o `GET /auth/sessao` seguinte
+ * já traz a ordem e os rótulos novos — o servidor está certo, o que falta é o
+ * cliente voltar a perguntar. Quem fizer o painel tem de invalidar
+ * `queryKeys.sessao()` no `onSuccess` do `PUT` (e não `removeQueries`, que
+ * tiraria a sessão debaixo do invólucro que está montado).
+ */
+export function useMenuDaSessao(): readonly ItemDeMenu[] {
+  const sessao = useSessao();
+  return sessao.data?.menu ?? SEM_MENU;
 }
 
 /**

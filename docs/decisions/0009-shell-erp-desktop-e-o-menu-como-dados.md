@@ -95,3 +95,29 @@ desenhados para o telemóvel. E a impossibilidade de promoção fica **estrutura
 a forma que a projecção por tenant transporta (`EntradaDaProjeccao`) **não tem** o campo `campo`,
 logo nenhuma configuração o pode pôr lá.
 
+**Terceira correcção, de 2026-10-06, quando o shell foi ligado ao menu do servidor.** O `route_id`
+que chega do servidor é validado em Zod como **`z.string().min(1)` e não como um `z.enum` dos ids
+conhecidos** — contra o que o handoff desta tarefa pedia, e com duas razões medidas.
+
+**Um `z.enum` derrubava a aplicação inteira num rolling deploy.** Medido com um sétimo `route_id`
+injectado no payload real, como um backend mais novo o serviria a um bundle antigo: o parse do `menu`
+falha, o `sessaoSchema` falha com ele, o `apiRequest` lança `ResponseShapeError` e o `beforeLoad`
+rejeita. **O resultado não é um menu com um item a menos — é "não foi possível abrir este ecrã", e
+também no `/entrar`**, que lê a mesma sessão. Com `z.string()` a sessão parseia, o `montarMenu` ignora
+o id que não conhece, e os conhecidos renderizam.
+
+É também a postura que o **backend** já tinha escolhido para o caso simétrico: o
+`selectors.projeccao_de_menu` decide explicitamente que "uma entrada a mais não é razão para o menu
+não montar". O cliente a espelhá-la é coerência e não tolerância.
+
+**E evita uma segunda lista dos ids em runtime sem nada a casá-la.** Com `z.enum` haveria duas — o
+schema e o `Record` do registo — e o modo de falha era pior do que a duplicação: se o enum crescesse,
+o `Record` falhava o `typecheck`, alguém acrescentava a entrada, e a lista do Zod ficava para trás, a
+falhar o parse **em silêncio** e sem gate nenhum a apanhá-la.
+
+**O gate não se perdeu**, e é onde esta ADR o põe: no `Record<RotaId, EntradaDoRegisto>` com o
+`RotaId` a vir do enum gerado. Sondado nas duas direcções — uma entrada que o enum não tem dá
+`TS2353` com os seis ids listados, e um id do enum sem entrada dá `TS2741`. A validação em runtime
+contra dados **maus** também não se perdeu: o `PUT` recusa um `route_id` desconhecido com 400, logo a
+única origem possível de um id que o cliente não conheça é um servidor mais novo.
+

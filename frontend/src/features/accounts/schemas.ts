@@ -65,6 +65,65 @@ export const estadoDaSessaoSchema = z.enum([
 ]);
 
 /**
+ * `ItemDeMenuOut` — uma linha do menu, **já resolvida pelo servidor** (ADR 0009
+ * e ADR 0011).
+ *
+ * É a tupla que a ADR 0009 fixa — `(route_id, grupo, ordem, visivel, rotulo)` —,
+ * uma lista com um nível de agrupamento e nunca uma árvore. Quem a compõe é o
+ * `selectors.projeccao_de_menu` do backend: o registo de rotas que vive em
+ * código, a configuração do tenant por cima, e o filtro pelo papel de quem pede.
+ *
+ * O **mesmo** `ItemDeMenu` existe com outro significado no `shell/menu.ts`: lá é
+ * o item já casado com o registo de rotas (com caminho, ícone e pergunta). Este
+ * é a linha de configuração que chega por HTTP, e é a `EntradaDaProjeccao` que
+ * ele satisfaz — o encaixe é verificado em `routes/involucro.tsx`, que é a única
+ * camada que pode importar os dois lados (ADR 0008, decisão 2).
+ *
+ * ## `route_id` é `z.string()` e **não** o enum fechado, e é decisão desta sessão
+ *
+ * O id é um enum fechado do backend e chega ao `types.ts` como união
+ * (`RotaIdEnum`); é essa união que o `Record<RotaId, EntradaDoRegisto>` do
+ * `shell/registo-de-rotas.ts` verifica — medido, **nos dois sentidos**. A
+ * garantia está lá, e repeti-la aqui com um `z.enum([...])` custava mais do que
+ * dava:
+ *
+ *  - era uma **segunda lista dos seis ids em runtime**, sem nada que a casasse
+ *    com a primeira — exactamente a dívida que o `campo` duplicado já tem
+ *    nomeada (está nos dois registos e nada falha se divergirem);
+ *  - e, sobretudo, um id que **este bundle** não conhece derrubava a resposta
+ *    inteira do `GET /auth/sessao` — ou seja, a aplicação não arrancava. O caso
+ *    não é hipotético: é o intervalo de um rolling deploy, com um backend novo a
+ *    servir um sétimo id a um bundle antigo. O backend decidiu explicitamente o
+ *    contrário para o caso simétrico ("uma entrada a mais não é razão para o
+ *    menu não montar", `selectors.projeccao_de_menu`) e o `montarMenu` do shell
+ *    já ignora o id que o registo não tem. Um menu com um item a menos é
+ *    degradação; uma sessão que não parseia é a app fechada.
+ *
+ * Logo o que se valida aqui é a **forma**, e o resto da linha é estrito: um
+ * `grupo` vazio é um cabeçalho de grupo sem nome e uma `ordem` que não é inteiro
+ * não ordena nada — os dois seriam defeitos do servidor, e falham alto.
+ *
+ * Que o `min(1)` nunca recusa uma resposta legítima foi **medido** no `PUT`, que
+ * é o único escritor: `grupo: ""` e `rotulo: ""` levam 400 por campo e não
+ * escrevem linha nenhuma. E um `route_id` inventado também leva 400 — o que
+ * confirma que a única origem possível de um id desconhecido é um **servidor
+ * mais novo**, que é exactamente o caso que a decisão acima protege.
+ *
+ * `ordem` não leva os limites do serializer (`0..32767`): aqui é só a chave de
+ * ordenação do `montarMenu`, e quem recusa um valor fora de limites é o `PUT`,
+ * que é onde ele entra. `rotulo` é `null` quando o tenant não sobrepôs nada e
+ * nunca `""` — a coluna guarda a ausência como `""` e a tradução para `null`
+ * acontece num sítio só (`selectors.projeccao_de_menu`).
+ */
+export const itemDeMenuSchema = z.object({
+  route_id: z.string().min(1),
+  grupo: z.string().min(1),
+  ordem: z.number().int(),
+  visivel: z.boolean(),
+  rotulo: z.string().min(1).nullable(),
+});
+
+/**
  * `SessaoOut` — a resposta dos **quatro** endpoints de autenticação, sempre
  * nesta forma. Uma forma só é o que permite ao cliente guardar as quatro numa
  * entrada de cache em vez de ter quatro ramos de Zod.
@@ -83,10 +142,20 @@ export const estadoDaSessaoSchema = z.enum([
  * vez de um `AppShell` montado sem estabelecimento a dar 403 em cada pedido
  * seguinte, que é o sintoma a dois passos de distância da causa.
  *
- * `menu` viaja vazio e **sem forma de item declarada** até a ADR 0009 existir
- * em código: `z.array(z.unknown())` é a forma honesta de "há uma lista aqui e
- * eu ainda não sei o que ela leva". Declarar a tupla dela aqui era inventar o
- * contrato de outra ADR.
+ * ## `menu` deixou de ser `unknown[]` a 2026-10-06
+ *
+ * Era `z.array(z.unknown())` — "há uma lista aqui e eu ainda não sei o que ela
+ * leva" —, porque a tabela da ADR 0011 não existia e declarar a tupla dela aqui
+ * era inventar o contrato de outra ADR. Agora existe, o `ItemDeMenuOut` está no
+ * `types.ts` e esta lista é a **fonte real do menu**: é por aqui que a sidebar
+ * sabe o que mostrar, em que ordem, com que nome e para que papel. Medido contra
+ * o backend: um `owner` recebe seis itens, um `staff` do mesmo estabelecimento
+ * recebe cinco (sem `convites`).
+ *
+ * Uma lista **vazia** é um estado normal e não um erro, em dois casos medidos:
+ * uma sessão sem estabelecimento activo (`escolha_pendente` traz `menu: []`, e
+ * aí o `beforeLoad` nem monta o invólucro) e um estabelecimento que esconda tudo
+ * o que o papel de quem pede pode ver.
  */
 export const sessaoSchema = z
   .object({
@@ -94,7 +163,7 @@ export const sessaoSchema = z
     utilizador: utilizadorSchema.nullable(),
     tenant_ativo: estabelecimentoSchema.nullable(),
     tenants: z.array(estabelecimentoSchema),
-    menu: z.array(z.unknown()),
+    menu: z.array(itemDeMenuSchema),
   })
   .refine(
     (sessao) => (sessao.estado === "ativa") === (sessao.tenant_ativo !== null),
@@ -313,6 +382,7 @@ export type Papel = z.output<typeof papelSchema>;
 export type Estabelecimento = z.output<typeof estabelecimentoSchema>;
 export type Utilizador = z.output<typeof utilizadorSchema>;
 export type EstadoDaSessao = z.output<typeof estadoDaSessaoSchema>;
+export type ItemDeMenu = z.output<typeof itemDeMenuSchema>;
 export type Sessao = z.output<typeof sessaoSchema>;
 export type Credenciais = z.output<typeof credenciaisSchema>;
 export type FormularioDeAtivacao = z.output<typeof formularioDeAtivacaoSchema>;

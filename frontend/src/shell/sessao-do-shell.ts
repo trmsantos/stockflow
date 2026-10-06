@@ -21,9 +21,12 @@
  * dava ("é a rota que liga o ecrã da feature ao invólucro" — `moldura-publica.tsx`).
  *
  * O que torna isto um contrato e não uma esperança: a passagem acontece em
- * `routes/app.tsx`, que importa os **dois** lados, logo é o `pnpm typecheck` que
- * verifica que o que a feature devolve serve o que o shell pede. Se o hook
- * deixar de trazer `estabelecimentos`, é a rota que deixa de compilar.
+ * `routes/involucro.tsx` (o `component` da rota `app`), que importa os **dois**
+ * lados, logo é o `pnpm typecheck` que verifica que o que a feature devolve
+ * serve o que o shell pede. Se o hook deixar de trazer `estabelecimentos`, é a
+ * rota que deixa de compilar. Desde 2026-10-06 o mesmo ponto verifica uma
+ * segunda interface pelo mesmo mecanismo — a `EntradaDaProjeccao` do `menu.ts`,
+ * satisfeita pelo `useMenuDaSessao`.
  *
  * Nenhum tipo do domínio atravessa a fronteira: o `papel` chega como **string
  * já traduzida** (`nomeDoPapel`, do `features/accounts/schemas.ts`), porque o

@@ -9,6 +9,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import type { components } from "@/lib/api/types";
+
 /**
  * O registo de rotas — **a lista fechada do que existe para navegar**, e a
  * garantia que substitui a dos "4 itens" da tab bar (ADR 0009).
@@ -25,12 +27,21 @@ import {
  *  1. **id → registo**: `Record<RotaId, EntradaDoRegisto>` é exaustivo nos dois
  *     sentidos sob `pnpm typecheck`. Um id no registo que a união não tem não
  *     compila (propriedade em excesso), e um id na união que o registo não tem
- *     também não (propriedade em falta). Hoje a união é declarada aqui; no dia
- *     em que o backend servir o menu (ADR 0011) ela passa a ser o enum gerado
- *     (`components["schemas"]["RotaIdEnum"]` do `lib/api/types.ts`) e o **mesmo**
- *     `Record` passa a ser verificado contra a lista do backend. Essa é a troca
- *     de uma linha que a ADR 0009 descreve, e é por isso que `RotaId` é um tipo
- *     e não um `typeof REGISTO`;
+ *     também não (propriedade em falta). **Desde 2026-10-06 a união é o enum
+ *     gerado** (`components["schemas"]["RotaIdEnum"]`, do `types.ts` que o
+ *     `pnpm gen:api` escreve), logo este `Record` é verificado contra a lista
+ *     fechada **do backend** — que é quem valida o `route_id` que a projecção
+ *     guarda (ADR 0011) — e não contra uma união que o frontend escreveu sozinho.
+ *     Era a troca de uma linha que a ADR 0009 descreve, e é por isso que `RotaId`
+ *     é um tipo e não um `typeof REGISTO`.
+ *
+ *     **Medido nas três direcções, e revertido:** um `RotaId` com um sétimo id
+ *     (a simular o enum do backend a crescer) dá `TS2741: Property
+ *     'configuracao' is missing` no `REGISTO_DE_ROTAS`; uma entrada a mais no
+ *     registo dá `TS2353: Object literal may only specify known properties`; e
+ *     um `RotaId = "stok"` dá `TS2820`, com os seis ids gerados listados na
+ *     mensagem — que é o que prova que esta união não é `string` nem um `any`
+ *     vindo de um import que resolveu para o lado errado;
  *  2. **registo → rotas**: o `caminho` é do tipo `CaminhoDeRota`, que vem da
  *     **árvore de rotas real** (ver abaixo). Um caminho que não exista na árvore
  *     não compila — nem com um erro de dedo, nem depois de alguém apagar a rota.
@@ -44,7 +55,16 @@ import {
  * só elas (DESIGN.md §1 e §4). Vive em **código** e não na projecção por tenant
  * de propósito: a `EntradaDaProjeccao` (ver `menu.ts`) não tem este campo, logo
  * nenhuma configuração de empresa consegue promover uma rota de escritório para
- * o telemóvel. Não é uma convenção — é a forma do tipo que chega por HTTP.
+ * o telemóvel. Não é uma convenção — é a forma do tipo que chega por HTTP, e
+ * desde que o menu vem do servidor isso deixou de ser uma afirmação sobre um
+ * tipo nosso: o `ItemDeMenuOut` do contrato **também** não tem `campo`, nem o
+ * `ItemDeMenuInRequest` que o `PUT /menu` aceita. Medido: as seis linhas que o
+ * `GET /auth/sessao` devolve têm cinco campos, e `campo` não é um deles.
+ *
+ * O preço está nomeado do outro lado: o predicado existe **duas vezes** (aqui e
+ * no `apps/accounts/menu.py`) e nada falha se divergirem. É a dívida que o
+ * backend já declarou no seu relatório, e não é desta tarefa — o que a UI usa é
+ * esta cópia, porque é ela que gera a frase da gaveta.
  *
  * O que o predicado **não** faz é filtrar a gaveta de mobile. A ADR 0009 é
  * explícita noutro ponto ("**a mesma** sidebar como drawer a partir do header em
@@ -53,21 +73,27 @@ import {
  * predicado paga-se onde é verdade, na frase que a gaveta mostra sobre o que ali
  * foi desenhado para o telemóvel. Está no relatório como contradição apontada.
  *
- * ## O que não está aqui: o papel — e continua a não estar
+ * ## O que não está aqui: o papel — e agora não está em sítio nenhum do cliente
  *
- * A ADR 0011 diz que o menu é filtrado **pelo papel** contra o papel mínimo que
- * o registo declara — e esse registo é o **do backend**, porque esconder um item
- * que um `staff` não pode usar é autorização. Um `papelMinimo` aqui era uma
- * segunda definição de autorização no cliente, que é o erro que a ADR 0009
- * nomeia ("esconder é apresentação, não autorização").
+ * A ADR 0011 diz que o menu é filtrado **pelo papel**, e que quem o filtra é o
+ * servidor: esconder um item que um `staff` não pode usar é autorização e não
+ * preferência. Um `papelMinimo` aqui era uma segunda definição de autorização no
+ * cliente, que é o erro que a ADR 0009 nomeia ("esconder é apresentação, não
+ * autorização").
  *
- * A 2026-10-06 entrou a primeira rota que **é** de um papel só — `/convites`, que
- * a ADR 0010 dá ao `owner` — e esta secção não mudou: o registo continua sem
- * saber o que é um papel. Quem esconde o item é a **projecção** (`menu.ts`, pelo
- * `visivel` que ela já tinha), e quem decide o que esconder é a camada que pode
- * ver os dois lados — a rota (`routes/involucro.tsx`), com o predicado a vir do
- * `features/accounts`, que é onde o domínio vive. O caminho é o mesmo por onde a
- * tabela da ADR 0011 vai entrar, e é por isso que não houve campo novo aqui.
+ * Entre a manhã e a tarde de 2026-10-06 o cliente teve, por necessidade, um
+ * filtro próprio: o menu era uma constante de módulo e a primeira rota de um
+ * papel só (`/convites`, do `owner` pela ADR 0010) tinha de ser escondida em
+ * algum sítio. **Esse filtro saiu** quando o menu passou a vir do
+ * `GET /auth/sessao` — o servidor já não manda a linha a quem não é `owner`
+ * (medido: seis itens para o `owner`, cinco para o `staff` do mesmo
+ * estabelecimento) — e dois filtros a fazer o mesmo são um a ficar
+ * desactualizado.
+ *
+ * E a correcção de 2026-10-06 da ADR 0011 vale ser lida aqui: o que o registo do
+ * backend declara é `papeis_permitidos`, um **conjunto** por rota, e não um
+ * `papel_minimo` — não existe ordem entre papéis neste projeto, e inventá-la era
+ * responder à Q7 sem ninguém ter perguntado.
  */
 
 /**
@@ -90,8 +116,22 @@ import {
  */
 export type CaminhoDeRota = AbsoluteToPath<RegisteredRouter, "/">;
 
-/** Os ids de rota que o menu pode nomear. Hoje código, amanhã o enum gerado. */
-export type RotaId = "inicio" | "stock" | "alertas" | "receber" | "contar" | "convites";
+/**
+ * Os ids de rota que o menu pode nomear — **o enum fechado do backend**.
+ *
+ * Não é uma união escrita à mão que por acaso coincide: é o `RotaIdEnum` do
+ * `types.ts`, que o `pnpm gen:api` gera do `schema.yaml`, que o drf-spectacular
+ * gera do `RotaDeMenu` do Django. O caminho inteiro que a ADR 0009 descreve, com
+ * o gate de diff do CI (`ARCHITECTURE.md` §5) a garantir que o ficheiro gerado e
+ * commitado não divergiu da API.
+ *
+ * É também o primeiro consumidor do `types.ts` em código de aplicação — até aqui
+ * ele era um artefacto que o CI comparava e ninguém importava. O shell pode
+ * importá-lo: a fronteira do `eslint.config.js` proíbe-lhe `@/features/*` e
+ * `@/routes/*`, e `@/lib/*` é o `apps/shared` do frontend, que é para ser usado
+ * de cima para baixo.
+ */
+export type RotaId = components["schemas"]["RotaIdEnum"];
 
 export interface EntradaDoRegisto {
   readonly caminho: CaminhoDeRota;
@@ -166,7 +206,22 @@ export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
  */
 const REGISTO_POR_ID = new Map<string, EntradaDoRegisto>(Object.entries(REGISTO_DE_ROTAS));
 
-export function entradaDoRegisto(id: RotaId): EntradaDoRegisto | undefined {
+/**
+ * A entrada deste id, ou `undefined` se o registo não o conhecer.
+ *
+ * **`string` e não `RotaId`**, e isso é a forma certa desde que o menu chega por
+ * HTTP: o `route_id` de uma linha da projecção é texto que veio do servidor, e
+ * exigir aqui o tipo fechado obrigava alguém a afirmar, com um cast ou com um
+ * `z.enum`, que ele é um dos seis — uma afirmação que um backend mais novo torna
+ * falsa no intervalo de um rolling deploy. O `undefined` é a resposta honesta
+ * nesse caso, e quem chama (`montarMenu`) ignora a linha.
+ *
+ * A garantia dos dois sentidos **não** está nesta assinatura e não precisa de
+ * estar: está no `Record<RotaId, EntradaDoRegisto>` acima, que é o único sítio
+ * do frontend onde os seis ids são escritos — do outro lado são o `RotaDeMenu`
+ * do Django, e é exactamente contra essa lista que o `Record` é verificado.
+ */
+export function entradaDoRegisto(id: string): EntradaDoRegisto | undefined {
   return REGISTO_POR_ID.get(id);
 }
 

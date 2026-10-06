@@ -44,9 +44,16 @@ export function MenuDeNavegacao({
   readonly aoNavegar?: (() => void) | undefined;
 }) {
   if (menu.length === 0) {
-    // Com a projecção em código isto é inalcançável; com a tabela por tenant da
-    // ADR 0011 deixa de o ser — basta uma configuração que esconda tudo. Um
-    // `<nav>` vazio seria UI partida, e a frase diz a coisa certa: as rotas
+    // **Alcançável, e medido contra o backend real** — o que até 2026-10-06 era
+    // uma previsão ("com a projecção em código isto é inalcançável; com a tabela
+    // por tenant deixa de o ser"). O caso não exige que alguém se tranque a si
+    // mesmo fora do menu: um `PUT /menu` que deixe visível **só** o item dos
+    // convites dá, à sessão de um `staff` do mesmo estabelecimento, cinco itens
+    // todos com `visivel: false` — o servidor tira-lhe a linha dos convites por
+    // papel e o cliente esconde as outras cinco. Resultado medido: `montarMenu`
+    // devolve zero grupos e é esta frase que aparece.
+    //
+    // Um `<nav>` vazio seria UI partida, e a frase diz a coisa certa: as rotas
     // continuam a existir (esconder é apresentação, não autorização), logo há
     // sempre uma saída.
     return (
@@ -54,9 +61,16 @@ export function MenuDeNavegacao({
         <p className="text-pretty text-sm text-muted-foreground">
           Este estabelecimento não tem itens de menu configurados.
         </p>
+        {/* `min-h-linha` (44px) e não só texto: provar que este estado é
+            alcançável (ver acima) tornou real uma pergunta que era teórica — num
+            telemóvel, esta é a **única** coisa tocável do menu, e um link de
+            `text-sm` tem metade do alvo mínimo do DESIGN.md §4. A regra de
+            `pointer: coarse` do `base.css` cobre botões e inputs, não um `<a>`
+            de texto. 44px é também a altura da linha de menu, logo é o mesmo
+            alvo que os itens que aqui faltam. */}
         <Link
           to="/"
-          className="text-sm text-primary underline underline-offset-4 hover:no-underline"
+          className="inline-flex min-h-linha items-center text-sm text-primary underline underline-offset-4 hover:no-underline"
           onClick={aoNavegar}
         >
           Ir para o início

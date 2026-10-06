@@ -1,28 +1,44 @@
-import {
-  casaCaminho,
-  entradaDoRegisto,
-  type EntradaDoRegisto,
-  type RotaId,
-} from "./registo-de-rotas";
+import { casaCaminho, entradaDoRegisto, type EntradaDoRegisto } from "./registo-de-rotas";
 
 /**
  * O menu — **dados**, e uma projecção por tenant sobre o registo de rotas
  * (ADR 0009).
  *
- * ## Porque é que isto é um array em código e ainda assim não é "o menu em
- * código"
+ * ## Desde 2026-10-06 a projecção vem do servidor, e isto deixou de ter uma
  *
- * A tabela `accounts_tenantmenuitem` da ADR 0011 não existe: é backend que
- * ainda não foi escrito, e o `menu` do `SessaoOut` viaja vazio e **sem forma de
- * item declarada** (ADR 0010). Logo a projecção de hoje é o
- * `PROJECCAO_EM_CODIGO` abaixo — mas tem a **forma** da linha da tabela
- * (`route_id`, `grupo`, `ordem`, `visivel`, `rotulo`), e quem a consome é uma
- * função que recebe a projecção por argumento. Trocar a fonte é trocar o
- * argumento de `montarMenu(...)` numa linha do `sidebar-nav.tsx`, sem reescrever
- * o shell — que é exactamente o que a ADR 0009 pede.
+ * Este ficheiro tinha um `PROJECCAO_EM_CODIGO`: um array com a forma da linha da
+ * tabela da ADR 0011, enquanto essa tabela não existia. Existe
+ * (`accounts_tenantmenuitem`), o menu viaja no `GET /auth/sessao` filtrado pelo
+ * papel de quem pede, e o `ItemDeMenuOut` está no `types.ts`. A constante saiu —
+ * um default em código ao lado de um default que o servidor serve são dois
+ * defaults, e o de cá era o que ficava desactualizado.
+ *
+ * Os **defaults continuam a existir e continuam a ser código**, mas do outro
+ * lado: `apps/accounts/menu.py`. Um estabelecimento sem nenhuma linha de
+ * configuração recebe o menu completo pela ordem do registo (medido: seis itens,
+ * `rotulo: null` em todos), porque "os defaults vivem em código e a linha nasce
+ * na primeira escrita" (ADR 0011). As razões dos nomes dos grupos ("Equipa" e
+ * não "Contas", porque é copy de produto e não o nome do módulo; o "Painel" como
+ * sítio das perguntas da manhã) foram com eles e estão lá, citando este ficheiro
+ * como origem — não se perderam na troca.
+ *
+ * Que a troca **não** é um redesenho foi medido item a item: o menu que o
+ * servidor serve por omissão compõe exactamente os mesmos quatro grupos, pela
+ * mesma ordem, com os mesmos rótulos, e a frase da gaveta continua a nomear
+ * "Contar" e "Receber".
+ *
+ * ## A forma entra por propriedade, e o encaixe é verificado numa linha
+ *
+ * O shell **declara** a `EntradaDaProjeccao` e não importa o schema que a
+ * valida: `src/shell/**` não conhece domínios (ADR 0008, decisão 2, imposta pelo
+ * `eslint.config.js`). Quem satisfaz a interface é o `features/accounts`
+ * (`useMenuDaSessao`, sobre o `itemDeMenuSchema`) e quem liga os dois é a rota
+ * (`routes/involucro.tsx`) — a mesma inversão de dependência do
+ * `sessao-do-shell.ts`, e o mesmo ponto único onde o `pnpm typecheck` confronta
+ * os dois lados.
  *
  * Os nomes dos campos estão em `snake_case` porque são **contrato** (é a linha
- * que o servidor vai servir), pela mesma convenção que o `tenant_ativo` do
+ * que o servidor serve), pela mesma convenção que o `tenant_ativo` do
  * `features/accounts/schemas.ts`: "o campo é contrato, o tipo é nosso".
  *
  * ## Uma lista com um nível de agrupamento, nunca uma árvore
@@ -34,81 +50,47 @@ import {
  */
 
 export interface EntradaDaProjeccao {
-  readonly route_id: RotaId;
+  /**
+   * O id da rota, como texto.
+   *
+   * **`string` e não `RotaId`**, e a razão está no `entradaDoRegisto`: isto é
+   * texto que veio por HTTP, e a lista fechada é verificada onde ela está
+   * escrita — no `Record<RotaId, EntradaDoRegisto>` do registo. Um id que este
+   * bundle não conheça é ignorado por `montarMenu`, em vez de derrubar a
+   * resposta da sessão e com ela o arranque da aplicação.
+   */
+  readonly route_id: string;
   /** O cabeçalho sob o qual o item aparece. Caixa alta é apresentação. */
   readonly grupo: string;
   /** Ordena **dentro e entre** grupos: a ordem dos grupos é a do seu 1.º item. */
   readonly ordem: number;
   /** Esconder é apresentação, não autorização (ADR 0009): a rota continua lá. */
   readonly visivel: boolean;
-  /** Sobrepõe o rótulo do registo. Ausente = o do registo. */
-  readonly rotulo?: string;
+  /**
+   * Sobrepõe o rótulo do registo. `null` = o do registo.
+   *
+   * **`string | null` e não `rotulo?: string`**, e a diferença foi medida: o
+   * contrato manda `rotulo: null` quando o tenant não sobrepôs nada (e não o
+   * default já resolvido, para não prender o tenant a um default que nunca
+   * escolheu), e com `exactOptionalPropertyTypes` — que está ligado no
+   * `tsconfig.json` — um `null` não entra num campo declarado opcional. O `??`
+   * do `montarMenu` serve os dois casos sem mudar.
+   */
+  readonly rotulo: string | null;
 }
 
 /**
- * A projecção por omissão, que é a de todos os tenants enquanto a tabela não
- * existir.
+ * Um item já resolvido: a projecção do tenant por cima do registo de código.
  *
- * A `ordem` vai de dez em dez pela razão de sempre: inserir um item entre dois
- * não obriga a renumerar os outros, nem aqui nem na tabela que isto vai
- * substituir.
- *
- * O agrupamento segue os módulos do backend porque é o vocabulário que atravessa
- * as duas pontas (ADR 0008, decisão 2): "Inventário" é o `inventory`, "Compras"
- * é o `purchasing`. O "Painel" é o que responde às perguntas da manhã do
- * DESIGN.md §1 — "o que está mal" — e é onde o dono olha primeiro.
+ * O nome repete-se de propósito nas duas pontas, e as duas coisas são
+ * diferentes: o `ItemDeMenu` do `features/accounts/schemas.ts` é a **linha de
+ * configuração** que chega por HTTP (cinco campos, nenhum deles um caminho);
+ * este é o que a sidebar renderiza, com o caminho, o ícone e a pergunta de
+ * operação que só existem em código. O backend tem exactamente o mesmo par de
+ * nomes, pela mesma razão.
  */
-export const PROJECCAO_EM_CODIGO: readonly EntradaDaProjeccao[] = [
-  { route_id: "inicio", grupo: "Painel", ordem: 10, visivel: true },
-  { route_id: "alertas", grupo: "Painel", ordem: 20, visivel: true },
-  { route_id: "stock", grupo: "Inventário", ordem: 30, visivel: true },
-  { route_id: "contar", grupo: "Inventário", ordem: 40, visivel: true },
-  { route_id: "receber", grupo: "Compras", ordem: 50, visivel: true },
-  // "Equipa" é o quarto grupo, e fica no fim porque a sua ordem é a do seu
-  // primeiro item (ver `montarMenu`): quem administra entra aqui uma vez por
-  // contratação, não todas as manhãs. O nome não é um módulo do backend — os
-  // convites são do `accounts` —, e isso é deliberado: "Contas" é o nome do
-  // módulo e não do que a pessoa vai fazer ali, e este rótulo é copy de produto
-  // como os URLs são (ADR 0008, decisão 2). É também o grupo onde "Membros" e
-  // "Configuração" vão entrar sem um nome novo.
-  { route_id: "convites", grupo: "Equipa", ordem: 60, visivel: true },
-];
-
-/**
- * A projecção com alguns ids **escondidos** — o mecanismo, sem a razão.
- *
- * Esconder já era a forma do `visivel` e já era apresentação (ADR 0009:
- * "esconder é apresentação, não autorização"). O que faltava era uma maneira de
- * uma camada de cima dizer *quais*, sem que o shell passasse a saber **porquê**:
- * o shell não conhece domínios (ADR 0008, decisão 2) e não tem nada que saber o
- * que é um `owner`.
- *
- * Então a divisão é esta, e é a mesma inversão de dependência do
- * `sessao-do-shell.ts`: o shell dá o mecanismo, a feature `accounts` dá o
- * predicado (`usePodeConvidar`), e quem os liga é a **rota**
- * (`routes/involucro.tsx`), que é a única camada que pode importar os dois. Aqui
- * dentro, "esconder o item X" é uma transformação de dados e nada mais.
- *
- * Devolve uma projecção nova e não muta a recebida: a de entrada é uma constante
- * de módulo partilhada por todos os renders.
- */
-export function esconderNoMenu(
-  projeccao: readonly EntradaDaProjeccao[],
-  ids: readonly RotaId[],
-): readonly EntradaDaProjeccao[] {
-  // Um `Set` e não um `includes` por entrada: o `security/detect-object-injection`
-  // do `eslint.config.js` recusa leituras por chave dinâmica, e um `Set` é a
-  // forma que o resto do repositório já usa para pertença (`METHODS_WITHOUT_CSRF`
-  // do `http.ts`).
-  const escondidos = new Set<string>(ids);
-  return projeccao.map((entrada) =>
-    escondidos.has(entrada.route_id) ? { ...entrada, visivel: false } : entrada,
-  );
-}
-
-/** Um item já resolvido: a projecção do tenant por cima do registo de código. */
 export interface ItemDeMenu extends EntradaDoRegisto {
-  readonly id: RotaId;
+  readonly id: string;
   /** `activeOptions.exact` — só a raiz, senão `/` ficava activa em tudo. */
   readonly exacto: boolean;
 }
@@ -127,12 +109,16 @@ export interface GrupoDeMenu {
  *    continua a funcionar porque a árvore de rotas é código e não dados — é a
  *    razão número um da ADR 0009, e é o que impede "esconder" de se tornar um
  *    controlo de acesso falso e um marcador guardado num 404;
- *  - **um `route_id` que o registo não conhece é ignorado.** É inalcançável por
- *    construção (o `Record` é exaustivo nos dois sentidos), e deixa de o ser no
- *    dia em que a projecção chegar por HTTP de um servidor mais novo que este
- *    bundle. Ignorar um item desconhecido é o comportamento certo nesse dia:
- *    uma entrada a mais no menu de um cliente não é razão para o shell não
- *    montar;
+ *  - **um `route_id` que o registo não conhece é ignorado.** Era inalcançável
+ *    enquanto a projecção era código; **deixou de ser** agora que ela chega por
+ *    HTTP, e o dia em que acontece tem nome: o intervalo de um rolling deploy,
+ *    com um backend novo a servir um sétimo id a um bundle antigo. Ignorar o
+ *    item é o comportamento certo aí — uma entrada a mais no menu não é razão
+ *    para o shell não montar —, e é a mesma escolha que o
+ *    `selectors.projeccao_de_menu` do backend faz para o caso simétrico. É
+ *    também a razão pela qual o `route_id` do contrato não é validado contra um
+ *    `z.enum` à chegada: com um enum fechado em Zod, este ramo nunca corria
+ *    porque a **sessão inteira** falhava antes;
  *  - **a ordem dos grupos é a do primeiro item de cada um**, e não uma segunda
  *    coluna de ordenação. Com `ordem` global, reordenar o menu é mexer num
  *    número só.
@@ -183,7 +169,9 @@ export function rotulosDeCampo(menu: readonly GrupoDeMenu[]): readonly string[] 
  * cresce o nome do ecrã sozinho deixa de situar: há quatro sítios onde pode
  * estar um ecrã chamado "Entradas". O grupo vem da **projecção do tenant**, logo
  * uma empresa que renomeie o grupo renomeia também o que a barra de topo diz,
- * sem uma segunda tabela de nomes.
+ * sem uma segunda tabela de nomes. Medido com um `PUT /menu` a sério: com o
+ * `stock` renomeado para "Armazém", o URL `/stock/<uuid>` passa a situar-se em
+ * "Inventário / Armazém".
  *
  * Usa o mesmo casamento por prefixo do registo (`casaCaminho`), e por isso
  * `/stock/<uuid>` continua a situar-se em "Stock" — é nos ecrãs mais profundos
