@@ -5,6 +5,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  CLASSE_CONTADOR,
+  CorpoDoContador,
+  ReguaDeContadores,
+} from "@/components/regua-de-contadores";
 import { mensagemDeErro } from "@/lib/api/errors";
 import { formatMoney, formatMoneyRounded } from "@/lib/format";
 
@@ -27,7 +32,20 @@ import { textoDeQuantidade } from "../vocabulario";
  *    o §4 nº 7 proíbe.
  */
 
-/** Um total em euros: arredondado, porque é uma soma de custos médios. */
+/**
+ * Um total em euros: arredondado, porque é uma soma de custos médios.
+ *
+ * **Era um mosaico `rounded-xl` com borda própria, numa grelha de três** — a
+ * última do repositório, e o cartão de estatística que o DESIGN.md §5 proíbe.
+ * Passou a campo da régua de contadores a 2026-10-06, pela mesma razão que os
+ * dos outros ecrãs: sem ela, este ecrã era o único que não parecia do mesmo
+ * produto.
+ *
+ * Este ecrã **continua a ser um formulário e não uma tabela**, e não foi
+ * convertido: as três células são totais e o resto é uma justificação e um botão.
+ * É também uma rota de campo — fecha-se a contagem onde ela foi feita, no
+ * telemóvel — e o §4 dá a 360px a prioridade do desenho aqui.
+ */
 function Total({
   rotulo,
   valor,
@@ -38,11 +56,8 @@ function Total({
   readonly cor: string;
 }) {
   return (
-    <div className="flex min-h-14 flex-col items-end justify-center gap-0.5 rounded-xl border border-border bg-surface px-2.5 py-2 text-right">
-      <span data-numeric className={`text-lg leading-none font-semibold sm:text-2xl ${cor}`}>
-        {formatMoneyRounded(valor)}
-      </span>
-      <span className="text-xs leading-tight text-muted-foreground">{rotulo}</span>
+    <div className={CLASSE_CONTADOR}>
+      <CorpoDoContador campo={rotulo} figura={formatMoneyRounded(valor)} tinta={cor} />
     </div>
   );
 }
@@ -52,16 +67,16 @@ export function ResumoDoFecho({ fecho }: { readonly fecho: FechoDeContagem }) {
 
   return (
     <section className="flex flex-col gap-3">
-      <div className="grid grid-cols-3 gap-2 px-4">
+      <ReguaDeContadores>
         <Total rotulo="em falta" valor={fecho.loss_eur} cor="text-danger" />
         <Total rotulo="a mais" valor={fecho.gain_eur} cor="text-success" />
         <Total rotulo="diferença líquida" valor={fecho.net_eur} cor="" />
-      </div>
+      </ReguaDeContadores>
 
-      <p className="px-4 text-xs text-muted-foreground">
+      <p className="px-celula-x text-xs text-muted-foreground">
         <span data-numeric>{fecho.counted_lines}</span> de{" "}
         <span data-numeric>{fecho.total_lines}</span> linhas contadas
-        {porContar === 0 ? "" : " · as que ficaram por contar não geram ajuste"}
+        {porContar === 0 ? "" : ". As que ficaram por contar não geram ajuste."}
       </p>
 
       {porContar === 0 ? null : (

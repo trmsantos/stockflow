@@ -5,6 +5,7 @@ import { EstadoVazio } from "@/components/estado-vazio";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CLASSE_CONTADOR, ReguaDeContadores } from "@/components/regua-de-contadores";
 import { mensagemDeErro } from "@/lib/api/errors";
 
 import { useContagemAberta, useFecharContagem, useFechoDeContagem } from "../api";
@@ -72,15 +73,22 @@ export function EcraDeFechoDeContagem() {
       ) : null}
 
       {fecho.isPending && id !== undefined ? (
-        <div aria-busy="true" className="flex flex-col gap-3 px-4">
+        <div aria-busy="true" className="flex flex-col gap-3">
           <span className="sr-only">A carregar as diferenças…</span>
-          <div className="grid grid-cols-3 gap-2">
-            <Skeleton className="h-14" />
-            <Skeleton className="h-14" />
-            <Skeleton className="h-14" />
+          {/* O esqueleto tem a forma da régua e não de três mosaicos: senão o
+              layout salta no momento em que os totais chegam. */}
+          <ReguaDeContadores>
+            {[0, 1, 2].map((indice) => (
+              <div key={indice} className={CLASSE_CONTADOR}>
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-8 w-20" />
+              </div>
+            ))}
+          </ReguaDeContadores>
+          <div className="flex flex-col gap-3 px-celula-x">
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-14 w-full" />
           </div>
-          <Skeleton className="h-4 w-48" />
-          <Skeleton className="h-14 w-full" />
         </div>
       ) : null}
 

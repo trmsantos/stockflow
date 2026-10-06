@@ -98,12 +98,21 @@ export function CorpoDoContador({
   campo,
   figura,
   nota,
+  tinta = "",
   ativo = false,
 }: {
   readonly campo: string;
   readonly figura: string;
   /** A segunda linha — a hora a que o dia de negócio começa, por exemplo. */
   readonly nota?: string;
+  /**
+   * A cor da figura, quando ela **é** um veredicto e não uma contagem: um total
+   * de perdas em euros lê-se a vermelho e um de ganhos a verde. Vazia por
+   * omissão, que é o caso normal — um contador de "3 a expirar" não é vermelho,
+   * porque a cor nesta identidade é sinal e não ênfase. Quem a passa tem de ter
+   * a palavra a dizer o mesmo (DESIGN.md §2: nunca só a cor).
+   */
+  readonly tinta?: string;
   readonly ativo?: boolean;
 }) {
   return (
@@ -126,7 +135,7 @@ export function CorpoDoContador({
           próprio rótulo — media-se e via-se, o rótulo à esquerda e a figura
           encostada à direita da célula, como se fossem de dois blocos. A utility
           ganha ao `@layer base`, logo basta declará-la. */}
-      <span data-numeric className="text-left text-3xl leading-none font-semibold">
+      <span data-numeric className={`text-left text-3xl leading-none font-semibold ${tinta}`}>
         {figura}
       </span>
 

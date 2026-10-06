@@ -267,7 +267,8 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
 - Largura máxima: `72rem` para **formulários e leitura**, `42rem` para texto corrido. **Tabelas usam
   a largura toda da área de conteúdo** — um cap de 72rem numa tabela de ERP é espaço desperdiçado à
   direita.
-- **O Stock cumpre a linha acima desde 2026-10-06; os outros três ainda não.** Este documento
+- **O Stock e os Alertas cumprem a linha acima desde 2026-10-06; Contar e o Fecho de contagem
+  nunca a vão cumprir, e isso é a resposta certa para eles.** Este documento
   carregava a dívida por escrito — os quatro ecrãs com um cap de `42rem`, 672px numa área de 1024 —
   e a ordem de a pagar **depois** da sessão 0 (ADR 0009), porque refazer antes das respostas era
   refazer duas vezes.
@@ -277,9 +278,18 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   sessão 0 ainda decide são as **colunas** (unidades, mínimo por artigo ou por artigo-e-loja), e
   trocar uma coluna numa tabela que existe é uma linha num array — logo o argumento de "duas vezes"
   caiu com a forma, não com as respostas.
-  **Alargar o cap sem passar as linhas a tabela densa continua a ser pior do que não alargar.** É
-  por isso que Alertas, Contar e Receber mantêm o cap: a conversão é por ecrã e cada um paga a sua.
-  Contar e Receber são rotas de campo e a prioridade delas é 360px, não 1440.
+  **Alargar o cap sem passar as linhas a tabela densa continua a ser pior do que não alargar.** A
+  conversão é por ecrã e cada um paga a sua.
+- **Contar e o Fecho de contagem ficam como estão, e não é dívida.** Não são listas: são
+  **formulários**. Uma linha de contagem é um campo numérico com salto de foco (`enterKeyHint="next"`)
+  para o teclado ficar aberto do princípio ao fim da zona, e o `<label>` está ao lado do campo —
+  contra o default do §3 — porque nove rótulos empilhados sobre nove campos são dezoito linhas. O
+  fecho são três totais, uma justificação e um botão. As duas são rotas de campo, contam-se de pé no
+  armazém com uma mão, e o §4 dá a 360px a prioridade do desenho ali: uma tabela de `<input>`s a
+  360px desliza na horizontal e põe fora do ecrã o campo que se está a escrever.
+  O que elas **partilham** com os outros ecrãs é a régua de contadores — a última grelha de três
+  mosaicos do repositório era a dos totais do fecho, e passou a régua a 2026-10-06. A linguagem é a
+  mesma; a forma do conteúdo é que é outra, por razões de uso e não de moda.
 - Densidade: **compacta** em desktop; em mobile mantém-se compacta e os alvos de toque são ≥ 44px
   (a regra está no `base.css` por `pointer: coarse`, não por breakpoint — um tablet com rato mantém a
   densidade).

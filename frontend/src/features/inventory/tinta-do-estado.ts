@@ -1,4 +1,4 @@
-import type { EstadoNivel } from "./schemas";
+import type { EstadoNivel, Gravidade } from "./schemas";
 
 /**
  * A tinta de um estado de stock, nos **dois papéis** em que ela aparece: a
@@ -22,7 +22,13 @@ import type { EstadoNivel } from "./schemas";
  * Se o limiar de "baixo" mudar, muda num sítio e esta lista não passa a
  * discordar dos alertas.
  */
-type Gravidade = "grave" | "aviso";
+/**
+ * A urgência **interna** desta camada. Tem nome próprio e não se chama
+ * "gravidade" porque `Gravidade` é o tipo do contrato (`danger`/`warning`/`info`)
+ * e são coisas diferentes: aquele é o que o servidor diz, este é o que a tinta
+ * precisa de saber. Dois vocabulários do contrato colapsam neste.
+ */
+type Urgencia = "grave" | "aviso";
 
 /**
  * O `ok` **não está aqui**, e é deliberado: um nível saudável não tem tinta
@@ -32,34 +38,65 @@ type Gravidade = "grave" | "aviso";
  * novo que o contrato ganhe e esta lista não conheça cai no mesmo sítio que o
  * `ok` — sem cor inventada, com a palavra do servidor à vista.
  */
-const GRAVIDADE = new Map<EstadoNivel, Gravidade>([
+const URGENCIA_DO_ESTADO = new Map<EstadoNivel, Urgencia>([
   ["negativo", "grave"],
   ["esgotado", "grave"],
   ["baixo", "aviso"],
 ]);
 
 /** Primeiro papel do §2: a cor de estado como **cor de texto**. */
-const TINTA_DO_TEXTO = new Map<Gravidade, string>([
+const TINTA_DO_TEXTO = new Map<Urgencia, string>([
   ["grave", "text-danger"],
   ["aviso", "text-warning"],
 ]);
 
 /** O trilho é preenchimento, mas de 4px e sem nada por cima: não leva frente. */
-const TINTA_DO_TRILHO = new Map<Gravidade, string>([
+const TINTA_DO_TRILHO = new Map<Urgencia, string>([
   ["grave", "bg-danger"],
   ["aviso", "bg-warning"],
 ]);
 
-function gravidadeDe(estado: EstadoNivel): Gravidade | undefined {
-  return GRAVIDADE.get(estado);
+function urgenciaDe(estado: EstadoNivel): Urgencia | undefined {
+  return URGENCIA_DO_ESTADO.get(estado);
 }
 
 export function tintaDoTexto(estado: EstadoNivel): string {
-  const gravidade = gravidadeDe(estado);
-  return gravidade === undefined ? "" : (TINTA_DO_TEXTO.get(gravidade) ?? "");
+  const urgencia = urgenciaDe(estado);
+  return urgencia === undefined ? "" : (TINTA_DO_TEXTO.get(urgencia) ?? "");
 }
 
 export function tintaDoTrilho(estado: EstadoNivel): string {
-  const gravidade = gravidadeDe(estado);
-  return gravidade === undefined ? "" : (TINTA_DO_TRILHO.get(gravidade) ?? "");
+  const urgencia = urgenciaDe(estado);
+  return urgencia === undefined ? "" : (TINTA_DO_TRILHO.get(urgencia) ?? "");
+}
+
+/**
+ * A mesma classificação, a partir da **gravidade de um alerta** em vez do estado
+ * de um nível.
+ *
+ * O contrato tem dois vocabulários para a mesma ideia porque são dois recursos:
+ * um `StockLevel` tem `status` (`negativo`/`esgotado`/`baixo`/`ok`) e um alerta
+ * tem `severity` (`danger`/`warning`/`info`), as duas decididas no servidor.
+ * Traduzir ambos para a **mesma** gravidade interna é o que faz um "baixo" no
+ * ecrã de Stock e o alerta que ele gera terem exactamente a mesma cor — se cada
+ * ecrã tivesse o seu mapa, divergiam na primeira correção feita só num.
+ *
+ * O `info` não tem tinta, pela mesma razão que o `ok`. Num ecrã de alertas isso
+ * lê-se de forma diferente e vale dizê-lo: ali **todas** as linhas são alertas,
+ * logo o trilho não distingue "problema" de "não problema" — distingue
+ * **urgência**. Um `info` é um alerta que não se quer ver de dois metros.
+ */
+const URGENCIA_DO_ALERTA = new Map<Gravidade, Urgencia>([
+  ["danger", "grave"],
+  ["warning", "aviso"],
+]);
+
+export function tintaDoTextoDeGravidade(gravidade: Gravidade): string {
+  const urgencia = URGENCIA_DO_ALERTA.get(gravidade);
+  return urgencia === undefined ? "" : (TINTA_DO_TEXTO.get(urgencia) ?? "");
+}
+
+export function tintaDoTrilhoDeGravidade(gravidade: Gravidade): string {
+  const urgencia = URGENCIA_DO_ALERTA.get(gravidade);
+  return urgencia === undefined ? "" : (TINTA_DO_TRILHO.get(urgencia) ?? "");
 }

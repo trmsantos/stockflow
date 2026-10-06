@@ -13,14 +13,20 @@ import {
   useRegistarDesperdicio,
   useResumoDeAlertas,
 } from "../api";
-import { ErroDaLista, EsqueletoDaLista } from "../components/estados-da-lista";
-import { LinhaDeAlerta } from "../components/linha-de-alerta";
-import { LinhaDeDesperdicio } from "../components/linha-de-desperdicio";
+import { ErroDaLista } from "../components/estados-da-lista";
 import {
   ErroDosNumerosDeAlertas,
   EsqueletoDosNumerosDeAlertas,
   NumerosDosAlertas,
 } from "../components/numeros-dos-alertas";
+import {
+  EsqueletoDaTabelaDeAlertas,
+  TabelaDeAlertas,
+} from "../components/tabela-de-alertas";
+import {
+  EsqueletoDaTabelaDeDesperdicio,
+  TabelaDeDesperdicio,
+} from "../components/tabela-de-desperdicio";
 import type { Alerta, MotivoQuebra } from "../schemas";
 import { rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
 
@@ -46,8 +52,15 @@ import { rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
  *    sonda da Q6. Se ele olhar para "05:10 — Pastéis de ontem" e disser "isso é
  *    de ontem", a pergunta está respondida sem ter sido feita.
  *
- * A ação principal é um toque na linha, "Deitei fora", e o segundo toque escolhe
- * o motivo. É ela que alimenta o número que o dono mais quer ver.
+ * A ação principal é "Deitei fora", e o segundo toque escolhe o motivo. É ela que
+ * alimenta o número que o dono mais quer ver.
+ *
+ * **Era um toque na linha inteira e passou a uma coluna de acção** quando as duas
+ * listas deste ecrã viraram tabelas densas (2026-10-06). Não foi preferência: um
+ * `<tr>` não se envolve num `<button>`, e a forma certa apareceu por consequência
+ * — o nome é um link para o artigo, como no Stock, e o botão existe só nas linhas
+ * em que faz efeito. Antes, uma linha de validade era um `<button>` e uma de
+ * falta era um `<Link>`, com o mesmo aspecto e comportamentos diferentes.
  */
 
 /** O que se diz depois de registar, para quem não está a olhar para o ecrã. */
@@ -80,7 +93,9 @@ export function EcraDeAlertas() {
   const linhasDeDesperdicio = desperdicio.data?.results;
 
   return (
-    <section className="flex w-full max-w-2xl flex-col">
+    // Sem `max-w`: as duas tabelas usam a largura toda da área de conteúdo
+    // (DESIGN.md §4), como o ecrã de Stock.
+    <section className="flex w-full flex-col">
       <h1 className="sr-only">Alertas — o que expira, o que falta, quanto deitei fora</h1>
 
       {resumo.isPending ? <EsqueletoDosNumerosDeAlertas /> : null}
@@ -98,7 +113,7 @@ export function EcraDeAlertas() {
       {/* O resultado da ação principal, anunciado uma vez: a linha desaparece da
           lista quando o lote deixa de estar em risco, e sem isto quem ouve o
           ecrã só notava que havia uma linha a menos. */}
-      <p role="status" className="px-4 text-sm">
+      <p role="status" className="px-celula-x py-2 text-sm">
         {ultimo === null ? null : (
           <span className="flex items-start gap-1.5">
             <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-success" />
@@ -109,7 +124,7 @@ export function EcraDeAlertas() {
 
       {aVerDesperdicio ? (
         <>
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-border px-4 py-2">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-border px-celula-x py-2">
             {/* O rótulo da Q6, por extenso, onde há largura para ele: é este
                 cabeçalho e a hora de cada linha que fazem o dono dizer "isso é
                 de ontem" — e aí a pergunta está respondida. */}
@@ -133,9 +148,7 @@ export function EcraDeAlertas() {
             </Link>
           </div>
 
-          {desperdicio.isPending ? (
-            <EsqueletoDaLista rotulo="A carregar o desperdício…" linhas={4} />
-          ) : null}
+          {desperdicio.isPending ? <EsqueletoDaTabelaDeDesperdicio /> : null}
 
           {desperdicio.isError ? (
             <ErroDaLista
@@ -164,16 +177,12 @@ export function EcraDeAlertas() {
               </Button>
             </EstadoVazio>
           ) : (
-            <ul className="flex flex-col">
-              {linhasDeDesperdicio.map((linha) => (
-                <LinhaDeDesperdicio key={linha.id} linha={linha} />
-              ))}
-            </ul>
+            <TabelaDeDesperdicio linhas={linhasDeDesperdicio} />
           )}
         </>
       ) : (
         <>
-          {alertas.isPending ? <EsqueletoDaLista rotulo="A carregar os alertas…" /> : null}
+          {alertas.isPending ? <EsqueletoDaTabelaDeAlertas /> : null}
 
           {alertas.isError ? (
             <ErroDaLista
@@ -213,52 +222,42 @@ export function EcraDeAlertas() {
             </EstadoVazio>
           ) : (
             <>
-              <ul className="flex flex-col">
-                {linhas.map((alerta) => (
-                  <LinhaDeAlerta
-                    key={alerta.id}
-                    alerta={alerta}
-                    idDoPainel={`motivos-${alerta.id}`}
-                    aberto={aberta === alerta.id}
-                    aoAlternar={() => {
-                      setAberta((atual) => (atual === alerta.id ? null : alerta.id));
-                      registar.reset();
-                    }}
-                    aRegistar={registar.isPending && registar.variables.product === alerta.product}
-                    erro={
-                      registar.isError && aberta === alerta.id
-                        ? mensagemDeErro(registar.error)
-                        : null
-                    }
-                    aoDeitarFora={(motivo) => {
-                      registar.mutate(
-                        {
-                          product: alerta.product,
-                          // Um alerta de validade tem sempre localização e lote:
-                          // é **sobre** aquele lote, e deitar fora outro seria
-                          // deitar fora o lote errado. A guarda existe porque o
-                          // contrato os deixa nulos (uma falta não tem nenhum
-                          // dos dois), e essa linha não tem esta ação.
-                          location: alerta.location?.id ?? "",
-                          quantity: alerta.quantity.base,
-                          reason: motivo,
-                          ...(alerta.lot === null ? {} : { lot_code: alerta.lot.lot_code }),
-                        },
-                        {
-                          onSuccess: () => {
-                            setUltimo(frasePorRegisto(alerta, motivo));
-                            setAberta(null);
-                          },
-                        },
-                      );
-                    }}
-                  />
-                ))}
-              </ul>
+              <TabelaDeAlertas
+                alertas={linhas}
+                abertaEm={aberta}
+                aoAlternar={(id) => {
+                  setAberta((atual) => (atual === id ? null : id));
+                  registar.reset();
+                }}
+                produtoARegistar={registar.isPending ? registar.variables.product : null}
+                erro={registar.isError ? mensagemDeErro(registar.error) : null}
+                aoDeitarFora={(alerta, motivo) => {
+                  registar.mutate(
+                    {
+                      product: alerta.product,
+                      // Um alerta de validade tem sempre localização e lote: é
+                      // **sobre** aquele lote, e deitar fora outro seria deitar
+                      // fora o lote errado. A guarda existe porque o contrato os
+                      // deixa nulos (uma falta não tem nenhum dos dois), e essa
+                      // linha não tem esta ação.
+                      location: alerta.location?.id ?? "",
+                      quantity: alerta.quantity.base,
+                      reason: motivo,
+                      ...(alerta.lot === null ? {} : { lot_code: alerta.lot.lot_code }),
+                    },
+                    {
+                      onSuccess: () => {
+                        setUltimo(frasePorRegisto(alerta, motivo));
+                        setAberta(null);
+                      },
+                    },
+                  );
+                }}
+              />
 
-              <p className="px-4 py-3 text-xs text-muted-foreground">
-                {linhas.length === 1 ? "1 alerta" : `${String(linhas.length)} alertas`} · o pior
-                primeiro · «consumir até» é limite legal, «perde qualidade» é durabilidade mínima
+              <p className="px-celula-x py-3 text-xs text-muted-foreground">
+                {linhas.length === 1 ? "1 alerta" : `${String(linhas.length)} alertas`}, o pior
+                primeiro. «Consumir até» é limite legal; «perde qualidade» é durabilidade mínima.
               </p>
             </>
           )}
@@ -268,7 +267,7 @@ export function EcraDeAlertas() {
       {/* O desperdício de hoje tem sempre uma porta, mesmo quando se está a ver
           o risco: é a terceira pergunta, e o contador do topo é a primeira. */}
       {aVerDesperdicio || resumo.data === undefined ? null : (
-        <p className="px-4 pb-3 text-xs text-muted-foreground">
+        <p className="px-celula-x pb-3 text-xs text-muted-foreground">
           Deitado fora nos últimos 7 dias:{" "}
           <span data-numeric>{formatMoneyRounded(resumo.data.wasted_week_eur)}</span>.{" "}
           <Link
