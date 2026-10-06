@@ -1,15 +1,16 @@
-"""Identidade, tenants, pertenças e convites (ADR 0007 e ADR 0010).
+"""Identidade, tenants, pertenças, convites e o menu (ADR 0007, 0010 e 0011).
 
-Quatro tabelas, e a mesma pergunta respondida de três maneiras ("o que é que
+Cinco tabelas, e a mesma pergunta respondida de três maneiras ("o que é que
 uma ligação sem âmbito consegue ler?"). Nenhuma das respostas é "confia no
 código":
 
-| Tabela                 | Política RLS            | Porquê                      |
-|------------------------|-------------------------|-----------------------------|
-| `accounts_tenant`      | sim, sobre **`id`**     | a tabela *é* o tenant       |
-| `accounts_membership`  | sim, sobre `tenant_id`  | é a tabela da autorização   |
-| `accounts_invitation`  | sim, sobre `tenant_id`  | **o link nomeia o tenant**  |
-| `accounts_user`        | **não** — lista fechada | o login lê antes do âmbito  |
+| Tabela                      | Política RLS            | Porquê                    |
+|-----------------------------|-------------------------|---------------------------|
+| `accounts_tenant`           | sim, sobre **`id`**     | a tabela *é* o tenant     |
+| `accounts_membership`       | sim, sobre `tenant_id`  | é a tabela da autorização |
+| `accounts_invitation`       | sim, sobre `tenant_id`  | **o link nomeia o tenant**|
+| `accounts_tenantmenuitem`   | sim, sobre `tenant_id`  | configuração de um tenant |
+| `accounts_user`             | **não** — lista fechada | o login lê antes do âmbito|
 
 A terceira linha é a que contraria o instinto, e é a decisão central da ADR
 0010. Um convite é lido **antes** de existir sessão, como o login — logo o
@@ -80,7 +81,9 @@ __all__ = [
     "Invitation",
     "Membership",
     "Papel",
+    "RotaDeMenu",
     "Tenant",
+    "TenantMenuItem",
     "User",
     "UserManager",
 ]
@@ -646,3 +649,131 @@ class Invitation(TenantModel):
         if self.expires_at <= timezone.now():
             return EstadoDoConvite.EXPIRADO
         return EstadoDoConvite.PENDENTE
+
+
+class RotaDeMenu(models.TextChoices):
+    """A lista **fechada** de rotas que o menu de um tenant pode nomear.
+
+    Vive ao nível do módulo como o `Papel`, e pela mesma razão: é um valor que
+    atravessa a fronteira do contrato. Os defaults de cada rota — rótulo, grupo,
+    ordem, papéis permitidos — não estão aqui, estão no `apps/accounts/menu.py`:
+    isto é a lista de ids e aquilo é o registo, e separá-los é o que faz esta
+    classe servir de `choices` de uma coluna sem arrastar metadados de
+    apresentação para dentro de `models.py`.
+
+    É um `TextChoices` para o `ChoiceField` do serializer o emitir como enum
+    fechado no OpenAPI (`RotaIdEnum`, fixado em `SPECTACULAR_SETTINGS`): a união
+    chega ao `types.ts` commitado e o `Record<RotaId, …>` do shell passa a ser
+    exaustivo contra **a lista do backend**, nos dois sentidos, sob
+    `pnpm typecheck`. É isso — e não a cardinalidade — que substitui a garantia
+    dos "4 itens" que morreu com a tab bar (ADR 0009).
+
+    Os seis ids são exactamente os do `frontend/src/shell/registo-de-rotas.ts`,
+    que os escreveu primeiro (incluindo o `convites`, que entrou lá no mesmo dia
+    em que esta tabela nasceu). Acrescentar um sétimo aqui **faz o
+    `pnpm typecheck` do frontend falhar** até o `Record` dele o ter, e tirar um
+    falha do mesmo modo pelo outro lado: é essa a propriedade que se compra, e é
+    por isso que o id da rota do painel de configuração ainda não está nesta
+    lista — a rota não existe na árvore da SPA.
+
+    O valor é curto e estável de propósito: é uma chave de configuração guardada
+    em linhas de clientes, e renomear um id é uma migração de dados.
+    """
+
+    INICIO = "inicio", "Início"
+    ALERTAS = "alertas", "Alertas"
+    STOCK = "stock", "Stock"
+    CONTAR = "contar", "Contar"
+    RECEBER = "receber", "Receber"
+    CONVITES = "convites", "Convites"
+
+
+class TenantMenuItem(TenantModel):
+    """A projecção do menu de **um** tenant sobre o registo de rotas (ADR 0011).
+
+    Herda de `TenantModel`, que lhe dá a chave UUID, o `tenant_id` que a política
+    compara, os timestamps e o índice `(tenant_id, -created_at)`. Herdar daqui é
+    também a declaração de que esta é uma tabela de dados de um tenant e que a
+    migração que a cria traz o bloco de RLS — e traz: `accounts_tenantmenuitem`
+    aparece na varredura do `pg_class` do lado das tabelas **com** política e
+    **não** entra em `SEM_POLITICA` (`tests/test_db_roles.py`, que falha nos dois
+    sentidos). Esconder um item de menu é apresentação, mas a linha que o diz é
+    configuração de um cliente, e configuração de um cliente não é legível por
+    outro.
+
+    ## Quatro colunas mutáveis, e porque é que isto não é um armazém chave/valor
+
+    A ADR 0011 proíbe `chave`/`valor` e `JSONField` de settings, e a razão é um
+    gate e não gosto: um blob geraria `Record<string, unknown>` no `types.ts` e o
+    gate de diff do CI não veria nada — "um valor configurável que o TypeScript
+    gerado não consegue nomear não é configuração, é um bug". Aqui cada coluna é
+    tipada e aparece no `schema.yml`: `grupo` é texto, `ordem` é inteiro,
+    `visivel` é booleano, `rotulo` é texto, e `route_id` é um enum fechado que o
+    backend valida. O que esta tabela **não** tem é uma coluna onde caiba a
+    próxima decisão adiada.
+
+    ## A linha nasce na primeira escrita, e os defaults vivem em código
+
+    ADR 0011, com estas palavras. Quem lê chama a projecção e recebe os defaults
+    do `apps/accounts/menu.py` quando não há linha nenhuma — logo um tenant que
+    nunca abriu o painel tem o menu completo, sem uma linha na tabela. O
+    `accounts.criar_tenant` **não** as pode criar (o `accounts` não importa nada
+    e nem precisaria de importar: criá-las seria escrever configuração que
+    ninguém pediu, e um default guardado é um default que deixa de poder mudar),
+    e fazê-lo por evento exigia o consumidor da outbox, que não existe.
+
+    A consequência é que uma rota **ausente** da tabela e uma rota ausente do
+    corpo de um `PUT` significam a mesma coisa: "este tenant não configurou
+    isto". `visivel = False` é a forma de esconder, e é explícita.
+
+    ## Unicidade `(tenant, route_id)`
+
+    Uma rota tem uma configuração por tenant. Sem a constraint, duas linhas da
+    mesma rota davam um menu com o item repetido e uma ordem que depende da
+    ordem de leitura — e o `PUT` de substituição total não as consegue distinguir
+    para as corrigir. É também o índice por onde a projecção filtra o tenant.
+
+    ## Sem `REVOKE UPDATE, DELETE`, e sem registo no admin
+
+    Isto não é um ledger: a configuração do menu é para mudar, e o `PUT` de
+    substituição total apaga e reescreve as linhas do tenant numa transação. O
+    `APPEND_ONLY` do `tests/test_db_roles.py` não muda (ADR 0006).
+
+    E não entra no `admin.py`: o admin só registra modelos **sem** política
+    (ADR 0007), e uma changelist desta tabela apareceria vazia a um operador
+    sem `tenant_id` na sessão — "uma changelist vazia é uma armadilha
+    operacional, onde alguém conclui que o cliente não tem dados".
+    """
+
+    route_id = models.CharField(
+        max_length=32,
+        choices=RotaDeMenu.choices,
+        verbose_name="rota",
+    )
+    grupo = models.CharField(max_length=50, verbose_name="grupo")
+    #: `PositiveSmallIntegerField` e não `IntegerField`: um menu com mais de
+    #: 32767 posições não existe, e o teto na base de dados é a rede do
+    #: `max_value` do serializer. Não é único — duas rotas com a mesma ordem
+    #: desempatam pelo `route_id` na projecção, e obrigar a unicidade fazia
+    #: reordenar exigir uma renumeração sem colisões intermédias, que é
+    #: precisamente o problema que a `ordem` de dez em dez evita.
+    ordem = models.PositiveSmallIntegerField(verbose_name="ordem")
+    visivel = models.BooleanField(default=True, verbose_name="visível")
+    #: Vazio — e nunca `NULL` — quer dizer "usa o rótulo do registo". Uma coluna
+    #: de texto nulável é a armadilha que o `DJ001` do ruff nomeia: passava a
+    #: haver dois valores para a mesma ausência. Quem traduz `""` para o `null`
+    #: do contrato é a projecção, num sítio só.
+    rotulo = models.CharField(max_length=50, blank=True, verbose_name="rótulo")
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "item de menu"
+        verbose_name_plural = "itens de menu"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "route_id"],
+                name="tenantmenuitem_tenant_route_uniq",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.route_id} ({self.grupo}, {self.ordem})"

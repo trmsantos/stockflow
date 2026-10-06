@@ -324,6 +324,29 @@ SPECTACULAR_SETTINGS = {
     # O schema descreve endpoints privados: não fica aberto a anónimos. O
     # `pnpm gen:api` usa o comando `manage.py spectacular`, não este endpoint.
     "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAuthenticated"],
+    # O nome dos componentes de enum, onde o default não serve. O drf-spectacular
+    # deriva-o do **nome do campo** (`papel` -> `PapelEnum`), o que dá dois
+    # problemas que esta tabela resolve:
+    #
+    #   * o mesmo conjunto de valores em dois campos com nomes diferentes gera
+    #     dois nomes para um componente só, e isso é um **warning** — logo exit 1
+    #     no `spectacular --fail-on-warn` do `pnpm gen:api`. Acontece com o
+    #     `Papel`, que é `papel` no convite e no estabelecimento e
+    #     `papeis_permitidos` no registo de rotas do menu;
+    #   * o `route_id` daria `RouteIdEnum`, e o nome que o registo de rotas do
+    #     shell espera — e documenta — é `RotaIdEnum`
+    #     (`frontend/src/shell/registo-de-rotas.ts`). É esse componente que faz o
+    #     `Record<RotaId, EntradaDoRegisto>` ser exaustivo contra a lista do
+    #     backend nos dois sentidos (ADR 0009), e um nome que mude sozinho
+    #     quando alguém renomear um campo era uma dependência frágil no único
+    #     gate de contrato que existe.
+    #
+    # Aponta para as classes `TextChoices` e não para listas copiadas: o nome
+    # segue o conjunto de valores, e é o conjunto que o drf-spectacular compara.
+    "ENUM_NAME_OVERRIDES": {
+        "PapelEnum": "apps.accounts.models.Papel",
+        "RotaIdEnum": "apps.accounts.models.RotaDeMenu",
+    },
 }
 
 # Uploads (SECURITY.md §2 e §4). Nenhuma destas settings é um teto de tamanho

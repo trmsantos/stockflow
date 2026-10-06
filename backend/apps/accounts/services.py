@@ -1,6 +1,6 @@
 """As únicas escritas do `accounts` (CLAUDE.md: nenhuma escrita fora de services).
 
-Três famílias de funções, e vale a pena separá-las na cabeça antes de ler o
+Quatro famílias de funções, e vale a pena separá-las na cabeça antes de ler o
 código, porque a fronteira transacional de cada uma é diferente.
 
 **A família das pertenças** — `criar_tenant`, `criar_tenant_com_dono`,
@@ -24,6 +24,13 @@ de convites são endpoints normais, com âmbito e só para o `owner`. A quarta �
 excepção que dá nome à decisão: corre **antes** de existir sessão, e o âmbito
 que ela abre vem do **link** e não da sessão — o link escolhe o âmbito, a
 política concede-o.
+
+**A família do menu** — uma função só, `guardar_menu` (ADR 0009 e ADR 0011).
+Corre **dentro** do âmbito do pedido, como as pertenças, e é a única escrita do
+módulo que é de *configuração* e não de identidade. A fronteira transacional é a
+mais simples das quatro e ainda assim é a razão de a função existir: a
+substituição é **total** porque reordenar um menu é uma intenção só, e N
+escritas parciais deixam um menu meio ordenado se uma delas falhar.
 
 Nenhuma destas funções emite um evento de domínio, e a ADR 0010 fecha a questão
 em vez de a deixar em aberto: **zero eventos e zero tarefas no v1**, porque não
@@ -94,6 +101,7 @@ import logging
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from django.contrib.auth import authenticate, login, logout
@@ -113,6 +121,7 @@ from apps.accounts.api import (
     tenant_context,
     utilizador_atual,
 )
+from apps.accounts.menu import ItemDeMenu
 from apps.accounts.middleware import CODIGO_DESCONHECIDO, SESSION_TENANT_KEY
 from apps.accounts.models import (
     EstadoDoConvite,
@@ -120,9 +129,15 @@ from apps.accounts.models import (
     Membership,
     Papel,
     Tenant,
+    TenantMenuItem,
     User,
 )
-from apps.accounts.selectors import convite_por_token_hash, membership_no_ambito
+from apps.accounts.selectors import (
+    convite_por_token_hash,
+    itens_de_menu_do_ambito,
+    membership_no_ambito,
+    projeccao_de_menu,
+)
 from apps.shared.db import TenantScopeConflict, current_tenant, tenant_scope
 
 __all__ = [
@@ -149,6 +164,7 @@ __all__ = [
     "criar_tenant",
     "criar_tenant_com_dono",
     "escolher_tenant_ativo",
+    "guardar_menu",
     "iniciar_sessao",
     "reenviar_convite",
     "revogar_convite",
@@ -391,7 +407,7 @@ def conceder_pertenca(
     atualiza o papel e o nome exibido em vez de levantar. É o comportamento que
     um convite reenviado precisa.
     """
-    _exigir_ambito(tenant_id)
+    _exigir_ambito(tenant_id, tabela="accounts_membership")
     if role not in {p.value for p in Papel}:
         raise ValueError(f"papel desconhecido: {role!r}")
 
@@ -415,7 +431,7 @@ def revogar_pertenca(*, user: User, tenant_id: UUID) -> bool:
     A sessão de quem for revogado não é tocada: ela guarda um UUID e zero
     autorização, e o pedido seguinte leva 403 do `TenantMiddleware`.
     """
-    _exigir_ambito(tenant_id)
+    _exigir_ambito(tenant_id, tabela="accounts_membership")
 
     with transaction.atomic():
         revogadas = Membership.objects.filter(
@@ -427,18 +443,23 @@ def revogar_pertenca(*, user: User, tenant_id: UUID) -> bool:
     return revogadas > 0
 
 
-def _exigir_ambito(tenant_id: UUID) -> None:
+def _exigir_ambito(tenant_id: UUID, *, tabela: str) -> None:
     """O âmbito aberto tem de ser o deste tenant, senão a política recusaria.
 
     Não é uma verificação defensiva a mais: sem âmbito, o `INSERT` levaria
-    `new row violates row-level security policy` e o `UPDATE` afetaria zero
-    linhas **sem erro** — que é a forma silenciosa do mesmo bug.
+    `new row violates row-level security policy` e o `UPDATE` ou o `DELETE`
+    afetariam zero linhas **sem erro** — que é a forma silenciosa do mesmo bug.
+
+    O nome da tabela é **obrigatório** e não tem default, porque quem lê a
+    mensagem está a depurar uma escrita concreta: esta guarda nasceu nas
+    pertenças e protege hoje três tabelas, e um default nomearia a errada em
+    duas delas. Explícito, o pior caso é não compilar na cabeça de quem lê.
     """
     ativo = current_tenant()
     if ativo != tenant_id:
         raise TenantScopeConflict(
-            f"escrita em accounts_membership para {tenant_id} com o âmbito em "
-            f"{ativo}: a política filtra por app.tenant_id e o UPDATE afetaria "
+            f"escrita em {tabela} para {tenant_id} com o âmbito em "
+            f"{ativo}: a política filtra por app.tenant_id e a escrita afetaria "
             "zero linhas sem erro (ADR 0005, ADR 0007)."
         )
 
@@ -531,14 +552,19 @@ class SessaoOut:
     utilizador: UserOut | None
     tenant_ativo: TenantOption | None
     tenants: tuple[TenantOption, ...]
-    #: Sempre vazio hoje, e de propósito. A projecção do menu por tenant é da
-    #: ADR 0009 e a tabela dela não existe; o campo vai na resposta desde o
-    #: primeiro dia para o cliente não ter de mudar de forma quando ela nascer,
-    #: e vai **sem** forma de item declarada, porque declarar a tupla
-    #: `(route_id, grupo, ordem, visivel, rotulo)` agora era inventar o
-    #: contrato de outra ADR — e o `route_id` só vale como enum fechado vindo do
-    #: backend, que é o que torna o registo do frontend exaustivo.
-    menu: tuple[object, ...] = ()
+    #: A projecção do menu do **estabelecimento ativo**, já filtrada pelo papel
+    #: de quem pede (ADR 0009 e ADR 0011). Viaja aqui e não num endpoint próprio
+    #: porque "resolve-se com exactamente o que a sessão já resolveu — o tenant
+    #: activo —, pelo que não custa um round trip no caminho crítico do primeiro
+    #: paint da sidebar" (ADR 0011).
+    #:
+    #: Vazio quando não há estabelecimento ativo, e isso não é um caso
+    #: degenerado: sem tenant não há configuração por tenant, e os estados
+    #: `anonimo`, `sem_estabelecimento` e `escolha_pendente` são precisamente os
+    #: três em que o cliente não mostra sidebar nenhuma. O tipo deixou de ser
+    #: `object` — a forma do item é agora contrato (`ItemDeMenuOut`), que é o
+    #: que a ADR 0010 deixou em dívida à espera desta ADR.
+    menu: tuple[ItemDeMenu, ...] = ()
 
 
 class Recusa(Exception):
@@ -824,6 +850,25 @@ def _sessao(
     Django pôr `request.user = user`, o que ele faz; e há um teste que afirma o
     email na resposta do login, logo a suposição falha em vermelho se deixar de
     ser verdade.
+
+    ## O menu custa uma transação curta, e só quando há estabelecimento ativo
+
+    A tabela do menu tem política (ADR 0011), logo a leitura corre dentro de
+    `tenant_scope(ativo.id)` — como a confirmação de cada candidato, e pela
+    mesma razão. É a transação **N+1** de um login com N estabelecimentos, e
+    não há nenhuma quando não há tenant ativo: é o único sítio onde o custo do
+    menu na sessão aparece, e a ADR 0011 aceita-o explicitamente ("não custa um
+    round trip no caminho crítico do primeiro paint da sidebar").
+
+    Esta função é chamada **sempre fora** de qualquer `tenant_scope` — o login,
+    a troca de estabelecimento e a activação fecham o seu bloco antes de a
+    chamar —, e o `tenant_scope` é reentrante para o mesmo tenant, pelo que
+    chamá-la de dentro do âmbito do próprio `ativo` também funciona. De dentro
+    do âmbito de **outro** tenant levantaria `TenantScopeConflict`, que é o que
+    se quer: o menu de A não se lê no âmbito de B.
+
+    O papel vem do `TenantOption` que a política já confirmou neste pedido, e
+    não da sessão nem de um campo do `User`: é por tenant (ADR 0007).
     """
     utilizador = utilizador_atual(request)
     if ativo is not None:
@@ -832,11 +877,16 @@ def _sessao(
         estado = EstadoDaSessao.ESCOLHA_PENDENTE
     else:
         estado = EstadoDaSessao.SEM_ESTABELECIMENTO
+    menu: tuple[ItemDeMenu, ...] = ()
+    if ativo is not None:
+        with tenant_scope(ativo.id):
+            menu = projeccao_de_menu(tenant_id=ativo.id, papel=ativo.role)
     return SessaoOut(
         estado=estado,
         utilizador=utilizador,
         tenant_ativo=ativo,
         tenants=tenants,
+        menu=menu,
     )
 
 
@@ -920,7 +970,7 @@ def criar_convite(
     inventes default sem falar com um utilizador real", e um `Papel` hierárquico
     escrito aqui era a resposta dela dada por um agente.
     """
-    _exigir_ambito(tenant_id)
+    _exigir_ambito(tenant_id, tabela="accounts_invitation")
     if role not in {p.value for p in Papel}:
         raise ValueError(f"papel desconhecido: {role!r}")
 
@@ -966,7 +1016,7 @@ def reenviar_convite(*, convite: Invitation) -> ConviteCriado:
     mudado entre a leitura e a escrita, e é a base de dados que resolve a
     corrida — zero linhas afetadas é a mesma recusa.
     """
-    _exigir_ambito(convite.tenant_id)
+    _exigir_ambito(convite.tenant_id, tabela="accounts_invitation")
     token, token_hash = _novo_token()
     agora = timezone.now()
 
@@ -1008,7 +1058,7 @@ def revogar_convite(*, convite: Invitation) -> Invitation:
     distingue os dois casos de "zero linhas afetadas" sem uma segunda
     verificação em Python a correr sobre dados velhos.
     """
-    _exigir_ambito(convite.tenant_id)
+    _exigir_ambito(convite.tenant_id, tabela="accounts_invitation")
     agora = timezone.now()
 
     with transaction.atomic():
@@ -1375,3 +1425,90 @@ def _exigir_email_convidavel(*, tenant_id: UUID, email: str) -> None:
     )
     if ja_convidado:
         raise _email_ja_convidado()
+
+
+# ---------------------------------------------------------------------------
+# O menu por tenant (ADR 0009 e ADR 0011).
+#
+# Uma função, porque é **um** caso de uso: "o menu deste estabelecimento passa
+# a ser este". A ADR 0009 é explícita sobre a razão de não haver aqui uma função
+# por item — reordenar é uma intenção só, e N escritas parciais deixam um menu
+# meio ordenado se uma falhar.
+#
+# Escreve e não emite nada: zero eventos e zero tarefas neste módulo (ADR 0010),
+# porque não existe consumidor da outbox e um evento sem subscritor é um
+# contrato público escrito ao contrário.
+# ---------------------------------------------------------------------------
+@transaction.atomic
+def guardar_menu(*, tenant_id: UUID, itens: list[dict[str, Any]]) -> tuple[ItemDeMenu, ...]:
+    """Substitui **toda** a configuração de menu deste estabelecimento.
+
+    ## Substituição total, e não um `PATCH` por item
+
+    É a decisão da ADR 0009, e a razão não é de gosto de API: reordenar um menu
+    é **uma** intenção, e N pedidos parciais deixam o menu meio ordenado se um
+    deles falhar — com o cliente sem forma de saber quais passaram. Aqui, ou o
+    menu novo entra inteiro ou fica o antigo: o `@transaction.atomic` é um
+    savepoint dentro da transação do pedido (ADR 0005), e o `DELETE` e o
+    `INSERT` vão nele.
+
+    ## Apagar e reinserir, e não um diff
+
+    "Substituição total" escreve-se assim em duas instruções e sem algoritmo:
+    uma rota ausente do corpo volta ao default, que é exactamente o que a
+    ausência de linha significa (ADR 0011, e ver o modelo). Um diff — manter o
+    que não mudou, actualizar o resto — dava o mesmo resultado com um caminho a
+    mais para se enganar, e `created_at` de uma linha de configuração não é um
+    dado de que alguém dependa.
+
+    O preço é nomeado: um cliente antigo que envie as rotas que **ele** conhece
+    repõe o default das que não conhece. É inerente à substituição total e o
+    recíproco — ignorar as ausentes — tornava impossível repor um default.
+
+    ## Um corpo vazio é legítimo
+
+    `[]` quer dizer "sem configuração nenhuma", ou seja o menu de defaults. É o
+    botão "repor tudo" e não um caso degenerado — e **não** é "esconder tudo",
+    que se escreve com `visivel: false` em cada item.
+
+    ## O que esta função não faz
+
+    Não valida o `route_id` contra o registo: quem o faz é o `ChoiceField` do
+    serializer, contra o mesmo enum, e repeti-lo aqui dava duas verificações com
+    uma a tornar-se a única que importa. Também não procura duplicados — é uma
+    afirmação sobre a forma do corpo, não uma leitura à base de dados, e vive no
+    `ListSerializer` (ver `serializers.py`). O que **é** daqui é a transação, o
+    âmbito e a resposta.
+
+    Devolve a projecção **inteira e sem filtro de papel**: é a configuração como
+    ficou, que é o que o painel precisa de voltar a mostrar. Ver o
+    `projeccao_de_menu`, onde está escrito porque é que filtrá-la aqui era um
+    caminho para perder configuração.
+    """
+    _exigir_ambito(tenant_id, tabela="accounts_tenantmenuitem")
+
+    # Dentro do âmbito, o `DELETE` só alcança as linhas deste tenant — pela
+    # política **e** pelo filtro do selector, que são os dois controlos que o
+    # `SECURITY.md` §1 exige lado a lado.
+    itens_de_menu_do_ambito(tenant_id=tenant_id).delete()
+    TenantMenuItem.objects.bulk_create(
+        [
+            TenantMenuItem(
+                tenant_id=tenant_id,
+                route_id=item["route_id"],
+                grupo=item["grupo"],
+                ordem=item["ordem"],
+                visivel=item["visivel"],
+                # `None` do contrato e `""` na coluna são a mesma ausência, e a
+                # coluna não é nulável de propósito (ver o modelo).
+                rotulo=item.get("rotulo") or "",
+            )
+            for item in itens
+        ]
+    )
+
+    logger.info(
+        "menu guardado",
+        extra={"event": "menu", "outcome": "ok", "count": len(itens)},
+    )
+    return projeccao_de_menu(tenant_id=tenant_id)

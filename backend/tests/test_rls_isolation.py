@@ -741,7 +741,13 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
 
     E os três endpoints de **gestão** de convites aparecem no outro lado da
     asserção, com âmbito, que é o default: criar, reenviar e revogar são
-    operações de dentro de um estabelecimento, feitas por quem tem sessão.
+    operações de dentro de um estabelecimento, feitas por quem tem sessão. As
+    duas do `menu/` (ADR 0009 e ADR 0011) estão no mesmo lado e pelo mesmo
+    critério — configurar o menu é uma operação de dentro de um
+    estabelecimento. O `menu/rotas` não lê dados de tenant nenhum e **ainda
+    assim** tem âmbito: a dispensa pede-se quando é necessária, e poupar uma
+    transação é a razão mais fraca que existe para alargar a superfície sem
+    âmbito.
 
     As duas da saúde estão aqui pelo mesmo critério das outras, e não por serem
     inofensivas: não abrem âmbito porque não leem dados de tenant nenhum, e não
@@ -778,6 +784,8 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^convites$",
         "api/v1/^convites/(?P<pk>[^/.]+)/reenviar$",
         "api/v1/^convites/(?P<pk>[^/.]+)/revogar$",
+        "api/v1/menu",
+        "api/v1/menu/rotas",
         "api/v1/schema/",
     ], (
         "o conjunto das views com âmbito mudou. O default é ter âmbito, logo "

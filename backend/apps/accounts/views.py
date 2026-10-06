@@ -1,4 +1,4 @@
-"""A autenticação de sessão, a activação de convites e a gestão deles (ADR 0010).
+"""A sessão, os convites e o menu por estabelecimento (ADR 0010, 0009 e 0011).
 
 É o primeiro `views.py` do repositório, e por isso este docstring fixa quatro
 coisas que vão valer para todos os que vierem depois.
@@ -16,8 +16,16 @@ a lista fechada que a impõe está em `tests/test_rls_isolation.py`.
 | `POST /auth/tenant-ativo` | autenticado | dispensado | o âmbito escolhido |
 | `POST /auth/ativar` | qualquer um | **o do link** | password, pertença, convite, sessão |
 | `/convites[/<id>/…]` | `owner` | o da sessão | cria, reenvia e revoga convites |
+| `GET  /menu/rotas` | `owner` | o da sessão | nada — o registo é código |
+| `PUT  /menu` | `owner` | o da sessão | substitui a configuração do menu |
 
 (Os paths são relativos a `/api/v1/`.)
+
+As duas do `menu/` são da ADR 0009 e da ADR 0011, e entram nesta tabela com
+âmbito, que é o default: configurar o menu é uma operação de dentro de um
+estabelecimento. O **menu em si** não tem endpoint de leitura — viaja no
+`GET /auth/sessao`, porque se resolve com exactamente o que a sessão já
+resolveu (ADR 0011).
 
 **1. A view é fina e a lógica está em `services.py`.** O que cada método aqui
 faz é: validar o corpo com um serializer, chamar **uma** função de service,
@@ -97,6 +105,14 @@ se nada fosse, e nenhum teste que não medisse o status o apanharia. O
   `tenant-ativo`. Fica como é: o cliente que chega lá sem sessão tem um bug, e
   não vale inventar um código para o descrever.
 
+A família do `menu/` **não acrescenta código nenhum**, e por isso não declara um
+403 no schema: os seus dois 403 já existem e vêm de sítios diferentes — o do
+`TenantMiddleware`, com `code` (`sem_sessao`, `tenant_desconhecido`), quando a
+sessão não nomeia um estabelecimento que a política conceda; e o do `TemPapel`,
+**sem** `code`, quando quem pede não é `owner`. Declarar o `ErroOut` nessas
+operações prometia ao cliente gerado um `code` que o segundo caminho não manda —
+e o `errors.ts` do frontend já lê o campo defensivamente por esta razão.
+
 Os quatro códigos da família dos convites estão nos docstrings da `AtivacaoView`
 e do `ConviteViewSet`, e os dois mapas de status estão fechados contra os dois
 conjuntos de códigos dos services por um teste, nos dois sentidos.
@@ -155,6 +171,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.api import Papel, PertenceAoTenant, TemPapel, tenant_scope_exempt
+from apps.accounts.menu import rotas_do_registo
 from apps.accounts.middleware import CODIGO_DESCONHECIDO
 from apps.accounts.models import Invitation
 from apps.accounts.selectors import convites_do_ambito
@@ -164,7 +181,10 @@ from apps.accounts.serializers import (
     ConviteInSerializer,
     ConviteOutSerializer,
     ErroOutSerializer,
+    ItemDeMenuInSerializer,
+    ItemDeMenuOutSerializer,
     LoginInSerializer,
+    RotaDeMenuOutSerializer,
     SessaoOutSerializer,
     TenantAtivoInSerializer,
 )
@@ -182,6 +202,7 @@ from apps.accounts.services import (
     ativar_convite,
     criar_convite,
     escolher_tenant_ativo,
+    guardar_menu,
     iniciar_sessao,
     reenviar_convite,
     revogar_convite,
@@ -196,6 +217,8 @@ __all__ = [
     "ConviteViewSet",
     "LoginView",
     "LogoutView",
+    "MenuView",
+    "RotasDeMenuView",
     "SessaoView",
     "TenantAtivoView",
 ]
@@ -627,3 +650,151 @@ class ConviteViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 def _resposta_de_convite(criado: ConviteCriado, codigo: int) -> Response:
     """A resposta de `criar` e de `reenviar`: o convite e o segredo, uma vez."""
     return Response(ConviteCriadoOutSerializer(criado).data, status=codigo)
+
+
+@extend_schema_view(
+    # A descrição vai explícita, pela razão escrita no `ConviteViewSet`: sem
+    # ela o drf-spectacular usa o docstring **da classe**, e estas duas têm
+    # dezenas de linhas sobre isolamento e papéis que não são contrato. O porquê
+    # fica no docstring, que é onde quem lê o código o procura.
+    get=extend_schema(
+        operation_id="menu_rotas",
+        summary="As rotas que existem, com os seus defaults",
+        description=(
+            "A lista fechada de rotas que o menu pode nomear, com o rótulo e o "
+            "grupo por omissão, os papéis que as podem ver e se foram "
+            "desenhadas para telemóvel. É um registo em **código**: nenhuma "
+            "linha de base de dados é lida, e a ordem é a do menu por omissão. "
+            "Só o `owner`."
+        ),
+        responses={status.HTTP_200_OK: RotaDeMenuOutSerializer(many=True)},
+    ),
+)
+class RotasDeMenuView(APIView):
+    """`GET /api/v1/menu/rotas` — o **registo** de rotas. Código, não dados.
+
+    Não lê nada à base de dados: devolve o `REGISTO_DE_ROTAS` do
+    `apps/accounts/menu.py`, que é a lista fechada do que o menu pode nomear
+    (ADR 0009 e ADR 0011). É o que o painel de configuração precisa para
+    mostrar o que existe, qual é o default de cada item, quem o pode ver e se o
+    ecrã foi desenhado para telemóvel.
+
+    ## Com âmbito, apesar de não ler dados de tenant nenhum
+
+    É o default e fica como é. A dispensa de âmbito é uma decisão de isolamento
+    (ADR 0007) e pede-se quando é **necessária** — aqui não é: quem chama tem
+    sessão e estabelecimento ativo, e o middleware já pagou a query da pertença
+    que o `TemPapel` a seguir consome. Dispensá-la para poupar uma transação
+    seria alargar a superfície sem âmbito pela razão mais fraca que existe.
+
+    ## Só `owner`, e é a mesma razão dos convites
+
+    ADR 0011: "Editar: `owner`, nos dois casos, no v1 (Q7 aberta)". Quem não
+    configura não tem o painel, e um endpoint que descreve o registo é parte do
+    painel. Não é segredo nenhum — é uma lista de ecrãs do produto — mas a
+    superfície certa de um endpoint é a de quem o usa.
+
+    ## Sem paginação, e não é esquecimento
+
+    O `DEFAULT_PAGINATION_CLASS` do `base.py` aplica-se às views genéricas de
+    lista; esta é uma `APIView` e devolve o array directamente. A lista é
+    **fechada pelo enum**: tem exactamente tantos elementos quantos
+    `RotaDeMenu` tem valores, hoje seis, e paginá-la daria ao cliente um
+    `count`/`next` sobre uma constante do programa.
+    """
+
+    permission_classes = [IsAuthenticated, PertenceAoTenant, TemPapel.exige(Papel.OWNER)]
+
+    def get(self, request: Request) -> Response:
+        return Response(RotaDeMenuOutSerializer(rotas_do_registo(), many=True).data)
+
+
+@extend_schema_view(
+    put=extend_schema(
+        operation_id="menu_guardar",
+        summary="Substituir a configuração do menu do estabelecimento",
+        description=(
+            "Substitui **toda** a configuração de menu do estabelecimento "
+            "ativo: o corpo é a lista inteira, porque reordenar é uma intenção "
+            "só. Uma rota ausente do corpo volta ao default, e `[]` repõe todos "
+            "os defaults. Cada `route_id` aparece no máximo uma vez.\n\n"
+            "A resposta é a configuração **como ficou**, sem filtro de papel — "
+            "um cliente que a volte a enviar não perde nada. O menu filtrado "
+            "pelo papel de quem pede viaja no `GET /api/v1/auth/sessao`. "
+            "Só o `owner`."
+        ),
+        request=ItemDeMenuInSerializer(many=True),
+        responses={status.HTTP_200_OK: ItemDeMenuOutSerializer(many=True)},
+    ),
+)
+class MenuView(APIView):
+    """`PUT /api/v1/menu` — substitui **toda** a configuração do menu.
+
+    ## `PUT` de substituição total, e não `PATCH` por item
+
+    É a decisão da ADR 0009 e a razão está lá: **reordenar é uma intenção**, e N
+    `PATCH` deixam um menu meio ordenado se um deles falhar — com o cliente sem
+    saber quais passaram. O corpo é a lista inteira, a escrita é uma transação, e
+    a resposta é a configuração como ficou.
+
+    O corpo é um **array no topo** e não um objecto com uma chave `itens`: a
+    entidade que este endpoint substitui *é* a lista, e embrulhá-la só
+    acrescentava um nível que nada usa. `[]` é legítimo e quer dizer "repor os
+    defaults" (ver `services.guardar_menu`).
+
+    ## Sem `GET`, e isso é deliberado
+
+    O menu efectivo chega ao cliente no `GET /auth/sessao` (ADR 0011: viaja na
+    resposta da sessão porque se resolve com o que a sessão já resolveu), e o
+    registo chega no `GET /menu/rotas`. Um terceiro endpoint a devolver a
+    configuração em cru seria uma terceira fonte para a mesma coisa; quem a quer
+    sem filtro de papel recebe-a na resposta deste `PUT`.
+
+    A consequência fica nomeada em vez de descoberta mais tarde: o `menu` da
+    sessão é filtrado pelo papel, pelo que um `owner` só vê no painel as rotas
+    que o **seu** papel pode ver. Hoje são todas: a única rota restrita é a dos
+    `convites`, e é restrita **ao** `owner`. No dia em que uma rota não for
+    visível para quem configura, o painel precisa de um `GET /menu` sem filtro —
+    está no relatório como o que falta, e é a razão de a resposta **deste** `PUT`
+    não ser filtrada.
+
+    ## Sem `has_object_permission` no caminho, e porquê
+
+    O `SECURITY.md` §5 exige a comparação `obj.tenant_id == request.tenant.id`
+    em toda a view que receba um `pk` — e esta não recebe nenhum. A configuração
+    do menu não é um objecto endereçável: é o conjunto de linhas do
+    estabelecimento ativo, identificado pelo **âmbito** e não por um id no URL.
+    Logo não há um id de outro tenant para rejeitar, e o que isola é a política
+    mais o filtro do selector. O `PertenceAoTenant` continua na lista pelo seu
+    `has_permission` (nega quando não há `request.tenant`), e o
+    `services.guardar_menu` levanta `TenantScopeConflict` se for chamado com o
+    âmbito noutro tenant — o esquecimento falha fechado em vez de escrever zero
+    linhas em silêncio.
+
+    ## 400 por campo, e indexado pela posição no corpo
+
+    O corpo é uma lista, logo os erros do DRF (3.18) vêm num objecto **cuja
+    chave é o índice como string**: `{"1": {"ordem": ["..."]}}`, e não uma lista
+    com buracos. É o que um painel com N linhas precisa para marcar a linha
+    errada, e é a forma medida e não a presumida — vale dizê-la porque um
+    cliente que esperasse um array lia `undefined` em todos os índices.
+
+    As rotas repetidas saem em `non_field_errors`, porque são uma propriedade da
+    lista e não de um dos seus elementos (ver o `MenuInListSerializer`).
+
+    Esta forma **não** está no `schema.yml`, e é a mesma limitação que o
+    docstring do módulo já nomeia para os dois 400 do login: o drf-spectacular
+    descreve a resposta de sucesso e um corpo de erro por endpoint, não dois.
+    """
+
+    permission_classes = [IsAuthenticated, PertenceAoTenant, TemPapel.exige(Papel.OWNER)]
+    parser_classes = [JSONParser]
+
+    def put(self, request: Request) -> Response:
+        corpo = ItemDeMenuInSerializer(data=request.data, many=True)
+        corpo.is_valid(raise_exception=True)
+        itens = guardar_menu(
+            tenant_id=request.tenant.id,
+            itens=corpo.validated_data,
+        )
+        return Response(ItemDeMenuOutSerializer(itens, many=True).data)

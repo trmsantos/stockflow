@@ -73,3 +73,21 @@ ERP pede e é um desenho maior (por utilizador ou por tenant? exportação? filt
 mínimo é por artigo ou por (artigo, localização) — a sonda da Q2 compara o **mesmo** mínimo contra o
 consolidado e contra cada loja, o que se lê como um mínimo por artigo, e isso é afirmação de domínio e
 não minha; e qual das três unidades é a "preferida" (de contagem, de compra, de consumo).
+
+---
+
+**Correcção de 2026-10-06, quando o menu foi implementado.** Esta ADR escreve "o papel **mínimo** que
+o registo declara", e o contrato implementado tem **`papeis_permitidos`** — um **conjunto** por rota.
+A diferença não é de nome: um mínimo afirma uma **ordem** entre papéis (`owner > manager > staff`), e
+essa ordem **não existe neste projeto** — o conjunto de papéis é a pergunta 7 das onze da sessão 0,
+marcada como "não inventes default sem falar com um utilizador real".
+
+O conjunto dá o mesmo poder de filtragem sem afirmar a ordem, e a direcção é a segura: **um conjunto
+derivado de uma ordem futura continua a ser um conjunto, e o inverso não se desfaz sem mudar o
+contrato.** O agente que o implementou apontou a contradição em vez de inventar a ordem, que era o
+caminho mais curto.
+
+Efeito colateral que valida o desenho: `convites` é a primeira rota genuinamente de um papel só — não
+por escolha de quem fez o menu, mas porque a ADR 0010 o decidiu e o `ConviteViewSet` o impõe. O filtro
+por papel deixou de ser teórico sem ninguém ter respondido à pergunta 7.
+

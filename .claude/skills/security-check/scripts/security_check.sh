@@ -175,7 +175,22 @@ PY
     # correr no contexto que o mecanismo avaliado escolhe. Imprime-se o módulo
     # para a cobertura ficar no relatório e não na suposição de quem o lê.
     modulo="config.settings.prod"
-    out=$(DJANGO_SETTINGS_MODULE="$modulo" uv run manage.py check --deploy 2>&1 || true)
+    # **O ambiente também é fixo, e não só o módulo.** As settings de produção
+    # exigem `ALLOWED_HOSTS` e `CSRF_TRUSTED_ORIGINS`, e até hoje o gate ia
+    # buscá-los ao `.env` de quem desenvolve. Consequência medida: no dia em que
+    # eu os comentei no `.env` — para o `manage.py runserver` deixar de dar 400
+    # em `localhost` — este gate passou a morrer em `ImproperlyConfigured`, ou
+    # seja a falhar por uma razão que não é a que ele testa. Um gate que grita
+    # por um alarme falso ensina quem o lê a ignorá-lo.
+    #
+    # Valores de **fachada**, os mesmos que o job `backend` do CI usa: o que se
+    # verifica é a configuração de segurança das settings de produção, não os
+    # domínios de ninguém. É a mesma lição do `DJANGO_SETTINGS_MODULE` fixo acima,
+    # aplicada ao outro lado do mesmo comando.
+    out=$(DJANGO_SETTINGS_MODULE="$modulo" \
+          ALLOWED_HOSTS="stockflow.example.pt" \
+          CSRF_TRUSTED_ORIGINS="https://stockflow.example.pt" \
+          uv run manage.py check --deploy 2>&1 || true)
     note "  módulo verificado: $modulo"
     echo "$out" > "$REPORT_DIR/django-check.txt"
     # O SECURITY.md §2 exige `check --deploy` **sem warnings**, ponto — não "sem

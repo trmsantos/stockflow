@@ -239,6 +239,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/menu": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Substituir a configuração do menu do estabelecimento
+         * @description Substitui **toda** a configuração de menu do estabelecimento ativo: o corpo é a lista inteira, porque reordenar é uma intenção só. Uma rota ausente do corpo volta ao default, e `[]` repõe todos os defaults. Cada `route_id` aparece no máximo uma vez.
+         *
+         *     A resposta é a configuração **como ficou**, sem filtro de papel — um cliente que a volte a enviar não perde nada. O menu filtrado pelo papel de quem pede viaja no `GET /api/v1/auth/sessao`. Só o `owner`.
+         */
+        put: operations["menu_guardar"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/menu/rotas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * As rotas que existem, com os seus defaults
+         * @description A lista fechada de rotas que o menu pode nomear, com o rótulo e o grupo por omissão, os papéis que as podem ver e se foram desenhadas para telemóvel. É um registo em **código**: nenhuma linha de base de dados é lida, e a ordem é a do menu por omissão. Só o `owner`.
+         */
+        get: operations["menu_rotas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -396,6 +438,73 @@ export interface components {
             detail: string;
         };
         /**
+         * @description Uma linha do corpo do `PUT /menu`: o que o tenant decidiu sobre uma rota.
+         *
+         *     Os quatro campos configuráveis, e nada mais. **Não** há `campo`, e isso é
+         *     estrutural e não uma omissão: se a forma que a configuração transporta
+         *     tivesse esse campo, uma empresa conseguia promover uma rota de escritório
+         *     para o telemóvel escrevendo `campo: true` — e o predicado que diz "este ecrã
+         *     foi desenhado para 360px" é código (ADR 0009, adenda 2). Também não há
+         *     `caminho` nem `icone`: a árvore de rotas é código, e um menu que nomeasse
+         *     caminhos punha o deep link a depender da configuração.
+         *
+         *     O `route_id` é um `ChoiceField` sobre o enum fechado do backend, e é essa
+         *     linha que impede a tabela de ser um armazém chave/valor: um id inventado é
+         *     400 por campo, não uma linha guardada que ninguém sabe ler.
+         *
+         *     `rotulo` é opcional e pode vir `null`; os outros três são obrigatórios,
+         *     porque o corpo é a configuração **inteira** e não um `PATCH` — "mantém o que
+         *     estava" não é uma intenção que este endpoint consiga ter.
+         *
+         *     `allow_blank=False` no `rotulo`: um rótulo vazio não é um rótulo. Quem quer
+         *     o default manda `null` ou omite-o, e a coluna guarda `""` para essa ausência
+         *     (ver o modelo) — um sítio só a traduzir as duas formas.
+         */
+        ItemDeMenuInRequest: {
+            grupo: string;
+            ordem: number;
+            rotulo?: string | null;
+            route_id: components["schemas"]["RotaIdEnum"];
+            visivel: boolean;
+        };
+        /**
+         * @description Um item do menu **já resolvido**: o registo com a configuração por cima.
+         *
+         *     A tupla da ADR 0009 — `(route_id, grupo, ordem, visivel, rotulo)` —, uma
+         *     lista com um nível de agrupamento e nunca uma árvore ("esconder e reordenar
+         *     uma árvore é um problema muito maior e 'cresce' não precisa dele").
+         *
+         *     Serve as **duas** posições onde o menu aparece: o `menu` do `SessaoOut`
+         *     (filtrado pelo papel de quem pede) e a resposta do `PUT /menu` (a
+         *     configuração inteira, como ficou). Uma classe e não duas porque a forma é a
+         *     mesma e duas idênticas davam dois componentes iguais no OpenAPI, logo dois
+         *     esquemas de Zod a divergir. A diferença entre as duas posições é **o
+         *     conjunto de linhas**, não a forma de cada uma, e está escrita no
+         *     `selectors.projeccao_de_menu`.
+         *
+         *     `visivel` vem com o seu valor e não filtrado: esconder é apresentação e a
+         *     rota continua a funcionar por deep link (ADR 0009) — quem esconde é o
+         *     cliente, e o painel precisa de ver o que está escondido para o poder mostrar
+         *     outra vez. Filtrar aqui transformava "esconder" num controlo de acesso
+         *     falso e um marcador guardado num 404.
+         *
+         *     `rotulo` é `null` quando o tenant não sobrepôs nada, e **não** o rótulo do
+         *     registo já resolvido: o cliente faz `rotulo ?? registo.rotulo`, que é o que
+         *     o `montarMenu` do shell já escreve. O porquê está no `menu.ItemDeMenu` — em
+         *     resumo, resolvê-lo aqui prendia o tenant a um default que ele nunca escolheu.
+         *
+         *     **Não** leva `campo`: o que esta lista transporta é configuração, e o
+         *     predicado de rota de campo é código (ADR 0009, adenda 2). Quem o quer pede
+         *     `GET /menu/rotas`, que é o registo.
+         */
+        ItemDeMenuOut: {
+            grupo: string;
+            ordem: number;
+            rotulo: string | null;
+            route_id: components["schemas"]["RotaIdEnum"];
+            visivel: boolean;
+        };
+        /**
          * @description O corpo do `POST /auth/login`: um email e uma password, e nada mais.
          *
          *     O `max_length` do email é o do `EmailField` do modelo (254, o limite do
@@ -438,6 +547,56 @@ export interface components {
          */
         PapelEnum: "owner" | "manager" | "staff";
         /**
+         * @description Uma rota do **registo**: o que existe para configurar, e os seus defaults.
+         *
+         *     É a resposta do `GET /menu/rotas`, e o que ela descreve é código e não dados
+         *     de um tenant: a lista fechada de rotas que o menu pode nomear, com o rótulo
+         *     e o grupo por omissão, quem as pode ver, e se foram desenhadas para 360px.
+         *     Nenhuma linha de base de dados é lida para a produzir.
+         *
+         *     Serve um ecrã só — o painel de configuração do menu — e é por isso que
+         *     carrega o `rotulo_default` e o `grupo_default`: são o que permite mostrar "o
+         *     default é este" ao lado de um valor que o estabelecimento sobrepôs, e o que
+         *     dá sentido ao botão que repõe (um `PUT` sem aquele item).
+         *
+         *     ## `papeis_permitidos`, e não `papel_minimo`
+         *
+         *     A ADR 0011 escreve "o papel mínimo que o registo declara". **Um mínimo exige
+         *     uma ordem entre papéis, e essa ordem não existe neste projeto** — é a Q7,
+         *     marcada como "não inventes default sem falar com um utilizador real" — pelo
+         *     que o registo declara um conjunto. Dá o mesmo poder de filtragem sem afirmar
+         *     que `manager` > `staff`; ver o `apps/accounts/menu.py` para a decisão inteira
+         *     e para o que ficou sem resposta.
+         *
+         *     Sai como lista de enum fechado (`PapelEnum`), logo o cliente não consegue
+         *     inventar um papel ao mostrar o filtro. A ordem é a da declaração do `Papel`,
+         *     para o diff do `schema.yml` não depender da iteração de um `frozenset`.
+         *
+         *     ## `ordem_default` não está aqui
+         *
+         *     Não é esquecimento: a ordem por omissão chega ao cliente **já aplicada** na
+         *     projecção (o `menu` do `SessaoOut` e a resposta do `PUT`), que é o único
+         *     sítio onde serve. Um segundo número a dizer a mesma coisa noutra forma era
+         *     uma segunda fonte para a ordenação do menu.
+         */
+        RotaDeMenuOut: {
+            campo: boolean;
+            grupo_default: string;
+            papeis_permitidos: components["schemas"]["PapelEnum"][];
+            rotulo_default: string;
+            route_id: components["schemas"]["RotaIdEnum"];
+        };
+        /**
+         * @description * `inicio` - Início
+         *     * `alertas` - Alertas
+         *     * `stock` - Stock
+         *     * `contar` - Contar
+         *     * `receber` - Receber
+         *     * `convites` - Convites
+         * @enum {string}
+         */
+        RotaIdEnum: "inicio" | "alertas" | "stock" | "contar" | "receber" | "convites";
+        /**
          * @description A resposta dos quatro endpoints de autenticação. Sempre esta forma.
          *
          *     Uma forma só para login, logout, leitura da sessão e troca de
@@ -450,7 +609,7 @@ export interface components {
          */
         SessaoOut: {
             estado: components["schemas"]["SessaoOutEstadoEnum"];
-            menu: unknown[];
+            menu: components["schemas"]["ItemDeMenuOut"][];
             tenant_ativo: components["schemas"]["TenantOut"] | null;
             tenants: components["schemas"]["TenantOut"][];
             utilizador: components["schemas"]["UtilizadorOut"] | null;
@@ -788,6 +947,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+    menu_guardar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemDeMenuInRequest"][];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemDeMenuOut"][];
+                };
+            };
+        };
+    };
+    menu_rotas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RotaDeMenuOut"][];
                 };
             };
         };

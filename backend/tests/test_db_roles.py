@@ -372,6 +372,18 @@ def test_as_tabelas_com_politica_sao_exatamente_as_de_dados_de_tenant(
         "convites fora da RLS, isso reabre a ADR 0010: o link escolhe o âmbito, "
         "a política concede-o."
     )
+    # A segunda âncora, pela mesma razão: a igualdade acima já obrigaria a
+    # tabela do menu a ter política, mas obrigaria em silêncio. O pedido da
+    # feature do menu podia ler-se como "esconder um item é apresentação, logo a
+    # configuração não é sensível" — e não é isso que esta tabela guarda: guarda
+    # como é que cada cliente organizou o seu menu, que nomes deu aos grupos e
+    # que ecrãs esconde, ou seja que parte do produto usa. Configuração de um
+    # cliente não é legível por outro (ADR 0011).
+    assert "accounts_tenantmenuitem" in com_politica, (
+        "o accounts_tenantmenuitem perdeu a política. A tabela tem tenant_id e "
+        "guarda configuração de um cliente: esconder um item de menu é "
+        "apresentação, a linha que o diz não é."
+    )
 
 
 def test_as_tabelas_sem_politica_sao_uma_lista_fechada(
@@ -457,7 +469,7 @@ def test_toda_a_politica_compara_contra_o_nullif_do_guc() -> None:
     )
     # Âncora: a tabela mais recente a ganhar política tem de estar na varredura,
     # senão este teste passava sobre um conjunto que não a inclui.
-    assert "accounts_invitation" in {tabela for tabela, _nome, _pred in politicas}
+    assert "accounts_tenantmenuitem" in {tabela for tabela, _nome, _pred in politicas}
 
 
 # ---------------------------------------------------------------------------

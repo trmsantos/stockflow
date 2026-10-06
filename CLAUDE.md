@@ -56,9 +56,11 @@ Skills externas esperadas (ver README): frontend-design, web-design-guidelines, 
   para o login funcionar (ADR 0007); as duas vivem numa lista fechada em `tests/test_db_roles.py`,
   que falha nos dois sentidos.
 - Onde append-only é regra de negócio, a mesma migração revoga a escrita destrutiva ao role da
-  aplicação: `REVOKE UPDATE, DELETE ON <tabela> FROM stockflow_app` (ADR 0006). Hoje aplica-se a
-  `inventory_stockmovement` e a mais nada; a lista fechada vive no `APPEND_ONLY` de
-  `tests/test_db_roles.py` e o teste falha se a lista e a base de dados divergirem.
+  aplicação: `REVOKE UPDATE, DELETE ON <tabela> FROM stockflow_app` (ADR 0006). **Hoje não se aplica a
+  tabela nenhuma**: o `inventory_stockmovement` só nasce no passo do ledger e o `APPEND_ONLY` é um
+  conjunto vazio. (Esta linha afirmava que já se aplicava, e lia-se como inventário do que está
+  feito — dois agentes diferentes apontaram-no.) A lista fechada vive no `APPEND_ONLY` de
+  `tests/test_db_roles.py` e o teste falha nos dois sentidos se ela e a base de dados divergirem.
 - Lógica em `services.py`; módulos só se importam via `apps/<m>/api.py` (import-linter).
 - Serializers de escrita listam `fields`; sem `__all__`. IDs são UUID. Quantidades e dinheiro são `Decimal`.
 - Efeitos secundários (email, extração de faturas, previsões) em Celery via outbox.

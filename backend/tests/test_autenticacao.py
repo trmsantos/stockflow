@@ -52,7 +52,7 @@ from django.core.cache import cache
 from django.test import Client, override_settings
 
 from apps.accounts.middleware import CODIGO_DESCONHECIDO, SESSION_TENANT_KEY
-from apps.accounts.models import Membership, Papel, Tenant, User
+from apps.accounts.models import Membership, Papel, RotaDeMenu, Tenant, User
 from apps.accounts.serializers import ErroOutSerializer
 from apps.accounts.services import (
     CODIGO_CREDENCIAIS_INVALIDAS,
@@ -225,8 +225,14 @@ def test_login_com_um_estabelecimento_fica_com_ele_ativo(cenario: Cenario) -> No
         "papel": Papel.OWNER.value,
     }
     assert corpo["tenants"] == [corpo["tenant_ativo"]]
-    # Vazio, e é o contrato de hoje: a tabela do menu é da ADR 0009 e não existe.
-    assert corpo["menu"] == []
+    # O menu vem **na resposta do login**, já resolvido e filtrado pelo papel
+    # (ADR 0011): é o que a sidebar precisa no primeiro paint, sem um segundo
+    # round trip. Este estabelecimento nunca configurou nada, logo o que sai são
+    # os defaults do registo de rotas, que é código — e a Ana é `owner`, logo vê
+    # também o item dos convites. O contrato do item está fixado em
+    # `tests/test_menu.py`; aqui afirma-se só que ele chega por este caminho.
+    assert [item["route_id"] for item in corpo["menu"]] == list(RotaDeMenu.values)
+    assert all(item["visivel"] is True for item in corpo["menu"])
     # A sessão nomeia o âmbito — é o que o `TenantMiddleware` vai ler no pedido
     # seguinte, e é a única coisa que o login lhe deixa.
     assert cliente.session[SESSION_TENANT_KEY] == str(cenario.alfa.id)

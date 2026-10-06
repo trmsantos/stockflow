@@ -1,4 +1,4 @@
-"""Rotas da autenticação, da activação e dos convites (ADR 0010).
+"""Rotas da autenticação, da activação, dos convites e do menu (ADR 0010 e 0011).
 
 Sem `app_name`: estas entram no `include((api_v1_patterns, "api"))` do
 `config/urls.py`, logo o namespace é o `api` de todos os endpoints da API e os
@@ -10,11 +10,12 @@ detalhe de arrumação interna a aparecer no contrato.
 
 As cinco rotas sob `auth/` são as que correm **antes** de existir tenant na
 sessão (ADR 0007 e ADR 0010): login, logout, sessão, troca de estabelecimento e
-activação de convite. Os `convites` ficam **fora** do `auth/` de propósito — são
-endpoints normais, com âmbito e só para o `owner`, e um `/auth/convites` sugeria
-o contrário a quem lesse o path. A dispensa continua a ser declarada na **view**
-e nunca inferida do prefixo (`tenant_scope_exempt`); o prefixo é o que torna a
-regra legível, não o que a impõe.
+activação de convite. Os `convites` e o `menu` ficam **fora** do `auth/` de
+propósito — são endpoints normais, com âmbito e só para o `owner`, e um
+`/auth/convites` sugeria o contrário a quem lesse o path. A dispensa continua a
+ser declarada na **view** e nunca inferida do prefixo
+(`tenant_scope_exempt`); o prefixo é o que torna a regra legível, não o que a
+impõe.
 
 ## Sem barra final, e é a convenção da API e não um descuido
 
@@ -48,6 +49,8 @@ from apps.accounts.views import (
     ConviteViewSet,
     LoginView,
     LogoutView,
+    MenuView,
+    RotasDeMenuView,
     SessaoView,
     TenantAtivoView,
 )
@@ -61,5 +64,18 @@ urlpatterns = [
     path("auth/sessao", SessaoView.as_view(), name="sessao"),
     path("auth/tenant-ativo", TenantAtivoView.as_view(), name="tenant-ativo"),
     path("auth/ativar", AtivacaoView.as_view(), name="ativar"),
+    # O menu (ADR 0009 e ADR 0011). `menu/rotas` antes de `menu` por leitura e
+    # não por necessidade — são paths distintos e o resolver não os confunde.
+    #
+    # O menu **efectivo** não está aqui: viaja no `GET /auth/sessao`. O que esta
+    # família tem é o registo (o que existe para configurar) e a escrita da
+    # configuração; um `GET /menu` seria uma terceira fonte para a mesma lista.
+    #
+    # Sem barra final, como o resto da API, e pela mesma razão medida: o
+    # `APPEND_SLASH` do `CommonMiddleware` responderia 301 a um `PUT` para
+    # `menu`, e o browser repetiria o pedido em **GET** e sem corpo — a
+    # configuração "guardava" com um 405 e nada no log a explicá-lo.
+    path("menu/rotas", RotasDeMenuView.as_view(), name="menu-rotas"),
+    path("menu", MenuView.as_view(), name="menu"),
     *router.urls,
 ]

@@ -33,9 +33,12 @@ divergir com o tempo — e a que menos se vê.
 
 from __future__ import annotations
 
+from collections import Counter
+from typing import Any
+
 from rest_framework import serializers
 
-from apps.accounts.models import EstadoDoConvite, Papel
+from apps.accounts.models import EstadoDoConvite, Papel, RotaDeMenu
 from apps.accounts.services import LIMITE_DO_FRAGMENTO, EstadoDaSessao
 
 __all__ = [
@@ -44,12 +47,27 @@ __all__ = [
     "ConviteInSerializer",
     "ConviteOutSerializer",
     "ErroOutSerializer",
+    "ItemDeMenuInSerializer",
+    "ItemDeMenuOutSerializer",
     "LoginInSerializer",
+    "MenuInListSerializer",
+    "RotaDeMenuOutSerializer",
     "SessaoOutSerializer",
     "TenantAtivoInSerializer",
     "TenantOutSerializer",
     "UtilizadorOutSerializer",
 ]
+
+#: O teto do `rotulo` e do `grupo`, igual ao das colunas (ver o modelo). Uma
+#: constante e não dois literais repetidos em três serializers: o que interessa
+#: é que o limite do contrato e o da coluna sejam **o mesmo** número, senão a
+#: recusa vem do Postgres em vez de vir como erro de validação por campo.
+LIMITE_DO_ROTULO = 50
+LIMITE_DO_GRUPO = 50
+
+#: O teto da `ordem`, que é o do `PositiveSmallIntegerField`. Sem ele, um 99999
+#: passava a validação do DRF e estourava no `INSERT` como 500 em vez de 400.
+ORDEM_MAXIMA = 32767
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +134,79 @@ class ConviteInSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=254)
     papel = serializers.ChoiceField(source="role", choices=Papel.choices)
     nome = serializers.CharField(source="display_name", max_length=150)
+
+
+class MenuInListSerializer(serializers.ListSerializer):
+    """A lista do `PUT /menu`, e o único sítio onde o corpo é visto como um todo.
+
+    Existe por uma razão que um `ItemDeMenuInSerializer` sozinho não consegue
+    cumprir: **nenhuma rota pode aparecer duas vezes**. É uma afirmação sobre a
+    forma do corpo — não precisa de ler nada à base de dados — pelo que é
+    validação de serializer e não de service, ao contrário das recusas dos
+    convites ("já é membro", "já tem convite pendente"), que são leituras dentro
+    do âmbito.
+
+    Sem isto, a recusa vinha do `tenantmenuitem_tenant_route_uniq` como
+    `IntegrityError`, ou seja 500 numa situação que é um erro de cliente. A
+    unicidade na base de dados continua a ser a rede, como a RLS.
+
+    O erro sai em `non_field_errors` e não por campo: a duplicação é uma
+    propriedade da lista e não de um dos seus elementos, e apontá-la ao índice
+    `n` escolhia arbitrariamente uma das duas ocorrências.
+
+    Não tem `max_length`: a lista não consegue ser mais comprida do que o
+    registo de rotas, porque cada `route_id` é validado contra o enum e nenhum
+    se repete. O teto existe e é derivado, em vez de ser um número escrito à
+    mão que alguém esquece de subir.
+    """
+
+    def validate(self, attrs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        vistos = Counter(str(item["route_id"]) for item in attrs)
+        repetidos = sorted(rota for rota, quantas in vistos.items() if quantas > 1)
+        if repetidos:
+            raise serializers.ValidationError(
+                f"rotas repetidas no menu: {', '.join(repetidos)}. O PUT é uma "
+                "substituição total e cada rota aparece no máximo uma vez."
+            )
+        return attrs
+
+
+class ItemDeMenuInSerializer(serializers.Serializer):
+    """Uma linha do corpo do `PUT /menu`: o que o tenant decidiu sobre uma rota.
+
+    Os quatro campos configuráveis, e nada mais. **Não** há `campo`, e isso é
+    estrutural e não uma omissão: se a forma que a configuração transporta
+    tivesse esse campo, uma empresa conseguia promover uma rota de escritório
+    para o telemóvel escrevendo `campo: true` — e o predicado que diz "este ecrã
+    foi desenhado para 360px" é código (ADR 0009, adenda 2). Também não há
+    `caminho` nem `icone`: a árvore de rotas é código, e um menu que nomeasse
+    caminhos punha o deep link a depender da configuração.
+
+    O `route_id` é um `ChoiceField` sobre o enum fechado do backend, e é essa
+    linha que impede a tabela de ser um armazém chave/valor: um id inventado é
+    400 por campo, não uma linha guardada que ninguém sabe ler.
+
+    `rotulo` é opcional e pode vir `null`; os outros três são obrigatórios,
+    porque o corpo é a configuração **inteira** e não um `PATCH` — "mantém o que
+    estava" não é uma intenção que este endpoint consiga ter.
+
+    `allow_blank=False` no `rotulo`: um rótulo vazio não é um rótulo. Quem quer
+    o default manda `null` ou omite-o, e a coluna guarda `""` para essa ausência
+    (ver o modelo) — um sítio só a traduzir as duas formas.
+    """
+
+    route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
+    grupo = serializers.CharField(max_length=LIMITE_DO_GRUPO)
+    ordem = serializers.IntegerField(min_value=0, max_value=ORDEM_MAXIMA)
+    visivel = serializers.BooleanField()
+    rotulo = serializers.CharField(
+        max_length=LIMITE_DO_ROTULO,
+        required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        list_serializer_class = MenuInListSerializer
 
 
 class AtivacaoInSerializer(serializers.Serializer):
@@ -209,6 +300,87 @@ class TenantOutSerializer(serializers.Serializer):
     papel = serializers.ChoiceField(source="role", choices=Papel.choices)
 
 
+class ItemDeMenuOutSerializer(serializers.Serializer):
+    """Um item do menu **já resolvido**: o registo com a configuração por cima.
+
+    A tupla da ADR 0009 — `(route_id, grupo, ordem, visivel, rotulo)` —, uma
+    lista com um nível de agrupamento e nunca uma árvore ("esconder e reordenar
+    uma árvore é um problema muito maior e 'cresce' não precisa dele").
+
+    Serve as **duas** posições onde o menu aparece: o `menu` do `SessaoOut`
+    (filtrado pelo papel de quem pede) e a resposta do `PUT /menu` (a
+    configuração inteira, como ficou). Uma classe e não duas porque a forma é a
+    mesma e duas idênticas davam dois componentes iguais no OpenAPI, logo dois
+    esquemas de Zod a divergir. A diferença entre as duas posições é **o
+    conjunto de linhas**, não a forma de cada uma, e está escrita no
+    `selectors.projeccao_de_menu`.
+
+    `visivel` vem com o seu valor e não filtrado: esconder é apresentação e a
+    rota continua a funcionar por deep link (ADR 0009) — quem esconde é o
+    cliente, e o painel precisa de ver o que está escondido para o poder mostrar
+    outra vez. Filtrar aqui transformava "esconder" num controlo de acesso
+    falso e um marcador guardado num 404.
+
+    `rotulo` é `null` quando o tenant não sobrepôs nada, e **não** o rótulo do
+    registo já resolvido: o cliente faz `rotulo ?? registo.rotulo`, que é o que
+    o `montarMenu` do shell já escreve. O porquê está no `menu.ItemDeMenu` — em
+    resumo, resolvê-lo aqui prendia o tenant a um default que ele nunca escolheu.
+
+    **Não** leva `campo`: o que esta lista transporta é configuração, e o
+    predicado de rota de campo é código (ADR 0009, adenda 2). Quem o quer pede
+    `GET /menu/rotas`, que é o registo.
+    """
+
+    route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
+    grupo = serializers.CharField(max_length=LIMITE_DO_GRUPO)
+    ordem = serializers.IntegerField()
+    visivel = serializers.BooleanField()
+    rotulo = serializers.CharField(max_length=LIMITE_DO_ROTULO, allow_null=True)
+
+
+class RotaDeMenuOutSerializer(serializers.Serializer):
+    """Uma rota do **registo**: o que existe para configurar, e os seus defaults.
+
+    É a resposta do `GET /menu/rotas`, e o que ela descreve é código e não dados
+    de um tenant: a lista fechada de rotas que o menu pode nomear, com o rótulo
+    e o grupo por omissão, quem as pode ver, e se foram desenhadas para 360px.
+    Nenhuma linha de base de dados é lida para a produzir.
+
+    Serve um ecrã só — o painel de configuração do menu — e é por isso que
+    carrega o `rotulo_default` e o `grupo_default`: são o que permite mostrar "o
+    default é este" ao lado de um valor que o estabelecimento sobrepôs, e o que
+    dá sentido ao botão que repõe (um `PUT` sem aquele item).
+
+    ## `papeis_permitidos`, e não `papel_minimo`
+
+    A ADR 0011 escreve "o papel mínimo que o registo declara". **Um mínimo exige
+    uma ordem entre papéis, e essa ordem não existe neste projeto** — é a Q7,
+    marcada como "não inventes default sem falar com um utilizador real" — pelo
+    que o registo declara um conjunto. Dá o mesmo poder de filtragem sem afirmar
+    que `manager` > `staff`; ver o `apps/accounts/menu.py` para a decisão inteira
+    e para o que ficou sem resposta.
+
+    Sai como lista de enum fechado (`PapelEnum`), logo o cliente não consegue
+    inventar um papel ao mostrar o filtro. A ordem é a da declaração do `Papel`,
+    para o diff do `schema.yml` não depender da iteração de um `frozenset`.
+
+    ## `ordem_default` não está aqui
+
+    Não é esquecimento: a ordem por omissão chega ao cliente **já aplicada** na
+    projecção (o `menu` do `SessaoOut` e a resposta do `PUT`), que é o único
+    sítio onde serve. Um segundo número a dizer a mesma coisa noutra forma era
+    uma segunda fonte para a ordenação do menu.
+    """
+
+    route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
+    rotulo_default = serializers.CharField(max_length=LIMITE_DO_ROTULO)
+    grupo_default = serializers.CharField(max_length=LIMITE_DO_GRUPO)
+    papeis_permitidos = serializers.ListField(
+        child=serializers.ChoiceField(choices=Papel.choices)
+    )
+    campo = serializers.BooleanField()
+
+
 class SessaoOutSerializer(serializers.Serializer):
     """A resposta dos quatro endpoints de autenticação. Sempre esta forma.
 
@@ -225,15 +397,14 @@ class SessaoOutSerializer(serializers.Serializer):
     utilizador = UtilizadorOutSerializer(allow_null=True)
     tenant_ativo = TenantOutSerializer(allow_null=True)
     tenants = TenantOutSerializer(many=True)
-    # Sempre `[]` hoje, e **sem** forma de item declarada: a projecção do menu
-    # por estabelecimento é da ADR 0009 e a tabela dela não existe. Declarar
-    # agora a tupla `(route_id, grupo, ordem, visivel, rotulo)` era inventar o
-    # contrato de outra ADR, e o `route_id` só vale como enum fechado vindo do
-    # backend — é isso que torna o registo de rotas do frontend exaustivo nos
-    # dois sentidos. Até lá o campo chega ao `types.ts` como uma lista de
-    # `unknown`, o que é exactamente a verdade: existe, está vazio, e a sua
-    # forma ainda não é contrato.
-    menu = serializers.ListField(child=serializers.JSONField())
+    # A projecção do menu do estabelecimento ativo, filtrada pelo papel de quem
+    # pede (ADR 0009 e ADR 0011). Até esta feature existir, o campo era uma
+    # `ListField(JSONField())` sempre vazia e **sem** forma de item declarada,
+    # porque declarar a tupla desta ADR quando ela não existia era inventar o
+    # contrato de outra (ADR 0010). Agora existe: o item é o `ItemDeMenuOut` e o
+    # `route_id` dele é o enum fechado que torna o `Record<RotaId, …>` do shell
+    # exaustivo contra a lista do backend, nos dois sentidos.
+    menu = ItemDeMenuOutSerializer(many=True)
 
 
 class ConviteOutSerializer(serializers.Serializer):
