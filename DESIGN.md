@@ -296,8 +296,18 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   desenho deste documento, nenhuma das tabelas trunca. Um nome de artigo a cortar aos 1280 é aceite e
   tem o texto completo no `title` e no ecrã de detalhe a que o nome liga — um nome truncado lê-se
   mesmo assim, ao contrário da razão de um alerta ou de uma validade.
-- **Contar e o Fecho de contagem ficam como estão, e não é dívida.** Não são listas: são
-  **formulários**. Uma linha de contagem é um campo numérico com salto de foco (`enterKeyHint="next"`)
+- **Contar e o Fecho de contagem continuam formulários, mas já não são estreitos.** O dono do
+  produto apanhou o Contar a parecer de outro produto ao lado dos outros — continuava com o cap de
+  `42rem` e o cromado antigo — e tinha razão. O que mudou foi a largura e o cromado; as linhas
+  continuam a ser um formulário. A razão para o ter deixado de fora tinha um **pressuposto
+  escondido**: assumiu-se que uma tabela obriga a uma largura mínima grande e que isso partia os
+  360px. Com poucas colunas não obriga — o que de facto não cabe a 360px é a informação toda.
+  A forma é por isso uma **grelha responsiva com um só `<input>` no DOM**: cinco colunas em desktop,
+  com cabeçalho, e duas linhas empilhadas a 360, com os mesmos elementos. O `md:contents` promove os
+  filhos da segunda linha a células em desktop, que é o que evita dois layouts — e dois layouts
+  seriam dois campos, dois focos e dois `onBlur`. O cabeçalho usa a **mesma** constante de grelha da
+  linha: medido, o rótulo "Artigo" e a célula dele ficam os dois em `x=272, w=384`.
+  As duas continuam a não ser listas: são **formulários**. Uma linha de contagem é um campo numérico com salto de foco (`enterKeyHint="next"`)
   para o teclado ficar aberto do princípio ao fim da zona, e o `<label>` está ao lado do campo —
   contra o default do §3 — porque nove rótulos empilhados sobre nove campos são dezoito linhas. O
   fecho são três totais, uma justificação e um botão. As duas são rotas de campo, contam-se de pé no

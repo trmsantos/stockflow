@@ -23,8 +23,12 @@ import {
   useRegistarContagemDeLinha,
   useUltimaContagemFechada,
 } from "../api";
-import { ErroDaLista, EsqueletoDaLista } from "../components/estados-da-lista";
-import { LinhaDeContagem } from "../components/linha-de-contagem";
+import { ErroDaLista } from "../components/estados-da-lista";
+import {
+  CabecalhoDaContagem,
+  EsqueletoDaContagem,
+  LinhaDeContagem,
+} from "../components/linha-de-contagem";
 import {
   EsqueletoDoProgresso,
   ProgressoDaContagem,
@@ -128,7 +132,7 @@ function SemContagem() {
       </EstadoVazio>
 
       {iniciar.isError ? (
-        <p role="alert" className="px-4 text-sm text-danger">
+        <p role="alert" className="px-celula-x text-sm text-danger">
           {mensagemDeErro(iniciar.error)}
         </p>
       ) : null}
@@ -186,7 +190,14 @@ export function EcraDeContar() {
   }
 
   return (
-    <section className="flex w-full max-w-2xl flex-col">
+    // Sem `max-w-2xl` desde 2026-10-06: o dono do produto apanhou este ecrã a
+    // parecer de outro produto ao lado dos outros, e tinha razão. O que mudou foi
+    // a largura e o cromado; as linhas **continuam a ser um formulário** e não
+    // uma tabela, porque a 360px seis colunas pedem 640px e um `overflow-x-auto`
+    // punha fora do ecrã o campo que se está a escrever. A razão inteira, e o
+    // pressuposto escondido que me fez deixá-lo de fora, estão no
+    // `GRELHA_DA_LINHA` do `linha-de-contagem.tsx`.
+    <section className="flex w-full flex-col">
       {/* O nome do ecrã já está no header do shell; repeti-lo em grande custava
           uma das sete linhas do orçamento de 360×640. */}
       <h1 className="sr-only">Contar — o que está na prateleira é o que o sistema diz?</h1>
@@ -194,7 +205,7 @@ export function EcraDeContar() {
       {contagem.isPending ? (
         <>
           <EsqueletoDoProgresso />
-          <EsqueletoDaLista rotulo="A carregar a contagem…" linhas={5} />
+          <EsqueletoDaContagem />
         </>
       ) : null}
 
@@ -214,7 +225,7 @@ export function EcraDeContar() {
         <>
           <ProgressoDaContagem contagem={aberta} zonaAtiva={busca.zona} />
 
-          {linhas.isPending ? <EsqueletoDaLista rotulo="A carregar as linhas…" linhas={5} /> : null}
+          {linhas.isPending ? <EsqueletoDaContagem /> : null}
 
           {linhas.isError ? (
             <ErroDaLista
@@ -240,6 +251,7 @@ export function EcraDeContar() {
             </EstadoVazio>
           ) : (
             <>
+              <CabecalhoDaContagem />
               <ul className="flex flex-col">
                 {resultados.map((linha, indice) => (
                   <LinhaDeContagem
@@ -264,7 +276,7 @@ export function EcraDeContar() {
               </ul>
 
               {registar.isError ? (
-                <p role="alert" className="px-4 py-2 text-sm text-danger">
+                <p role="alert" className="px-celula-x py-2 text-sm text-danger">
                   {mensagemDeErro(registar.error)}
                 </p>
               ) : null}
@@ -274,7 +286,7 @@ export function EcraDeContar() {
                   que é precisamente a que falta contar. A razão sobrevive à
                   saída da tab bar (ADR 0009) — o que tapava a linha era a barra
                   fixa, não o que estava por baixo dela. */}
-              <div className="flex flex-col items-start gap-1.5 border-t border-border px-4 py-4">
+              <div className="flex flex-col items-start gap-1.5 border-t border-border px-celula-x py-4">
                 <Button asChild>
                   <Link to="/contar/fechar" search={{ contagem: aberta.id }}>
                     Fechar contagem
@@ -282,7 +294,7 @@ export function EcraDeContar() {
                 </Button>
                 <p className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Lock aria-hidden="true" className="size-3 shrink-0" />
-                  só o {aberta.closing_role} fecha a contagem · as diferenças aparecem antes
+                  só o {aberta.closing_role} fecha a contagem, e as diferenças aparecem antes
                 </p>
               </div>
             </>
