@@ -52,14 +52,28 @@ campo, que são desenhadas para 360px.
 Todos os tokens são variáveis CSS mapeadas para Tailwind v4 via `@theme`. O agente usa
 **apenas** classes derivadas destes tokens. Cores hardcoded são proibidas.
 
-### Cor — uma paleta, escura, e porque não há duas
+### Cor — três paletas, e a que existe é a escura
 
-**Uma paleta só, e é escura.** A identidade "Cabine" é um painel de operação; a decisão do dono do
-produto é **escuro primário, claro depois**. O modo claro é **dívida nomeada**, aqui e não num
-banner: entra quando estiver **completo e medido** — os 18 tokens redefinidos, gamut e contraste
-medidos contra a pior superfície dele — e o gate falha se aparecer um bloco `prefers-color-scheme`
-com uma paleta parcial. Um modo claro a meio é pior do que não ter modo claro: dá uma app com metade
-das cores erradas a quem tem o sistema em claro.
+**Três paletas: `escuro` (o default, e a identidade aprovada), `claro` e `meio_termo`; e a selecção é
+o atributo `data-tema` no `<html>`, nunca `prefers-color-scheme` (ADR 0015).** A preferência é **da
+pessoa** e vive no servidor (ADR 0016), não na configuração do sistema de quem olha; e uma media query
+tem dois estados para três paletas. Por isso `prefers-color-scheme` deixou de selecionar o que quer que
+seja e passa a ser proibido em `src/**` inteiro.
+
+**Das três, hoje existe uma: a escura, que está escrita abaixo.** A `claro` e a `meio_termo` entram,
+com os seus blocos neste §2 e no `tokens.css`, na mesma alteração que muda o gate — e entram
+**completas e medidas**, ou não entram: os 18 tokens de cor redefinidos **mais os dois de sombra**,
+gamut a 1e-6, e contraste contra a **pior superfície de cada paleta**, que é *calculada* e não nomeada
+(no escuro dá o `surface-2`, o mais claro dos três pretos; no claro dá a **mais escura** das três). Um
+tema que entre com 17 dos 18 falha. Um modo a meio é pior do que não ter modo nenhum: dá uma app com
+metade das cores erradas a quem o escolheu. E **o meio termo é um terceiro conjunto de superfícies —
+grafite, com texto claro —, não um `opacity` por cima do escuro**: um factor multiplicativo não
+redefine token nenhum, e um token que caia a 4.4:1 não aparece em medição alguma porque não existe como
+valor.
+
+Os **acentos e as cores de estado redefinem-se em cada paleta**, e isso não é uma proibição de
+partilhar um valor: é o que a medição obriga. O mesmo `oklch` que dá 5.5:1 sobre quase-preto dá muito
+menos sobre papel, logo um valor copiado falha na paleta onde não passa.
 
 Três papéis por cor de estado, porque um valor só não serve os três. Uma cor de estado usada
 como **texto** sobre o fundo precisa de 4.5:1; a mesma cor como **preenchimento** de um banner
@@ -107,11 +121,12 @@ O acento é ciano e não verde por eliminação, não por gosto: a gama de estad
 âmbar e o vermelho, e o §5 proíbe o roxo. Um acento que repita uma cor de estado faz o item activo
 do menu parecer um alerta.
 
-**`color-scheme: dark` no `:root`**, e não `light dark`. Sem isso as barras de scroll, o caret, o
-autofill e os controlos nativos vêm do modo claro por cima de uma página preta — é o detalhe que
-trai uma app escura feita a meio. E como há uma paleta só, o variant `dark:` do Tailwind (que por
-default é `prefers-color-scheme`) está **neutralizado** no `tokens.css`: senão o aspecto dos inputs
-passava a depender da configuração do sistema de quem olha, com a mesma paleta nos dois casos.
+**`color-scheme` é por paleta, e nunca `light dark`**: `dark` no escuro e no meio termo, `light` no
+claro. Sem isso as barras de scroll, o caret, o autofill e os controlos nativos vêm do modo errado por
+cima da página — é o detalhe que trai uma app feita a meio, e é a razão pela qual esta linha existe. O
+variant `dark:` do Tailwind continua **neutralizado** no `tokens.css`, agora com duas razões: ele
+selecciona dois estados e há três, e a paleta vive nos tokens, pelo que nenhum componente precisa de
+saber qual está activa — um `dark:` escrito por nós é uma regra que não corre.
 
 Como se usam os três papéis, e não há um quarto:
 - `--color-<estado>` é **cor de texto e de ícone**, sobre qualquer das três superfícies. Serve
@@ -124,25 +139,30 @@ Como se usam os três papéis, e não há um quarto:
 Regras:
 - Uma cor de acento. Gradientes só se a identidade os pedir explicitamente; nunca como default.
 - Cinzentos com um ligeiro tom (o `0.003–0.016` de chroma acima, em hue 240), nunca `#888` puro.
-- **Contraste mínimo WCAG AA: 4.5:1 texto, 3:1 UI, verificado contra a pior das três superfícies**
-  — que é o `surface-2`, não o `background`. **Medido** (`pnpm lint`, não a olho): texto de
-  **5.535:1** (`muted-foreground`) a **14.864:1** (`foreground`); fronteiras de componente de
-  **3.349:1** (`border-strong`) a **4.960:1** (`warning-border`); `foreground` sobre as três tintas
-  de estado de **11.670:1** a **12.814:1**; `primary-foreground` sobre `primary` a **8.863:1**. Os
-  três valores mais apertados são os que se quer ver num diff: se um deles descer, desceu por uma
-  razão que alguém tem de escrever.
+- **Contraste mínimo WCAG AA: 4.5:1 texto, 3:1 UI, verificado contra a pior das três superfícies de
+  cada paleta** — que o gate calcula (a de menor contraste contra o `foreground` dessa paleta) em vez
+  de a nomear; na escura é o `surface-2`, não o `background`. **Medido na paleta escura** (`pnpm lint`,
+  não a olho): texto de **5.535:1** (`muted-foreground`) a **14.864:1** (`foreground`); fronteiras de
+  componente de **3.349:1** (`border-strong`) a **4.960:1** (`warning-border`); `foreground` sobre as
+  três tintas de estado de **11.670:1** a **12.814:1**; `primary-foreground` sobre `primary` a
+  **8.863:1**. Os três valores mais apertados são os que se quer ver num diff: se um deles descer,
+  desceu por uma razão que alguém tem de escrever.
 - **Isto é um gate, não uma promessa.** O `frontend/scripts/check-design-tokens.mjs` recalcula o
   gamut e o contraste a cada `pnpm lint`, deriva os papéis do **nome** do token (um
   `--color-info-border` novo entra sozinho na regra dos 3:1) e compara esta secção com o
   `tokens.css` token a token. Até aqui as três afirmações desta secção eram prosa: verdadeiras
   quando escritas, e sem nada que as mantivesse verdadeiras. Foi assim que dois `warning` de uma
   paleta anterior estiveram fora do gamut sem ninguém dar por isso.
-- **O gate mudou de alvo a 2026-10-01, e não foi relaxado.** Exigia paridade entre dois modos; com
-  um modo só, essa paridade era uma afirmação sobre um conjunto vazio. Passou a exigir: uma paleta
-  **completa** (os nove tokens de estrutura e os **três papéis** de cada cor de estado — o que esta
-  secção prometia e nada media), todo o token literal legível como `oklch(L C h)`, e **falha se
-  aparecer um bloco `prefers-color-scheme` com uma paleta parcial**. Relaxar um gate é afirmar menos
-  sobre a mesma coisa; mudar o que ele afirma, porque a coisa mudou, é outra.
+- **O gate mudou de alvo duas vezes, e nunca foi relaxado.** A 2026-10-01 exigia paridade entre dois
+  modos; com um modo só, essa paridade era uma afirmação sobre um conjunto vazio, e passou a exigir uma
+  paleta **completa** (os nove tokens de estrutura e os **três papéis** de cada cor de estado — o que
+  esta secção prometia e nada media) e todo o token literal legível como `oklch(L C h)`. A 2026-10-06,
+  com o pedido das três paletas (ADR 0015), o alvo passa de "uma paleta completa e nenhuma
+  alternativa" para **"N paletas, cada uma completa e cada uma medida"**: a completude passa a incluir
+  os dois tokens de sombra, a pior superfície passa a ser calculada por paleta, e um bloco de paleta
+  que não redefina o conjunto inteiro falha — como já falhava um `prefers-color-scheme` parcial.
+  Relaxar um gate é afirmar menos sobre a mesma coisa; mudar o que ele afirma, porque a coisa mudou, é
+  outra.
 - **Todos os valores estão dentro do gamut sRGB**, verificado com tolerância de 1e-6 e não com uma
   margem de arredondamento: numa paleta anterior o `warning` escuro estava a `-0.0011` no canal azul
   e uma tolerância de `0.002` deixava-o passar como se estivesse dentro. Um `oklch()` fora do gamut
@@ -189,7 +209,9 @@ Números tabulares em tabelas e métricas (`font-variant-numeric: tabular-nums`)
   e a altura que deixa a mesma tabela servir num tablet na copa sem um segundo desenho.
 - Sombras: máximo dois níveis (`shadow-sm` para painéis, `shadow-lg` para popovers). Sem sombras
   coloridas. Num fundo preto a sombra não separa — o que separa é o fio de luz de 1px na aresta de
-  cima, que é a primeira camada do `shadow-sm`.
+  cima, que é a primeira camada do `shadow-sm`. **Os dois tokens de sombra são parte da paleta e
+  redefinem-se com ela** (ADR 0015): num fundo claro um fio de luz branco não existe e é a sombra que
+  volta a separar.
 - Bordas de 1px com `--color-border` são preferíveis a sombras para separar superfícies. O cromado
   desta identidade é **visível e contado**: cromado (sidebar e cabeçalho) no `surface` e a tela de
   conteúdo no `background` — **ao contrário do que esta linha dizia**, e a razão é medida: os quatro
@@ -218,12 +240,20 @@ pnpm dlx shadcn@latest add <componente>
 ```
 
 **`pnpm dlx` e não uma devDependency**, desde 2026-10-06. O `shadcn` é um CLI que
-se corre de vez em quando, nada o importa e nenhum script o chamava — e enquanto
-era dependência arrastava uma árvore transitiva (`ts-morph`, `fast-glob`,
-`micromatch`, `braces`) que a auditoria do CI lia a cada corrida. O `braces` tem
-um aviso `high` **sem versão corrigida a montante**, logo a única saída honesta era
-não ter o caminho: suprimir um aviso que não se pode corrigir ensina a ignorar a
-auditoria, e uma auditoria que se ignora não é um gate.
+se corre de vez em quando, nada o importa em TypeScript e nenhum script o chamava
+— entrava por um `@import` de CSS, que é como ele me escapou à primeira
+verificação. Enquanto era dependência arrastava uma árvore transitiva
+(`ts-morph`, `fast-glob`, `micromatch`, `braces`) que a auditoria do CI lia a cada
+corrida, e o `braces` tem um aviso `high` **sem versão corrigida a montante**: a
+única saída honesta era não ter o caminho, porque suprimir um aviso que não se pode
+corrigir ensina a ignorar a auditoria, e uma auditoria que se ignora não é um gate.
+
+As três variantes `data-*` que vinham do CSS dele são nossas desde então
+(`src/styles/variantes.css`), com o `scripts/check-variantes.mjs` a impedir a
+cópia de divergir — e a lista fechada dele cobre o caso em que a variante nativa
+do Tailwind não basta, que é quando o Radix escreve `data-state="open"` e o nativo
+`[data-open]` nunca casa: a classe existe e o estilo não aparece.
+
 Personalizados uma vez através dos tokens acima — não por componente.
 
 Regras de composição:
@@ -336,7 +366,10 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   menu é uma projecção por tenant sobre as rotas que existem, com um nível de agrupamento (ADR
   0009); esconder é apresentação, não autorização.
 - O **seletor de tenant** vive no pé da sidebar (é do shell); o **seletor de loja** fica na barra do
-  ecrã (é do ecrã). Parecem a mesma coisa e não são.
+  ecrã (é do ecrã). Parecem a mesma coisa e não são. É também no pé da sidebar que vivem as
+  **preferências da pessoa** (o tema), ao lado do email e da saída da conta; as **definições da
+  empresa** são um item de menu restrito ao `owner`, e são dois ecrãs e não dois separadores do mesmo
+  (ADR 0017).
 
 ---
 
@@ -361,16 +394,20 @@ Se o agente se apanhar a produzir qualquer um destes, apaga e recomeça a partir
 - [ ] Fontes são as do projeto (Archivo / IBM Plex Mono), não Inter/Roboto.
 - [ ] Todos os estados (loading/empty/error/disabled/focus) existem.
 - [ ] Navegação por teclado funciona; foco é visível.
-- [ ] `pnpm lint` passou — é ele que mede o contraste AA contra o `surface-2` (a pior superfície),
-      o gamut sRGB a 1e-6 e a paridade desta secção com o `tokens.css`. Não se presume nenhum dos três.
+- [ ] `pnpm lint` passou — é ele que mede o contraste AA contra a pior superfície **de cada paleta**
+      (calculada, não nomeada), o gamut sRGB a 1e-6 e a paridade desta secção com o `tokens.css`. Não
+      se presume nenhum dos três.
       Para os números token a token: `node scripts/check-design-tokens.mjs --detalhe`.
-- [ ] Se acrescentei uma cor de estado, tem os **três** papéis (`-surface` e `-border` incluídos) e
-      está escrita no §2 — o gate falha nos dois sentidos, e agora **mede** os três papéis.
-- [ ] **Não comecei um segundo modo de cor.** Há uma paleta só, escura; o modo claro é dívida
-      nomeada no §2 e entra completo e medido ou não entra. Um `prefers-color-scheme` com paleta
-      parcial falha o `pnpm lint`.
-- [ ] Nenhum `dark:` em código nosso: com uma paleta só, o variant não seleciona nada (está
-      neutralizado no `tokens.css`) e o gate recusa-o fora dos ficheiros gerados.
+- [ ] Se acrescentei uma cor de estado, tem os **três** papéis (`-surface` e `-border` incluídos) em
+      **todas** as paletas e está escrita no §2 — o gate falha nos dois sentidos, e **mede** os três
+      papéis.
+- [ ] **Se acrescentei uma paleta, acrescentei-a completa.** São 18 tokens de cor mais os dois de
+      sombra, medidos, com o bloco neste §2 e no `tokens.css` na mesma alteração (ADR 0015). Um tema a
+      17 de 18 falha o `pnpm lint`, e um bloco de paleta parcial também.
+- [ ] Nenhum `prefers-color-scheme` em código nosso: a paleta é escolhida pelo atributo `data-tema`,
+      que vem da preferência da pessoa (ADR 0016), e não pela configuração do sistema de quem olha.
+- [ ] Nenhum `dark:` em código nosso: o variant selecciona dois estados e há três paletas (está
+      neutralizado no `tokens.css`), e o gate recusa-o fora dos ficheiros gerados.
 - [ ] Nenhum `input` ou controlo delimitado com `--color-border` em vez de `--color-border-strong`.
 - [ ] Densidade pelos tokens (`h-linha`, `px-celula-x`, `gap-ritmo`), não por números no JSX.
 - [ ] Funciona a **1280px**; e a **360px** se for uma rota de campo (Contar, Receber). Fora dessas,
