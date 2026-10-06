@@ -201,9 +201,10 @@ def _linhas_no_ambito(tenant_id: UUID) -> list[TenantMenuItem]:
 def test_o_enum_tem_exatamente_os_ids_do_registo_do_shell() -> None:
     """A lista fechada do backend é a união que o `types.ts` carrega (ADR 0009).
 
-    Os seis valores são os ids que o `frontend/src/shell/registo-de-rotas.ts`
-    escreveu primeiro — os cinco ecrãs do shell mais o `convites`, que entrou lá
-    no mesmo dia em que esta tabela nasceu. Um id a mais aqui **faz o
+    Os sete valores são os ids que o `frontend/src/shell/registo-de-rotas.ts`
+    escreveu primeiro — os cinco ecrãs do shell, o `convites`, e o `painel`, que
+    entrou a 2026-10-06 quando o painel de gestão saiu do Início para rota
+    própria. Um id a mais aqui **faz o
     `pnpm typecheck` do frontend falhar** até o `Record<RotaId,
     EntradaDoRegisto>` dele o ter: é essa a propriedade que se compra, e é por
     isso que acrescentar um id é uma mudança que atravessa as duas pontas e não
@@ -214,6 +215,7 @@ def test_o_enum_tem_exatamente_os_ids_do_registo_do_shell() -> None:
     """
     assert list(RotaDeMenu.values) == [
         "inicio",
+        "painel",
         "alertas",
         "stock",
         "contar",
@@ -233,24 +235,34 @@ def test_o_registo_cobre_o_enum_nos_dois_sentidos() -> None:
     assert [rota.route_id for rota in rotas_do_registo()] == list(RotaDeMenu.values)
 
 
-def test_a_unica_rota_restrita_e_a_dos_convites_e_e_do_owner() -> None:
+def test_as_rotas_restritas_sao_duas_e_as_duas_sao_do_owner() -> None:
     """Uma lista fechada de restrições, e cada uma com a permissão que a justifica.
 
     `convites` é do `owner` porque a ADR 0010 o decidiu e porque é o que o
-    `ConviteViewSet` impõe — mostrar o item a um `staff` era pôr no menu um
-    caminho que acaba em 403. As outras estão abertas aos três papéis: dizer que
-    um `staff` não pode ver o Stock é uma decisão de produto que ninguém tomou
-    (Q7).
+    `ConviteViewSet` impõe. `painel` é do `owner` porque o dono do produto o
+    decidiu a 2026-10-06 — o painel de gestão mostra o resultado do mês, a folha
+    salarial e o custo por cargo — e porque é o que o `reporting` impõe nos três
+    endpoints. Nos dois casos, mostrar o item a quem não o pode usar era pôr no
+    menu um caminho que acaba em 403.
 
-    Este teste é o que torna visível no diff a segunda restrição, e a pergunta a
-    fazer nesse dia é a mesma: que `permission_classes` a justifica?
+    As outras estão abertas aos três papéis: dizer que um `staff` não pode ver o
+    Stock é uma decisão de produto que ninguém tomou (Q7).
+
+    **Este teste chamava-se "a única rota restrita" e passou a nomear duas.** Ele
+    existe exactamente para isso: tornar visível no diff cada restrição nova, com
+    a mesma pergunta a fazer nesse dia — que `permission_classes` a justifica? Não
+    é um teste que se relaxa quando uma entra; é um teste que se **reescreve**, e a
+    diferença é que reescrevê-lo obriga a responder à pergunta.
     """
     restritas = {
         rota.route_id: sorted(rota.papeis)
         for rota in rotas_do_registo()
         if rota.papeis != TODOS_OS_PAPEIS
     }
-    assert restritas == {RotaDeMenu.CONVITES: [Papel.OWNER]}, (
+    assert restritas == {
+        RotaDeMenu.PAINEL: [Papel.OWNER],
+        RotaDeMenu.CONVITES: [Papel.OWNER],
+    }, (
         "a lista de rotas restritas a um subconjunto de papéis mudou. Esconder "
         "um item que um papel não pode usar é autorização (ADR 0011), logo cada "
         "entrada tem de corresponder à permissão real do ecrã que serve — e não "
@@ -321,12 +333,13 @@ def test_sem_linhas_o_menu_e_o_dos_defaults(cenario: Cenario) -> None:
     assert [item["grupo"] for item in menu] == [
         "Painel",
         "Painel",
+        "Painel",
         "Inventário",
         "Inventário",
         "Compras",
         "Equipa",
     ]
-    assert [item["ordem"] for item in menu] == [10, 20, 30, 40, 50, 60]
+    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 40, 50, 60]
 
 
 def test_sem_estabelecimento_ativo_o_menu_vem_vazio(cenario: Cenario) -> None:
@@ -356,6 +369,7 @@ def test_o_owner_guarda_o_menu_e_a_sessao_passa_a_devolve_lo(cenario: Cenario) -
         _item(RotaDeMenu.RECEBER, grupo="Dia a dia", ordem=10, rotulo="Entradas"),
         _item(RotaDeMenu.CONTAR, grupo="Dia a dia", ordem=20),
         _item(RotaDeMenu.INICIO, grupo="Gestão", ordem=30),
+        _item(RotaDeMenu.PAINEL, grupo="Gestão", ordem=35),
         _item(RotaDeMenu.ALERTAS, grupo="Gestão", ordem=40),
         _item(RotaDeMenu.STOCK, grupo="Gestão", ordem=50, visivel=False),
         _item(RotaDeMenu.CONVITES, grupo="Equipa", ordem=60),
@@ -631,24 +645,32 @@ def _restringir(
 
 
 @pytest.mark.parametrize("papel", [Papel.MANAGER, Papel.STAFF])
-def test_os_convites_desaparecem_do_menu_de_quem_nao_pode_convidar(
+def test_as_rotas_do_owner_desaparecem_do_menu_de_quem_nao_e_owner(
     cenario: Cenario, papel: str
 ) -> None:
     """"Esconder um item que um `staff` não pode usar é autorização" (ADR 0011).
 
     A configuração é por tenant e a resposta é por **(tenant, papel)**: o mesmo
-    estabelecimento, a mesma tabela (aqui sem linha nenhuma), três respostas. E o
-    item escondido é o que leva ao `/convites`, que o `ConviteViewSet` recusa a
-    quem não é `owner` — um menu que o mostrasse apontava para um 403.
+    estabelecimento, a mesma tabela (aqui sem linha nenhuma), três respostas. Os
+    itens escondidos são os que levam a caminhos que o servidor recusa a quem não
+    é `owner` — o `/convites`, que o `ConviteViewSet` recusa, e o `/painel`, que o
+    `reporting` recusa nos três endpoints. Um menu que os mostrasse apontava para
+    um 403.
+
+    **Eram um e passaram a dois a 2026-10-06**, e o teste é nomeado pelo critério
+    (as rotas do `owner`) e não pela lista, para a segunda entrada não obrigar a
+    inventar um nome novo — mas a asserção continua a ser pela lista exacta, que é
+    o que faz cada entrada nova aparecer no diff.
     """
     user = cenario.bento if papel == Papel.MANAGER else cenario.clara
 
     do_owner = _menu_da_sessao(_cliente(cenario.ana, cenario.alfa.id))
     do_outro = _menu_da_sessao(_cliente(user, cenario.alfa.id))
 
-    assert RotaDeMenu.CONVITES in {item["route_id"] for item in do_owner}
-    assert RotaDeMenu.CONVITES not in {item["route_id"] for item in do_outro}
-    assert len(do_outro) == len(do_owner) - 1
+    so_do_owner = {RotaDeMenu.CONVITES, RotaDeMenu.PAINEL}
+    assert so_do_owner <= {item["route_id"] for item in do_owner}
+    assert so_do_owner.isdisjoint({item["route_id"] for item in do_outro})
+    assert len(do_outro) == len(do_owner) - len(so_do_owner)
 
 
 def test_o_filtro_por_papel_nao_depende_da_configuracao_do_tenant(

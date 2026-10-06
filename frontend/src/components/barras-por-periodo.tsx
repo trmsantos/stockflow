@@ -201,21 +201,33 @@ export function BarrasPorPeriodo({
       </div>
 
       {/* Os números a sério, para quem ouve o ecrã e para quem quer o valor
-          exacto de um dia. Um `<caption>` não serve: a figura já tem nome. */}
-      <table className="sr-only">
-        <tbody>
-          {intervalos.map((intervalo, indice) => (
-            <tr key={intervalo}>
-              <th scope="row">{intervalo}</th>
-              {series.map((serie) => (
-                <td key={serie.id}>
-                  {serie.rotulo}: {serie.pontos.at(indice)?.valor ?? "sem dados"}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          exacto de um dia. Um `<caption>` não serve: a figura já tem nome.
+
+          **O `sr-only` está no `<div>` e não na `<table>`, e isso é um defeito
+          medido.** O `sr-only` esconde com `position:absolute; width:1px;
+          overflow:hidden`, e uma `<table>` não se deixa encolher por isso: o
+          algoritmo de tabela usa a largura mínima do conteúdo e ignora o
+          `width:1px`. Resultado, a 2026-10-06, com o gráfico numa vidraça de
+          512px: esta tabela invisível media **526px**, saía 13px para fora do
+          viewport de 1280 e punha a **página inteira** a deslizar na
+          horizontal. Não se via — era invisível — e media-se. Num `<div>`, que
+          é um contentor de bloco a sério, o `overflow:hidden` corta. */}
+      <div className="sr-only">
+        <table>
+          <tbody>
+            {intervalos.map((intervalo, indice) => (
+              <tr key={intervalo}>
+                <th scope="row">{intervalo}</th>
+                {series.map((serie) => (
+                  <td key={serie.id}>
+                    {serie.rotulo}: {serie.pontos.at(indice)?.valor ?? "sem dados"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </figure>
   );
 }

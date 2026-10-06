@@ -668,7 +668,7 @@ class RotaDeMenu(models.TextChoices):
     `pnpm typecheck`. É isso — e não a cardinalidade — que substitui a garantia
     dos "4 itens" que morreu com a tab bar (ADR 0009).
 
-    Os seis ids são exactamente os do `frontend/src/shell/registo-de-rotas.ts`,
+    Os sete ids são exactamente os do `frontend/src/shell/registo-de-rotas.ts`,
     que os escreveu primeiro (incluindo o `convites`, que entrou lá no mesmo dia
     em que esta tabela nasceu). Acrescentar um sétimo aqui **faz o
     `pnpm typecheck` do frontend falhar** até o `Record` dele o ter, e tirar um
@@ -681,6 +681,7 @@ class RotaDeMenu(models.TextChoices):
     """
 
     INICIO = "inicio", "Início"
+    PAINEL = "painel", "Painel de gestão"
     ALERTAS = "alertas", "Alertas"
     STOCK = "stock", "Stock"
     CONTAR = "contar", "Contar"

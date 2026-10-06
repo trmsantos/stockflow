@@ -73,18 +73,26 @@ const [RECURSO_RESUMO, RECURSO_SERIES, RECURSO_MES] = RECURSOS;
 export type PapelDoPainel = components["schemas"]["PapelEnum"];
 
 /**
- * As **três projecções** do mesmo ecrã (ADR 0013, decisão 6).
+ * Quem está a olhar, em duas palavras — e desde 2026-10-06 só uma delas abre o
+ * painel.
  *
- * Não é "o painel do dono com uma barra escondida": são ecrãs diferentes, e é
- * por isso que isto é uma projecção e não um conjunto de booleanos. O `staff`
- * não vê painel nenhum — aterra no Início e vê a lista das perguntas da manhã,
- * que é o que ele já vê hoje; o `manager` vê o bloco de período e nada que seja
- * função de salários; o `owner` vê tudo.
+ * Eram **três projecções do mesmo ecrã** (ADR 0013, decisão 6): o `staff` via a
+ * lista das perguntas da manhã, o `manager` via o bloco de período sem nada que
+ * fosse função de salários, e o `owner` via tudo. O dono do produto mudou a
+ * direcção: *"esta aba de dashboard é apenas para owner do estabelecimento; os
+ * outros colaboradores e gerentes no início têm acesso a outra coisa"*. O painel
+ * passou a ser uma rota própria (`/painel`) e um ecrã só, do dono; o Início
+ * passou a ser a fila de trabalho do dia, igual para os três papéis.
+ *
+ * O que isso simplificou é real e vale ser dito: nenhum bloco deste painel sabe
+ * agora quem está a olhar. A projecção decide se o ecrã **existe**, não o que
+ * cada bloco mostra — e os três endpoints de `reporting` passam a ser de
+ * `{owner}`, não só o `/month`.
  *
  * **Isto não é autorização**, e é a mesma distinção que o `podeConvidar()` do
  * `accounts` faz: quem autoriza é o servidor, com `permission_classes` na view,
- * e o `/month` responde 403 a quem não é dono. O que isto faz é não bater numa
- * porta fechada — e o 403 fica como rede para o deep link e para a pertença
+ * e os três caminhos respondem 403 a quem não é dono. O que isto faz é não bater
+ * numa porta fechada — e o 403 fica como rede para o deep link e para a pertença
  * revogada a meio da sessão, que é o caso que a ADR 0007 fez ser verificado por
  * pedido.
  */
@@ -109,10 +117,10 @@ const PROJECCOES = new Map<string, Projeccao>(Object.entries(PROJECCAO_DO_PAPEL)
  * A projecção desta sessão, ou `null` enquanto ela não chegou.
  *
  * `null` e não um default, porque os dois defaults possíveis estão errados:
- * `"dono"` dispara o `/month` de quem talvez não possa, e `"operacao"` fazia o
- * painel do dono aparecer depois de um piscar das perguntas da manhã. Na
- * prática é imediato — o `beforeLoad` da rota do shell já leu a sessão antes de
- * montar o invólucro —, e o ecrã trata o `null` como "a carregar".
+ * `"dono"` dispara três pedidos de quem talvez não possa, e `"operacao"` fazia o
+ * painel do dono aparecer depois de um piscar da recusa. Na prática é imediato —
+ * o `beforeLoad` da rota do shell já leu a sessão antes de montar o invólucro —,
+ * e o ecrã trata o `null` como "a carregar".
  *
  * Lê a **única** cache que existe, pela porta que a ADR 0008 deixa aberta entre
  * features (`@/features/accounts/api`). Não faz pedido nenhum.
@@ -126,10 +134,13 @@ export function useProjeccaoDoPainel(): Projeccao | null {
 /**
  * `GET /reporting/summary?period=…` — o bloco de período.
  *
- * O `ativo` existe porque um hook não se chama condicionalmente: um `staff` vê
- * as perguntas da manhã e **não** dispara este pedido, que o servidor recusaria
- * com 403 (a permissão é `OWNER, MANAGER`). Não é um controlo de acesso — é não
- * bater numa porta fechada.
+ * O `ativo` existe porque um hook não se chama condicionalmente, e serve **duas**
+ * perguntas desde 2026-10-06: quem não é dono não dispara este pedido (a
+ * permissão passou de `OWNER, MANAGER` a `{owner}` quando o painel saiu do
+ * Início), e a aba que não está à vista também não — a série do gráfico só se
+ * pede na aba do dinheiro. Nenhuma das duas é controlo de acesso: a primeira é
+ * não bater numa porta fechada e a segunda é não pagar latência por um ecrã que
+ * ninguém está a ver.
  */
 export function useResumoDoPeriodo(
   periodo: Periodo,
@@ -180,9 +191,10 @@ export function useSeriesDoPeriodo(
  * invalidá-lo é invalidar um mês e não a família toda.
  *
  * O `ativo` é a decisão 6 da ADR 0013 a ser cumprida do lado do cliente: quem
- * não é dono **não dispara** este pedido. O 403 continua a existir e a ser a
- * autoridade — o ecrã mostra-o se ele chegar, porque pode chegar: basta a
- * pertença ser revogada com a página aberta.
+ * não é dono **não dispara** este pedido, e quem não está na aba do pessoal
+ * também não. O 403 continua a existir e a ser a autoridade — o ecrã mostra-o se
+ * ele chegar, porque pode chegar: basta a pertença ser revogada com a página
+ * aberta.
  */
 export function useFechoDoMes(mes: string, ativo: boolean): UseQueryResult<FechoDoMes> {
   const tenant = tenantDaCache();
@@ -198,7 +210,8 @@ export function useFechoDoMes(mes: string, ativo: boolean): UseQueryResult<Fecho
 /**
  * Os dois parâmetros do painel, re-exportados para a **rota** os validar.
  *
- * `src/routes/busca-do-painel.ts` precisa deles para o `validateSearch`, e a
+ * `src/routes/busca-do-painel.ts` precisa deles para o `validateSearch` da rota
+ * `/painel`, e a
  * fronteira do ADR 0008 decisão 2 só deixa uma rota importar
  * `@/features/<módulo>/screens/<ecrã>` e `@/features/<módulo>/api`. Re-exportar
  * aqui é o que evita a alternativa pior: uma segunda cópia da lista fechada dos
@@ -207,3 +220,5 @@ export function useFechoDoMes(mes: string, ativo: boolean): UseQueryResult<Fecho
  */
 export { mesSchema, periodoSchema } from "./schemas";
 export type { Periodo } from "./schemas";
+export { abaSchema } from "./abas";
+export type { AbaDoPainel } from "./abas";

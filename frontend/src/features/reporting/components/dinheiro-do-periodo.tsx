@@ -1,14 +1,10 @@
-import {
-  CLASSE_CELULA,
-  CLASSE_LINHA,
-  EsqueletoDeTabela,
-  MolduraDeTabela,
-  type ColunaDeTabela,
-} from "@/components/tabela";
+import { EsqueletoDeTabela, MolduraDeTabela } from "@/components/tabela";
 import { formatMoney, formatMoneyChange } from "@/lib/format";
 
+import { COLUNAS_DE_RUBRICA, LARGURA_MINIMA_DE_RUBRICA } from "../colunas";
 import type { ResumoDoPeriodo } from "../schemas";
 import { notaDaVariacaoDeStock, notaDeCusto, rotuloDoPeriodo } from "../vocabulario";
+import { LinhaDeRubrica } from "./linha-de-rubrica";
 
 /**
  * **As quatro linhas, e a conta a fechar à vista.** É o bloco mais importante
@@ -37,12 +33,16 @@ import { notaDaVariacaoDeStock, notaDeCusto, rotuloDoPeriodo } from "../vocabula
  * respostas para "quanto gastei?", e o primeiro bug reportado seria "o painel
  * diz 5 130 € num sítio e 3 980 € noutro".
  *
- * ## Três decisões de forma que são lições pagas
+ * ## As anotações saíram da tabela e **não** saíram do ecrã
  *
- * **As anotações são uma coluna, não sub-linhas.** O `←` do bloco da ADR é a
- * terceira coluna desta tabela, porque uma sub-linha de 13px numa célula de
- * 44px cresce a linha e desfaz o ritmo (DESIGN.md §4, lição 3: foi medido nos
- * Alertas, com metade das linhas a 62px numa tabela de 44).
+ * O `←` do bloco acima era uma terceira coluna, "O QUE É". Era a maior massa de
+ * texto do painel e saiu a 2026-10-06, para o `title` da rubrica e para a camada
+ * do `?explicar=1` (`components/explicar.tsx`). A razão pela qual não voltou a
+ * ser uma sub-linha dentro da célula é a mesma de sempre: uma sub-linha de 13px
+ * numa célula de 44px cresce a linha e desfaz o ritmo (DESIGN.md §4, lição 3).
+ * Quando a camada está ligada, a nota é uma **linha própria** por baixo.
+ *
+ * ## Duas decisões de forma que continuam a ser lições pagas
  *
  * **Os valores aparecem ao cêntimo**, e é a excepção à regra de arredondar ao
  * euro que o `formatMoneyRounded` documenta. Aqui o cêntimo não é precisão
@@ -56,84 +56,71 @@ import { notaDaVariacaoDeStock, notaDeCusto, rotuloDoPeriodo } from "../vocabula
  * exactamente a leitura errada: que comprar muito é um ganho.
  */
 
-const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "rubrica", rotulo: "Rubrica", classe: "w-64" },
-  { chave: "valor", rotulo: "Valor", classe: "w-40 text-right" },
-  { chave: "nota", rotulo: "O que é" },
-];
-
-const LARGURA_MINIMA = "min-w-3xl";
 const ROTULO = "O dinheiro e a mercadoria do período, com a variação de stock";
 
-function Linha({
-  rubrica,
-  valor,
-  nota,
+export function DinheiroDoPeriodo({
+  resumo,
+  explicar,
 }: {
-  readonly rubrica: string;
-  readonly valor: string;
-  readonly nota: string;
+  readonly resumo: ResumoDoPeriodo;
+  readonly explicar: boolean;
 }) {
-  return (
-    <tr className={CLASSE_LINHA}>
-      <th scope="row" className={`${CLASSE_CELULA} w-64 text-left font-medium`}>
-        {rubrica}
-      </th>
-      <td data-numeric className={`${CLASSE_CELULA} w-40 text-right`}>
-        {valor}
-      </td>
-      <td className={`${CLASSE_CELULA} max-w-0 text-muted-foreground`}>
-        <span className="block truncate" title={nota}>
-          {nota}
-        </span>
-      </td>
-    </tr>
-  );
-}
-
-export function DinheiroDoPeriodo({ resumo }: { readonly resumo: ResumoDoPeriodo }) {
   const semConsumo = !resumo.data_quality.consumption_registered;
 
   return (
     <>
-      <MolduraDeTabela colunas={COLUNAS} larguraMinima={LARGURA_MINIMA} rotulo={ROTULO}>
+      <MolduraDeTabela
+        colunas={COLUNAS_DE_RUBRICA}
+        larguraMinima={LARGURA_MINIMA_DE_RUBRICA}
+        rotulo={ROTULO}
+      >
         <tbody>
-          <Linha
+          <LinhaDeRubrica
             rubrica="Vendas, sem IVA"
             valor={formatMoney(resumo.revenue_net_eur)}
             nota={`a base dos rácios; com IVA são ${formatMoney(resumo.revenue_gross_eur)}`}
+            explicar={explicar}
           />
-          <Linha
+          <LinhaDeRubrica
             rubrica="Compras a fornecedores"
             valor={formatMoney(resumo.purchases_eur)}
             nota={notaDeCusto("purchases")}
+            explicar={explicar}
           />
           {/* Sem consumo registado o número **não aparece**: um zero aqui lia-se
               como "não saiu mercadoria do stock", que é a afirmação mais cara
               que este ecrã pode fazer errada. O travessão é a ausência, e o que
-              falta registar está no bloco de qualidade de dados. */}
-          <Linha
+              falta registar está no bloco de qualidade de dados — que aparece
+              sempre, e é por isso que a ausência aqui não fica sem explicação
+              quando o interruptor está desligado. */}
+          <LinhaDeRubrica
             rubrica="Mercadoria consumida"
             valor={semConsumo ? "—" : formatMoney(resumo.goods_consumed_eur)}
             nota={
               semConsumo
-                ? "sem consumo registado neste período — ver o que falta, em baixo"
+                ? "sem consumo registado neste período — ver o que falta, em «O que este painel não sabe»"
                 : notaDeCusto("goods_consumed")
             }
+            tintaDaNota={semConsumo ? "text-warning" : ""}
+            explicar={explicar}
           />
-          <Linha
+          <LinhaDeRubrica
             rubrica="Variação de stock"
             valor={formatMoneyChange(resumo.stock_change_eur)}
             nota={notaDaVariacaoDeStock(resumo.stock_change_eur)}
+            explicar={explicar}
           />
         </tbody>
       </MolduraDeTabela>
 
-      {/* A identidade, com os três termos e os números. Não é uma frase
-          decorativa: é a afirmação que o servidor faz ao cêntimo
+      {/* A identidade, com os três termos e os números. **Fica à vista em
+          qualquer camada**, e não é uma frase decorativa: é a afirmação que o
+          servidor faz ao cêntimo
           (`stock_change == purchases − goods_consumed − unknown_shrinkage`) e
           que o ecrã mostra para poder ser contestada. O cliente não a calcula —
-          imprime os quatro valores que recebeu, na ordem da conta. */}
+          imprime os quatro valores que recebeu, na ordem da conta. É a única
+          prova que este painel dá, e é por isso que não entrou na camada de
+          explicação com as outras frases. */}
       <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-celula-x py-3 text-xs text-muted-foreground">
         <span>
           A conta fecha: variação de stock = compras − mercadoria consumida − quebra desconhecida
@@ -151,8 +138,8 @@ export function DinheiroDoPeriodo({ resumo }: { readonly resumo: ResumoDoPeriodo
 export function EsqueletoDoDinheiro() {
   return (
     <EsqueletoDeTabela
-      colunas={COLUNAS}
-      larguraMinima={LARGURA_MINIMA}
+      colunas={COLUNAS_DE_RUBRICA}
+      larguraMinima={LARGURA_MINIMA_DE_RUBRICA}
       rotulo="A carregar o dinheiro do período…"
       linhas={4}
     />

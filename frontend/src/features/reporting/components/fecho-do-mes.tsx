@@ -9,12 +9,14 @@ import { formatDayMonthShort, formatTime } from "@/lib/format";
 import type { FechoDoMes } from "../schemas";
 
 /**
- * O **segundo grão** do painel: o fecho do mês, com salários.
+ * O **segundo grão** do painel: o fecho do mês, com salários. Vive na aba
+ * **Pessoal**, e é a única que o usa.
  *
  * São dois grãos e não um, e a ADR 0013 (decisão 5) diz porquê numa linha: um
  * salário é um facto mensal, e ratear 30 dias por uma janela de 7 inventa
  * precisão que ninguém tem. É por isso que `period` e `month` são parâmetros
- * diferentes e que este bloco tem navegação própria.
+ * diferentes e que esta aba tem navegação própria — a barra do ecrã troca o
+ * seletor de período por estes dois botões quando a aba muda.
  *
  * ## A moldura do mês a correr, e porque é que ela é obrigatória
  *
@@ -55,16 +57,16 @@ export function NavegacaoDeMes({
   const podeAvancar = seguinte <= limite;
 
   return (
-    <>
+    <nav aria-label="Mês do fecho" className="flex items-center gap-1">
       <Button asChild variant="outline" size="sm">
-        <Link to="/" search={(anteriores) => ({ ...anteriores, month: anterior })}>
+        <Link to="/painel" search={(anteriores) => ({ ...anteriores, month: anterior })}>
           <ChevronLeft aria-hidden="true" />
           Mês anterior
         </Link>
       </Button>
       {podeAvancar ? (
         <Button asChild variant="outline" size="sm">
-          <Link to="/" search={(anteriores) => ({ ...anteriores, month: seguinte })}>
+          <Link to="/painel" search={(anteriores) => ({ ...anteriores, month: seguinte })}>
             Mês seguinte
             <ChevronRight aria-hidden="true" />
           </Link>
@@ -82,14 +84,21 @@ export function NavegacaoDeMes({
           <ChevronRight aria-hidden="true" />
         </Button>
       )}
-    </>
+    </nav>
   );
 }
 
-/** A fronteira do mês de negócio, ecoada: `1 set 04:00 → 1 out 04:00`. */
+/**
+ * A fronteira do mês de negócio, ecoada: `1 set 04:00 → 1 out 04:00`.
+ *
+ * Mesma forma e mesmo lugar da fronteira do período (`FronteiraDoPeriodo`), na
+ * ponta direita da barra: é a mesma afirmação sobre um grão diferente, e duas
+ * formas para a mesma afirmação fariam parecer que se está a falar de outra
+ * coisa.
+ */
 export function FronteiraDoMes({ mes }: { readonly mes: FechoDoMes }) {
   return (
-    <>
+    <p className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
       <span className="sr-only">Mês de negócio: </span>
       <span data-numeric className="text-xs">
         {formatDayMonthShort(mes.since)} {formatTime(mes.since)}
@@ -103,20 +112,20 @@ export function FronteiraDoMes({ mes }: { readonly mes: FechoDoMes }) {
           ? " · mês fechado"
           : ` · a correr: ${String(mes.days_elapsed)} de ${String(mes.days_in_month)} dias`}
       </span>
-    </>
+    </p>
   );
 }
 
 /**
  * O aviso do mês a correr. Um `warning` e não um `danger`: não está nada mal —
  * está **incompleto**, e o passo seguinte é esperar pelo fim do mês ou olhar
- * para o bloco de período, que é o que mede o que está a acontecer.
+ * para a aba do dinheiro, que é a que mede o que está a acontecer.
  */
 export function AvisoDoMesACorrer({ mes }: { readonly mes: FechoDoMes }) {
   if (mes.closed) return null;
 
   return (
-    <div className="px-celula-x pb-3">
+    <div className="px-celula-x py-3">
       <Alert className="border-warning-border bg-warning-surface">
         <ShieldAlert aria-hidden="true" className="text-warning" />
         <AlertTitle>
@@ -126,7 +135,7 @@ export function AvisoDoMesACorrer({ mes }: { readonly mes: FechoDoMes }) {
           <span className="text-pretty">
             O pessoal e os custos fixos são do mês inteiro — um salário é um facto mensal e não se
             divide por dias. As vendas e a mercadoria são as dos dias que já passaram, logo o
-            resultado e os rácios deste bloco só ficam comparáveis quando o mês fechar.
+            resultado e os rácios desta aba só ficam comparáveis quando o mês fechar.
           </span>
         </AlertDescription>
       </Alert>
@@ -135,28 +144,36 @@ export function AvisoDoMesACorrer({ mes }: { readonly mes: FechoDoMes }) {
 }
 
 /**
- * O 403 do `/month` — quem não é dono não vê este bloco, e **não é este ecrã
- * que o decide**.
+ * O 403 do painel — **quem não é dono não o vê, e não é este ecrã que o
+ * decide**.
  *
- * O cliente não dispara o pedido (a projecção do papel decide-o no `api.ts`),
- * logo isto só aparece no caso que a ADR 0007 fez ser verificado por pedido: a
- * pertença revogada com a página aberta, ou um deep link de alguém que não é
- * dono. Nesse caso o que se mostra é **o que se passa**, e não um
+ * Era só do `/reporting/month` e passou a ser do painel inteiro a 2026-10-06,
+ * quando o dono do produto o tirou do Início: *"esta aba de dashboard é apenas
+ * para owner do estabelecimento"*. Os três caminhos de `reporting` são de
+ * `{owner}`, e o cliente não dispara nenhum deles sem o papel (a projecção
+ * decide-o no `api.ts`).
+ *
+ * Isto só aparece em dois casos, e os dois são reais: um deep link de quem não é
+ * dono, e a pertença revogada com a página aberta — que é o caso que a ADR 0007
+ * fez ser verificado por pedido. Nos dois mostra-se **o que se passa**, e não um
  * redireccionamento em silêncio: quem clica num link e aterra noutro ecrã não
  * aprende nada e vai tentar outra vez.
  */
-export function SemPermissaoParaOMes() {
+export function SemPermissaoParaOPainel() {
   return (
-    <div className="px-celula-x pb-3">
+    <div className="px-celula-x py-3">
       <Alert className="border-warning-border bg-warning-surface">
         <ShieldAlert aria-hidden="true" className="text-warning" />
-        <AlertTitle>O fecho do mês é do dono do estabelecimento</AlertTitle>
+        <AlertTitle>O painel de gestão é do dono do estabelecimento</AlertTitle>
         <AlertDescription className="flex flex-col items-start gap-2 text-foreground">
           <span className="text-pretty">
-            Este bloco inclui salários e custo por cargo, e um custo por cargo com uma pessoa é o
-            salário dessa pessoa com outro nome. O resto do painel — vendas, compras, mercadoria,
-            perdas — continua acima.
+            Inclui salários e custo por cargo, e um custo por cargo com uma pessoa é o salário dessa
+            pessoa com outro nome. O trabalho do dia — o que expira, o que falta, o que chegou por
+            dar entrada — está no Início, e é igual para toda a gente.
           </span>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/">Ir para o Início</Link>
+          </Button>
           <span className="text-xs text-muted-foreground">
             Quem decide isto é o servidor, não este ecrã.
           </span>

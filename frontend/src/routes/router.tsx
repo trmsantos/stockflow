@@ -11,6 +11,7 @@ import { rotaDeContar, rotaDeFechoDeContagem } from "./contar";
 import { rotaDeConvites } from "./convites";
 import { rotaDeEntrada } from "./entrar";
 import { rotaInicial } from "./inicio";
+import { rotaDoPainel } from "./painel";
 import { rotaPublica } from "./publico";
 import { rotaDeFotografar, rotaDeRececao, rotaDeReceber } from "./receber";
 import { rotaRaiz } from "./root";
@@ -42,11 +43,13 @@ import { rotaDeStock } from "./stock";
  * sem caminho próprio:
  *
  *  - `rotaPublica` → `/entrar` e `/ativar`, num painel centrado, **sem** sessão;
- *  - `rotaDaApp` → o `AppShell` e os oito ecrãs, com o `beforeLoad` que exige
- *    sessão ativa. O oitavo é `/convites` (ADR 0010), e é o primeiro que **não é
- *    de todos os papéis** — o que isso muda não é a árvore (a rota existe para
- *    todos, porque esconder é apresentação e não autorização) mas a projecção do
- *    menu, que passou a ser calculada no `involucro.tsx`.
+ *  - `rotaDaApp` → o `AppShell` e os nove ecrãs, com o `beforeLoad` que exige
+ *    sessão ativa. Dois deles **não são de todos os papéis**: `/convites` (ADR
+ *    0010) e `/painel`, que a 2026-10-06 saiu do Início para ser o painel de
+ *    gestão do dono. O que isso muda não é a árvore — as rotas existem para
+ *    todos, porque esconder é apresentação e não autorização, e quem recusa é o
+ *    servidor com um 403 — mas a projecção do menu, que é calculada no
+ *    `involucro.tsx` a partir do que o `GET /auth/sessao` manda.
  *
  * Os URLs dos ecrãs não mudaram: uma rota de layout sem `path` não acrescenta
  * segmento nenhum.
@@ -82,6 +85,7 @@ const arvoreDeRotas = rotaRaiz.addChildren([
   rotaPublica.addChildren([rotaDeEntrada, rotaDeAtivacao]),
   rotaDaApp.addChildren([
     rotaInicial,
+    rotaDoPainel,
     rotaDeStock,
     rotaDeArtigo,
     rotaDeReceber,

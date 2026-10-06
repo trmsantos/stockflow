@@ -100,9 +100,13 @@ export function rotuloDeCusto(id: IdDeCusto): string {
  * A anotação de cada linha — o `← dinheiro que saiu` do bloco da ADR 0013
  * decisão 4, que é o que impede o mês do stock-up de ser lido como prejuízo.
  *
- * É uma coluna da tabela e não uma sub-linha dentro da célula, e isso é uma
- * lição paga: uma sub-linha de 13px numa célula de 44px cresce a linha e desfaz
- * o ritmo da tabela (DESIGN.md §4).
+ * **Era uma coluna da tabela ("O QUE É") e desde 2026-10-06 é uma camada.** A
+ * coluna era a maior massa de texto do painel — cerca de trinta frases num ecrã
+ * de 3630px —, e o dono do produto leu-a como um manual de instruções. Cada nota
+ * está agora no `title` da rubrica a que pertence e aparece como **sub-linha**
+ * com o `?explicar=1` (ver `components/explicar.tsx`). Uma linha própria e nunca
+ * uma segunda linha dentro da célula: uma sub-linha de 13px numa célula de 44px
+ * cresce a linha e desfaz o ritmo da tabela (DESIGN.md §4, lição 3).
  */
 const NOTA_DE_CUSTO: Record<IdDeCusto, string> = {
   purchases: "dinheiro que saiu para fornecedores",
@@ -262,8 +266,9 @@ export function rotuloDeParteDeSalarios(id: IdDeParteDeSalarios): string {
  * cost fora do ecrã. Os campos da régua empacotam à esquerda e **não esticam**,
  * logo quem decide a largura é o texto mais comprido que lá se põe.
  *
- * A forma curta vai ao contador; a longa fica na frase que explica a
- * decomposição, onde há largura para ela.
+ * A forma curta vai ao contador; a longa fica na **nota da linha "Pessoal"** da
+ * tabela do resultado, com a decomposição do custo-empresa, onde há largura para
+ * ela e onde o interruptor de explicação a revela a quem a pedir.
  */
 const ROTULO_DA_BASE_DOS_SALARIOS: Record<BaseDosSalarios, string> = {
   employer_cost: "custo-empresa",
@@ -383,6 +388,15 @@ export function fraseDasExclusoes(exclusoes: readonly ExclusaoDoResultado[]): st
  *
  * Devolve `null` quando a remuneração do dono **está** nos custos: aí o rácio é
  * comparável e a frase seria ruído.
+ *
+ * **Encurtou a 2026-10-06 e não saiu.** Eram quatro afirmações: não é
+ * comparável, porque a remuneração do dono não entra, porque é distribuição e
+ * não despesa, e quanto isso vale em pontos. As duas do meio explicam uma
+ * decisão de contabilidade a quem já a tomou; as outras duas são as que mudam o
+ * que o dono faz com o número — e são as que ficaram. A explicação inteira está
+ * na linha "Pessoal" da tabela do resultado, atrás do interruptor de explicação,
+ * que é a camada onde o painel passou a guardar o que não é accionável de
+ * relance.
  */
 export function avisoDoRacioDePessoal(
   exclusoes: readonly ExclusaoDoResultado[],
@@ -396,8 +410,7 @@ export function avisoDoRacioDePessoal(
   // por isso que a frase diz a mesma coisa por outras palavras.
   return (
     "Este rácio não é comparável com os do sector: a remuneração do dono não entra nos " +
-    "custos de pessoal, porque o que o dono tira é uma distribuição do que o negócio rende " +
-    "e não uma despesa. Quando o dono trabalha no negócio sem se pagar, o custo de pessoal " +
+    "custos de pessoal. Quando o dono trabalha no negócio sem se pagar, o custo de pessoal " +
     "real é 4 a 5 pontos mais alto do que este número."
   );
 }

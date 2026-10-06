@@ -802,6 +802,7 @@ components:
     RotaIdEnum:
       enum:
       - inicio
+      - painel
       - alertas
       - stock
       - contar
@@ -810,6 +811,7 @@ components:
       type: string
       description: |-
         * `inicio` - Início
+        * `painel` - Painel de gestão
         * `alertas` - Alertas
         * `stock` - Stock
         * `contar` - Contar

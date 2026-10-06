@@ -588,6 +588,7 @@ export interface components {
         };
         /**
          * @description * `inicio` - Início
+         *     * `painel` - Painel de gestão
          *     * `alertas` - Alertas
          *     * `stock` - Stock
          *     * `contar` - Contar
@@ -595,7 +596,7 @@ export interface components {
          *     * `convites` - Convites
          * @enum {string}
          */
-        RotaIdEnum: "inicio" | "alertas" | "stock" | "contar" | "receber" | "convites";
+        RotaIdEnum: "inicio" | "painel" | "alertas" | "stock" | "contar" | "receber" | "convites";
         /**
          * @description A resposta dos quatro endpoints de autenticação. Sempre esta forma.
          *

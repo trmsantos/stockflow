@@ -1,6 +1,7 @@
 import type { AbsoluteToPath, RegisteredRouter } from "@tanstack/react-router";
 import {
   Boxes,
+  ChartNoAxesColumn,
   ClipboardCheck,
   House,
   MailPlus,
@@ -39,7 +40,7 @@ import type { components } from "@/lib/api/types";
  *     (a simular o enum do backend a crescer) dá `TS2741: Property
  *     'configuracao' is missing` no `REGISTO_DE_ROTAS`; uma entrada a mais no
  *     registo dá `TS2353: Object literal may only specify known properties`; e
- *     um `RotaId = "stok"` dá `TS2820`, com os seis ids gerados listados na
+ *     um `RotaId = "stok"` dá `TS2820`, com os ids gerados listados na
  *     mensagem — que é o que prova que esta união não é `string` nem um `any`
  *     vindo de um import que resolveu para o lado errado;
  *  2. **registo → rotas**: o `caminho` é do tipo `CaminhoDeRota`, que vem da
@@ -58,7 +59,7 @@ import type { components } from "@/lib/api/types";
  * o telemóvel. Não é uma convenção — é a forma do tipo que chega por HTTP, e
  * desde que o menu vem do servidor isso deixou de ser uma afirmação sobre um
  * tipo nosso: o `ItemDeMenuOut` do contrato **também** não tem `campo`, nem o
- * `ItemDeMenuInRequest` que o `PUT /menu` aceita. Medido: as seis linhas que o
+ * `ItemDeMenuInRequest` que o `PUT /menu` aceita. Medido: as linhas que o
  * `GET /auth/sessao` devolve têm cinco campos, e `campo` não é um deles.
  *
  * O preço está nomeado do outro lado: o predicado existe **duas vezes** (aqui e
@@ -86,8 +87,9 @@ import type { components } from "@/lib/api/types";
  * papel só (`/convites`, do `owner` pela ADR 0010) tinha de ser escondida em
  * algum sítio. **Esse filtro saiu** quando o menu passou a vir do
  * `GET /auth/sessao` — o servidor já não manda a linha a quem não é `owner`
- * (medido: seis itens para o `owner`, cinco para o `staff` do mesmo
- * estabelecimento) — e dois filtros a fazer o mesmo são um a ficar
+ * (medido a 2026-10-06, já com a rota `/painel`: **sete** itens para o `owner` e
+ * **cinco** para o `staff` do mesmo estabelecimento — as duas linhas que o
+ * `staff` não recebe são `convites` e `painel`) — e dois filtros a fazer o mesmo são um a ficar
  * desactualizado.
  *
  * E a correcção de 2026-10-06 da ADR 0011 vale ser lida aqui: o que o registo do
@@ -149,7 +151,21 @@ export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
     caminho: "/",
     rotulo: "Início",
     icone: House,
-    pergunta: "Em que estado está a aplicação?",
+    pergunta: "O que é que tenho de fazer hoje?",
+    campo: false,
+  },
+  painel: {
+    caminho: "/painel",
+    rotulo: "Painel",
+    icone: ChartNoAxesColumn,
+    pergunta: "Quanto entrou, quanto saiu, e como fechou o mês?",
+    // **Não** é rota de campo: é o ecrã mais denso da aplicação — três abas,
+    // tabelas de dinheiro e dois gráficos — e lê-se ao computador. A 360px
+    // funciona, com as tabelas a deslizar na horizontal, que é o que o
+    // DESIGN.md §4 declara em vez de tratar como defeito.
+    //
+    // O papel **não** está aqui, e é a regra do ficheiro: quem filtra o menu
+    // pelo papel é o servidor (ADR 0011). Esta linha é só o que a rota é.
     campo: false,
   },
   alertas: {
@@ -212,13 +228,13 @@ const REGISTO_POR_ID = new Map<string, EntradaDoRegisto>(Object.entries(REGISTO_
  * **`string` e não `RotaId`**, e isso é a forma certa desde que o menu chega por
  * HTTP: o `route_id` de uma linha da projecção é texto que veio do servidor, e
  * exigir aqui o tipo fechado obrigava alguém a afirmar, com um cast ou com um
- * `z.enum`, que ele é um dos seis — uma afirmação que um backend mais novo torna
+ * `z.enum`, que ele é um dos sete — uma afirmação que um backend mais novo torna
  * falsa no intervalo de um rolling deploy. O `undefined` é a resposta honesta
  * nesse caso, e quem chama (`montarMenu`) ignora a linha.
  *
  * A garantia dos dois sentidos **não** está nesta assinatura e não precisa de
  * estar: está no `Record<RotaId, EntradaDoRegisto>` acima, que é o único sítio
- * do frontend onde os seis ids são escritos — do outro lado são o `RotaDeMenu`
+ * do frontend onde os sete ids são escritos — do outro lado são o `RotaDeMenu`
  * do Django, e é exactamente contra essa lista que o `Record` é verificado.
  */
 export function entradaDoRegisto(id: string): EntradaDoRegisto | undefined {

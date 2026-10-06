@@ -1,20 +1,20 @@
 import { BarrasOrdenadas, type BarraOrdenada } from "@/components/barras-ordenadas";
-import {
-  CLASSE_CELULA,
-  CLASSE_LINHA,
-  MolduraDeTabela,
-  type ColunaDeTabela,
-} from "@/components/tabela";
+import { MolduraDeTabela } from "@/components/tabela";
 import { formatMoney, formatMoneyChange, formatMoneyRounded } from "@/lib/format";
 
+import { COLUNAS_DE_RUBRICA, LARGURA_MINIMA_DE_RUBRICA } from "../colunas";
 import { eNegativo, type ComponenteDeCusto, type FechoDoMes } from "../schemas";
 import { tintaDeCusto } from "../tinta-do-painel";
 import {
   fraseDasExclusoes,
+  notaDaBaseDosSalarios,
+  notaDaOrigemDosSalarios,
   notaDeCusto,
   rotuloDeCusto,
   rotuloDeOutroCusto,
+  rotuloDeParteDeSalarios,
 } from "../vocabulario";
+import { LinhaDeRubrica } from "./linha-de-rubrica";
 
 /**
  * Onde foi o dinheiro do mês, e o que **sobrou**.
@@ -38,6 +38,20 @@ import {
  * somável** — porque o que se deitou fora em outubro pode ter sido comprado em
  * setembro. Um booleano não sabe dizer isso; dois campos sabem.
  *
+ * ## Duas tabelas que deixaram de existir, e para onde foram
+ *
+ * Tinha por baixo duas tabelas inteiras: os **custos fixos** por categoria
+ * (renda, energia, água, gás, TPA, licenças, contabilista) e a **decomposição do
+ * custo-empresa** (bruto, TSU, subsídios, alimentação, seguro). 684px para
+ * decompor **duas linhas** desta tabela, num painel que o dono do produto leu
+ * como confuso por ter demasiado conteúdo.
+ *
+ * As duas são agora a **nota** da linha que decompõem — no `title` dela e na
+ * sub-linha do `?explicar=1`. Não se perdeu valor nenhum: cada parcela continua
+ * com o seu nome e o seu valor, na ordem em que o servidor as manda, e continua
+ * a poder ser contestada uma a uma. O que se perdeu foi a moldura de uma tabela
+ * à volta de sete linhas que ninguém lê todos os dias.
+ *
  * ## A tinta do resultado só acende num mês fechado
  *
  * Um mês a correr ao dia 6 tem o pessoal e os custos fixos do mês **inteiro**
@@ -48,68 +62,63 @@ import {
  * lado diz o mesmo que a cor (DESIGN.md §2).
  */
 
-const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "rubrica", rotulo: "Rubrica", classe: "w-64" },
-  { chave: "valor", rotulo: "Valor", classe: "w-40 text-right" },
-  { chave: "nota", rotulo: "O que é" },
-];
-
-const LARGURA_MINIMA = "min-w-3xl";
-
-function LinhaDeCusto({
-  rubrica,
-  valor,
-  nota,
-  dentroDeOutra = false,
-  destacada = false,
-  tinta = "",
-}: {
-  readonly rubrica: string;
-  readonly valor: string;
-  readonly nota: string;
-  /** Uma decomposição: indenta e diz "dos quais". */
-  readonly dentroDeOutra?: boolean;
-  /** Os totais: um degrau de superfície acima, como o cabeçalho da tabela. */
-  readonly destacada?: boolean;
-  readonly tinta?: string;
-}) {
-  return (
-    <tr className={`${CLASSE_LINHA} ${destacada ? "bg-surface-2" : ""}`}>
-      <th
-        scope="row"
-        className={`${CLASSE_CELULA} w-64 text-left ${
-          dentroDeOutra ? "pl-8 font-normal text-muted-foreground" : "font-medium"
-        }`}
-      >
-        {dentroDeOutra ? "dos quais " : ""}
-        {rubrica}
-      </th>
-      <td data-numeric className={`${CLASSE_CELULA} w-40 text-right ${tinta}`}>
-        {valor}
-      </td>
-      <td className={`${CLASSE_CELULA} max-w-0 text-muted-foreground`}>
-        <span className="block truncate" title={nota}>
-          {nota}
-        </span>
-      </td>
-    </tr>
-  );
+/** "Renda 850 € (Loja Centro e Cozinha); Energia 420 €; …" — a nota da linha. */
+function decomposicaoDosCustosFixos(mes: FechoDoMes): string {
+  return mes.other_costs
+    .map((custo) => {
+      const base = `${rotuloDeOutroCusto(custo.category)} ${formatMoney(custo.amount_eur)}`;
+      return custo.note === null || custo.note === "" ? base : `${base} (${custo.note})`;
+    })
+    .join("; ");
 }
 
-function notaDaParcela(parcela: ComponenteDeCusto): string {
+/** "Bruto base 2 960,08 €; Segurança Social (TSU) 703,02 €; …" */
+function decomposicaoDosSalarios(mes: FechoDoMes): string {
+  return mes.payroll_breakdown
+    .map((parcela) => `${rotuloDeParteDeSalarios(parcela.id)} ${formatMoney(parcela.amount_eur)}`)
+    .join("; ");
+}
+
+/**
+ * A nota de uma parcela: o que ela é, mais o que ela contém quando é um
+ * agregado de linhas que já não têm tabela própria.
+ *
+ * "Não soma" tem de estar escrito na nota, e não deduzido da indentação: as
+ * compras aparecem no meio de uma lista de custos e **não** entram no total.
+ */
+function notaDaParcela(parcela: ComponenteDeCusto, mes: FechoDoMes): string {
   const base = notaDeCusto(parcela.id);
-  // "Não soma" tem de estar escrito na linha, e não deduzido da indentação: as
-  // compras aparecem no meio de uma lista de custos e **não** entram no total.
-  return parcela.is_part_of_total ? base : `não entra no total — ${base}`;
+  const partes: string[] = [parcela.is_part_of_total ? base : `não entra no total — ${base}`];
+
+  if (parcela.id === "other" && mes.other_costs.length > 0) {
+    partes.push(decomposicaoDosCustosFixos(mes));
+  }
+  if (parcela.id === "payroll") {
+    // As duas palavras longas do pessoal vivem aqui e não num contador: é a
+    // nota que tem largura para elas (ver o `vocabulario.ts`, onde está medido
+    // o que aconteceu quando a frase inteira foi para a régua).
+    partes.push(
+      `${notaDaBaseDosSalarios(mes.payroll_basis)}, ${notaDaOrigemDosSalarios(mes.payroll_source)}`,
+    );
+    if (mes.payroll_breakdown.length > 0) partes.push(decomposicaoDosSalarios(mes));
+  }
+
+  return partes.join(". ");
 }
 
-export function ResultadoDoMes({ mes }: { readonly mes: FechoDoMes }) {
+export function ResultadoDoMes({
+  mes,
+  explicar,
+}: {
+  readonly mes: FechoDoMes;
+  readonly explicar: boolean;
+}) {
   const exclusoes = fraseDasExclusoes(mes.result_excludes);
   const prejuizo = mes.closed && eNegativo(mes.result_eur);
 
   const barras: readonly BarraOrdenada[] = mes.costs
     // Só o que soma: um gráfico de repartição com uma parcela que não é parcela
-    // mente sobre o todo. As outras continuam na tabela acima, com a frase.
+    // mente sobre o todo. As outras continuam na tabela acima, com a nota.
     .filter((parcela) => parcela.is_part_of_total)
     .map((parcela) => ({
       chave: parcela.id,
@@ -127,34 +136,37 @@ export function ResultadoDoMes({ mes }: { readonly mes: FechoDoMes }) {
   return (
     <div className="flex flex-col">
       <MolduraDeTabela
-        colunas={COLUNAS}
-        larguraMinima={LARGURA_MINIMA}
+        colunas={COLUNAS_DE_RUBRICA}
+        larguraMinima={LARGURA_MINIMA_DE_RUBRICA}
         rotulo="Vendas, gastos e resultado do mês"
       >
         <tbody>
-          <LinhaDeCusto
+          <LinhaDeRubrica
             rubrica="Vendas, sem IVA"
             valor={formatMoney(mes.revenue_net_eur)}
             nota={`a base dos rácios; com IVA são ${formatMoney(mes.revenue_gross_eur)}`}
+            explicar={explicar}
           />
 
           {mes.costs.map((parcela) => (
-            <LinhaDeCusto
+            <LinhaDeRubrica
               key={parcela.id}
               rubrica={rotuloDeCusto(parcela.id)}
               valor={formatMoney(parcela.amount_eur)}
-              nota={notaDaParcela(parcela)}
+              nota={notaDaParcela(parcela, mes)}
               dentroDeOutra={parcela.part_of !== null}
+              explicar={explicar}
             />
           ))}
 
-          <LinhaDeCusto
+          <LinhaDeRubrica
             rubrica="Total de gastos"
             valor={formatMoney(mes.cost_total_eur)}
             nota="mercadoria, perdas, pessoal e custos fixos — somado pelo servidor"
             destacada
+            explicar={explicar}
           />
-          <LinhaDeCusto
+          <LinhaDeRubrica
             rubrica="Resultado"
             valor={formatMoneyChange(mes.result_eur)}
             nota={
@@ -164,10 +176,14 @@ export function ResultadoDoMes({ mes }: { readonly mes: FechoDoMes }) {
             }
             destacada
             tinta={prejuizo ? "text-danger" : ""}
+            explicar={explicar}
           />
         </tbody>
       </MolduraDeTabela>
 
+      {/* O que fica de fora do resultado, **ao lado do número e em qualquer
+          camada**: um resultado que não inclui amortizações nem a remuneração do
+          dono, lido como se incluísse, é cerca do dobro do que é. */}
       {exclusoes === null ? null : (
         <p className="px-celula-x py-3 text-sm">
           <span className={prejuizo ? "text-danger" : "text-muted-foreground"}>
@@ -190,30 +206,6 @@ export function ResultadoDoMes({ mes }: { readonly mes: FechoDoMes }) {
             rotuloDoValor="Valor"
             rotulo="Gastos do mês por categoria, do maior para o menor"
           />
-        </div>
-      )}
-
-      {mes.other_costs.length === 0 ? null : (
-        <div className="flex flex-col gap-1 border-t border-border pt-3">
-          <p className="px-celula-x text-xs font-bold tracking-microrotulo text-muted-foreground uppercase">
-            Custos fixos do mês
-          </p>
-          <MolduraDeTabela
-            colunas={COLUNAS}
-            larguraMinima={LARGURA_MINIMA}
-            rotulo="Custos fixos do mês, por categoria"
-          >
-            <tbody>
-              {mes.other_costs.map((custo) => (
-                <LinhaDeCusto
-                  key={custo.category}
-                  rubrica={rotuloDeOutroCusto(custo.category)}
-                  valor={formatMoney(custo.amount_eur)}
-                  nota={custo.note ?? ""}
-                />
-              ))}
-            </tbody>
-          </MolduraDeTabela>
         </div>
       )}
     </div>

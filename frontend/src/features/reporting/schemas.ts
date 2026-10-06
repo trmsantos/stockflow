@@ -186,6 +186,17 @@ export const qualidadeDosDadosSchema = z.object({
  * `SummaryOut`. **Sem total de gastos e sem resultado**, de propósito: os dois
  * vivem só no `/month`, porque um total com mercadoria discriminada dá a folha
  * salarial por subtracção (ADR 0013, decisão 6).
+ *
+ * **A razão deste invariante mudou a 2026-10-06, e ele fica.** Era "impede a
+ * exposição": o `/summary` era visto pelo encarregado e um total de gastos ao
+ * lado da mercadoria dava-lhe a folha salarial por subtracção de rácios. Com o
+ * painel inteiro fechado ao dono (os três endpoints passaram a `{owner}`), não
+ * há hoje ninguém a quem isso exponha o que quer que seja. Passou a ser "impede
+ * que uma abertura futura crie a exposição sem ninguém notar": no dia em que
+ * alguém abrir um bloco deste painel ao encarregado — e é um pedido plausível,
+ * porque o encarregado compra —, a folha salarial não vem atrás por descuido. O
+ * `goods_cost_ratio_pct` fica como está e o `goods_margin_eur` continua fora,
+ * pela mesma razão com que a ADR o revogou.
  */
 export const resumoDoPeriodoSchema = z.object({
   period: periodoResolvidoSchema,

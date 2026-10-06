@@ -206,6 +206,26 @@ _ROTAS: Final[tuple[RotaDoRegisto, ...]] = (
         campo=False,
     ),
     RotaDoRegisto(
+        route_id=RotaDeMenu.PAINEL,
+        rotulo_default="Painel de gestão",
+        grupo_default=GRUPO_PAINEL,
+        ordem_default=15,
+        # **A segunda rota restrita, e pela mesma mecânica do `convites`.** O
+        # painel de gestão mostra o resultado do mês, a folha salarial e o custo
+        # por cargo; é do dono e de mais ninguém (decisão do dono do produto, e o
+        # `reporting` impõe-no nas permissões dos três endpoints). Mostrar o item
+        # a um encarregado era pôr no menu um caminho que acaba em 403 — o caso
+        # literal do "esconder um item que um papel não pode usar é autorização e
+        # não preferência" (ADR 0011).
+        #
+        # Não é uma ordem entre papéis: é o conjunto `{owner}`, que se alarga sem
+        # se desfazer. A Q7 continua sem resposta e esta entrada não a inventa.
+        papeis=frozenset({Papel.OWNER}),
+        # Escritório. Um painel de gestão lê-se sentado, com o mês ao lado do
+        # período; a 360px as tabelas deslizam e isso é declarado (DESIGN.md §4).
+        campo=False,
+    ),
+    RotaDoRegisto(
         route_id=RotaDeMenu.ALERTAS,
         rotulo_default="Alertas",
         grupo_default=GRUPO_PAINEL,

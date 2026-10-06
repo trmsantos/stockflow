@@ -1125,6 +1125,29 @@ const RECUSA_DE_PAPEL = {
   detail: "Não tem permissão para executar esta ação.",
 } as const;
 
+/**
+ * Os papéis que os **três** caminhos aceitam, e eram os três diferentes.
+ *
+ * O `/month` sempre foi `{owner}` (ADR 0013, decisão 6) e os outros dois eram
+ * `{owner, manager}`. A 2026-10-06 o dono do produto tirou o painel do Início e
+ * fechou-o ao dono — *"esta aba de dashboard é apenas para owner do
+ * estabelecimento"* —, e com isso os três passaram a ter a mesma permissão. Uma
+ * constante e não três literais iguais: três cópias do mesmo conjunto divergem
+ * na primeira vez que um deles mudar, e a que diverge é sempre a que ninguém
+ * relê.
+ *
+ * É `papeis` que faz a variante `restrito` sair **sozinha** com uma sessão que
+ * não tem o papel, em vez de esperar por `?_fixture=restrito`. Sem ela, medido a
+ * 2026-10-06 com uma sessão `staff` real, o `/month` devolvia 200 com a folha
+ * salarial inteira — uma fixture mais permissiva do que o endpoint que vai
+ * substituí-la, que é a família de defeito que o `z.iso.datetime()` nu já deixou
+ * escondida 11 dias.
+ *
+ * A recusa é a rede do **deep link** e da pertença revogada a meio da sessão,
+ * que é o caso que a ADR 0007 fez ser verificado por pedido.
+ */
+const PAPEIS_DO_PAINEL: readonly string[] = ["owner"];
+
 export const ROTAS_DO_PAINEL: readonly Rota[] = [
   {
     metodo: "GET",
@@ -1142,6 +1165,8 @@ export const ROTAS_DO_PAINEL: readonly Rota[] = [
       const periodo = periodoPedido(ctx) ?? "7d";
       return resposta(200, resumoVazio(periodo), resumoDoPeriodoSchema);
     },
+    papeis: PAPEIS_DO_PAINEL,
+    restrito: () => resposta(403, RECUSA_DE_PAPEL),
   },
   {
     metodo: "GET",
@@ -1155,6 +1180,8 @@ export const ROTAS_DO_PAINEL: readonly Rota[] = [
       const periodo = periodoPedido(ctx) ?? "7d";
       return resposta(200, seriesVazias(periodo), seriesDoPeriodoSchema);
     },
+    papeis: PAPEIS_DO_PAINEL,
+    restrito: () => resposta(403, RECUSA_DE_PAPEL),
   },
   {
     metodo: "GET",
@@ -1168,17 +1195,7 @@ export const ROTAS_DO_PAINEL: readonly Rota[] = [
       const mes = ctx.parametros.get("month") ?? mesDeHoje();
       return mesValido(mes) ? resposta(200, mesVazio(mes), fechoDoMesSchema) : resposta(400, RECUSA_DE_MES);
     },
-    // A **terceira** variante, e é só deste caminho: o painel do dono visto por
-    // quem não é dono. É a rede do deep link e da pertença revogada a meio da
-    // sessão, que é o caso que a ADR 0007 fez ser verificado por pedido.
-    //
-    // `papeis` é o que faz esta variante sair **sozinha** com uma sessão que não
-    // seja de dono, em vez de esperar por `?_fixture=restrito`. Sem ele, medido a
-    // 2026-10-06 com uma sessão `staff` real, este caminho devolvia 200 com a
-    // folha salarial inteira — uma fixture mais permissiva do que o endpoint que
-    // vai substituí-la, que é a família de defeito que o `z.iso.datetime()` nu já
-    // deixou escondida 11 dias. O valor é o `{owner}` da ADR 0013, decisão 6.
-    papeis: ["owner"],
+    papeis: PAPEIS_DO_PAINEL,
     restrito: () => resposta(403, RECUSA_DE_PAPEL),
   },
 ];
