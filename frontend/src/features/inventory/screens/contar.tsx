@@ -270,8 +270,10 @@ export function EcraDeContar() {
               ) : null}
 
               {/* O fecho fica no fim da lista, onde se chega depois de contar, e
-                  não colado ao ecrã: uma barra fixa por cima da tab bar tapava a
-                  última linha, que é precisamente a que falta contar. */}
+                  não colado ao ecrã numa barra fixa: ela tapava a última linha,
+                  que é precisamente a que falta contar. A razão sobrevive à
+                  saída da tab bar (ADR 0009) — o que tapava a linha era a barra
+                  fixa, não o que estava por baixo dela. */}
               <div className="flex flex-col items-start gap-1.5 border-t border-border px-4 py-4">
                 <Button asChild>
                   <Link to="/contar/fechar" search={{ contagem: aberta.id }}>

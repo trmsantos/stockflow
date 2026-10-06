@@ -98,8 +98,10 @@ export function LinhaDeContagem({
   }
 
   return (
-    // O `scroll-mt-16` é o header *sticky* de 48px do shell: sem ele, o campo
-    // que recebe o foco ao saltar de linha em linha pode parar debaixo dele.
+    // O `scroll-mt-16` (64px) desconta a barra de topo do shell — 56px desde
+    // que ela passou a ter os `--spacing-cabecalho` que o DESIGN.md §2 lhe dá —
+    // mais uma folga. Sem ele, o campo que recebe o foco ao saltar de linha em
+    // linha pode parar debaixo dela.
     <li className="scroll-mt-16 border-b border-border last:border-b-0">
       <form onSubmit={aoSubmeter} className="flex flex-col gap-1 px-4 py-2">
         <div className="flex items-center gap-3">

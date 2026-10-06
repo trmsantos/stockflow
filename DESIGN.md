@@ -191,7 +191,12 @@ Números tabulares em tabelas e métricas (`font-variant-numeric: tabular-nums`)
   coloridas. Num fundo preto a sombra não separa — o que separa é o fio de luz de 1px na aresta de
   cima, que é a primeira camada do `shadow-sm`.
 - Bordas de 1px com `--color-border` são preferíveis a sombras para separar superfícies. O cromado
-  desta identidade é **visível e contado**: sidebar no `background` e conteúdo no `surface`,
+  desta identidade é **visível e contado**: cromado (sidebar e cabeçalho) no `surface` e a tela de
+  conteúdo no `background` — **ao contrário do que esta linha dizia**, e a razão é medida: os quatro
+  ecrãs desenham painéis e mosaicos em `bg-surface`, logo com a sidebar em `background` e a tela em
+  `surface` os painéis **desapareciam na própria tela**. Honrar a ordem original exige subir todos os
+  ecrãs um degrau de superfície, que é obra própria e fica nomeada; até lá o documento descreve o que
+  existe,
   cabeçalho de tabela no `surface-2`, réguas verticais de 1px entre colunas, e um trilho de 4px em
   `--color-primary` na linha e no item de menu activos.
 
@@ -234,6 +239,13 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
 - Largura máxima: `72rem` para **formulários e leitura**, `42rem` para texto corrido. **Tabelas usam
   a largura toda da área de conteúdo** — um cap de 72rem numa tabela de ERP é espaço desperdiçado à
   direita.
+- **Os quatro ecrãs de produto ainda não cumprem a linha acima, e é deliberado.** Todos abrem com um
+  cap de `42rem`: a 1280px a área de conteúdo tem ~1024px e o ecrã ocupa 672 alinhados à esquerda.
+  Foram desenhados para 360px, quando o produto era mobile-first. **Alargar o cap sem passar as
+  linhas a tabela densa é pior do que o que está** — dava linhas de 1024px com um nome à esquerda, um
+  número à direita e um vazio no meio. A reestruturação é uma obra só, e a ADR 0009 recomenda
+  explicitamente fazê-la **depois** da sessão 0, porque o que o dono fizer com estes ecrãs muda a
+  estrutura e refazê-los antes é refazê-los duas vezes.
 - Densidade: **compacta** em desktop; em mobile mantém-se compacta e os alvos de toque são ≥ 44px
   (a regra está no `base.css` por `pointer: coarse`, não por breakpoint — um tablet com rato mantém a
   densidade).

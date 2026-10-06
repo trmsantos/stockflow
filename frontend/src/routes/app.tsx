@@ -1,8 +1,9 @@
 import { createRoute, redirect } from "@tanstack/react-router";
 
 import { opcoesDaSessao, sincronizarEstabelecimentoAtivo } from "@/features/accounts/api";
-import { AppShell } from "@/shell/app-shell";
 
+import { destinoDoRegresso } from "./destino";
+import { InvolucroDaAplicacao } from "./involucro";
 import { rotaRaiz } from "./root";
 
 /**
@@ -70,11 +71,27 @@ import { rotaRaiz } from "./root";
  * estabelecimento, `sem_estabelecimento` vê a frase própria. Ramificar aqui
  * daria três redireccionamentos para três rotas que teriam o mesmo invólucro e o
  * mesmo pedido de sessão por baixo.
+ *
+ * ## O `component` é uma ligação de seis linhas, e é aqui que ela tem de estar
+ *
+ * O shell desenha o seletor de estabelecimento no pé da sidebar (DESIGN.md §4,
+ * ADR 0009) e **não pode conhecer domínios** (ADR 0008, decisão 2, imposta pelo
+ * `eslint.config.js`: `src/shell/**` não importa `@/features/*`). As duas só são
+ * verdadeiras ao mesmo tempo com o shell a declarar a interface
+ * (`shell/sessao-do-shell.ts`) e o `accounts` a satisfazê-la — e **esta** camada
+ * é a única que pode importar as duas, que é precisamente o papel que o shell já
+ * lhe dava ("é a rota que liga o ecrã da feature ao invólucro",
+ * `shell/moldura-publica.tsx`).
+ *
+ * É também o único sítio onde o `pnpm typecheck` consegue verificar que o que a
+ * feature devolve serve o que o shell pede. A contradição entre as duas ADRs
+ * está apontada no relatório desta sessão; isto é a forma dela que não enfraquece
+ * nenhum dos dois gates.
  */
 export const rotaDaApp = createRoute({
   getParentRoute: () => rotaRaiz,
   id: "app",
-  component: AppShell,
+  component: InvolucroDaAplicacao,
   beforeLoad: async ({ context, location }) => {
     const sessao = await context.queryClient.query({
       ...opcoesDaSessao(),
@@ -103,19 +120,3 @@ export const rotaDaApp = createRoute({
     }
   },
 });
-
-/**
- * Para onde voltar depois de entrar.
- *
- * O `href` traz caminho **e** search params (`/stock?loja=…`), que é o que faz
- * um deep link funcionar de verdade: voltar a `/stock` sem o filtro era voltar a
- * outro ecrã. A raiz não viaja — `?destino=%2F` é ruído num URL que alguém pode
- * ter de ler ao telefone.
- *
- * `replace: true` no redireccionamento: sem ele, o botão de voltar a partir do
- * login voltava ao URL protegido, que redirecciona outra vez para o login — um
- * ciclo que o utilizador experimenta como "o botão de voltar não funciona".
- */
-function destinoDoRegresso(href: string): { destino?: string } {
-  return href === "/" ? {} : { destino: href };
-}

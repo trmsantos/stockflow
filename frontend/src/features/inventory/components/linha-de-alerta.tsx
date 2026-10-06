@@ -90,9 +90,11 @@ function Corpo({ alerta }: { readonly alerta: Alerta }) {
 }
 
 /**
- * O `scroll-mt-16` não é margem: é o header *sticky* de 48px do shell. Sem ele,
- * a linha que recebe o foco por teclado pode ficar debaixo dele — foco visível
- * mas tapado, que é o mesmo que foco invisível.
+ * O `scroll-mt-16` (64px) não é margem: é a barra de topo *sticky* do shell —
+ * 56px desde que ela passou a ter os `--spacing-cabecalho` que o DESIGN.md §2
+ * lhe dá — mais uma folga. Sem ele, a linha que recebe o foco por teclado pode
+ * ficar debaixo dela: foco visível mas tapado, que é o mesmo que foco
+ * invisível.
  */
 const CLASSE_LINHA =
   "flex min-h-14 w-full scroll-mt-16 flex-col justify-center gap-1 px-4 py-2 text-left transition-colors hover:bg-surface-2";

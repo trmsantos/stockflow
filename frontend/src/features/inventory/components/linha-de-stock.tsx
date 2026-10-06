@@ -44,9 +44,12 @@ export function LinhaDeStock({
       to="/stock/$artigo"
       params={{ artigo: nivel.product }}
       search={true}
-      // O `scroll-mt-24` existe por causa da barra *sticky* do topo: sem ele, a
-      // linha que recebe o foco por teclado pode ficar debaixo dela.
-      className="flex min-h-14 scroll-mt-24 flex-col justify-center gap-1 border-b border-border px-4 py-2 transition-colors hover:bg-surface-2"
+      // A âncora desconta **as duas** barras que ficam por cima desta lista: a
+      // de topo do shell (56px, `--spacing-cabecalho`) e a de filtros (48px).
+      // Sem isso, a linha que recebe o foco por teclado fica debaixo delas.
+      // Eram 96px quando o cabeçalho tinha 48; são 104 desde que ele passou aos
+      // 56 que o DESIGN.md §2 lhe dá.
+      className="flex min-h-14 scroll-mt-26 flex-col justify-center gap-1 border-b border-border px-4 py-2 transition-colors hover:bg-surface-2"
     >
       <span className="flex items-baseline gap-3">
         <span className="min-w-0 flex-1 truncate font-medium">{nivel.short_name}</span>

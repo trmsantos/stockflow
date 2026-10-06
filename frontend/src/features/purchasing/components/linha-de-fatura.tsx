@@ -327,8 +327,10 @@ export function LinhaDeFatura({
   const foraDaEntrada = linha.status === "skipped";
 
   return (
-    // O `scroll-mt-16` é o header *sticky* de 48px do shell: sem ele, o campo
-    // de lote que recebe o foco pode parar debaixo dele.
+    // O `scroll-mt-16` (64px) desconta a barra de topo do shell — 56px desde
+    // que ela passou a ter os `--spacing-cabecalho` que o DESIGN.md §2 lhe dá —
+    // mais uma folga. Sem ele, o campo de lote que recebe o foco pode parar
+    // debaixo dela.
     <li className="flex scroll-mt-16 flex-col gap-1 border-b border-border px-4 py-3 last:border-b-0">
       {/* A descrição **como vem na fatura**: é o que ele compara com o papel.
           Mono com `font-mono` e não com `data-numeric`, porque o atributo também

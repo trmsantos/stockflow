@@ -17,10 +17,15 @@ React 18 · TypeScript strict · Vite · Tailwind v4 · shadcn/ui · TanStack Ro
 Portas sobreponíveis por ambiente, sem prefixo `VITE_` porque não entram no bundle:
 `FRONTEND_DEV_PORT` (default 5183; o contentor do compose usa 5173) e `BACKEND_ORIGIN`.
 
-Em desenvolvimento há três variáveis para os estados do DESIGN.md §3, lidas no `vite.config.ts`:
-`FIXTURES_ATRASO_MS` (default 250), `FIXTURES_VAZIO` e `FIXTURES_ERRO` (listas de caminhos
-separadas por vírgula). Por pedido há também `?_fixture=vazio` e `?_fixture=erro`, para sondar com
+Em desenvolvimento há quatro variáveis, lidas no `vite.config.ts`: `FIXTURES_ATRASO_MS`
+(default 250), `FIXTURES_VAZIO`, `FIXTURES_ERRO` e `FIXTURES_SEM_SESSAO` (listas de caminhos
+separadas por vírgula). Por pedido há também `?_fixture=vazio|erro|sem_sessao`, para sondar com
 `curl` sem reiniciar — nada em `src/` envia esse parâmetro.
+
+O `sem_sessao` responde **403 com o corpo do `TenantMiddleware`** e é a sessão a expirar a meio.
+Não é fingir uma sessão — a ADR 0010 proíbe-o, porque uma sessão falsa muda *autorização* em vez de
+forma de dados; uma recusa é o contrário disso, e é a única forma de ver o caminho que leva a pessoa
+de volta a `/entrar` com o `destino` preenchido.
 
 ## Onde estão as decisões
 
@@ -29,11 +34,23 @@ separadas por vírgula). Por pedido há também `?_fixture=vazio` e `?_fixture=e
   buscar dados; se um ficheiro de rota passa de umas vinte linhas, a lógica está no sítio errado.
   **Sem `loader`, `loaderDeps` nem `useLoaderData`** — a única camada de dados é o TanStack Query, e
   o `eslint.config.js` tem um selector contra os três.
-- **`src/shell/`** — `AppShell`, `SidebarNav`, `TabBar`, `AppHeader`, `nav-items.ts` e os três
-  estados de rota. Uma árvore só: a sidebar e a tab bar estão ambas no DOM, escondidas por
-  breakpoint (`hidden md:flex` / `md:hidden`), nunca por `useMediaQuery`. Os itens de navegação são
-  **um** array, e os quatro de mobile são uma tupla de quatro que o `pnpm typecheck` verifica — a
-  tab bar sai com o shell de ERP da ADR 0009, que é a tarefa seguinte e não esta.
+- **`src/shell/`** — o invólucro de ERP (ADR 0009): `AppShell`, `SidebarNav` (persistente e
+  colapsável), `GavetaDeNavegacao` (a **mesma** sidebar num drawer em mobile), `AppHeader`,
+  `RodapeDaSidebar` (o seletor de estabelecimento), `registo-de-rotas.ts`, `menu.ts` e os três
+  estados de rota. **Não há tab bar** e não há uma terceira superfície de navegação. A sidebar está
+  sempre no DOM e é escondida por breakpoint (`hidden md:flex`), nunca por `useMediaQuery`.
+  - O **menu é dados**: uma projecção (`route_id`, `grupo`, `ordem`, `visivel`, `rotulo`) sobre um
+    registo de rotas que é código. Hoje a projecção é um array em `menu.ts`; quando a tabela por
+    tenant da ADR 0011 existir, muda a fonte e não o shell.
+  - A garantia dos "4 itens" da tab bar morreu com ela, e **não foi substituída pela
+    cardinalidade** — ninguém conta ao compilar uma lista que chega por HTTP. No lugar ficou a
+    **integridade referencial**: um `Record<RotaId, …>` exaustivo nos dois sentidos e um `caminho`
+    tipado pela própria árvore de rotas. Três sondas medidas: caminho inexistente, id a mais e id a
+    menos dão todos exit 1 no `pnpm typecheck`.
+  - O shell **não conhece domínios** (ADR 0008, decisão 2) e ainda assim desenha o seletor de
+    estabelecimento (DESIGN.md §4): declara a interface em `sessao-do-shell.ts`, o `accounts`
+    satisfaz-na e quem os liga é `routes/involucro.tsx` — a única camada que pode importar os dois,
+    e onde o `pnpm typecheck` confronta os dois lados.
 - **`src/features/<módulo>/`** — produto, com os nomes dos módulos do backend (`inventory`,
   `purchasing`, …), não nomes de ecrã. Dentro: `screens/`, `components/`, `hooks/`, `api.ts`,
   `schemas.ts`. As quatro fronteiras entre `routes/`, `features/`, `shell/` e `lib/`+`components/`

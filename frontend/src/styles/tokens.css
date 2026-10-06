@@ -216,6 +216,22 @@
   --radius-4xl: 12px;
 
   /* -----------------------------------------------------------------------
+   * Sem escala de blur, logo **sem glassmorphism possível**.
+   *
+   * O §5 proíbe "glassmorphism, blur em fundos"; o `pnpm lint` já recusava um
+   * `backdrop-blur-*` escrito por nós, mas não o que vem **dentro de um
+   * primitivo do shadcn** — o `sheet` instalado pelo CLI traz
+   * `supports-backdrop-filter:backdrop-blur-xs` no seu overlay, e os ficheiros
+   * gerados estão (com razão) isentos dessa regra, porque não se editam à mão.
+   *
+   * Com o namespace vazio a utility não existe: nenhum `blur-*` nem
+   * `backdrop-blur-*` compila, venha de onde vier. É a mesma mecânica do
+   * `--color-*: initial` acima — tornar impossível em vez de proibir —, e é
+   * verificável no CSS compilado: `backdrop-filter` não aparece no `dist/`.
+   * --------------------------------------------------------------------- */
+  --blur-*: initial;
+
+  /* -----------------------------------------------------------------------
    * Sombras: dois níveis, `sm` para painéis e `lg` para o que flutua. Num
    * fundo preto a sombra não separa — o que separa é um fio de luz na aresta
    * de cima, e é essa a primeira camada do `sm`. Nenhuma é colorida.

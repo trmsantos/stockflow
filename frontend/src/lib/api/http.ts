@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import { readCookie } from "./cookies";
 import { ApiError, ResponseShapeError, TenantConflictError } from "./errors";
+import { anunciarPerdaDeSessao, CODIGO_SEM_SESSAO } from "./sessao-perdida";
 import { getActiveTenantId } from "./tenant";
 
 /**
@@ -116,6 +117,22 @@ function throwForStatus(path: string, response: Response, payload: unknown): nev
   const { code, detail } = errorFields(payload);
   if (response.status === 409 && code === "tenant_divergente") {
     throw new TenantConflictError({ detail, payload });
+  }
+
+  // A sessão deixou de servir a meio: anuncia-se **e continua a lançar**.
+  //
+  // As duas metades são precisas e fazem coisas diferentes. O anúncio leva a
+  // pessoa de volta a `/entrar` com o `destino` preenchido (ver
+  // `sessao-perdida.ts`); o `throw` faz a query falhar, o que impede o ecrã de
+  // renderizar como se tivesse dados e deixa o estado de erro no sítio durante
+  // o instante em que a navegação acontece. Engolir o erro aqui dava uma
+  // promise pendente para sempre e um skeleton eterno se a navegação falhasse.
+  //
+  // Fica no `throwForStatus` e não em cada `api.ts` porque é a **única** forma
+  // de recusa que vale para todos os endpoints com âmbito, e porque uma
+  // verificação por feature é a que falta na quinta.
+  if (response.status === 403 && code === CODIGO_SEM_SESSAO) {
+    anunciarPerdaDeSessao();
   }
   throw new ApiError({
     status: response.status,

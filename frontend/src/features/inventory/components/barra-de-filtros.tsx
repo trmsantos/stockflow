@@ -59,7 +59,12 @@ export function BarraDeFiltros({
     : undefined;
 
   return (
-    <div className="sticky top-12 z-10 flex items-center gap-2 border-b border-border bg-background px-4 py-2">
+    // `top-cabecalho` e não `top-12`: a barra de topo do shell passou a ter os
+    // 56px que o DESIGN.md §2 lhe dá (`--spacing-cabecalho`) — tinha 48px do
+    // orçamento de ecrã da sessão 0, que a ADR 0009 retirou. Com o número
+    // antigo esta barra ficava 8px por baixo do cabeçalho e desaparecia-lhe por
+    // trás ao deslizar. Agora é o mesmo token nos dois sítios.
+    <div className="sticky top-cabecalho z-10 flex items-center gap-2 border-b border-border bg-background px-4 py-2">
       {/* `role="search"` e não um `<form>`: não há submissão — o filtro aplica-se
           a cada tecla e o estado vive no URL, logo não há nada para enviar. */}
       <div role="search" className="relative min-w-0 flex-1">

@@ -149,3 +149,20 @@
 [data-slot="select-content"] {
   box-shadow: var(--shadow-lg);
 }
+
+/* O overlay da gaveta de navegação (o `sheet` do shadcn) pede `bg-black/10`, e
+ * **`black` não é um token desta paleta**: o `--color-*: initial` do
+ * `tokens.css` apaga a paleta default do Tailwind, logo a utility não existe e
+ * o overlay ficava completamente transparente. O efeito é o mesmo defeito que
+ * o popover do `Select` tinha — um painel aberto que não se distingue do que
+ * está atrás dele — e com um agravante: por cima de uma lista densa, o menu
+ * aberto lia-se como parte da tabela.
+ *
+ * A tinta é a tela da identidade com transparência, não um cinzento novo: a
+ * tela escurece, o painel (em `surface`, um degrau acima) separa-se dela, e não
+ * há blur nenhum — o `--blur-*: initial` do `tokens.css` tirou-o ao primitivo.
+ * Vai aqui, fora de `@layer`, pela razão escrita nas regras acima: tem de
+ * ganhar a uma utility, e nenhuma camada ganha a `utilities`. */
+[data-slot="sheet-overlay"] {
+  background-color: color-mix(in oklab, var(--color-background) 72%, transparent);
+}

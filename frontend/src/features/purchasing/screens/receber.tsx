@@ -133,12 +133,21 @@ export function EcraDeReceber() {
         </>
       )}
 
-      {/* A ação principal, colada ao fundo e ao alcance do polegar. O `bottom`
-          desconta a tab bar de 56px **e** a barra de gestos do telemóvel, que só
-          o dispositivo conhece (`env()`); em desktop a tab bar não existe e a
-          barra assenta no fundo da janela. O `mt-auto` mantém-na em baixo quando
-          a lista é curta, em vez de a deixar a meio do ecrã. */}
-      <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 mt-auto flex flex-col items-start gap-1 border-t border-border bg-background px-4 py-2 md:bottom-0">
+      {/* A ação principal, colada ao fundo e ao alcance do polegar.
+          **A tab bar saiu** (ADR 0009), e com ela os `3.5rem` que este `bottom`
+          descontava — eram a altura dela, e este era o único sítio fora do shell
+          onde ela estava escrita. Fica `bottom-0`: a barra assenta no fundo da
+          janela nas duas larguras.
+          O que **não** sai é a barra de gestos do telemóvel, que só o
+          dispositivo conhece e que taparia o botão: entra como `env()` no
+          `style`, porque não é uma decisão de design e portanto não é um token
+          (é a mesma razão, e a mesma forma, que a tab bar usava).
+          O `mt-auto` mantém a barra em baixo quando a lista é curta, em vez de a
+          deixar a meio do ecrã. */}
+      <div
+        className="sticky bottom-0 z-10 mt-auto flex flex-col items-start gap-1 border-t border-border bg-background px-4 pt-2"
+        style={{ paddingBottom: "calc(var(--spacing) * 2 + env(safe-area-inset-bottom))" }}
+      >
         <Button asChild>
           <Link to="/receber/fotografar" search={true}>
             <Camera aria-hidden="true" />

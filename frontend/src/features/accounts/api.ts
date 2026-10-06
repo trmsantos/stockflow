@@ -7,20 +7,23 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 
 import { apiRequest } from "@/lib/api/http";
 import { queryKeys } from "@/lib/api/query-keys";
 import { setActiveTenantId } from "@/lib/api/tenant";
 
-import { codigoDaRecusa, CODIGO_TENANT_DESCONHECIDO } from "./erros";
+import { codigoDaRecusa, CODIGO_TENANT_DESCONHECIDO, mensagemDaRecusa } from "./erros";
 import {
   ativacaoSchema,
   credenciaisSchema,
   escolhaDeEstabelecimentoSchema,
+  nomeDoPapel,
   sessaoSchema,
   type Ativacao,
   type Credenciais,
   type EscolhaDeEstabelecimento,
+  type Estabelecimento,
   type Sessao,
 } from "./schemas";
 
@@ -311,4 +314,116 @@ export function useAtivarConvite(): UseMutationResult<Sessao, Error, Ativacao> {
       fixarSessao(queryClient, sessao);
     },
   });
+}
+
+/**
+ * Esquecer a sessão **e** os dados do estabelecimento — o que se faz quando a
+ * sessão deixou de servir a meio (403 `sem_sessao`).
+ *
+ * É a regra do `fixarSessao` sem a parte de escrever: qualquer resposta que
+ * mude quem ou onde se está apaga os dados de tenant. Aqui não há resposta
+ * nenhuma para escrever, logo a entrada da sessão também sai.
+ *
+ * ## `removeQueries` e **não** `invalidateQueries`, e isto não é preferência
+ *
+ * Os dois portões (`routes/app.tsx` e `routes/entrar.tsx`) leem a sessão com
+ * `query({ staleTime: "static" })`, que devolve o que está em cache **sempre que
+ * exista** — é essa a semântica que substituiu o `ensureQueryData` deprecado.
+ * Uma entrada invalidada continua a existir: com `invalidateQueries`, o
+ * `/entrar` lia a sessão antiga, via `estado: "ativa"` e reencaminhava para o
+ * ecrã protegido, que dava 403 outra vez — um ciclo que a pessoa experimenta
+ * como "a aplicação pisca e não entra". Com `removeQueries` não há entrada, logo
+ * o portão vai ao servidor e lê a verdade.
+ *
+ * O `setActiveTenantId(null)` é a terceira parte e não é higiene: sem ele o
+ * pedido seguinte leva um `X-Tenant-ID` de uma sessão que já não existe e traz
+ * um 409 por cima do 403 — dois erros para a mesma causa, e o segundo a esconder
+ * o primeiro.
+ */
+export function esquecerSessao(queryClient: QueryClient): void {
+  setActiveTenantId(null);
+  queryClient.removeQueries({ queryKey: PREFIXO_DE_TENANT });
+  queryClient.removeQueries({ queryKey: queryKeys.sessao() });
+}
+
+/** Um estabelecimento na forma que o invólucro mostra: o papel por extenso. */
+function paraOInvolucro(estabelecimento: Estabelecimento) {
+  return {
+    id: estabelecimento.id,
+    nome: estabelecimento.nome,
+    papel: nomeDoPapel(estabelecimento.papel),
+  };
+}
+
+/**
+ * A sessão na forma de que o invólucro precisa: onde estou, onde mais posso
+ * estar, como troco e como saio.
+ *
+ * ## Porque é que isto vive aqui e não no shell
+ *
+ * Porque o shell não conhece domínios (ADR 0008, decisão 2) e o seletor de
+ * estabelecimento é do shell (DESIGN.md §4, ADR 0009). As duas coisas são
+ * verdadeiras ao mesmo tempo com o shell a declarar a interface
+ * (`shell/sessao-do-shell.ts`) e esta feature a satisfazê-la; quem as liga é a
+ * rota, que é a única camada que pode importar as duas. Está no `api.ts` e não
+ * num `hooks/` porque `api.ts` é a **porta** do módulo — o `api.py` do frontend
+ * — e é a única coisa desta feature que uma rota pode importar.
+ *
+ * **Não leva tipo de retorno anotado**, e isso é deliberado: anotá-lo obrigava a
+ * declarar aqui uma segunda cópia da interface do shell (que esta camada não
+ * pode importar), e duas cópias divergem na primeira correcção. Quem verifica
+ * que o que sai daqui serve o que o shell pede é o `pnpm typecheck` no sítio
+ * onde os dois se encontram: `routes/app.tsx`.
+ *
+ * ## Duas coisas que acontecem depois de cada mutação, e porquê
+ *
+ * **Trocar** não navega — é o ponto todo de trocar no pé da sidebar: fica-se no
+ * mesmo ecrã com os dados do outro estabelecimento. Mas chama
+ * `router.invalidate()`, e isso não é zelo: as chaves de query dos ecrãs levam o
+ * estabelecimento à cabeça e são calculadas **no render** (`tenantDaCache()`).
+ * Sem forçar os ecrãs a renderizar outra vez, os observadores que já estão
+ * montados refazem o pedido com a chave do estabelecimento **anterior** — os
+ * dados que voltam são os certos (quem decide o âmbito é a sessão do servidor),
+ * mas ficam guardados debaixo do nome errado, que é precisamente o que o
+ * `query-keys.ts` existe para impedir.
+ *
+ * **Sair** navega, e tem de navegar: o `logout` devolve `SessaoOut` com
+ * `estado: "anonimo"` e escreve-o na cache, mas o `beforeLoad` do shell não
+ * volta a correr sozinho — sem o `navigate`, ficava-se dentro do invólucro de
+ * uma sessão que já não existe, a ver dados que o pedido seguinte recusa.
+ */
+export function useSessaoDoShell() {
+  const sessao = useSessao();
+  const escolher = useEscolherEstabelecimento();
+  const sair = useSair();
+  const router = useRouter();
+  const navegar = useNavigate();
+
+  return {
+    email: sessao.data?.utilizador?.email ?? null,
+    ativo: sessao.data?.tenant_ativo === undefined || sessao.data.tenant_ativo === null
+      ? null
+      : paraOInvolucro(sessao.data.tenant_ativo),
+    estabelecimentos: (sessao.data?.tenants ?? []).map(paraOInvolucro),
+    aTrocar: escolher.isPending,
+    erroDaTroca: escolher.isError ? mensagemDaRecusa(escolher.error) : null,
+    trocar: (id: string) => {
+      escolher.mutate(
+        { tenant_id: id },
+        {
+          onSuccess: () => {
+            void router.invalidate();
+          },
+        },
+      );
+    },
+    aSair: sair.isPending,
+    sair: () => {
+      sair.mutate(undefined, {
+        onSuccess: () => {
+          void navegar({ to: "/entrar", replace: true });
+        },
+      });
+    },
+  };
 }

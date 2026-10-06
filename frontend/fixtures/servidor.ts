@@ -42,6 +42,30 @@ const PREFIXO = "/api/v1/";
 const ATRASO_DEFAULT_MS = 250;
 
 /**
+ * O 403 `sem_sessao`, que é o **oposto** de fingir uma sessão.
+ *
+ * A ADR 0010 proíbe este servidor de fingir uma sessão, e a razão é exacta: uma
+ * sessão falsa é a única mentira que muda **autorização** em vez de forma de
+ * dados, e nenhum dos três gates da decisão 3 da ADR 0008 a apanharia. Devolver
+ * uma **recusa** é a direcção contrária: é uma forma de erro, como o 500 do
+ * `?_fixture=erro`, e nada aqui passa a conceder o que o servidor recusaria.
+ *
+ * Existe porque é o único caminho do cliente que não se consegue ver de outra
+ * maneira: a sessão só expira de verdade ao fim de duas semanas, e o que se tem
+ * de medir — que a pessoa volta a `/entrar` com o `destino` preenchido e que a
+ * cache do estabelecimento é esquecida — acontece num instante que ninguém
+ * consegue provocar à mão.
+ *
+ * O corpo é o do `TenantMiddleware` (`apps/accounts/middleware.py`), palavra por
+ * palavra: o cliente ramifica pelo `code`, e um `detail` diferente aqui dava uma
+ * frase em dev que o utilizador nunca veria em produção.
+ */
+const RECUSA_SEM_SESSAO = {
+  code: "sem_sessao",
+  detail: "Não há estabelecimento ativo nesta sessão.",
+} as const;
+
+/**
  * O estabelecimento falso. O `X-Tenant-ID` do cliente nunca escolhe âmbito —
  * só pode ser recusado (ADR 0007) —, e é esse 409 que este servidor sabe dar,
  * para o caminho de erro do `http.ts` existir em dev e não só em teoria.
@@ -105,6 +129,8 @@ export interface OpcoesDeFixtures {
   readonly vazios?: readonly string[];
   /** Caminhos que respondem 500. */
   readonly erros?: readonly string[];
+  /** Caminhos que respondem 403 `sem_sessao` — a sessão que expira a meio. */
+  readonly semSessao?: readonly string[];
 }
 
 /**
@@ -223,6 +249,7 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
   const atrasoDefault = opcoes.atrasoMs ?? ATRASO_DEFAULT_MS;
   const vazios = new Set(opcoes.vazios ?? []);
   const erros = new Set(opcoes.erros ?? []);
+  const semSessao = new Set(opcoes.semSessao ?? []);
 
   const middleware: Connect.NextHandleFunction = (req, res, next) => {
     const metodo = req.method ?? "GET";
@@ -249,6 +276,34 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
     const atraso = rota.atrasoMs ?? atrasoDefault;
 
     const servir = async (): Promise<void> => {
+      /**
+       * Os estados do DESIGN.md §3 (e a recusa de âmbito) pedem-se de duas
+       * formas, e nenhuma delas é um `if` dentro da app: por caminho, ao
+       * arrancar o `pnpm dev` (`FIXTURES_ERRO=/api/v1/stock/levels pnpm dev`),
+       * ou por pedido, com `?_fixture=erro|vazio|sem_sessao`. O segundo existe
+       * para sondar com `curl` sem reiniciar; nada em `src/` o envia, e no dia
+       * em que o Django servir o caminho o parâmetro deixa de ter quem o leia.
+       *
+       * Casa pelo caminho pedido **e** pelo padrão da rota: com um `:contagem`
+       * no meio, o caminho pedido traz um uuid que ninguém ia escrever à mão
+       * numa variável de ambiente.
+       */
+      const pedido = url.searchParams.get("_fixture");
+      const comErro = pedido === "erro" || erros.has(caminho) || erros.has(rota.caminho);
+      const comVazio = pedido === "vazio" || vazios.has(caminho) || vazios.has(rota.caminho);
+      const comRecusaDeAmbito =
+        pedido === "sem_sessao" || semSessao.has(caminho) || semSessao.has(rota.caminho);
+
+      // Primeiro de todos, porque é o que o `TenantMiddleware` faz: a falta de
+      // âmbito é decidida **antes** de o header ser comparado (um 409) e antes
+      // de a view correr. A ordem aqui é a ordem lá.
+      if (comRecusaDeAmbito) {
+        await esperar(atraso);
+        enviar(res, 403, RECUSA_SEM_SESSAO);
+        registar(metodo, caminho, 403, Date.now() - inicio);
+        return;
+      }
+
       // O header nunca seleciona âmbito; só pode divergir do da sessão.
       const tenant = primeiro(req.headers["x-tenant-id"]);
       if (tenant !== null && tenant !== TENANT_FALSO) {
@@ -281,21 +336,6 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
           return;
         }
       }
-
-      /**
-       * Os estados do DESIGN.md §3 pedem-se de duas formas, e nenhuma delas é
-       * um `if` dentro da app: por caminho, ao arrancar o `pnpm dev`
-       * (`FIXTURES_ERRO=/api/v1/stock/levels pnpm dev`), ou por pedido, com
-       * `?_fixture=erro`. O segundo existe para sondar com `curl` sem
-       * reiniciar; nada em `src/` o envia, e no dia em que o Django servir o
-       * caminho o parâmetro deixa de ter quem o leia.
-       */
-      // Casa pelo caminho pedido **e** pelo padrão da rota: com um `:contagem`
-      // no meio, o caminho pedido traz um uuid que ninguém ia escrever à mão
-      // numa variável de ambiente.
-      const pedido = url.searchParams.get("_fixture");
-      const comErro = pedido === "erro" || erros.has(caminho) || erros.has(rota.caminho);
-      const comVazio = pedido === "vazio" || vazios.has(caminho) || vazios.has(rota.caminho);
 
       await esperar(atraso);
 

@@ -25,6 +25,11 @@ const API_ORIGIN = process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8010";
  *   FIXTURES_ERRO=/api/v1/stock/levels pnpm dev   → 500 naquele caminho
  *   FIXTURES_VAZIO=/api/v1/stock/levels pnpm dev  → results: []
  *   FIXTURES_ATRASO_MS=1500 pnpm dev              → para ver os skeletons
+ *
+ * E um quarto, que não é um estado de dados: `FIXTURES_SEM_SESSAO=<caminho>`
+ * responde **403 `sem_sessao`** naquele caminho, que é a sessão a expirar a
+ * meio. Não é fingir uma sessão — é o contrário, e a razão está no
+ * `fixtures/servidor.ts`.
  */
 const ATRASO_DE_FIXTURES = Number(process.env.FIXTURES_ATRASO_MS ?? 250);
 
@@ -43,6 +48,7 @@ export default defineConfig({
       atrasoMs: ATRASO_DE_FIXTURES,
       vazios: caminhos(process.env.FIXTURES_VAZIO),
       erros: caminhos(process.env.FIXTURES_ERRO),
+      semSessao: caminhos(process.env.FIXTURES_SEM_SESSAO),
     }),
   ],
   resolve: {

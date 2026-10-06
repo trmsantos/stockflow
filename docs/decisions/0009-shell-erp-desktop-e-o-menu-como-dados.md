@@ -70,3 +70,28 @@ fazer agora:** reestruturar o Stock e os Alertas antes da sessão 0. É a mesma 
 visual já devido, e fazê-la duas vezes é o erro que o banner do `DESIGN.md` nomeia; o mínimo que esta
 direcção exige do shell existente é tirar a tab bar. Se a sessão 0 ainda corre com este shell, e em que
 forma, é decisão do dono do produto e não minha.
+
+---
+
+**Duas correcções de 2026-10-06, quando o shell foi implementado.** As duas foram apontadas pelo
+agente que o construiu, em vez de resolvidas em silêncio.
+
+**1 — Esta ADR lê-se como se o shell pudesse importar o `accounts`, e não pode.** Ela diz que o
+seletor de tenant "é do shell e vive no pé da sidebar"; a ADR 0008 decisão 2 diz que **o shell
+conhece caminhos de rota, nunca domínios**, e o `eslint.config.js` impõe-o (`src/shell/**` não
+importa `@/features/*`). Esta ADR só supera a parte da tab bar, não essa fronteira.
+
+A implementação resolveu-o **sem enfraquecer nenhum gate**, por inversão de dependência: o shell
+*declara* a interface de que precisa (`src/shell/sessao-do-shell.ts`), o `accounts` satisfá-la
+(`useSessaoDoShell`), e **a rota liga os dois** (`src/routes/involucro.tsx`) — que é exactamente o
+papel que a ADR 0008 já dava às rotas. O compilador verifica o encaixe nesse ponto único. É a forma
+certa e esta ADR devia tê-la dito.
+
+**2 — Contradição interna: "o menu de mobile é `registo.filter(campo) ∩ projecção`" e "a **mesma**
+sidebar como drawer" não podem ser ambas verdade.** Ficou a segunda, que é a que esta ADR argumenta
+(duas listas divergem à primeira pergunta). O predicado `campo` paga-se onde é verdadeiro: a gaveta
+mostra o menu **inteiro** e declara, numa frase gerada a partir do `campo`, quais ecrãs foram
+desenhados para o telemóvel. E a impossibilidade de promoção fica **estrutural** em vez de filtrada:
+a forma que a projecção por tenant transporta (`EntradaDaProjeccao`) **não tem** o campo `campo`,
+logo nenhuma configuração o pode pôr lá.
+
