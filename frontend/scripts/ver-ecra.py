@@ -46,12 +46,14 @@ fotografou o ecrã ou o esqueleto dele.
 aqui**: sem espera fotografa-se o estado de carregamento e conclui-se que o ecrã
 está vazio.
 
-`LINGUA=en` (ou `pt-PT`) move os **dois** sinais da língua: o
-`Emulation.setLocaleOverride`, que é o que o `navigator.languages` e o `Intl` leem,
-e o `Accept-Language` dos pedidos. Mover só um media uma divergência que nenhum
-utilizador tem — o browser manda os dois da mesma configuração (ADR 0019,
+`LINGUA=en` (ou `pt-PT`) move os **dois** sinais da língua — o que o
+`navigator.languages` diz e o `Accept-Language` dos pedidos — com **um** comando,
+o `Emulation.setUserAgentOverride`. Mover só um media uma divergência que nenhum
+utilizador tem: o browser manda os dois da mesma configuração (ADR 0019,
 decisão 2), e um screenshot com a UI numa língua e as mensagens de erro noutra
-seria um defeito do instrumento e não da app.
+seria um defeito do instrumento e não da app. (Esta linha dizia
+`setLocaleOverride`, e está medido no corpo que esse comando move o `Intl` e
+**não** o `navigator.languages` — o JSON trazia `pt-PT,pt` com `LINGUA=en`.)
 
 `TEMA=claro` (ou `meio_termo`, ou `escuro`) escreve o `data-tema` no `<html>`
 antes do disparo. Existe desde as três paletas (ADR 0015) e é a forma de
