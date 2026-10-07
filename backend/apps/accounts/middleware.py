@@ -72,6 +72,7 @@ from uuid import UUID
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.urls import Resolver404, ResolverMatch, resolve
+from django.utils.translation import gettext_lazy as _
 
 from apps.accounts.api import (
     ATRIBUTO_MEMBERSHIP,
@@ -105,12 +106,26 @@ CODIGO_SEM_SESSAO = "sem_sessao"
 CODIGO_DESCONHECIDO = "tenant_desconhecido"
 CODIGO_DIVERGENTE = "tenant_divergente"
 
+#: As frases das três recusas, **traduzíveis** (ADR 0019).
+#:
+#: Os `msgid` são em inglês e a tradução pt-PT vive no
+#: `locale/pt_PT/LC_MESSAGES/django.po`, ao contrário do hábito deste
+#: repositório. A razão é mecânica e não de gosto: com o msgid em inglês, **o
+#: inglês sai de graça** e uma tradução pt-PT em falta é detectável (o teste
+#: compara conjuntos de msgid). No caminho inverso, uma tradução inglesa em falta
+#: cai no msgid português e mostra **português a um leitor inglês sem erro
+#: nenhum** — que é precisamente o modo de falha que este trabalho existe para
+#: evitar.
+#:
+#: `gettext_lazy` e não `gettext`: isto é uma constante de módulo, avaliada no
+#: import, e a língua só se sabe por pedido. Um `gettext` aqui congelava a
+#: primeira língua activa do processo para sempre.
 _DETALHES = {
-    CODIGO_SEM_SESSAO: "Não há estabelecimento ativo nesta sessão.",
-    CODIGO_DESCONHECIDO: "Não tem acesso ativo a este estabelecimento.",
-    CODIGO_DIVERGENTE: (
-        "O estabelecimento deste pedido não é o da sessão. "
-        "Recarregue antes de continuar."
+    CODIGO_SEM_SESSAO: _("No active establishment in this session."),
+    CODIGO_DESCONHECIDO: _("You do not have active access to this establishment."),
+    CODIGO_DIVERGENTE: _(
+        "The establishment of this request is not the one in the session. "
+        "Reload before continuing."
     ),
 }
 

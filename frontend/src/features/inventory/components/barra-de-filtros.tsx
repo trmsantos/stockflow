@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 
 import type { Localizacao } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * A barra *sticky* do topo: procurar e escolher a localização.
@@ -81,7 +82,7 @@ export function BarraDeFiltros({
           a cada tecla e o estado vive no URL, logo não há nada para enviar. */}
       <div role="search" className="relative min-w-0 flex-1 sm:max-w-xs">
         <Label htmlFor="procurar-artigo" className="sr-only">
-          Procurar artigo
+          {textos.filtros.procurar}
         </Label>
         <Search
           aria-hidden="true"
@@ -95,7 +96,7 @@ export function BarraDeFiltros({
           onChange={(evento) => {
             aoProcurar(evento.target.value);
           }}
-          placeholder="Procurar artigo…"
+          placeholder={textos.filtros.procurarPista}
           autoComplete="off"
           spellCheck={false}
           enterKeyHint="search"
@@ -111,14 +112,14 @@ export function BarraDeFiltros({
         disabled={semLocalizacoes}
       >
         <SelectTrigger
-          aria-label="Localização"
-          title="Ver uma localização ou o total consolidado"
+          aria-label={textos.filtros.localizacao}
+          title={textos.filtros.localizacaoPista}
           className="w-28 shrink-0 sm:w-40"
         >
-          <SelectValue placeholder="Todas" />
+          <SelectValue placeholder={textos.filtros.todas} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={TODAS}>Todas</SelectItem>
+          <SelectItem value={TODAS}>{textos.filtros.todas}</SelectItem>
           {localizacoes.map((localizacao) => (
             <SelectItem key={localizacao.id} value={localizacao.id}>
               {localizacao.name}

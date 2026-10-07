@@ -6,6 +6,7 @@ import { MenuDeNavegacao } from "./menu-de-navegacao";
 import type { GrupoDeMenu } from "./menu";
 import { RodapeDaSidebar } from "./rodape-da-sidebar";
 import type { SessaoDoShell } from "./sessao-do-shell";
+import { textos } from "./textos";
 
 /**
  * A sidebar de ERP: **persistente e colapsável** em desktop (DESIGN.md §4,
@@ -50,11 +51,11 @@ export function SidebarNav({
   readonly aoAlternar: () => void;
 }) {
   const Icone = recolhida ? PanelLeftOpen : PanelLeftClose;
-  const rotulo = recolhida ? "Expandir o menu" : "Recolher o menu";
+  const rotulo = recolhida ? textos.navegacao.expandir : textos.navegacao.recolher;
 
   return (
     <nav
-      aria-label="Navegação principal"
+      aria-label={textos.navegacao.principal}
       className={`hidden shrink-0 flex-col border-r border-border bg-surface md:sticky md:top-0 md:flex md:h-dvh ${
         recolhida ? "md:w-cabecalho" : "md:w-sidebar"
       }`}

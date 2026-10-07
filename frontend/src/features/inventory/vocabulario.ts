@@ -1,10 +1,11 @@
 import { formatCount, formatQuantity } from "@/lib/format";
 
 import type { EstadoNivel, MotivoQuebra, Quantidade, TipoMovimento } from "./schemas";
+import { textos } from "./textos";
 
 /**
- * O vocabulário do módulo: os enums do contrato em português europeu, e a
- * decisão de quantas casas decimais uma quantidade mostra.
+ * O vocabulário do módulo: os enums do contrato por extenso (as palavras vêm do
+ * `textos.pt.ts`), e a decisão de quantas casas decimais uma quantidade mostra.
  *
  * Vive num ficheiro só porque é a mesma palavra em todos os sítios — a lista, o
  * detalhe e o histórico têm de chamar `waste` "desperdício" e `breakage`
@@ -13,11 +14,16 @@ import type { EstadoNivel, MotivoQuebra, Quantidade, TipoMovimento } from "./sch
  * `OBJETO[chave]` com chave dinâmica.
  */
 
+// As palavras vêm do catálogo; os `Map` ficam aqui, porque é neles que o
+// contrato se amarra — um `EstadoNivel` novo tem de passar por esta lista.
+// Cada folha é nomeada à parte de propósito: o `check-textos` conta uma chave
+// como usada quando alguém a **nomeia**, e entregar o objecto do catálogo
+// inteiro deixava as palavras sem uso visível.
 const ROTULO_DE_ESTADO = new Map<EstadoNivel, string>([
-  ["negativo", "Negativo"],
-  ["esgotado", "Esgotado"],
-  ["baixo", "Baixo"],
-  ["ok", "OK"],
+  ["negativo", textos.vocabulario.estadoNegativo],
+  ["esgotado", textos.vocabulario.estadoEsgotado],
+  ["baixo", textos.vocabulario.estadoBaixo],
+  ["ok", textos.vocabulario.estadoOk],
 ]);
 
 /** O estado da linha, decidido pelo servidor. Nunca só a cor: isto é o texto. */
@@ -26,17 +32,16 @@ export function rotuloDeEstado(estado: EstadoNivel): string {
 }
 
 const ROTULO_DE_MOVIMENTO = new Map<TipoMovimento, string>([
-  ["receipt", "Entrada"],
-  ["consumption", "Consumo"],
-  ["waste", "Desperdício"],
-  ["adjustment", "Ajuste"],
-  ["transfer_out", "Transferência (saída)"],
-  ["transfer_in", "Transferência (entrada)"],
-  ["return", "Devolução"],
-  // As duas pernas de uma fornada (ADR 0014). "Produção" e não "Fabrico": é a
-  // palavra que se usa numa pastelaria, e é a que o guião da sessão 0 usa.
-  ["production_out", "Produção (consumo)"],
-  ["production_in", "Produção (entrada)"],
+  ["receipt", textos.vocabulario.movimentoEntrada],
+  ["consumption", textos.vocabulario.movimentoConsumo],
+  ["waste", textos.vocabulario.movimentoDesperdicio],
+  ["adjustment", textos.vocabulario.movimentoAjuste],
+  ["transfer_out", textos.vocabulario.movimentoTransferenciaSaida],
+  ["transfer_in", textos.vocabulario.movimentoTransferenciaEntrada],
+  ["return", textos.vocabulario.movimentoDevolucao],
+  // As duas pernas de uma fornada (ADR 0014).
+  ["production_out", textos.vocabulario.movimentoProducaoConsumo],
+  ["production_in", textos.vocabulario.movimentoProducaoEntrada],
 ]);
 
 export function rotuloDeMovimento(tipo: TipoMovimento): string {
@@ -44,11 +49,11 @@ export function rotuloDeMovimento(tipo: TipoMovimento): string {
 }
 
 const ROTULO_DE_MOTIVO = new Map<MotivoQuebra, string>([
-  ["expired", "expirado"],
-  ["spoiled", "estragado"],
-  ["breakage", "quebra"],
-  ["prep_loss", "perda de preparação"],
-  ["other", "outro"],
+  ["expired", textos.vocabulario.motivoExpirado],
+  ["spoiled", textos.vocabulario.motivoEstragado],
+  ["breakage", textos.vocabulario.motivoQuebra],
+  ["prep_loss", textos.vocabulario.motivoPerdaDePreparacao],
+  ["other", textos.vocabulario.motivoOutro],
 ]);
 
 export function rotuloDeMotivo(motivo: MotivoQuebra): string {

@@ -16,6 +16,7 @@ import { MenuDeNavegacao } from "./menu-de-navegacao";
 import { rotulosDeCampo, type GrupoDeMenu } from "./menu";
 import { RodapeDaSidebar } from "./rodape-da-sidebar";
 import type { SessaoDoShell } from "./sessao-do-shell";
+import { textos } from "./textos";
 
 /**
  * A navegação de mobile: **a mesma sidebar, numa gaveta a partir do header**
@@ -65,10 +66,10 @@ export function GavetaDeNavegacao({
           variant="ghost"
           size="icon"
           className="shrink-0 md:hidden"
-          title="Abrir o menu"
+          title={textos.gaveta.abrir}
         >
           <Menu aria-hidden="true" />
-          <span className="sr-only">Abrir o menu</span>
+          <span className="sr-only">{textos.gaveta.abrir}</span>
         </Button>
       </SheetTrigger>
 
@@ -90,7 +91,7 @@ export function GavetaDeNavegacao({
           {/* O `Dialog` do Radix quer uma descrição; esta serve quem ouve e não
               rouba uma linha a quem vê. */}
           <SheetDescription className="sr-only">
-            Escolha um ecrã do StockFlow.
+            {textos.gaveta.descricao}
           </SheetDescription>
           <SheetClose asChild>
             <Button
@@ -98,10 +99,10 @@ export function GavetaDeNavegacao({
               variant="ghost"
               size="icon"
               className="ml-auto shrink-0"
-              title="Fechar o menu"
+              title={textos.gaveta.fechar}
             >
               <X aria-hidden="true" />
-              <span className="sr-only">Fechar o menu</span>
+              <span className="sr-only">{textos.gaveta.fechar}</span>
             </Button>
           </SheetClose>
         </SheetHeader>

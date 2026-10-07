@@ -31,6 +31,26 @@ COPY backend/ ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
+# Os catálogos de tradução, compilados aqui (ADR 0019).
+#
+# **Neste stage e não no runtime**, por duas razões: o `gettext` nunca entra na
+# imagem que vai para produção (é uma dependência de build, como o `uv`), e o
+# `COPY --from=builder /app /app` do runtime traz os `.mo` já feitos.
+#
+# `msgfmt` directo e não `manage.py compilemessages`: o segundo é um invólucro
+# do primeiro que precisa de `django.setup()`, e isso neste stage obrigava às
+# variáveis de fachada que o `collectstatic` do runtime usa — um bootstrap de
+# Django para correr um compilador. O `--check` recusa um `.po` mal formado, e o
+# `-o` escreve ao lado do `.po`, que é onde o Django os procura.
+#
+# **Um `.mo` esquecido é uma UI em inglês sem erro nenhum**, e é por isso que o
+# `tests/test_i18n.py` afirma que cada msgid resolve para o seu msgstr: a rede
+# está no teste e não aqui, porque aqui só se apanha o `.po` inválido.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gettext=0.21-12 \
+ && rm -rf /var/lib/apt/lists/* \
+ && find locale -name '*.po' -exec sh -c 'msgfmt --check "$1" -o "${1%.po}.mo"' _ {} \;
+
 # ---------------------------------------------------------------- runtime
 FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS runtime
 
@@ -77,6 +97,16 @@ COPY --from=builder --chown=app:app /app /app
 # Corre com variáveis de fachada porque o `prod.py` exige-as sem default e este
 # comando não liga a nada.
 #
+# **As quatro do email entraram a 2026-10-07 e a lição é a que importa aqui**: o
+# commit que tornou o SMTP obrigatório partiu esta linha, e nada local o disse —
+# o `uv run pytest` usa `settings.test`, o `manage.py` usa `settings.dev`, e esta
+# é a única vez em que o `prod.py` é **importado** antes de produção. O sintoma
+# foi um `KeyError: 'EMAIL_HOST'` no CI, duas horas e dezoito commits depois.
+#
+# Qualquer `required(env, …)` novo no `prod.py` tem de aparecer aqui também. É a
+# fachada inteira e não um subconjunto: a regra do `prod.py` é "sem default", e
+# ela existe para um worker falhar à partida em vez de servir sem segredos.
+#
 # Nota para quem revê (SECURITY.md §8, "`docker history` não pode mostrar
 # segredos"): o `docker history` **mostra** a string `DJANGO_SECRET_KEY=` desta
 # linha, e verificar isso é o reflexo certo. O que ele mostra é o *comando*, com
@@ -89,6 +119,8 @@ RUN DJANGO_SECRET_KEY="x-collectstatic-$(python -c 'import secrets; print(secret
     DATABASE_URL=postgres://ninguem@127.0.0.1:1/vazio \
     ALLOWED_HOSTS=localhost CSRF_TRUSTED_ORIGINS=https://localhost \
     DJANGO_ADMIN_URL=x/ REDIS_URL=redis://127.0.0.1:1 \
+    EMAIL_HOST=127.0.0.1 EMAIL_HOST_USER=ninguem EMAIL_HOST_PASSWORD=vazio \
+    DEFAULT_FROM_EMAIL=ninguem@invalido \
     python manage.py collectstatic --noinput --clear \
  && chown -R app:app /app/staticfiles
 

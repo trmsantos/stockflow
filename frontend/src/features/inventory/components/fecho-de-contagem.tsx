@@ -14,6 +14,7 @@ import { mensagemDeErro } from "@/lib/api/errors";
 import { formatMoney, formatMoneyRounded } from "@/lib/format";
 
 import type { FechoDeContagem } from "../schemas";
+import { textos } from "../textos";
 import { textoDeQuantidade } from "../vocabulario";
 
 /**
@@ -68,15 +69,15 @@ export function ResumoDoFecho({ fecho }: { readonly fecho: FechoDeContagem }) {
   return (
     <section className="flex flex-col gap-3">
       <ReguaDeContadores>
-        <Total rotulo="em falta" valor={fecho.loss_eur} cor="text-danger" />
-        <Total rotulo="a mais" valor={fecho.gain_eur} cor="text-success" />
-        <Total rotulo="diferença líquida" valor={fecho.net_eur} cor="" />
+        <Total rotulo={textos.fecho.totalEmFalta} valor={fecho.loss_eur} cor="text-danger" />
+        <Total rotulo={textos.fecho.totalAMais} valor={fecho.gain_eur} cor="text-success" />
+        <Total rotulo={textos.fecho.totalLiquido} valor={fecho.net_eur} cor="" />
       </ReguaDeContadores>
 
       <p className="px-celula-x text-xs text-muted-foreground">
-        <span data-numeric>{fecho.counted_lines}</span> de{" "}
-        <span data-numeric>{fecho.total_lines}</span> linhas contadas
-        {porContar === 0 ? "" : ". As que ficaram por contar não geram ajuste."}
+        <span data-numeric>{fecho.counted_lines}</span> {textos.contagem.de}{" "}
+        <span data-numeric>{fecho.total_lines}</span> {textos.fecho.linhasContadas}
+        {porContar === 0 ? "" : textos.fecho.porContarSemAjuste}
       </p>
 
       {porContar === 0 ? null : (
@@ -87,24 +88,20 @@ export function ResumoDoFecho({ fecho }: { readonly fecho: FechoDeContagem }) {
           <Alert className="border-warning-border bg-warning-surface">
             <TriangleAlert aria-hidden="true" className="text-warning" />
             <AlertTitle>
-              Ficam <span data-numeric>{porContar}</span> linhas por contar
+              {textos.fecho.ficam} <span data-numeric>{porContar}</span>{" "}
+              {textos.fecho.linhasPorContar}
             </AlertTitle>
-            <AlertDescription>
-              O stock delas não muda: sem contagem não há diferença, e sem diferença não há
-              ajuste. Pode fechar assim.
-            </AlertDescription>
+            <AlertDescription>{textos.fecho.porContarCorpo}</AlertDescription>
           </Alert>
         </div>
       )}
 
       {fecho.differences.length === 0 ? (
-        <p className="px-4 text-sm text-muted-foreground">
-          Nenhuma diferença até agora. O que está na prateleira é o que o sistema diz.
-        </p>
+        <p className="px-4 text-sm text-muted-foreground">{textos.fecho.semDiferencas}</p>
       ) : (
         <div className="flex flex-col">
           <h2 className="bg-surface-2 px-4 py-1 text-xs font-medium text-muted-foreground">
-            Diferenças, a maior primeiro
+            {textos.fecho.diferencasTitulo}
           </h2>
           <ul className="flex flex-col">
             {fecho.differences.map((linha) => {
@@ -124,7 +121,9 @@ export function ResumoDoFecho({ fecho }: { readonly fecho: FechoDeContagem }) {
                     >
                       {linha.difference === null ? "" : textoDeQuantidade(linha.difference)}
                     </span>
-                    <span className="sr-only">{emFalta ? "a menos" : "a mais"}</span>
+                    <span className="sr-only">
+                      {emFalta ? textos.accoes.aMenos : textos.accoes.aMais}
+                    </span>
                     <span
                       data-numeric
                       className={`w-20 shrink-0 text-sm ${emFalta ? "text-danger" : "text-success"}`}
@@ -133,13 +132,13 @@ export function ResumoDoFecho({ fecho }: { readonly fecho: FechoDeContagem }) {
                     </span>
                   </span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {linha.zone.name} · contado{" "}
+                    {linha.zone.name} · {textos.fecho.contadoPrefixo}{" "}
                     <span data-numeric>
                       {linha.counted === null ? "" : textoDeQuantidade(linha.counted)}
                     </span>
                     {linha.expected === null ? null : (
                       <>
-                        {" · esperado "}
+                        {` · ${textos.fecho.esperadoPrefixo} `}
                         <span data-numeric>{textoDeQuantidade(linha.expected)}</span>
                       </>
                     )}
@@ -176,9 +175,7 @@ export function FormularioDeFecho({
     const motivo = (typeof escrito === "string" ? escrito : "").trim();
 
     if (fecho.reason_required && motivo === "") {
-      setErro(
-        `As diferenças somam mais de ${formatMoney(fecho.reason_required_above_eur)} — escreva o que aconteceu.`,
-      );
+      setErro(textos.fecho.motivoObrigatorio(formatMoney(fecho.reason_required_above_eur)));
       const campo = document.getElementById(idMotivo);
       if (campo instanceof HTMLInputElement) campo.focus();
       return;
@@ -192,7 +189,8 @@ export function FormularioDeFecho({
     <form onSubmit={aoSubmeter} className="flex flex-col gap-3 px-4">
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={idMotivo}>
-          O que aconteceu{fecho.reason_required ? "" : " (opcional)"}
+          {textos.fecho.oQueAconteceu}
+          {fecho.reason_required ? "" : textos.fecho.opcional}
         </Label>
         <Input
           id={idMotivo}
@@ -200,14 +198,14 @@ export function FormularioDeFecho({
           type="text"
           autoComplete="off"
           maxLength={200}
-          placeholder="por exemplo, faltou lançar a transferência da manhã…"
+          placeholder={textos.fecho.exemploDeMotivo}
           aria-describedby={erro === null ? idAjuda : `${idAjuda} ${idErro}`}
           aria-invalid={erro === null ? undefined : true}
         />
         <p id={idAjuda} className="text-xs text-muted-foreground">
           {fecho.reason_required
-            ? `Obrigatório: as diferenças somam mais de ${formatMoney(fecho.reason_required_above_eur)}. Vai com o ajuste para o histórico.`
-            : `Fica no histórico ao lado do ajuste. Obrigatório acima de ${formatMoney(fecho.reason_required_above_eur)} de diferenças.`}
+            ? textos.fecho.ajudaObrigatoria(formatMoney(fecho.reason_required_above_eur))
+            : textos.fecho.ajudaOpcional(formatMoney(fecho.reason_required_above_eur))}
         </p>
         {erro === null ? null : (
           <p id={idErro} className="text-sm text-danger">
@@ -218,14 +216,14 @@ export function FormularioDeFecho({
 
       <div className="flex flex-col items-start gap-1.5">
         <Button type="submit" disabled={aFechar}>
-          {aFechar ? "A fechar…" : "Fechar contagem"}
+          {aFechar ? textos.fecho.aFechar : textos.fecho.fechar}
         </Button>
         {/* A ação visivelmente restrita da Q7: diz **a quem pertence** e não
             impede ninguém. É daqui que sai a pergunta "a Ana podia ter feito
             isto? e apagar?" — com um botão desativado, não havia pergunta. */}
         <p className="flex items-center gap-1 text-xs text-muted-foreground">
           <Lock aria-hidden="true" className="size-3 shrink-0" />
-          só o {fecho.closing_role} fecha a contagem
+          {textos.fecho.soOPapelFecha(fecho.closing_role)}
         </p>
       </div>
 

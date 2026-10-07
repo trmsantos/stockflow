@@ -147,6 +147,27 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "csp.middleware.CSPMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    # **Depois da sessão e acima do `TenantMiddleware`** (ADR 0019): a língua
+    # tem de estar activa quando um service levanta uma recusa, e as recusas
+    # acontecem dentro do âmbito que o `TenantMiddleware` abre.
+    #
+    # O que ele faz é olhar para o `Accept-Language` do browser e activar a
+    # língua. É o **mesmo sinal** que o `navigator.language` dá ao React, logo os
+    # dois lados concordam sem nada a ligá-los — nem contrato, nem coluna, nem
+    # espelho em `localStorage` (que foi o que o tema custou, ADR 0016).
+    #
+    # Ele também acrescenta `Vary: Accept-Language` a tudo o que passa por aqui,
+    # e isso é a razão de ele estar no `MIDDLEWARE` em vez de um
+    # `translation.activate()` numa view: sem o header, uma resposta com texto
+    # traduzido guardada em cache sai na língua errada ao pedido seguinte.
+    #
+    # **E o `django.conf.urls.i18n` não é encaminhado**, de propósito: o
+    # `set_language` é um POST anónimo que escreve o cookie `django_language`, e
+    # esse cookie **ganha** ao `Accept-Language` aqui. Um cookie velho passava a
+    # mandar no lado da API sem mandar no lado do React — os dois sinais a
+    # divergir, que é exactamente a propriedade que esta escolha compra. É
+    # também a família de endpoint que o `SECURITY.md` §5 obriga a proteger.
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -455,6 +476,45 @@ LANGUAGE_CODE = "pt-pt"
 TIME_ZONE = "Europe/Lisbon"
 USE_I18N = True
 USE_TZ = True
+
+#: As línguas que a app serve. Lista fechada, com **duas** desde 2026-10-07
+#: (ADR 0019, decisão 9).
+#:
+#: Com o idioma a vir do browser não se pode "não enviar" inglês: um browser
+#: inglês recebe o que houver. Enquanto esta lista teve um elemento, um
+#: `Accept-Language: en` caía no `LANGUAGE_CODE` e a app era inteiramente
+#: portuguesa — coerente, porque uma app meio traduzida dá ao leitor inglês uma
+#: parede de português exactamente onde a tarefa fica difícil.
+#:
+#: O inglês entrou no commit em que a última linha da lista fechada do
+#: `frontend/scripts/check-textos.mjs` saiu, com a entrada equivalente no
+#: `LINGUAS` do `frontend/src/lib/i18n.ts`. **A condição é verificada e não
+#: prometida**: o `test_o_ingles_so_liga_com_a_lista_vazia` do
+#: `tests/test_i18n.py` lê essa lista e falha nos dois sentidos.
+#:
+#: Os dois nomes ficam na língua **deles** e não traduzidos: é o que um selector
+#: de idioma mostra, no dia em que houver um — ninguém procura "Inglês" numa
+#: lista que está a ler em inglês.
+LANGUAGES = [
+    ("pt-pt", "Português (Portugal)"),
+    ("en", "English"),
+]
+
+#: As traduções **do projecto**, e é esta linha que torna "pt é pt de Portugal"
+#: verdade (ADR 0019, decisão 4).
+#:
+#: O Django funde os catálogos **depois** dos das apps instaladas e a fusão
+#: sobrepõe, logo o nosso `locale/pt_PT/LC_MESSAGES/django.po` ganha ao `pt_PT`
+#: do DRF — que é quase uma cópia do `pt_BR`. Medido antes de esta linha
+#: existir: com `LANGUAGE_CODE = "pt-pt"`, um `UUIDField` inválido respondia
+#: **"Must be a valid UUID."** em inglês, um `ChoiceField` respondia *"não é um
+#: escolha válido"* e um `IntegerField` respondia *"Certifque-se"*. Mudar o
+#: código de língua não corrige nada: `pt` dá as mesmas frases.
+#:
+#: O que o catálogo sobrepõe é uma lista fechada **derivada de uma medição** e
+#: não adivinhada — ver `tests/test_i18n.py`, que varre o catálogo do DRF à
+#: procura de marcadores pt-BR e falha se algum chegar ao utilizador.
+LOCALE_PATHS = [BASE_DIR / "locale"]
 
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_ENABLE_UTC = True

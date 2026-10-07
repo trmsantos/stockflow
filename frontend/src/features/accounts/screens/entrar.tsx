@@ -19,6 +19,7 @@ import {
   mensagemDaRecusa,
 } from "../erros";
 import { credenciaisSchema, type Estabelecimento, type Sessao } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * `/entrar` — **a primeira tela real do produto na identidade "Cabine"**.
@@ -66,7 +67,7 @@ export function EcraDeEntrada() {
     // pedido que não sai.
     return (
       <ErroAoCarregar
-        titulo="Não foi possível falar com o servidor"
+        titulo={textos.entrar.erroDeRede}
         mensagem={mensagemDaRecusa(sessao.error)}
         aoTentarOutraVez={() => {
           void sessao.refetch();
@@ -139,9 +140,9 @@ function avisoDaRecusa(erro: unknown): { tom: TomDoAviso; titulo: string } {
   if (codigoDaRecusa(erro) === CODIGO_CONTA_BLOQUEADA) {
     // 429 do lockout do axes, com corpo JSON. É uma instrução ("tente mais
     // tarde") e não um beco: o tom certo é o de aviso.
-    return { tom: "warning", titulo: "Conta temporariamente bloqueada" };
+    return { tom: "warning", titulo: textos.entrar.contaBloqueada };
   }
-  return { tom: "danger", titulo: "Não foi possível entrar" };
+  return { tom: "danger", titulo: textos.entrar.erroAoEntrar };
 }
 
 function FormularioDeEntrada({ destino }: { readonly destino: string }) {
@@ -194,10 +195,8 @@ function FormularioDeEntrada({ destino }: { readonly destino: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Entrar</h1>
-        <p className="text-sm text-muted-foreground">
-          Use o email com que foi convidado para o seu estabelecimento.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{textos.entrar.titulo}</h1>
+        <p className="text-sm text-muted-foreground">{textos.entrar.subtitulo}</p>
       </div>
 
       {entrar.isError && !temErroDeCampo ? (
@@ -210,7 +209,7 @@ function FormularioDeEntrada({ destino }: { readonly destino: string }) {
       <form noValidate onSubmit={submeter} className="flex flex-col gap-4">
         <CampoDeTexto
           id="email"
-          rotulo="Email"
+          rotulo={textos.campos.email}
           tipo="email"
           valor={email}
           aoMudar={setEmail}
@@ -220,7 +219,7 @@ function FormularioDeEntrada({ destino }: { readonly destino: string }) {
         />
         <CampoDeTexto
           id="password"
-          rotulo="Password"
+          rotulo={textos.campos.password}
           tipo="password"
           valor={password}
           aoMudar={setPassword}
@@ -235,13 +234,12 @@ function FormularioDeEntrada({ destino }: { readonly destino: string }) {
           aria-busy={entrar.isPending}
         >
           <LogIn aria-hidden="true" />
-          {entrar.isPending ? "A entrar…" : "Entrar"}
+          {entrar.isPending ? textos.entrar.aEntrar : textos.entrar.titulo}
         </Button>
       </form>
 
       <p className="text-pretty text-xs text-muted-foreground">
-        Não tem conta? O acesso é por convite: peça um link a quem administra o seu
-        estabelecimento.
+        {textos.entrar.semConta}
       </p>
     </div>
   );
@@ -286,16 +284,16 @@ function EscolhaDeEstabelecimento({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Escolha o estabelecimento</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{textos.entrar.escolhaTitulo}</h1>
         <p className="text-sm text-muted-foreground">
-          A sua conta tem acesso a mais do que um. Escolha onde quer trabalhar agora.
+          {textos.entrar.escolhaSubtitulo}
         </p>
       </div>
 
       {escolher.isError ? (
         <Aviso
           tom="danger"
-          titulo="Não foi possível abrir esse estabelecimento"
+          titulo={textos.entrar.erroAoAbrirEstabelecimento}
           mensagem={mensagemDaRecusa(escolher.error)}
         />
       ) : null}
@@ -308,7 +306,7 @@ function EscolhaDeEstabelecimento({
       />
 
       <IdentidadeDaSessao sessao={sessao} />
-      <BotaoDeSair rotulo="Terminar sessão" />
+      <BotaoDeSair rotulo={textos.entrar.terminarSessao} />
     </div>
   );
 }
@@ -329,14 +327,13 @@ function ContaSemEstabelecimento({ sessao }: { readonly sessao: Sessao }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Conta sem estabelecimento</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{textos.entrar.semEstabelecimentoTitulo}</h1>
         <p className="text-pretty text-sm text-muted-foreground">
-          Esta conta não está associada a nenhum estabelecimento. Peça um convite a quem o
-          administra: o convite chega como um link de uso único, e é esse link que dá o acesso.
+          {textos.entrar.semEstabelecimentoCorpo}
         </p>
       </div>
       <IdentidadeDaSessao sessao={sessao} />
-      <BotaoDeSair rotulo="Terminar sessão" />
+      <BotaoDeSair rotulo={textos.entrar.terminarSessao} />
     </div>
   );
 }
@@ -354,21 +351,21 @@ function SessaoJaAtiva({ sessao }: { readonly sessao: Sessao }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Já tem sessão aberta</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{textos.entrar.jaTemSessaoTitulo}</h1>
         <p className="text-sm text-muted-foreground">
           {sessao.tenant_ativo === null
-            ? "A sua sessão está aberta."
-            : `Está a trabalhar em ${sessao.tenant_ativo.nome}.`}
+            ? textos.entrar.jaTemSessaoCorpo
+            : textos.entrar.aTrabalharEm(sessao.tenant_ativo.nome)}
         </p>
       </div>
       <Button asChild className="h-controlo w-fit">
         <Link to="/">
-          Abrir o StockFlow
+          {textos.entrar.abrirApp}
           <ArrowRight aria-hidden="true" />
         </Link>
       </Button>
       <IdentidadeDaSessao sessao={sessao} />
-      <BotaoDeSair rotulo="Terminar sessão" />
+      <BotaoDeSair rotulo={textos.entrar.terminarSessao} />
     </div>
   );
 }
@@ -386,7 +383,7 @@ function IdentidadeDaSessao({ sessao }: { readonly sessao: Sessao }) {
   if (sessao.utilizador === null) return null;
   return (
     <p className="text-xs text-muted-foreground">
-      Sessão de <span className="font-mono">{sessao.utilizador.email}</span>
+      {textos.entrar.sessaoDe} <span className="font-mono">{sessao.utilizador.email}</span>
     </p>
   );
 }

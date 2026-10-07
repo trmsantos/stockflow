@@ -904,6 +904,7 @@ components:
           $ref: '#/components/schemas/RotaIdEnum'
         grupo:
           type: string
+          nullable: true
           minLength: 1
           maxLength: 50
         ordem:
@@ -918,7 +919,6 @@ components:
           minLength: 1
           maxLength: 50
       required:
-      - grupo
       - ordem
       - route_id
       - visivel
@@ -958,6 +958,7 @@ components:
           $ref: '#/components/schemas/RotaIdEnum'
         grupo:
           type: string
+          nullable: true
           maxLength: 50
         ordem:
           type: integer
@@ -1095,12 +1096,6 @@ components:
       properties:
         route_id:
           $ref: '#/components/schemas/RotaIdEnum'
-        rotulo_default:
-          type: string
-          maxLength: 50
-        grupo_default:
-          type: string
-          maxLength: 50
         papeis_permitidos:
           type: array
           items:
@@ -1109,9 +1104,7 @@ components:
           type: boolean
       required:
       - campo
-      - grupo_default
       - papeis_permitidos
-      - rotulo_default
       - route_id
     RotaIdEnum:
       enum:
@@ -1121,8 +1114,6 @@ components:
       - stock
       - contar
       - receber
-      - convites
-      - configuracao
       type: string
       description: |-
         * `inicio` - Início
@@ -1131,8 +1122,6 @@ components:
         * `stock` - Stock
         * `contar` - Contar
         * `receber` - Receber
-        * `convites` - Convites
-        * `configuracao` - Configuração
     SessaoOut:
       type: object
       description: |-

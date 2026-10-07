@@ -13,10 +13,13 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import pathlib
+import re
 import sys
 
 import pytest
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
 from config.log import JsonFormatter, RequestContextFilter
 from tests.conftest import reload_settings as _reload
@@ -229,3 +232,130 @@ def test_num_proxies_definido_em_todos_os_ambientes(
     `REMOTE_ADDR`; em prod é o nº de proxies de confiança.
     """
     assert _reload(modulo).REST_FRAMEWORK["NUM_PROXIES"] == esperado
+
+
+# ---------------------------------------------------------------------------
+# Email (SMTP) em produção
+# ---------------------------------------------------------------------------
+def test_prod_exige_smtp_e_nao_cai_na_consola(
+    prod_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Um email "enviado" para o stdout de um contentor é a pior falha possível.
+
+    Não levanta, não aparece em log nenhum, e a pessoa do outro lado fica à
+    espera de um convite que nunca existiu. É por isso que o `EMAIL_HOST` é
+    `required` e não tem default: um arranque que falha por falta de
+    configuração é ruidoso e corrige-se em dois minutos.
+
+    O teste afirma as duas metades: com configuração, o backend é o de SMTP; sem
+    ela, o módulo não importa.
+    """
+    prod = _reload("prod")
+
+    assert prod.EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend"
+    assert prod.EMAIL_HOST == "smtp.example.pt"
+    assert prod.DEFAULT_FROM_EMAIL == "StockFlow <stockflow@example.pt>"
+
+    monkeypatch.delenv("EMAIL_HOST")
+    with pytest.raises(ImproperlyConfigured, match="EMAIL_HOST"):
+        _reload("prod")
+
+
+@pytest.mark.parametrize(
+    ("porta", "ssl", "tls"),
+    [(587, False, True), (465, True, False), (25, False, True), (2525, False, True)],
+)
+def test_o_tls_do_smtp_e_derivado_da_porta_e_nunca_os_dois(
+    prod_env: None, monkeypatch: pytest.MonkeyPatch, porta: int, ssl: bool, tls: bool
+) -> None:
+    """`EMAIL_USE_SSL` e `EMAIL_USE_TLS` são mutuamente exclusivos no Django.
+
+    Ligar os dois faz o `smtplib` falhar com uma mensagem que não aponta para
+    isto, e deixar os dois desligados manda a password de SMTP em claro na rede.
+    Daí serem **derivados da porta** em vez de duas variáveis: não há forma de
+    discordarem, e não há caminho para desligar os dois.
+
+    A porta 465 é TLS implícito (liga já cifrado) e tudo o resto é STARTTLS
+    (liga em claro e promove) — incluindo a 25 e as portas alternativas que
+    alguns serviços usam, que é o caso de `2525` estar aqui.
+    """
+    monkeypatch.setenv("EMAIL_PORT", str(porta))
+
+    prod = _reload("prod")
+
+    assert prod.EMAIL_PORT == porta
+    assert prod.EMAIL_USE_SSL is ssl
+    assert prod.EMAIL_USE_TLS is tls
+    assert prod.EMAIL_USE_SSL != prod.EMAIL_USE_TLS, (
+        "os dois não podem estar ligados nem desligados ao mesmo tempo"
+    )
+
+
+def test_o_dev_escreve_na_consola_e_o_test_guarda_em_memoria(clean_env: None) -> None:
+    """E é por isso que nada disto é preciso para desenvolver.
+
+    Vale um teste porque é a razão pela qual o `prod.py` **pode** ser
+    intransigente: quem desenvolve nunca precisa de um SMTP, logo exigir um em
+    produção não custa nada a ninguém que esteja a trabalhar.
+    """
+    assert (
+        _reload("dev").EMAIL_BACKEND
+        == "django.core.mail.backends.console.EmailBackend"
+    )
+    assert (
+        _reload("test").EMAIL_BACKEND
+        == "django.core.mail.backends.locmem.EmailBackend"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A fachada do `collectstatic` tem de acompanhar o `prod.py`
+# ---------------------------------------------------------------------------
+
+#: O `prod.py` e a linha do `collectstatic` do Dockerfile, lidos como texto.
+RAIZ = pathlib.Path(__file__).resolve().parents[2]
+PROD = RAIZ / "backend/config/settings/prod.py"
+DOCKERFILE = RAIZ / "docker/backend.Dockerfile"
+
+
+def test_a_fachada_do_collectstatic_cobre_todos_os_required_do_prod() -> None:
+    """O `collectstatic` da build importa o `prod.py`, e é o único sítio que o faz.
+
+    **Esta é a divergência que já aconteceu**, a 2026-10-07: o commit que tornou
+    o SMTP obrigatório acrescentou quatro `required(env, …)` ao `prod.py` e não
+    tocou na linha do Dockerfile. Nada local o disse — o `pytest` usa
+    `settings.test`, o `manage.py` usa `settings.dev` — e o sintoma foi um
+    `KeyError: 'EMAIL_HOST'` a partir a build de imagens no CI, dezoito commits
+    depois de a causa ter entrado.
+
+    Este teste é a única coisa que liga as duas pontas, e **é texto a ler texto**
+    de propósito: importar o `prod.py` aqui obrigava a ter a fachada no ambiente
+    do teste, que é precisamente o acoplamento que se quer medir em vez de
+    satisfazer.
+
+    O que afirma é a inclusão, e não a igualdade: a fachada pode trazer mais do
+    que o `prod.py` exige (o `EMAIL_PORT`, por exemplo, tem default).
+    """
+    exigidas = set(re.findall(r'required\(\s*env\s*,\s*"([A-Z0-9_]+)"', PROD.read_text()))
+    assert exigidas, (
+        f"não encontrei nenhum `required(env, …)` em {PROD}. Se a forma mudou, este "
+        "teste deixou de medir o que diz medir — arranja-o em vez de o apagar."
+    )
+
+    dockerfile = DOCKERFILE.read_text()
+    # O fecho é `python manage.py collectstatic` e não `collectstatic`: a própria
+    # linha gera a chave com um `x-collectstatic-…`, e um `.*?collectstatic`
+    # fechava ali — o teste passava a ler uma fachada de uma variável só. Apanhado
+    # porque ele acusou seis que **estavam** lá.
+    bloco = re.search(
+        r"RUN DJANGO_SECRET_KEY=.*?python manage\.py collectstatic", dockerfile, re.DOTALL
+    )
+    assert bloco is not None, f"não encontrei a linha do `collectstatic` em {DOCKERFILE}"
+    na_fachada = set(re.findall(r"([A-Z0-9_]+)=", bloco.group(0)))
+
+    assert exigidas <= na_fachada, (
+        "o `prod.py` passou a exigir variáveis que a fachada do `collectstatic` não "
+        f"dá: {sorted(exigidas - na_fachada)}. Acrescenta-as à linha `RUN` do "
+        f"{DOCKERFILE.name} — senão a build da imagem falha com um `KeyError`, e só "
+        "no CI, porque é o único sítio onde o `prod.py` é importado."
+    )

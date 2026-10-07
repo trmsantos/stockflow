@@ -13,6 +13,7 @@ import {
 } from "../components/numeros-do-topo";
 import { EsqueletoDaTabelaDeStock, TabelaDeStock } from "../components/tabela-de-stock";
 import type { Localizacao, NivelDeStock } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * O ecrã Stock — "o que é que eu tenho, e quanto?".
@@ -41,7 +42,7 @@ import type { Localizacao, NivelDeStock } from "../schemas";
  * **Não há um único campo de quantidade editável neste ecrã**, e é a decisão que
  * o define: stock é um ledger, e um lápis ao lado do "3,4 kg" ensinaria o
  * produto errado a quem o vê. Quem quer mexer no número vai ao detalhe do
- * artigo e registra um movimento, que é o que o ledger aceita.
+ * artigo e regista um movimento, que é o que o ledger aceita.
  *
  * Todo o estado que define o ecrã está no URL (`?loja=`, `?filtro=`, `?q=`),
  * validado à entrada pela rota: recarregar a página, voltar atrás e abrir um
@@ -138,7 +139,7 @@ export function EcraDeStock() {
           Stock"). Aqui fica o `h1` do documento, para quem navega por
           cabeçalhos — visível seria a mesma palavra duas vezes a 40px de
           distância. */}
-      <h1 className="sr-only">Stock — o que tenho, e quanto</h1>
+      <h1 className="sr-only">{textos.stock.titulo}</h1>
 
       <BarraDeFiltros
         termo={termo}
@@ -186,7 +187,7 @@ export function EcraDeStock() {
           {/* A contagem muda a cada tecla; quem lê por áudio tem de a ouvir sem
               ter de voltar ao topo da lista. */}
           <p aria-live="polite" className="sr-only">
-            {linhas.length === 1 ? "1 artigo" : `${String(linhas.length)} artigos`}
+            {textos.stock.artigos(linhas.length)}
           </p>
 
           {linhas.length === 0 ? (
@@ -198,8 +199,7 @@ export function EcraDeStock() {
                   dobra: quem chega ao fundo da tabela é quem precisa de saber
                   porque é que ela não está por ordem alfabética. */}
               <p className="px-celula-x py-3 text-xs text-muted-foreground">
-                {linhas.length === 1 ? "1 artigo" : `${String(linhas.length)} artigos`}
-                {truncada ? ` de ${String(total)}` : ""}, ordenados pelo que está pior primeiro
+                {textos.stock.rodape(linhas.length, truncada ? total : null)}
               </p>
             </>
           )}

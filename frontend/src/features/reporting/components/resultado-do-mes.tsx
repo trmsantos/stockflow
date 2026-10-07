@@ -4,6 +4,7 @@ import { formatMoney, formatMoneyChange, formatMoneyRounded } from "@/lib/format
 
 import { COLUNAS_DE_RUBRICA, LARGURA_MINIMA_DE_RUBRICA } from "../colunas";
 import { eNegativo, type ComponenteDeCusto, type FechoDoMes } from "../schemas";
+import { textos } from "../textos";
 import { tintaDeCusto } from "../tinta-do-painel";
 import {
   fraseDasExclusoes,
@@ -88,7 +89,9 @@ function decomposicaoDosSalarios(mes: FechoDoMes): string {
  */
 function notaDaParcela(parcela: ComponenteDeCusto, mes: FechoDoMes): string {
   const base = notaDeCusto(parcela.id);
-  const partes: string[] = [parcela.is_part_of_total ? base : `não entra no total — ${base}`];
+  const partes: string[] = [
+    parcela.is_part_of_total ? base : textos.resultado.naoEntraNoTotal(base),
+  ];
 
   if (parcela.id === "other" && mes.other_costs.length > 0) {
     partes.push(decomposicaoDosCustosFixos(mes));
@@ -138,13 +141,13 @@ export function ResultadoDoMes({
       <MolduraDeTabela
         colunas={COLUNAS_DE_RUBRICA}
         larguraMinima={LARGURA_MINIMA_DE_RUBRICA}
-        rotulo="Vendas, gastos e resultado do mês"
+        rotulo={textos.resultado.tabela}
       >
         <tbody>
           <LinhaDeRubrica
-            rubrica="Vendas, sem IVA"
+            rubrica={textos.rubricas.vendasSemIva}
             valor={formatMoney(mes.revenue_net_eur)}
-            nota={`a base dos rácios; com IVA são ${formatMoney(mes.revenue_gross_eur)}`}
+            nota={textos.rubricas.comIva(formatMoney(mes.revenue_gross_eur))}
             explicar={explicar}
           />
 
@@ -160,20 +163,16 @@ export function ResultadoDoMes({
           ))}
 
           <LinhaDeRubrica
-            rubrica="Total de gastos"
+            rubrica={textos.rubricas.totalDeGastos}
             valor={formatMoney(mes.cost_total_eur)}
-            nota="mercadoria, perdas, pessoal e custos fixos — somado pelo servidor"
+            nota={textos.resultado.totalDeGastosNota}
             destacada
             explicar={explicar}
           />
           <LinhaDeRubrica
-            rubrica="Resultado"
+            rubrica={textos.rubricas.resultado}
             valor={formatMoneyChange(mes.result_eur)}
-            nota={
-              mes.closed
-                ? "vendas sem IVA menos o total de gastos"
-                : "mês a correr: o pessoal e os custos fixos são do mês inteiro"
-            }
+            nota={mes.closed ? textos.resultado.notaFechado : textos.resultado.notaACorrer}
             destacada
             tinta={prejuizo ? "text-danger" : ""}
             explicar={explicar}
@@ -187,10 +186,10 @@ export function ResultadoDoMes({
       {exclusoes === null ? null : (
         <p className="px-celula-x py-3 text-sm">
           <span className={prejuizo ? "text-danger" : "text-muted-foreground"}>
-            {prejuizo ? "Resultado negativo neste mês. " : ""}
+            {prejuizo ? textos.resultado.negativo : ""}
           </span>
           <span className="text-muted-foreground">
-            {exclusoes} É o que sobra do que está nesta tabela, e só isso.
+            {textos.resultado.comExclusoes(exclusoes)}
           </span>
         </p>
       )}
@@ -198,13 +197,13 @@ export function ResultadoDoMes({
       {barras.length === 0 ? null : (
         <div className="flex flex-col gap-1 border-t border-border py-2">
           <p className="px-celula-x text-xs text-muted-foreground">
-            Repartição dos gastos que somam ao total, do maior para o menor.
+            {textos.resultado.notaDasBarras}
           </p>
           <BarrasOrdenadas
             barras={barras}
-            campo="Gasto"
-            rotuloDoValor="Valor"
-            rotulo="Gastos do mês por categoria, do maior para o menor"
+            campo={textos.resultado.campoGasto}
+            rotuloDoValor={textos.grafico.valor}
+            rotulo={textos.resultado.rotuloDasBarras}
           />
         </div>
       )}

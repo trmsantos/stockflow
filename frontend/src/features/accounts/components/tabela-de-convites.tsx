@@ -14,6 +14,7 @@ import { formatDate, formatDayMonth } from "@/lib/format";
 import { nomeDoEstadoDoConvite, nomeDoPapel, type Convite } from "../schemas";
 import { BadgeDeEstadoDoConvite } from "./badge-de-estado-do-convite";
 import { ValidadeDoConvite } from "./validade-do-convite";
+import { textos } from "../textos";
 
 /**
  * A tabela de convites — **o primeiro ecrã deste repositório com a largura toda**
@@ -76,13 +77,13 @@ import { ValidadeDoConvite } from "./validade-do-convite";
 
 /** As sete colunas, e o que cada uma é. Uma lista só, usada pelas três formas. */
 const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "email", rotulo: "Email" },
-  { chave: "nome", rotulo: "Nome" },
-  { chave: "papel", rotulo: "Papel" },
-  { chave: "estado", rotulo: "Estado" },
-  { chave: "validade", rotulo: "Link" },
-  { chave: "criado", rotulo: "Criado", classe: "text-right" },
-  { chave: "accoes", rotulo: "Acções", classe: "text-right" },
+  { chave: "email", rotulo: textos.convites.colunas.email },
+  { chave: "nome", rotulo: textos.convites.colunas.nome },
+  { chave: "papel", rotulo: textos.convites.colunas.papel },
+  { chave: "estado", rotulo: textos.convites.colunas.estado },
+  { chave: "validade", rotulo: textos.convites.colunas.validade },
+  { chave: "criado", rotulo: textos.convites.colunas.criado, classe: "text-right" },
+  { chave: "accoes", rotulo: textos.convites.colunas.accoes, classe: "text-right" },
 ];
 
 /**
@@ -105,7 +106,7 @@ const COLUNAS: readonly ColunaDeTabela[] = [
  */
 const LARGURA_MINIMA = "min-w-4xl";
 
-const ROTULO = "Convites enviados, do mais recente para o mais antigo";
+const ROTULO = textos.convites.tabela;
 
 export function TabelaDeConvites({
   convites,
@@ -244,7 +245,7 @@ function LinhaDeConvite({
           // coisa errada.
           <span className="flex items-center justify-end gap-1">
             <span className="mr-1 hidden text-xs text-muted-foreground lg:inline">
-              Revogar é final.
+              {textos.convites.revogarEFinal}
             </span>
             <Button
               type="button"
@@ -258,8 +259,8 @@ function LinhaDeConvite({
               }}
             >
               <Ban aria-hidden="true" />
-              {aRevogar ? "A revogar…" : "Confirmar"}
-              <span className="sr-only"> a revogação do convite de {convite.email}</span>
+              {aRevogar ? textos.convites.aRevogar : textos.convites.confirmar}
+              <span className="sr-only">{textos.convites.daRevogacaoDe(convite.email)}</span>
             </Button>
             <Button
               type="button"
@@ -270,8 +271,8 @@ function LinhaDeConvite({
                 setAConfirmarRevogacao(false);
               }}
             >
-              Cancelar
-              <span className="sr-only"> a revogação do convite de {convite.email}</span>
+              {textos.convites.cancelar}
+              <span className="sr-only">{textos.convites.daRevogacaoDe(convite.email)}</span>
             </Button>
           </span>
         ) : (
@@ -284,31 +285,31 @@ function LinhaDeConvite({
               size="sm"
               disabled={inerte}
               aria-busy={aReenviar}
-              title="Cria um link novo e invalida o anterior"
+              title={textos.convites.reenviarPista}
               onClick={() => {
                 aoReenviar(convite.id);
               }}
             >
               <RefreshCw aria-hidden="true" />
-              {aReenviar ? "A reenviar…" : "Reenviar"}
+              {aReenviar ? textos.convites.aReenviar : textos.convites.reenviar}
               {/* O email no nome acessível: numa tabela de dez linhas, dez
                   botões chamados "Reenviar" são dez botões indistinguíveis
                   para quem navega por lista de controlos. */}
-              <span className="sr-only"> o convite de {convite.email}</span>
+              <span className="sr-only">{textos.convites.doConviteDe(convite.email)}</span>
             </Button>
             <Button
               type="button"
               variant="destructive"
               size="sm"
               disabled={inerte}
-              title="Cancela o convite. Pede confirmação, e é final."
+              title={textos.convites.revogarPista}
               onClick={() => {
                 setAConfirmarRevogacao(true);
               }}
             >
               <Ban aria-hidden="true" />
-              Revogar
-              <span className="sr-only"> o convite de {convite.email}</span>
+              {textos.convites.revogar}
+              <span className="sr-only">{textos.convites.doConviteDe(convite.email)}</span>
             </Button>
           </span>
         )}
@@ -331,7 +332,7 @@ export function EsqueletoDeConvites({ linhas = 3 }: { readonly linhas?: number }
     <EsqueletoDeTabela
       colunas={COLUNAS}
       larguraMinima={LARGURA_MINIMA}
-      rotulo="A carregar os convites…"
+      rotulo={textos.convites.aCarregar}
       linhas={linhas}
     />
   );

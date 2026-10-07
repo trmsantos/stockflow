@@ -4,14 +4,13 @@ import {
   ChartNoAxesColumn,
   ClipboardCheck,
   House,
-  MailPlus,
-  SlidersHorizontal,
   TriangleAlert,
   Truck,
   type LucideIcon,
 } from "lucide-react";
 
 import type { components } from "@/lib/api/types";
+import { textos } from "./textos";
 
 /**
  * O registo de rotas — **a lista fechada do que existe para navegar**, e a
@@ -87,11 +86,14 @@ import type { components } from "@/lib/api/types";
  * filtro próprio: o menu era uma constante de módulo e a primeira rota de um
  * papel só (`/convites`, do `owner` pela ADR 0010) tinha de ser escondida em
  * algum sítio. **Esse filtro saiu** quando o menu passou a vir do
- * `GET /auth/sessao` — o servidor já não manda a linha a quem não é `owner`
- * (medido a 2026-10-06, já com a rota `/painel`: **sete** itens para o `owner` e
- * **cinco** para o `staff` do mesmo estabelecimento — as duas linhas que o
- * `staff` não recebe são `convites` e `painel`) — e dois filtros a fazer o mesmo são um a ficar
- * desactualizado.
+ * `GET /auth/sessao` — o servidor já não manda a linha a quem não é `owner` — e
+ * dois filtros a fazer o mesmo são um a ficar desactualizado.
+ *
+ * O exemplo de 2026-10-06 era o `convites`, e ele já não está aqui: saiu do
+ * registo a 2026-10-07 quando virou secção das Definições (ADR 0019, decisão 7).
+ * A propriedade medida é a mesma e a rota restrita que sobra é o `painel`: um
+ * `owner` recebe **seis** itens e um `staff` do mesmo estabelecimento recebe
+ * **cinco**.
  *
  * E a correcção de 2026-10-06 da ADR 0011 vale ser lida aqui: o que o registo do
  * backend declara é `papeis_permitidos`, um **conjunto** por rota, e não um
@@ -140,6 +142,22 @@ export interface EntradaDoRegisto {
   readonly caminho: CaminhoDeRota;
   /** O rótulo por omissão. A projecção por tenant pode sobrepô-lo (ADR 0011). */
   readonly rotulo: string;
+  /**
+   * O grupo por omissão, e **vive aqui desde 2026-10-07** (ADR 0019, decisão 5).
+   *
+   * Vinha do servidor, resolvido e obrigatório — e como o `PUT /menu` é
+   * substituição total, a primeira gravação congelava "Inventário" na linha do
+   * tenant e nenhuma tradução a voltava a alcançar. Medido na base de dados.
+   *
+   * É copy do produto, como o `rotulo`: o contrato manda `null` quando a empresa
+   * não sobrepôs nada e quem resolve é o `montarMenu`. O que a empresa escreveu
+   * é texto **dela**, numa língua só, e nunca se traduz.
+   *
+   * A **ordem dos grupos** continua a ser a do primeiro item de cada um, que
+   * agora é a ordem deste ficheiro cruzada com a `ordem` da projecção — não há
+   * uma segunda lista a manter.
+   */
+  readonly grupo: string;
   readonly icone: LucideIcon;
   /** A pergunta de operação que o ecrã responde (DESIGN.md §1). */
   readonly pergunta: string;
@@ -150,16 +168,18 @@ export interface EntradaDoRegisto {
 export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
   inicio: {
     caminho: "/",
-    rotulo: "Início",
+    rotulo: textos.rotas.inicio.rotulo,
+    grupo: textos.grupos.painel,
     icone: House,
-    pergunta: "O que é que tenho de fazer hoje?",
+    pergunta: textos.rotas.inicio.pergunta,
     campo: false,
   },
   painel: {
     caminho: "/painel",
-    rotulo: "Painel",
+    rotulo: textos.rotas.painel.rotulo,
+    grupo: textos.grupos.painel,
     icone: ChartNoAxesColumn,
-    pergunta: "Quanto entrou, quanto saiu, e como fechou o mês?",
+    pergunta: textos.rotas.painel.pergunta,
     // **Não** é rota de campo: é o ecrã mais denso da aplicação — três abas,
     // tabelas de dinheiro e dois gráficos — e lê-se ao computador. A 360px
     // funciona, com as tabelas a deslizar na horizontal, que é o que o
@@ -171,59 +191,35 @@ export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
   },
   alertas: {
     caminho: "/alertas",
-    rotulo: "Alertas",
+    rotulo: textos.rotas.alertas.rotulo,
+    grupo: textos.grupos.painel,
     icone: TriangleAlert,
-    pergunta: "O que expira? O que falta? Quanto deitei fora?",
+    pergunta: textos.rotas.alertas.pergunta,
     campo: false,
   },
   stock: {
     caminho: "/stock",
-    rotulo: "Stock",
+    rotulo: textos.rotas.stock.rotulo,
+    grupo: textos.grupos.inventario,
     icone: Boxes,
-    pergunta: "O que é que eu tenho, e quanto?",
+    pergunta: textos.rotas.stock.pergunta,
     campo: false,
   },
   contar: {
     caminho: "/contar",
-    rotulo: "Contar",
+    rotulo: textos.rotas.contar.rotulo,
+    grupo: textos.grupos.inventario,
     icone: ClipboardCheck,
-    pergunta: "O que está na prateleira é o que o sistema diz?",
+    pergunta: textos.rotas.contar.pergunta,
     campo: true,
   },
   receber: {
     caminho: "/receber",
-    rotulo: "Receber",
+    rotulo: textos.rotas.receber.rotulo,
+    grupo: textos.grupos.compras,
     icone: Truck,
-    pergunta: "O que chegou, e está certo?",
+    pergunta: textos.rotas.receber.pergunta,
     campo: true,
-  },
-  convites: {
-    caminho: "/convites",
-    rotulo: "Convites",
-    icone: MailPlus,
-    pergunta: "Quem tem acesso, e quem está por entrar?",
-    // **Não** é rota de campo, e isto não é uma omissão: o predicado marca as
-    // rotas desenhadas para 360px, que são Contar e Receber e só elas (DESIGN.md
-    // §1 e §4). Convidar é um acto de escritório — tem um formulário de três
-    // campos e uma tabela de sete colunas, e é feito ao computador. A 360px
-    // funciona (nenhuma rota é bloqueada em mobile) com a tabela a deslizar na
-    // horizontal, que é o que o §4 declara em vez de tratar como defeito.
-    campo: false,
-  },
-  configuracao: {
-    caminho: "/configuracao",
-    rotulo: "Configuração",
-    icone: SlidersHorizontal,
-    pergunta: "Como é que esta casa está configurada?",
-    // Escritório, como os convites e pela mesma razão: é um ecrã de formulários
-    // e de uma tabela de configuração, feito sentado. A hora a que o dia de
-    // negócio começa não se muda no telemóvel entre duas mesas.
-    //
-    // O papel **não** está aqui, e é a regra deste ficheiro: quem filtra o menu
-    // pelo papel é o servidor (ADR 0011). Esta rota é restrita ao `owner`, e
-    // quem o diz é o `papeis` do registo do backend e o `permission_classes` do
-    // endpoint — não esta linha, que é só o que a rota é.
-    campo: false,
   },
 };
 

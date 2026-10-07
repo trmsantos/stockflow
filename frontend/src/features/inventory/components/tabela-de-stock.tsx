@@ -10,6 +10,7 @@ import {
 } from "@/components/tabela";
 
 import type { NivelDeStock } from "../schemas";
+import { textos } from "../textos";
 import { tintaDoTrilhoDoNivel } from "../leitura-da-validade";
 import { textoDeQuantidade } from "../vocabulario";
 import { EstadoDoNivel } from "./estado-do-nivel";
@@ -84,7 +85,7 @@ import { TextoDeValidade } from "./validade";
  */
 const LARGURA_MINIMA = "min-w-4xl";
 
-const ROTULO = "Níveis de stock, ordenados pelo que está pior primeiro";
+const ROTULO = textos.stock.tabela;
 
 /**
  * As seis colunas. As três de largura previsível — duas quantidades e o estado —
@@ -101,12 +102,12 @@ const ROTULO = "Níveis de stock, ordenados pelo que está pior primeiro";
  * colunas e corta a terceira parece desenhada por quem não a usou.
  */
 const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "artigo", rotulo: "Artigo" },
-  { chave: "quantidade", rotulo: "Quantidade", classe: "w-36 text-right" },
-  { chave: "minimo", rotulo: "Mínimo", classe: "w-32 text-right" },
-  { chave: "estado", rotulo: "Estado", classe: "w-28" },
-  { chave: "validade", rotulo: "Validade" },
-  { chave: "onde", rotulo: "Onde" },
+  { chave: "artigo", rotulo: textos.colunas.artigo },
+  { chave: "quantidade", rotulo: textos.colunas.quantidade, classe: "w-36 text-right" },
+  { chave: "minimo", rotulo: textos.colunas.minimo, classe: "w-32 text-right" },
+  { chave: "estado", rotulo: textos.colunas.estado, classe: "w-28" },
+  { chave: "validade", rotulo: textos.colunas.validade },
+  { chave: "onde", rotulo: textos.colunas.onde },
 ];
 
 /**
@@ -225,7 +226,7 @@ export function EsqueletoDaTabelaDeStock() {
       colunas={COLUNAS}
       larguraMinima={LARGURA_MINIMA}
       comTrilho
-      rotulo="A carregar o stock…"
+      rotulo={textos.accoes.aCarregarStock}
     />
   );
 }

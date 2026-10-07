@@ -159,3 +159,51 @@ AXES_IPWARE_PROXY_ORDER = "left-most"
 # mesma topologia a partir de 1 (`addrs[-NUM_PROXIES]`), e é por isso que os
 # dois números diferem de uma unidade para a mesma realidade.
 AXES_IPWARE_PROXY_COUNT = max(TRUSTED_PROXY_COUNT - 1, 0)
+
+
+# ---------------------------------------------------------------------------
+# Email (SMTP)
+# ---------------------------------------------------------------------------
+# **Obrigatório e sem default, como o resto deste ficheiro.** A alternativa — um
+# default que cai no `console.EmailBackend` — era a pior possível: um convite
+# "enviado" a escrever no stdout de um contentor, sem erro nenhum, e a pessoa do
+# outro lado à espera de um email que nunca existiu. Um arranque que falha por
+# falta de configuração é ruidoso e corrige-se em dois minutos.
+#
+# `EMAIL_HOST_USER` e `EMAIL_HOST_PASSWORD` **são** obrigatórios: um SMTP sem
+# autenticação ou é um relay aberto (que não existe) ou é um serviço interno —
+# e nesse caso a variável fica com o valor que ele pede, não vazia por omissão.
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = required(env, "EMAIL_HOST")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = required(env, "EMAIL_HOST_USER")
+EMAIL_HOST_PASSWORD = required(env, "EMAIL_HOST_PASSWORD")
+
+# **TLS, e qual dos dois.** São mutuamente exclusivos no Django e ligar os dois
+# faz o `smtplib` falhar com uma mensagem que não aponta para isto. A escolha é
+# da porta e não de gosto: 587 é STARTTLS (liga em claro e promove), 465 é TLS
+# implícito (liga já cifrado). Derivada da porta em vez de ser uma terceira
+# variável, para não haver forma de as duas discordarem.
+#
+# **E não há caminho para desligar os dois.** Um `EMAIL_USE_TLS=False` numa
+# variável era a porta por onde uma password de SMTP sai em claro na rede, e o
+# dia em que alguém a pusesse para "testar" ninguém notava. Em desenvolvimento a
+# questão não existe: o `dev.py` escreve na consola.
+EMAIL_USE_SSL = EMAIL_PORT == 465
+EMAIL_USE_TLS = not EMAIL_USE_SSL
+
+# Quem assina. Obrigatório porque o default do Django é `webmaster@localhost`,
+# que é um endereço que não existe em domínio nenhum: a mensagem sai, o servidor
+# de quem recebe rejeita-a por SPF, e o envio "funciona" sem ninguém receber.
+DEFAULT_FROM_EMAIL = required(env, "DEFAULT_FROM_EMAIL")
+SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
+
+# O prefixo do `mail_admins`, que é o único consumidor de email que o Django
+# traz de série. Sem `ADMINS` configurado ele não envia nada, e é o que está:
+# erros vão para o log estruturado (`config/log.py`), que é onde se procuram.
+EMAIL_SUBJECT_PREFIX = "[StockFlow] "
+
+# Falha rápido em vez de prender o worker: um SMTP que não responde é um
+# problema de infraestrutura, e uma tarefa Celery pendurada 30 s num socket é
+# uma fila a crescer sem nada no log que o explique.
+EMAIL_TIMEOUT = 10

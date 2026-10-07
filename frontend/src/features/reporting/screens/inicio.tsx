@@ -7,6 +7,7 @@ import {
   CartaoDoQueExpira,
   CartaoDoQueFalta,
 } from "../components/cartoes-do-inicio";
+import { textos } from "../textos";
 
 /**
  * O ecrã `/` — **a grelha de pré-visualizações**, e é a mesma para os três
@@ -94,12 +95,12 @@ export function EcraInicial() {
     // tabelas do Stock e dos Alertas (DESIGN.md §4). É precisamente o ponto
     // deste ecrã.
     <section className="flex w-full flex-col">
-      <h1 className="sr-only">Início — o trabalho do dia</h1>
+      <h1 className="sr-only">{textos.inicio.titulo}</h1>
 
       {/* A régua do topo, com o mesmo cromado dos outros ecrãs: um `<h2>` de
           15px e a linha de 1px por baixo. É a única frase do ecrã. */}
       <div className="border-b border-border px-celula-x py-3">
-        <h2 className="text-sm font-semibold">O que está à espera</h2>
+        <h2 className="text-sm font-semibold">{textos.inicio.oQueEstaAEspera}</h2>
       </div>
 
       {/* A grelha. Os `gap` e o `p` são os tokens de densidade (`gap-ritmo` são

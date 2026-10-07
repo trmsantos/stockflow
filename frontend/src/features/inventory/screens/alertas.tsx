@@ -28,6 +28,7 @@ import {
   TabelaDeDesperdicio,
 } from "../components/tabela-de-desperdicio";
 import type { Alerta, MotivoQuebra } from "../schemas";
+import { textos } from "../textos";
 import { rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
 
 /**
@@ -65,7 +66,11 @@ import { rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
 
 /** O que se diz depois de registar, para quem não está a olhar para o ecrã. */
 function frasePorRegisto(alerta: Alerta, motivo: MotivoQuebra): string {
-  return `Deitado fora: ${textoDeQuantidade(alerta.quantity)} de ${alerta.short_name} — ${rotuloDeMotivo(motivo)}.`;
+  return textos.alertas.registado(
+    textoDeQuantidade(alerta.quantity),
+    alerta.short_name,
+    rotuloDeMotivo(motivo),
+  );
 }
 
 export function EcraDeAlertas() {
@@ -96,7 +101,7 @@ export function EcraDeAlertas() {
     // Sem `max-w`: as duas tabelas usam a largura toda da área de conteúdo
     // (DESIGN.md §4), como o ecrã de Stock.
     <section className="flex w-full flex-col">
-      <h1 className="sr-only">Alertas — o que expira, o que falta, quanto deitei fora</h1>
+      <h1 className="sr-only">{textos.alertas.titulo}</h1>
 
       {resumo.isPending ? <EsqueletoDosNumerosDeAlertas /> : null}
       {resumo.isError ? (
@@ -129,10 +134,9 @@ export function EcraDeAlertas() {
                 cabeçalho e a hora de cada linha que fazem o dono dizer "isso é
                 de ontem" — e aí a pergunta está respondida. */}
             <h2 className="text-sm font-semibold">
-              Deitado fora —{" "}
               {periodo === "hoje"
-                ? `hoje (desde as ${resumo.data?.business_day_starts_at ?? "04:00"})`
-                : "últimos 7 dias"}
+                ? textos.alertas.deitadoForaHoje(resumo.data?.business_day_starts_at ?? "04:00")
+                : textos.alertas.deitadoForaSemana}
             </h2>
             {/* As duas fronteiras do dia de negócio, as duas no URL: qual delas
                 ele escolhe primeiro é, também, resposta à Q6. */}
@@ -144,7 +148,7 @@ export function EcraDeAlertas() {
               })}
               className="text-xs text-primary underline underline-offset-4 hover:no-underline"
             >
-              {periodo === "hoje" ? "ver os últimos 7 dias" : "ver só hoje"}
+              {periodo === "hoje" ? textos.alertas.verSemana : textos.alertas.verHoje}
             </Link>
           </div>
 
@@ -152,7 +156,7 @@ export function EcraDeAlertas() {
 
           {desperdicio.isError ? (
             <ErroDaLista
-              titulo="Não foi possível carregar o desperdício"
+              titulo={textos.alertas.erroDoDesperdicio}
               mensagem={mensagemDeErro(desperdicio.error)}
               aoTentarOutraVez={() => {
                 void desperdicio.refetch();
@@ -163,16 +167,16 @@ export function EcraDeAlertas() {
           {linhasDeDesperdicio === undefined ? null : linhasDeDesperdicio.length === 0 ? (
             <EstadoVazio
               icone={Trash2}
-              titulo="Nada deitado fora neste período"
+              titulo={textos.alertas.vazioDesperdicioTitulo}
               descricao={
                 periodo === "hoje"
-                  ? "O dia de negócio começou e ainda não se registou nenhuma quebra. As de antes dessa hora contam no dia anterior."
-                  : "Nenhuma quebra registada nos últimos sete dias."
+                  ? textos.alertas.vazioDesperdicioHoje
+                  : textos.alertas.vazioDesperdicioSemana
               }
             >
               <Button asChild variant="outline">
                 <Link to="/alertas" search={() => ({})}>
-                  Ver o que está em risco
+                  {textos.alertas.verEmRisco}
                 </Link>
               </Button>
             </EstadoVazio>
@@ -186,7 +190,7 @@ export function EcraDeAlertas() {
 
           {alertas.isError ? (
             <ErroDaLista
-              titulo="Não foi possível carregar os alertas"
+              titulo={textos.alertas.erroAoCarregar}
               mensagem={mensagemDeErro(alertas.error)}
               aoTentarOutraVez={() => {
                 void alertas.refetch();
@@ -198,24 +202,24 @@ export function EcraDeAlertas() {
             <EstadoVazio
               icone={CircleCheck}
               titulo={
-                vista === undefined ? "Nada em risco agora" : "Nada em risco com este filtro"
+                vista === undefined
+                  ? textos.alertas.vazioTitulo
+                  : textos.alertas.vazioComFiltroTitulo
               }
               descricao={
-                vista === undefined
-                  ? "Nenhum lote dentro do horizonte de validade e nenhum artigo abaixo do mínimo. Os alertas aparecem aqui sozinhos."
-                  : "Os outros dois contadores do topo podem ter linhas. Toque para ver tudo."
+                vista === undefined ? textos.alertas.vazioCorpo : textos.alertas.vazioComFiltroCorpo
               }
             >
               {vista === undefined ? (
                 <Button asChild variant="outline">
                   <Link to="/stock" search={() => ({})}>
-                    Ver o stock
+                    {textos.accoes.verOStock}
                   </Link>
                 </Button>
               ) : (
                 <Button asChild variant="outline">
                   <Link to="/alertas" search={() => ({})}>
-                    Ver tudo
+                    {textos.alertas.verTudo}
                   </Link>
                 </Button>
               )}
@@ -256,8 +260,7 @@ export function EcraDeAlertas() {
               />
 
               <p className="px-celula-x py-3 text-xs text-muted-foreground">
-                {linhas.length === 1 ? "1 alerta" : `${String(linhas.length)} alertas`}, o pior
-                primeiro. «Consumir até» é limite legal; «perde qualidade» é durabilidade mínima.
+                {textos.alertas.rodape(linhas.length)}
               </p>
             </>
           )}
@@ -268,14 +271,14 @@ export function EcraDeAlertas() {
           o risco: é a terceira pergunta, e o contador do topo é a primeira. */}
       {aVerDesperdicio || resumo.data === undefined ? null : (
         <p className="px-celula-x pb-3 text-xs text-muted-foreground">
-          Deitado fora nos últimos 7 dias:{" "}
+          {textos.alertas.deitadoForaNaSemana}{" "}
           <span data-numeric>{formatMoneyRounded(resumo.data.wasted_week_eur)}</span>.{" "}
           <Link
             to="/alertas"
             search={(anteriores) => ({ ...anteriores, ver: "desperdicio" })}
             className="text-primary underline underline-offset-4 hover:no-underline"
           >
-            Ver o que foi, e a que horas
+            {textos.alertas.verOQueFoi}
           </Link>
         </p>
       )}

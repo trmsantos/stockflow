@@ -11,6 +11,7 @@ import {
 import { formatDate, formatDayMonth, formatMoney, formatTime } from "@/lib/format";
 
 import type { Rececao } from "../schemas";
+import { textos } from "../textos";
 import { tintaDoTextoDoEstado, tintaDoTrilhoDoEstado } from "../tinta-do-estado";
 import {
   nomeDoDocumento,
@@ -93,17 +94,17 @@ import {
  * trunca no primeiro caso e está inteiro no `title` do link.
  */
 const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "fornecedor", rotulo: "Fornecedor" },
-  { chave: "tipo", rotulo: "Tipo", classe: "w-20" },
+  { chave: "fornecedor", rotulo: textos.tabela.colunas.fornecedor },
+  { chave: "tipo", rotulo: textos.tabela.colunas.tipo, classe: "w-20" },
   // `w-32` e não `w-40`: medido, "FT 2026/4471" precisa de 132px dos 160 que a
   // coluna tinha, e os 32 de folga eram a largura que faltava ao fornecedor e ao
   // "onde" — os dois truncavam.
-  { chave: "documento", rotulo: "Documento", classe: "w-32" },
-  { chave: "chegou", rotulo: "Chegou", classe: "w-32 text-right" },
-  { chave: "total", rotulo: "Total", classe: "w-28 text-right" },
-  { chave: "linhas", rotulo: "Linhas", classe: "w-28 text-right" },
-  { chave: "estado", rotulo: "Estado", classe: "w-32" },
-  { chave: "onde", rotulo: "Onde" },
+  { chave: "documento", rotulo: textos.tabela.colunas.documento, classe: "w-32" },
+  { chave: "chegou", rotulo: textos.tabela.colunas.chegou, classe: "w-32 text-right" },
+  { chave: "total", rotulo: textos.tabela.colunas.total, classe: "w-28 text-right" },
+  { chave: "linhas", rotulo: textos.tabela.colunas.linhas, classe: "w-28 text-right" },
+  { chave: "estado", rotulo: textos.tabela.colunas.estado, classe: "w-32" },
+  { chave: "onde", rotulo: textos.tabela.colunas.onde },
 ];
 
 /**
@@ -116,7 +117,7 @@ const COLUNAS: readonly ColunaDeTabela[] = [
  */
 const LARGURA_MINIMA = "min-w-5xl";
 
-const ROTULO = "Receções, as que precisam de revisão primeiro";
+const ROTULO = textos.tabela.rotulo;
 
 function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
   const porRever = rececao.status === "needs_review";
@@ -158,7 +159,7 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
         {rececao.doc_number ?? (
           // Uma fatura manuscrita da frutaria não tem número, e existem. Dizê-lo
           // é mais honesto do que uma célula vazia.
-          <span className="font-sans text-muted-foreground">sem número</span>
+          <span className="font-sans text-muted-foreground">{textos.comuns.semNumero}</span>
         )}
         {nifDiferente ? (
           // A sonda da Q10, debaixo do número porque é do documento que se
@@ -166,9 +167,14 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
           // que o badge antigo guardava.
           <span
             className="block truncate font-sans text-xs text-muted-foreground"
-            title={`Documento emitido a ${rececao.customer_name ?? "outro adquirente"}, NIF ${textoDeNif(rececao.customer_nif ?? "")}. A empresa é ${rececao.company_name}, NIF ${textoDeNif(rececao.company_nif)}.`}
+            title={textos.comuns.nifDoDocumento(
+              rececao.customer_name ?? textos.comuns.outroAdquirente,
+              textoDeNif(rececao.customer_nif ?? ""),
+              rececao.company_name,
+              textoDeNif(rececao.company_nif),
+            )}
           >
-            emitida a {rececao.customer_name ?? "outro adquirente"}
+            {textos.tabela.emitidaA(rececao.customer_name ?? textos.comuns.outroAdquirente)}
           </span>
         ) : null}
       </td>
@@ -180,7 +186,10 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
       <td
         data-numeric
         className={`${CLASSE_CELULA} w-32 text-right`}
-        title={`${formatDate(rececao.received_at)} às ${formatTime(rececao.received_at)}`}
+        title={textos.comuns.dataEHora(
+          formatDate(rececao.received_at),
+          formatTime(rececao.received_at),
+        )}
       >
         {formatDayMonth(rececao.received_at)} {formatTime(rececao.received_at)}
       </td>
@@ -189,7 +198,7 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
         // A guia de remessa não traz preços: a mercadoria entra antes de existir
         // fatura. Dizê-lo é mais honesto do que um "0,00 €".
         <td className={`${CLASSE_CELULA} w-28 text-right text-xs text-muted-foreground`}>
-          sem valor
+          {textos.tabela.semValor}
         </td>
       ) : (
         // O total é exacto e por isso leva cêntimos: é um total de fatura, não
@@ -206,7 +215,7 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
           // O número que o badge antigo trazia, agora debaixo do total de linhas
           // que ele qualifica: "2 por rever" de 5 é outra coisa que "2" de 2.
           <span className={`block text-xs ${tintaDoTextoDoEstado(rececao.status)}`}>
-            {rececao.lines_to_review} por rever
+            {textos.tabela.porRever(rececao.lines_to_review)}
           </span>
         )}
       </td>
@@ -227,11 +236,8 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
           // Entrou por guia e a fatura vem a fim de mês. **Não é um aviso** — é o
           // normal de quem compra a distribuidores —, por isso é cinzento e fica
           // debaixo do estado, que é o que ele qualifica.
-          <span
-            className="block text-xs text-muted-foreground"
-            title="Entrou por guia de remessa, sem preços. A fatura do fornecedor vem a fim de mês e reconcilia as entregas do período."
-          >
-            sem fatura
+          <span className="block text-xs text-muted-foreground" title={textos.comuns.entrouPorGuia}>
+            {textos.tabela.semFatura}
           </span>
         ) : null}
       </td>
@@ -278,7 +284,7 @@ export function EsqueletoDaTabelaDeRececoes() {
       colunas={COLUNAS}
       larguraMinima={LARGURA_MINIMA}
       comTrilho
-      rotulo="A carregar as receções…"
+      rotulo={textos.tabela.aCarregar}
     />
   );
 }

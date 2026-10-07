@@ -37,6 +37,7 @@ from collections import Counter
 from datetime import time
 from typing import Any
 
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from apps.accounts.models import EstadoDoConvite, Papel, RegimeDeIva, RotaDeMenu, Tema
@@ -192,8 +193,10 @@ class MenuInListSerializer(serializers.ListSerializer):
         repetidos = sorted(rota for rota, quantas in vistos.items() if quantas > 1)
         if repetidos:
             raise serializers.ValidationError(
-                f"rotas repetidas no menu: {', '.join(repetidos)}. O PUT é uma "
-                "substituição total e cada rota aparece no máximo uma vez."
+                _(
+                    "Repeated routes in the menu: {rotas}. The PUT is a full "
+                    "replacement and each route appears at most once."
+                ).format(rotas=", ".join(repetidos))
             )
         return attrs
 
@@ -223,7 +226,16 @@ class ItemDeMenuInSerializer(serializers.Serializer):
     """
 
     route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
-    grupo = serializers.CharField(max_length=LIMITE_DO_GRUPO)
+    #: `grupo` e `rotulo` são os dois opcionais e anuláveis, e desde 2026-10-07
+    #: pela mesma razão: `null` (ou ausente) quer dizer "usa o default", que é
+    #: copy do cliente e não viaja no arame (ADR 0019, decisão 5). Antes disto o
+    #: `grupo` era obrigatório, e como este `PUT` é substituição total a primeira
+    #: gravação congelava "Inventário" na linha do tenant.
+    grupo = serializers.CharField(
+        max_length=LIMITE_DO_GRUPO,
+        required=False,
+        allow_null=True,
+    )
     ordem = serializers.IntegerField(min_value=0, max_value=ORDEM_MAXIMA)
     visivel = serializers.BooleanField()
     rotulo = serializers.CharField(
@@ -378,7 +390,7 @@ class ItemDeMenuOutSerializer(serializers.Serializer):
     """
 
     route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
-    grupo = serializers.CharField(max_length=LIMITE_DO_GRUPO)
+    grupo = serializers.CharField(max_length=LIMITE_DO_GRUPO, allow_null=True)
     ordem = serializers.IntegerField()
     visivel = serializers.BooleanField()
     rotulo = serializers.CharField(max_length=LIMITE_DO_ROTULO, allow_null=True)
@@ -419,8 +431,6 @@ class RotaDeMenuOutSerializer(serializers.Serializer):
     """
 
     route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
-    rotulo_default = serializers.CharField(max_length=LIMITE_DO_ROTULO)
-    grupo_default = serializers.CharField(max_length=LIMITE_DO_GRUPO)
     papeis_permitidos = serializers.ListField(
         child=serializers.ChoiceField(choices=Papel.choices)
     )
@@ -493,10 +503,14 @@ class EstabelecimentoInSerializer(serializers.Serializer):
     def validate_business_day_starts_at(self, valor: time) -> time:
         if not DIA_DE_NEGOCIO_MINIMO <= valor <= DIA_DE_NEGOCIO_MAXIMO:
             raise serializers.ValidationError(
-                "O dia de negócio começa entre as "
-                f"{DIA_DE_NEGOCIO_MINIMO:%H:%M} e as {DIA_DE_NEGOCIO_MAXIMO:%H:%M}. "
-                "Esta hora separa um dia do seguinte nos totais: fora desta janela, "
-                "um serviço de noite ficaria partido em dois dias."
+                _(
+                    "The business day starts between {minimo} and {maximo}. This "
+                    "hour separates one day from the next in the totals: outside "
+                    "this window, an evening service would be split across two days."
+                ).format(
+                    minimo=f"{DIA_DE_NEGOCIO_MINIMO:%H:%M}",
+                    maximo=f"{DIA_DE_NEGOCIO_MAXIMO:%H:%M}",
+                )
             )
         return valor
 

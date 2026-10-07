@@ -2,6 +2,7 @@ import { Outlet } from "@tanstack/react-router";
 import { RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { textos } from "./textos";
 
 /**
  * O invólucro do ramo público: `/entrar` e `/ativar`, **fora** do `AppShell`
@@ -41,7 +42,7 @@ export function MolduraPublica() {
         <div className="flex items-center gap-3">
           {/* O trilho de 4px da identidade. Decoração: o nome está ao lado. */}
           <span aria-hidden="true" className="h-chip w-trilho shrink-0 bg-primary" />
-          <span className="text-sm font-bold tracking-microrotulo uppercase">StockFlow</span>
+          <span className="text-sm font-bold tracking-microrotulo uppercase">{textos.marca}</span>
         </div>
 
         <main className="rounded-xl border border-border bg-surface p-6 shadow-sm">
@@ -49,7 +50,7 @@ export function MolduraPublica() {
         </main>
 
         <p className="text-xs text-muted-foreground">
-          Gestão de stock, validades e compras para restauração.
+          {textos.publico.tagline}
         </p>
       </div>
     </div>
@@ -71,15 +72,15 @@ export function ErroPublico({ error, reset }: { error: unknown; reset: () => voi
   const mensagem =
     error instanceof Error && error.message !== ""
       ? error.message
-      : "Verifique a ligação e tente outra vez.";
+      : textos.publico.erroCorpo;
 
   return (
     <div role="alert" className="flex flex-col items-start gap-3">
-      <h1 className="text-xl font-semibold tracking-tight">Não foi possível continuar</h1>
+      <h1 className="text-xl font-semibold tracking-tight">{textos.publico.erroTitulo}</h1>
       <p className="text-pretty text-sm text-muted-foreground">{mensagem}</p>
       <Button type="button" variant="outline" className="h-controlo" onClick={reset}>
         <RotateCcw aria-hidden="true" />
-        Tentar outra vez
+        {textos.estados.tentarOutraVez}
       </Button>
     </div>
   );

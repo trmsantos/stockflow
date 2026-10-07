@@ -23,14 +23,37 @@
 
     As cores são **literais** porque um ficheiro `.svg` servido como ícone não
     tem acesso às variáveis CSS da aplicação. São os valores exactos de quatro
-    tokens do `tokens.css` — `--color-background`, `--color-primary`,
-    `--color-foreground` e `--color-border` — e, para esta cópia não poder divergir em silêncio, o
-    `scripts/check-marca.mjs` compara-as token a token a cada `pnpm lint`.
-    O ecrã de arranque no `index.html` **não** precisa desta cópia: lá o SVG é
-    inline e usa `var(--color-*)` a sério.
+    tokens do `tokens.css`: `color-background`, `color-primary`,
+    `color-foreground` e `color-border`. Para esta cópia não poder divergir em
+    silêncio, o `scripts/check-marca.mjs` compara-as token a token a cada
+    `pnpm lint`. O ecrã de arranque no `index.html` **não** precisa desta cópia:
+    lá o SVG é inline e usa as variáveis a sério.
+
+    ## Os nomes dos tokens aqui não levam os dois hífenes, e a razão é um defeito
+
+    Este ficheiro nasceu a 2026-10-06 e **nunca apareceu no separador** — o
+    browser mostrava o globo cinzento por omissão, e foi o dono do produto a
+    dá-lo por isso no dia seguinte — porque um comentário de XML não pode
+    conter `[dois hífenes]` e os nomes dos tokens CSS começam precisamente por
+    isso. O ficheiro não era XML bem formado, o browser recusava-o inteiro, e o
+    modo de falha é o pior que há: nada no terminal, nada no CI, e um ícone que
+    existe, serve com `200 image/svg+xml` e não desenha.
+
+    Foi medido com o ficheiro carregado como `<img>` numa página de ensaio: o
+    PNG do iOS desenhava ao lado e este dava o ícone de imagem partida.
+    Escreve-se `color-primary` e não o nome completo; o `check-marca.mjs` recusa
+    o par de hífenes dentro de um comentário para isto não voltar.
+
+    ## O `data-token` de cada `rect` não é decoração
+
+    É o que o gate lê: cada rectângulo **declara** de que token copiou a cor, e o
+    `check-marca.mjs` compara o `fill` com o valor desse token na paleta escura
+    do `tokens.css`. Sem ele, o gate teria de adivinhar pela ordem dos elementos,
+    e a ordem muda no dia em que alguém acrescentar uma barra. Os browsers
+    ignoram-no.
   -->
-  <rect width="32" height="32" rx="7" fill="oklch(0.145 0.008 240)" />
-  <rect x="7" y="7" width="3.5" height="18" rx="1.2" fill="oklch(0.76 0.13 225)" />
-  <rect x="14.5" y="8.5" width="10.5" height="3.2" rx="1.2" fill="oklch(0.97 0.003 240)" />
-  <rect x="14.5" y="20.3" width="7" height="3.2" rx="1.2" fill="oklch(0.305 0.011 240)" />
+  <rect data-token="color-background" width="32" height="32" rx="7" fill="oklch(0.145 0.008 240)" />
+  <rect data-token="color-primary" x="7" y="7" width="3.5" height="18" rx="1.2" fill="oklch(0.76 0.13 225)" />
+  <rect data-token="color-foreground" x="14.5" y="8.5" width="10.5" height="3.2" rx="1.2" fill="oklch(0.97 0.003 240)" />
+  <rect data-token="color-border" x="14.5" y="20.3" width="7" height="3.2" rx="1.2" fill="oklch(0.305 0.011 240)" />
 </svg>

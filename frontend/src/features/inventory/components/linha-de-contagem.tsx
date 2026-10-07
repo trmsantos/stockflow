@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { formatMoney } from "@/lib/format";
 
 import type { LinhaDeContagem } from "../schemas";
+import { textos } from "../textos";
 import { textoDeQuantidade } from "../vocabulario";
 
 /**
@@ -93,11 +94,11 @@ export function CabecalhoDaContagem() {
       aria-hidden="true"
       className={`hidden h-8 border-b border-border bg-surface-2 text-xs font-bold tracking-microrotulo text-muted-foreground uppercase md:grid ${GRELHA_DA_LINHA}`}
     >
-      <span>Artigo</span>
-      <span>Contado</span>
-      <span className="text-right">Esperado</span>
-      <span className="text-right">Diferença</span>
-      <span>Quem</span>
+      <span>{textos.colunas.artigo}</span>
+      <span>{textos.colunas.contado}</span>
+      <span className="text-right">{textos.colunas.esperado}</span>
+      <span className="text-right">{textos.colunas.diferenca}</span>
+      <span>{textos.colunas.quem}</span>
     </div>
   );
 }
@@ -154,7 +155,7 @@ export function LinhaDeContagem({
       return;
     }
     if (!DECIMAL_POSITIVO.test(valor)) {
-      setErro(`Escreva quantos ${linha.count_unit} estão na prateleira.`);
+      setErro(textos.contagem.escrevaQuantos(linha.count_unit));
       return;
     }
 
@@ -215,15 +216,15 @@ export function LinhaDeContagem({
             // O `title` leva-a nas duas.
             <span
               className="flex items-center gap-1 text-muted-foreground md:truncate"
-              title="Contagem cega: o esperado só aparece ao fechar"
+              title={textos.contagem.cegaPista}
             >
               <EyeOff aria-hidden="true" className="size-3.5 shrink-0" />
-              <span className="md:hidden">contagem cega: o esperado só aparece ao fechar</span>
-              <span className="hidden md:inline">cega</span>
+              <span className="md:hidden">{textos.contagem.cegaLonga}</span>
+              <span className="hidden md:inline">{textos.contagem.cega}</span>
             </span>
           ) : (
             <span className="text-muted-foreground md:text-right">
-              <span className="md:hidden">esperado </span>
+              <span className="md:hidden">{textos.contagem.esperadoPrefixo}{" "}</span>
               <span data-numeric>{textoDeQuantidade(linha.expected)}</span>
             </span>
           )}
@@ -238,7 +239,7 @@ export function LinhaDeContagem({
               {semDiferenca ? (
                 <>
                   <Check aria-hidden="true" className="size-3.5 shrink-0" />
-                  confere
+                  {textos.contagem.confere}
                 </>
               ) : (
                 <>
@@ -246,7 +247,9 @@ export function LinhaDeContagem({
                       igual a preto e branco. A palavra vai em `sr-only` para
                       quem ouve a linha não ter de interpretar o sinal. */}
                   <span data-numeric>{textoDeQuantidade(diferenca)}</span>
-                  <span className="sr-only">{emFalta ? "a menos" : "a mais"}</span>
+                  <span className="sr-only">
+                    {emFalta ? textos.accoes.aMenos : textos.accoes.aMais}
+                  </span>
                   <span aria-hidden="true">·</span>
                   <span data-numeric>{formatMoney(diferencaEmEuros)}</span>
                 </>
@@ -262,10 +265,10 @@ export function LinhaDeContagem({
               coluna que se esconde era "a que faltava", e aqui o que se esconde é
               a **proveniência** — quem está a contar ao telemóvel é quem conta. */}
           <span className="hidden truncate text-muted-foreground md:block">
-            {aRegistar ? "a guardar…" : (linha.counted_by ?? "")}
+            {aRegistar ? textos.contagem.aGuardar : (linha.counted_by ?? "")}
           </span>
           {aRegistar ? (
-            <span className="text-muted-foreground md:hidden">a guardar…</span>
+            <span className="text-muted-foreground md:hidden">{textos.contagem.aGuardar}</span>
           ) : null}
         </p>
 
@@ -290,7 +293,7 @@ export function LinhaDeContagem({
 export function EsqueletoDaContagem({ linhas = 5 }: { readonly linhas?: number }) {
   return (
     <div aria-busy="true">
-      <span className="sr-only">A carregar as linhas…</span>
+      <span className="sr-only">{textos.contagem.aCarregarLinhas}</span>
       <CabecalhoDaContagem />
       {Array.from({ length: linhas }, (_, indice) => indice).map((indice) => (
         <div

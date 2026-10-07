@@ -1,6 +1,7 @@
 import { CLASSE_CELULA } from "@/components/tabela";
 
 import { SubLinhaDeNota } from "./explicar";
+import { textos } from "../textos";
 
 /**
  * **Duas colunas: a rubrica e o valor.** É a linha das três tabelas de dinheiro
@@ -86,7 +87,7 @@ export function LinhaDeRubrica({
             dentroDeOutra ? "pl-8 font-normal text-muted-foreground" : "font-medium"
           }`}
         >
-          {dentroDeOutra ? "dos quais " : ""}
+          {dentroDeOutra ? textos.rubricas.dosQuais : ""}
           {rubrica}
         </th>
         <td data-numeric className={`${CLASSE_CELULA} w-40 text-right ${tinta}`}>

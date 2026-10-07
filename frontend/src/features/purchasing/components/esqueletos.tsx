@@ -1,5 +1,7 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { textos } from "../textos";
+
 /**
  * Pendente: **skeleton, não spinner** (DESIGN.md §3), com a altura do que vem a
  * seguir para o ecrã não saltar quando os dados chegarem.
@@ -22,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function EsqueletoDoCabecalho() {
   return (
     <div aria-busy="true" className="flex flex-col gap-2 px-celula-x">
-      <span className="sr-only">A carregar a receção…</span>
+      <span className="sr-only">{textos.rececao.aCarregar}</span>
       <div className="flex items-baseline justify-between gap-3">
         <Skeleton className="h-7 w-44" />
         <Skeleton className="h-6 w-20" />

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 import { nomeDoPapel, type Convite } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * O link de activação, **a única vez que ele existe** — e o painel que este ecrã
@@ -107,26 +108,23 @@ export function SegredoDoConvite({
         <KeyRound aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
         <div className="flex min-w-0 flex-col gap-1">
           <p className="text-sm font-semibold">
-            {segredo.origem === "criado"
-              ? "Convite criado. Entregue este link a quem convidou."
-              : "Link novo. O link anterior deixou de funcionar."}
+            {segredo.origem === "criado" ? textos.segredo.criado : textos.segredo.reenviado}
           </p>
           <p className="text-pretty text-sm">
-            Para{" "}
+            {textos.segredo.para}{" "}
             <span className="font-mono" translate="no">
               {segredo.convite.email}
             </span>
-            , como{" "}
-            {nomeDoPapel(segredo.convite.papel)}
-            {segredo.convite.nome === "" ? null : <> ({segredo.convite.nome})</>}. Não é enviado
-            nenhum email: copie o link e entregue-o você.
+            {textos.segredo.como} {nomeDoPapel(segredo.convite.papel)}
+            {segredo.convite.nome === "" ? null : <> ({segredo.convite.nome})</>}
+            {textos.segredo.semEmail}
           </p>
         </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={idDoCampo} className="text-xs font-bold tracking-microrotulo uppercase">
-          Link de activação
+          {textos.segredo.linkDeActivacao}
         </Label>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
           <Input
@@ -167,23 +165,23 @@ export function SegredoDoConvite({
             ) : (
               <Copy aria-hidden="true" />
             )}
-            {copiado ? "Copiado" : "Copiar link"}
+            {copiado ? textos.segredo.copiado : textos.segredo.copiarLink}
           </Button>
         </div>
+        {/* O atalho vai na frase do catálogo com espaços que não quebram: o
+            `<span className="whitespace-nowrap">` que estava aqui fazia o mesmo
+            trabalho, e um `&nbsp;` só é entidade dentro de JSX — numa string
+            seria texto. */}
         {falhouACopia ? (
-          <p className="text-sm text-muted-foreground">
-            O browser não deixou copiar automaticamente. Seleccione o texto do campo e copie com{" "}
-            {/* `&nbsp;` no atalho: "Ctrl+C" partido ao fim da linha deixa de ser
-                um atalho e passa a ser duas letras perdidas. */}
-            <span className="whitespace-nowrap">Ctrl&nbsp;+&nbsp;C</span>.
-          </p>
+          <p className="text-sm text-muted-foreground">{textos.segredo.copiaFalhou}</p>
         ) : null}
       </div>
 
       <div className="flex flex-col items-start gap-2 border-t border-warning-border pt-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-pretty text-sm">
-          <strong className="font-semibold">Este link não volta a aparecer.</strong> Se o perder,
-          use <em>Reenviar</em> na linha do convite — isso cria um link novo e invalida este.
+          <strong className="font-semibold">{textos.segredo.naoVoltaAAparecer}</strong>{" "}
+          {textos.segredo.seOPerderInicio} <em>{textos.convites.reenviar}</em>{" "}
+          {textos.segredo.seOPerderFim}
         </p>
         <Button
           type="button"
@@ -192,7 +190,7 @@ export function SegredoDoConvite({
           onClick={aoGuardar}
         >
           <X aria-hidden="true" />
-          Já guardei
+          {textos.segredo.jaGuardei}
         </Button>
       </div>
     </li>

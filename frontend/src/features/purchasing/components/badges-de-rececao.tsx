@@ -3,6 +3,7 @@ import { CircleCheck, FileClock, Info, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 import type { Rececao, TipoDeDocumento } from "../schemas";
+import { textos } from "../textos";
 import { nomeDoDocumento, siglaDeDocumento, textoDeNif } from "../vocabulario";
 
 /**
@@ -34,8 +35,8 @@ export function BadgeDeRevisao({ linhas }: { readonly linhas: number }) {
   return (
     <Badge className="bg-warning-surface text-foreground">
       <TriangleAlert aria-hidden="true" className="text-warning" />
-      precisa de revisão
-      {linhas === 0 ? null : <> ({linhas === 1 ? "1 linha" : `${String(linhas)} linhas`})</>}
+      {textos.badges.precisaDeRevisao}
+      {linhas === 0 ? null : <> ({textos.badges.quantasLinhas(linhas)})</>}
     </Badge>
   );
 }
@@ -45,7 +46,9 @@ export function BadgeDeConfirmada() {
   return (
     <Badge className="bg-surface-2 text-muted-foreground">
       <CircleCheck aria-hidden="true" className="text-success" />
-      no stock
+      {/* A mesma palavra do estado do documento na tabela, e por isso a mesma
+          chave: o badge e a coluna não se podem contradizer. */}
+      {textos.vocabulario.noStock}
     </Badge>
   );
 }
@@ -58,7 +61,7 @@ export function BadgeSemFatura() {
   return (
     <Badge className="bg-surface-2 text-muted-foreground">
       <FileClock aria-hidden="true" />
-      entrou sem fatura
+      {textos.badges.entrouSemFatura}
     </Badge>
   );
 }
@@ -78,10 +81,15 @@ export function BadgeDeNifDiferente({ rececao }: { readonly rececao: Rececao }) 
   return (
     <Badge
       className="bg-surface-2 text-muted-foreground"
-      title={`Documento emitido a ${rececao.customer_name ?? "outro adquirente"}, NIF ${textoDeNif(rececao.customer_nif)}. A empresa é ${rececao.company_name}, NIF ${textoDeNif(rececao.company_nif)}.`}
+      title={textos.comuns.nifDoDocumento(
+        rececao.customer_name ?? textos.comuns.outroAdquirente,
+        textoDeNif(rececao.customer_nif),
+        rececao.company_name,
+        textoDeNif(rececao.company_nif),
+      )}
     >
       <Info aria-hidden="true" />
-      NIF diferente do da empresa
+      {textos.badges.nifDiferente}
     </Badge>
   );
 }

@@ -9,6 +9,7 @@ import {
 import { formatMoneyRounded, formatPercentPoints } from "@/lib/format";
 
 import type { FechoDoMes } from "../schemas";
+import { textos } from "../textos";
 import { avisoDoRacioDePessoal } from "../vocabulario";
 
 /**
@@ -77,27 +78,27 @@ export function NumerosDoMes({ mes }: { readonly mes: FechoDoMes }) {
         {mes.goods_cost_ratio_pct === null || !mes.data_quality.consumption_registered ? null : (
           <div className={CLASSE_CONTADOR}>
             <CorpoDoContador
-              campo="mercadoria"
+              campo={textos.contadores.mercadoria}
               figura={formatPercentPoints(Number(mes.goods_cost_ratio_pct))}
-              nota="do que se vendeu, sem IVA"
+              nota={textos.contadores.doQueSeVendeu}
             />
           </div>
         )}
         {mes.labour_cost_ratio_pct === null ? null : (
           <div className={CLASSE_CONTADOR}>
             <CorpoDoContador
-              campo="pessoal"
+              campo={textos.contadores.pessoal}
               figura={formatPercentPoints(Number(mes.labour_cost_ratio_pct))}
-              nota="sem a remuneração do dono"
+              nota={textos.contadores.semRemuneracaoDoDono}
             />
           </div>
         )}
         {mes.prime_cost_pct === null ? null : (
           <div className={CLASSE_CONTADOR}>
             <CorpoDoContador
-              campo="mercadoria + pessoal"
+              campo={textos.contadores.mercadoriaMaisPessoal}
               figura={formatPercentPoints(Number(mes.prime_cost_pct))}
-              nota="sobre vendas sem IVA"
+              nota={textos.contadores.sobreVendasSemIva}
             />
           </div>
         )}
@@ -120,7 +121,7 @@ export function NumerosDoMes({ mes }: { readonly mes: FechoDoMes }) {
 export function CargosDoMes({ mes }: { readonly mes: FechoDoMes }) {
   const cargos: readonly BarraOrdenada[] = mes.roles.map((cargo) => ({
     chave: cargo.role_id,
-    rotulo: `${cargo.name} · ${String(cargo.headcount)} ${cargo.headcount === 1 ? "pessoa" : "pessoas"}`,
+    rotulo: textos.pessoal.rotuloDoCargo(cargo.name, cargo.headcount),
     // Leitura e não prova, e medido: "2 880,12 €" partia em duas linhas na
     // coluna de valor do gráfico e crescia a linha acima dos 44px.
     valor: formatMoneyRounded(cargo.payroll_eur),
@@ -130,22 +131,19 @@ export function CargosDoMes({ mes }: { readonly mes: FechoDoMes }) {
   if (cargos.length === 0) {
     return (
       <p className="px-celula-x pb-3 text-sm text-muted-foreground">
-        Não há cargos com custo neste mês. O custo por cargo aparece aqui à medida que houver
-        remunerações registadas.
+        {textos.pessoal.cargosVazio}
       </p>
     );
   }
 
   return (
     <div className="flex flex-col gap-1 pb-2">
-      <p className="px-celula-x text-xs text-muted-foreground">
-        O cargo é a função de quem trabalha, não o acesso que tem à aplicação.
-      </p>
+      <p className="px-celula-x text-xs text-muted-foreground">{textos.pessoal.cargoNaoEPapel}</p>
       <BarrasOrdenadas
         barras={cargos}
-        campo="Cargo"
-        rotuloDoValor="Custo"
-        rotulo="Custo de pessoal por cargo, do maior para o menor"
+        campo={textos.pessoal.campoCargo}
+        rotuloDoValor={textos.pessoal.custo}
+        rotulo={textos.pessoal.rotuloDosCargos}
       />
     </div>
   );

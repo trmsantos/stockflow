@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { textos } from "../textos";
 
 /**
  * **A camada de explicação do painel** — o interruptor e a sub-linha que ele
@@ -80,7 +81,7 @@ export function BotaoDeExplicar({ ligado }: { readonly ligado: boolean }) {
         });
       }}
     >
-      {ligado ? "menos" : "explicar"}
+      {ligado ? textos.rubricas.menos : textos.rubricas.explicar}
     </Button>
   );
 }

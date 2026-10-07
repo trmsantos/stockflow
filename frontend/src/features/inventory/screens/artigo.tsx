@@ -12,6 +12,7 @@ import { FormularioDeDesperdicio } from "../components/formulario-de-desperdicio
 import { HistoricoDeMovimentos } from "../components/historico-de-movimentos";
 import { TextoDeValidade } from "../components/validade";
 import type { NivelDeStock } from "../schemas";
+import { textos } from "../textos";
 import { textoDeQuantidade } from "../vocabulario";
 
 /**
@@ -38,7 +39,7 @@ function Voltar() {
           reaparece na mesma loja, com o mesmo filtro e a mesma procura. */}
       <Link to="/stock" search={true}>
         <ArrowLeft aria-hidden="true" />
-        Stock
+        {textos.artigo.voltar}
       </Link>
     </Button>
   );
@@ -47,7 +48,7 @@ function Voltar() {
 function Esqueleto() {
   return (
     <div aria-busy="true" className="flex flex-col gap-3 px-4">
-      <span className="sr-only">A carregar o artigo…</span>
+      <span className="sr-only">{textos.artigo.aCarregar}</span>
       <Skeleton className="h-7 w-48" />
       <Skeleton className="h-9 w-32" />
       <Skeleton className="h-4 w-full max-w-xs" />
@@ -76,8 +77,10 @@ function Cabecalho({ nivel, limiarEmDias }: { nivel: NivelDeStock; limiarEmDias:
           configurações, para o dono o contestar em voz alta (guião §4, nº 7). A
           unidade de registo também está à vista: é a pergunta do leite ao ml. */}
       <p className="text-xs text-muted-foreground">
-        mínimo {textoDeQuantidade(nivel.min_quantity)}, registado ao{" "}
-        {nivel.quantity.base_unit}
+        {textos.artigo.minimoERegisto(
+          textoDeQuantidade(nivel.min_quantity),
+          nivel.quantity.base_unit,
+        )}
       </p>
 
       <div className="text-sm">
@@ -100,11 +103,8 @@ function Cabecalho({ nivel, limiarEmDias }: { nivel: NivelDeStock; limiarEmDias:
         // modal aqui responderia pelo dono à pergunta que a sessão quer fazer.
         <Alert className="border-warning-border bg-warning-surface">
           <TriangleAlert aria-hidden="true" className="text-warning" />
-          <AlertTitle>Ficou negativo</AlertTitle>
-          <AlertDescription>
-            O stock registado está abaixo de zero. Costuma ser uma entrada que falta registar, ou
-            uma saída lançada a mais. Corrige-se com um movimento novo — nada se apaga.
-          </AlertDescription>
+          <AlertTitle>{textos.artigo.negativoTitulo}</AlertTitle>
+          <AlertDescription>{textos.artigo.negativoCorpo}</AlertDescription>
         </Alert>
       ) : null}
     </header>
@@ -136,7 +136,7 @@ export function EcraDeArtigo() {
         <div className="px-4">
           <Alert className="border-danger-border bg-danger-surface">
             <CircleAlert aria-hidden="true" className="text-danger" />
-            <AlertTitle>Não foi possível carregar o artigo</AlertTitle>
+            <AlertTitle>{textos.artigo.erroAoCarregar}</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-2">
               <span>{mensagemDeErro(nivel.error)}</span>
               <Button
@@ -146,7 +146,7 @@ export function EcraDeArtigo() {
                 }}
               >
                 <RotateCcw aria-hidden="true" />
-                Tentar outra vez
+                {textos.artigo.tentarOutraVez}
               </Button>
             </AlertDescription>
           </Alert>
@@ -157,15 +157,14 @@ export function EcraDeArtigo() {
         <div className="flex flex-col items-start gap-3 px-4 py-6">
           <PackageSearch aria-hidden="true" className="size-6 text-muted-foreground" />
           <div className="flex flex-col gap-1">
-            <p className="font-medium">Este artigo não está no stock</p>
+            <p className="font-medium">{textos.artigo.semArtigoTitulo}</p>
             <p className="text-pretty text-sm text-muted-foreground">
-              Ou nunca teve movimentos, ou o endereço aponta para um artigo de outro
-              estabelecimento.
+              {textos.artigo.semArtigoCorpo}
             </p>
           </div>
           <Button asChild variant="outline">
             <Link to="/stock" search={() => ({})}>
-              Ver o stock
+              {textos.accoes.verOStock}
             </Link>
           </Button>
         </div>

@@ -107,6 +107,21 @@ jobs:
           DJANGO_SECRET_KEY: ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
         run: uv run manage.py makemigrations --check --dry-run
 
+      - name: Compilar os catálogos de tradução (ADR 0019)
+        working-directory: backend
+        # Os `.po` são commitados e os `.mo` não. Sem este passo o
+        # `tests/test_i18n.py` fica vermelho — de propósito: um `.mo` em falta
+        # dá uma UI em inglês a um utilizador português **sem erro nenhum**, e
+        # esse é o modo de falha que o teste existe para tornar ruidoso.
+        #
+        # `msgfmt` e não `manage.py compilemessages`, como no Dockerfile: o
+        # segundo precisava de `django.setup()` e das variáveis que o `pytest`
+        # abaixo já tem, só para correr um compilador.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext
+          find locale -name '*.po' -exec sh -c 'msgfmt --check "$1" -o "${1%.po}.mo"' _ {} \;
+
       - name: pytest
         working-directory: backend
         env:
@@ -127,6 +142,14 @@ jobs:
           CSRF_TRUSTED_ORIGINS: https://stockflow.example.pt
           DJANGO_ADMIN_URL: gestao-interna/
           REDIS_URL: redis://127.0.0.1:6379
+          # O SMTP é obrigatório no `prod.py` desde 2026-10-07 e **não** tem
+          # default: um email que cai na consola é um convite "enviado" para o
+          # stdout de um contentor, sem erro nenhum. Valores de fachada, como os
+          # de cima — este comando não abre socket nenhum.
+          EMAIL_HOST: smtp.example.pt
+          EMAIL_HOST_USER: stockflow@example.pt
+          EMAIL_HOST_PASSWORD: ci-sem-valor-nao-e-segredo
+          DEFAULT_FROM_EMAIL: StockFlow <stockflow@example.pt>
         # O `check --deploy` não abre ligação à base de dados. Zero warnings é a
         # barra (SECURITY.md §2), e quem a impõe é o `grep -q "no issues"` do
         # fim, que é o último comando e portanto o que fixa o exit code — o

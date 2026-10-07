@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { textos } from "./textos";
+
 /**
  * As três abas do painel — **a união, as palavras e a ordem**, num sítio só.
  *
@@ -33,14 +35,16 @@ export const ABAS: readonly AbaDoPainel[] = ["dinheiro", "perdas", "pessoal"];
 
 /**
  * Dois pares `Record`/`Map`, como em toda a casa: o `Record` é a garantia
- * (exaustivo nos dois sentidos sob `pnpm typecheck`) e o `Map` é por onde se lê,
+ * (exaustivo nos dois sentidos sob `pnpm typecheck`) — e continua a ser ele,
+ * depois de as palavras terem passado para o catálogo: cada folha é nomeada
+ * aqui, uma a uma — e o `Map` é por onde se lê,
  * porque o `security/detect-object-injection` do `eslint.config.js` recusa — e
  * bem — um `OBJETO[chave]` com chave dinâmica.
  */
 const ROTULO_DA_ABA: Record<AbaDoPainel, string> = {
-  dinheiro: "Dinheiro",
-  perdas: "Perdas",
-  pessoal: "Pessoal",
+  dinheiro: textos.abas.dinheiro,
+  perdas: textos.abas.perdas,
+  pessoal: textos.abas.pessoal,
 };
 
 const ROTULOS_DAS_ABAS = new Map<string, string>(Object.entries(ROTULO_DA_ABA));
@@ -56,9 +60,9 @@ export function rotuloDaAba(aba: AbaDoPainel): string {
  * título da página a mudar com ela, e o `aria-current` do link.
  */
 const PERGUNTA_DA_ABA: Record<AbaDoPainel, string> = {
-  dinheiro: "Quanto entrou e quanto saiu neste período?",
-  perdas: "O que se perdeu, e sabe-se mesmo quanto?",
-  pessoal: "Quanto custa a equipa, e como fechou o mês?",
+  dinheiro: textos.abas.dinheiroPergunta,
+  perdas: textos.abas.perdasPergunta,
+  pessoal: textos.abas.pessoalPergunta,
 };
 
 const PERGUNTAS_DAS_ABAS = new Map<string, string>(Object.entries(PERGUNTA_DA_ABA));

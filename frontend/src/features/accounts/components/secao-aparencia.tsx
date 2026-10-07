@@ -6,6 +6,7 @@ import { mensagemDeErro } from "@/lib/api/errors";
 import { rotuloDoTema, TEMAS, temaDe, type Tema } from "@/lib/tema";
 
 import { useGuardarTema, useSessao } from "../api";
+import { textos } from "../textos";
 
 /**
  * `/preferencias` — as definições **desta pessoa** (ADR 0016 e ADR 0017).
@@ -78,7 +79,7 @@ function Esqueleto() {
       aria-busy="true"
       className="flex flex-col divide-y divide-border border border-border md:flex-row md:divide-x md:divide-y-0"
     >
-      <span className="sr-only">A carregar as suas preferências…</span>
+      <span className="sr-only">{textos.aparencia.aCarregar}</span>
       {[0, 1, 2].map((indice) => (
         <div key={indice} className="flex flex-1 flex-col gap-2 px-celula-x py-3">
           <Skeleton className="h-4 w-24" />
@@ -138,7 +139,7 @@ function SegmentoDeTema({
         <span className="text-sm font-semibold">{nome}</span>
         {activo ? (
           <span className="text-xs font-bold tracking-microrotulo text-primary uppercase">
-            em uso
+            {textos.aparencia.emUso}
           </span>
         ) : null}
       </span>
@@ -148,7 +149,7 @@ function SegmentoDeTema({
   );
 }
 
-export function EcraDePreferencias() {
+export function SecaoAparencia() {
   const sessao = useSessao();
   const guardar = useGuardarTema();
 
@@ -159,35 +160,24 @@ export function EcraDePreferencias() {
   const tema = temaDe(sessao.data?.utilizador?.tema);
 
   return (
-    <div className="flex max-w-3xl flex-col gap-6 p-4">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-balance">Preferências</h1>
-        <p className="text-sm text-muted-foreground">
-          São suas e seguem a sua conta: muda aqui e fica igual no computador do escritório e no do
-          balcão. Não mudam nada para o resto da equipa.
-        </p>
-      </header>
-
-      <section aria-labelledby="titulo-da-paleta" className="flex flex-col gap-3">
+    <section aria-labelledby="titulo-da-paleta" className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <h2
             id="titulo-da-paleta"
             className="flex items-center gap-2 text-xs font-bold tracking-microrotulo text-muted-foreground uppercase"
           >
             <Palette aria-hidden="true" className="size-3.5" />
-            Paleta
+            {textos.aparencia.rotulo}
           </h2>
-          <p className="text-sm text-muted-foreground">
-            Escolher aplica logo. A aplicação inteira muda de cor.
-          </p>
+          <p className="text-sm text-muted-foreground">{textos.aparencia.explicacao}</p>
         </div>
 
         {guardar.isError ? (
           <Alert variant="destructive">
             <CircleAlert aria-hidden="true" />
-            <AlertTitle>A paleta não ficou guardada</AlertTitle>
+            <AlertTitle>{textos.aparencia.erroTitulo}</AlertTitle>
             <AlertDescription>
-              {mensagemDeErro(guardar.error)} As cores voltaram à paleta anterior. Tente outra vez.
+              {mensagemDeErro(guardar.error)} {textos.aparencia.erroCorpo}
             </AlertDescription>
           </Alert>
         ) : null}
@@ -216,7 +206,6 @@ export function EcraDePreferencias() {
             ))}
           </div>
         )}
-      </section>
-    </div>
+    </section>
   );
 }

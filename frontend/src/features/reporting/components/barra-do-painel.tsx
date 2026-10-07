@@ -6,6 +6,7 @@ import { formatDayMonthShort, formatTime } from "@/lib/format";
 
 import type { AbaDoPainel } from "../abas";
 import type { Periodo, PeriodoResolvido } from "../schemas";
+import { textos } from "../textos";
 import { PERIODOS, rotuloCurtoDoPeriodo } from "../vocabulario";
 import { AbasDoPainel } from "./abas-do-painel";
 
@@ -83,7 +84,7 @@ export function BarraDoPainel({
 /** O seletor de período — cinco janelas, e a activa um degrau de superfície acima. */
 export function SeletorDePeriodo({ periodo }: { readonly periodo: Periodo }) {
   return (
-    <nav aria-label="Período do painel" className="flex flex-wrap items-center gap-1">
+    <nav aria-label={textos.barra.periodo} className="flex flex-wrap items-center gap-1">
       {PERIODOS.map((chave) => {
         const ativo = chave === periodo;
         return (
@@ -125,7 +126,7 @@ export function FronteiraDoPeriodo({
 
   return (
     <p className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
-      <span className="sr-only">Janela: </span>
+      <span className="sr-only">{textos.barra.janela}</span>
       <span data-numeric className="text-xs">
         {formatDayMonthShort(resolvido.since)} {formatTime(resolvido.since)}
       </span>
@@ -134,8 +135,7 @@ export function FronteiraDoPeriodo({
         {formatDayMonthShort(resolvido.until)} {formatTime(resolvido.until)}
       </span>
       <span className="hidden sm:inline">
-        {" · dia de negócio desde as "}
-        {resolvido.business_day_starts_at}
+        {textos.barra.diaDeNegocioDesde(resolvido.business_day_starts_at)}
       </span>
     </p>
   );

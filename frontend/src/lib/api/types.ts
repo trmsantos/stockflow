@@ -702,7 +702,7 @@ export interface components {
          *     (ver o modelo) — um sítio só a traduzir as duas formas.
          */
         ItemDeMenuInRequest: {
-            grupo: string;
+            grupo?: string | null;
             ordem: number;
             rotulo?: string | null;
             route_id: components["schemas"]["RotaIdEnum"];
@@ -739,7 +739,7 @@ export interface components {
          *     `GET /menu/rotas`, que é o registo.
          */
         ItemDeMenuOut: {
-            grupo: string;
+            grupo: string | null;
             ordem: number;
             rotulo: string | null;
             route_id: components["schemas"]["RotaIdEnum"];
@@ -842,9 +842,7 @@ export interface components {
          */
         RotaDeMenuOut: {
             campo: boolean;
-            grupo_default: string;
             papeis_permitidos: components["schemas"]["PapelEnum"][];
-            rotulo_default: string;
             route_id: components["schemas"]["RotaIdEnum"];
         };
         /**
@@ -854,11 +852,9 @@ export interface components {
          *     * `stock` - Stock
          *     * `contar` - Contar
          *     * `receber` - Receber
-         *     * `convites` - Convites
-         *     * `configuracao` - Configuração
          * @enum {string}
          */
-        RotaIdEnum: "inicio" | "painel" | "alertas" | "stock" | "contar" | "receber" | "convites" | "configuracao";
+        RotaIdEnum: "inicio" | "painel" | "alertas" | "stock" | "contar" | "receber";
         /**
          * @description A resposta dos cinco endpoints de autenticação. Sempre esta forma.
          *

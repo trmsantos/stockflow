@@ -8,6 +8,7 @@ import {
 import { formatMoney, formatTime } from "@/lib/format";
 
 import type { Desperdicio } from "../schemas";
+import { textos } from "../textos";
 import { rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
 
 /**
@@ -40,18 +41,18 @@ import { rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
  */
 
 const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "hora", rotulo: "Hora", classe: "w-24 text-right" },
-  { chave: "artigo", rotulo: "Artigo" },
-  { chave: "quantidade", rotulo: "Quantidade", classe: "w-32 text-right" },
-  { chave: "valor", rotulo: "Valor", classe: "w-28 text-right" },
-  { chave: "motivo", rotulo: "Motivo", classe: "w-36" },
-  { chave: "quem", rotulo: "Quem" },
-  { chave: "onde", rotulo: "Onde" },
-  { chave: "lote", rotulo: "Lote", classe: "w-36" },
+  { chave: "hora", rotulo: textos.colunas.hora, classe: "w-24 text-right" },
+  { chave: "artigo", rotulo: textos.colunas.artigo },
+  { chave: "quantidade", rotulo: textos.colunas.quantidade, classe: "w-32 text-right" },
+  { chave: "valor", rotulo: textos.colunas.valor, classe: "w-28 text-right" },
+  { chave: "motivo", rotulo: textos.colunas.motivo, classe: "w-36" },
+  { chave: "quem", rotulo: textos.colunas.quem },
+  { chave: "onde", rotulo: textos.colunas.onde },
+  { chave: "lote", rotulo: textos.colunas.lote, classe: "w-36" },
 ];
 
 const LARGURA_MINIMA = "min-w-5xl";
-const ROTULO = "Movimentos de desperdício, do mais recente para o mais antigo";
+const ROTULO = textos.desperdicio.tabela;
 
 export function TabelaDeDesperdicio({ linhas }: { readonly linhas: readonly Desperdicio[] }) {
   return (
@@ -93,7 +94,7 @@ export function EsqueletoDaTabelaDeDesperdicio({ linhas = 4 }: { readonly linhas
     <EsqueletoDeTabela
       colunas={COLUNAS}
       larguraMinima={LARGURA_MINIMA}
-      rotulo="A carregar o desperdício…"
+      rotulo={textos.desperdicio.aCarregar}
       linhas={linhas}
     />
   );

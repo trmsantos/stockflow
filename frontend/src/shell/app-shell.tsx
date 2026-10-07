@@ -5,6 +5,7 @@ import { AppHeader } from "./app-header";
 import { montarMenu, type EntradaDaProjeccao } from "./menu";
 import type { SessaoDoShell } from "./sessao-do-shell";
 import { SidebarNav } from "./sidebar-nav";
+import { textos } from "./textos";
 
 /**
  * O invólucro da aplicação: **um** shell de ERP, desktop-primeiro, com o
@@ -90,7 +91,7 @@ export function AppShell({
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-30 focus:rounded-lg focus:border focus:border-border-strong focus:bg-surface focus:px-3 focus:py-2 focus:text-sm"
       >
-        Saltar para o conteúdo
+        {textos.saltarParaConteudo}
       </a>
 
       <SidebarNav

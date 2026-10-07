@@ -6,6 +6,9 @@
  * `tenant_desconhecido` (403) e `tenant_divergente` (409). O `detail` vem
  * pronto para mostrar e já diz o passo seguinte; a UI não o reescreve.
  */
+
+import { textos } from "../textos";
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string | null;
@@ -41,7 +44,7 @@ export class TenantConflictError extends ApiError {
       code: "tenant_divergente",
       detail: args.detail,
       payload: args.payload,
-      message: "O estabelecimento do pedido não é o da sessão.",
+      message: textos.erros.tenantDivergente,
     });
     this.name = "TenantConflictError";
   }
@@ -52,7 +55,7 @@ export class ResponseShapeError extends Error {
   constructor(path: string, cause: unknown) {
     // O erro do Zod vai em `cause`: o `message` é para mostrar, o `cause` é
     // para o log.
-    super(`A resposta de ${path} não tem a forma esperada.`, { cause });
+    super(textos.erros.respostaInesperada(path), { cause });
     this.name = "ResponseShapeError";
   }
 }
@@ -72,5 +75,5 @@ export function isApiError(error: unknown): error is ApiError {
 export function mensagemDeErro(error: unknown): string {
   if (error instanceof ApiError && error.detail !== null) return error.detail;
   if (error instanceof Error && error.message !== "") return error.message;
-  return "Verifique a ligação e tente outra vez.";
+  return textos.erros.semLigacao;
 }

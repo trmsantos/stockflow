@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 
 import type { SessaoDoShell } from "./sessao-do-shell";
+import { textos } from "./textos";
 
 /**
  * O pé da sidebar: **o estabelecimento ativo, com troca sem sair**, e a saída da
@@ -40,14 +41,18 @@ import type { SessaoDoShell } from "./sessao-do-shell";
  * fecho com Escape, clique fora, navegação por teclado, foco devolvido ao
  * botão e `aria-expanded` correcto.
  *
- * ## A entrada das preferências, desde 2026-10-07
+ * ## A entrada das Definições, desde 2026-10-07
  *
- * O `/preferencias` é o único ecrã da app **sem** entrada no menu, e a razão é
- * da ADR 0017: o menu é uma projecção **por tenant**, e uma rota pessoal lá
- * dentro deixava uma empresa esconder um ecrã pessoal aos seus colaboradores. O
- * sítio dela é aqui — ao lado do email e da saída da conta é onde "a tua conta"
- * vive, e é o shell que é o lado certo porque o tema é da pessoa e não do
- * estabelecimento.
+ * O `/definicoes` é o único ecrã da app **sem** entrada no menu, e por duas
+ * razões que se somam: o menu é uma projecção **por tenant**, e uma rota pessoal
+ * lá dentro deixava uma empresa esconder um ecrã pessoal aos seus colaboradores
+ * (ADR 0017); e **definições não respondem a uma pergunta de operação**, que é o
+ * que uma entrada no registo significa (ADR 0019, decisão 7). O sítio dela é aqui
+ * — ao lado do email e da saída da conta é onde "a tua conta" vive.
+ *
+ * Desde 2026-10-07 **todas** as definições estão lá dentro, em secções: a
+ * aparência, o estabelecimento, a navegação e a equipa. Os itens "Convites" e
+ * "Configuração" saíram da sidebar e o grupo "Equipa" desapareceu com eles.
  *
  * É um `<Link>` e não um controlo de tema: há **um** sítio onde a paleta se
  * troca, e um segundo controlo aqui era uma segunda fonte para o mesmo gesto. O
@@ -121,7 +126,7 @@ export function RodapeDaSidebar({
                 : "text-xs font-bold tracking-microrotulo text-muted-foreground uppercase"
             }
           >
-            Estabelecimento
+            {textos.rodape.estabelecimento}
           </Label>
           <Select
             value={ativo.id}
@@ -139,13 +144,12 @@ export function RodapeDaSidebar({
               // ao texto do botão, que já dizem "Estabelecimento" e o nome.
               aria-label={
                 recolhida
-                  ? `Estabelecimento: ${nomeDoAtivo}${
-                      ativo.demonstracao ? " (demonstração)" : ""
-                    }`
+                  ? textos.rodape.estabelecimentoRecolhido(nomeDoAtivo) +
+                    (ativo.demonstracao ? textos.rodape.sufixoDeDemonstracao : "")
                   : undefined
               }
               aria-busy={aTrocar}
-              title={soUm ? nomeDoAtivo : "Trocar de estabelecimento"}
+              title={soUm ? nomeDoAtivo : textos.rodape.trocar}
               className={recolhida ? "w-full justify-center px-1.5" : "w-full"}
             >
               {/* O nome, e **não** um `<SelectValue/>`: o primitivo envolve os
@@ -209,7 +213,7 @@ export function RodapeDaSidebar({
                       // Para quem ouve: o ícone é decorativo e o papel sozinho
                       // não distingue um demo de uma casa a sério com o mesmo
                       // nome. A cor nunca comunica sozinha (DESIGN.md §2).
-                      <span className="sr-only"> (demonstração)</span>
+                      <span className="sr-only">{textos.rodape.sufixoDeDemonstracao}</span>
                     ) : null}
                   </span>
                   {/* O papel distingue dois nomes parecidos, e é o que diz o que
@@ -232,10 +236,10 @@ export function RodapeDaSidebar({
             {sessao.email}
           </span>
         )}
-        <Button asChild variant="ghost" size="icon" className="shrink-0" title="Preferências">
-          <Link to="/preferencias">
+        <Button asChild variant="ghost" size="icon" className="shrink-0" title={textos.rodape.definicoes}>
+          <Link to="/definicoes">
             <SlidersHorizontal aria-hidden="true" />
-            <span className="sr-only">Preferências</span>
+            <span className="sr-only">{textos.rodape.definicoes}</span>
           </Link>
         </Button>
         <Button
@@ -243,13 +247,17 @@ export function RodapeDaSidebar({
           variant="ghost"
           size="icon"
           className="shrink-0"
-          title={sessao.email === null ? "Terminar sessão" : `Terminar sessão (${sessao.email})`}
+          title={
+            sessao.email === null
+              ? textos.rodape.terminarSessao
+              : textos.rodape.terminarSessaoDe(sessao.email)
+          }
           disabled={aSair}
           aria-busy={aSair}
           onClick={sair}
         >
           <LogOut aria-hidden="true" />
-          <span className="sr-only">{aSair ? "A sair…" : "Terminar sessão"}</span>
+          <span className="sr-only">{aSair ? textos.rodape.aSair : textos.rodape.terminarSessao}</span>
         </Button>
       </div>
     </div>

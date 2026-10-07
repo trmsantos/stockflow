@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatMoneyRounded, formatTime } from "@/lib/format";
 
 import type { ResumoDeAlertas } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * Os três contadores do topo dos Alertas — e a razão de este ecrã não ser três
@@ -92,25 +93,25 @@ export function NumerosDosAlertas({
     <ReguaDeContadores>
       <ContadorDeVista
         figura={String(resumo.expiring_count)}
-        campo="lotes a expirar"
-        nota={`dentro de ${String(dias)} dias`}
-        titulo={`Lotes com validade dentro de ${String(dias)} dias — o limiar é do servidor e aparece dentro de cada alerta`}
+        campo={textos.numeros.lotesAExpirar}
+        nota={textos.numeros.dentroDeDias(String(dias))}
+        titulo={textos.numeros.lotesComValidade(String(dias))}
         ativo={vistaAtiva === "expira"}
         vista="expira"
       />
       <ContadorDeVista
         figura={String(resumo.missing_count)}
-        campo="em falta"
-        nota="abaixo do mínimo"
-        titulo="Artigos abaixo do mínimo de stock — o mesmo número do ecrã de Stock"
+        campo={textos.numeros.emFalta}
+        nota={textos.numeros.abaixoDoMinimo}
+        titulo={textos.numeros.artigosAbaixoDoMinimoNosAlertas}
         ativo={vistaAtiva === "falta"}
         vista="falta"
       />
       <ContadorDeVista
         figura={formatMoneyRounded(resumo.wasted_today_eur)}
-        campo="deitado fora hoje"
-        nota={`desde as ${desde}`}
-        titulo={`O dia de negócio deste estabelecimento começa às ${desde}, ou seja às ${formatTime(resumo.wasted_since)} de hoje — o que foi deitado fora antes disso conta no dia anterior`}
+        campo={textos.numeros.deitadoForaHoje}
+        nota={textos.numeros.desdeAs(desde)}
+        titulo={textos.numeros.diaDeNegocio(desde, formatTime(resumo.wasted_since))}
         ativo={vistaAtiva === "desperdicio"}
         vista="desperdicio"
       />
@@ -121,7 +122,7 @@ export function NumerosDosAlertas({
 /** Pendente: um aviso só, no contentor, para quem ouve o ecrã (medido no Stock). */
 export function EsqueletoDosNumerosDeAlertas() {
   return (
-    <ReguaDeContadores aria-busy="true" rotulo="A carregar os números…">
+    <ReguaDeContadores aria-busy="true" rotulo={textos.numeros.aCarregar}>
       {[0, 1, 2].map((indice) => (
         <div key={indice} className={CLASSE_CONTADOR}>
           <Skeleton className="h-3 w-24" />
@@ -140,8 +141,8 @@ export function ErroDosNumerosDeAlertas({
   return (
     <div className="border-b border-border px-celula-x py-3">
       <ErroAoCarregar
-        titulo="Não foi possível contar os alertas"
-        mensagem="A lista abaixo continua a funcionar. Os três números voltam à segunda tentativa."
+        titulo={textos.numeros.erroDeAlertasTitulo}
+        mensagem={textos.numeros.erroDeAlertasCorpo}
         aoTentarOutraVez={aoTentarOutraVez}
       />
     </div>

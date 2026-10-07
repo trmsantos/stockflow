@@ -16,6 +16,7 @@ import {
   EsqueletoDaTabelaDeRececoes,
   TabelaDeRececoes,
 } from "../components/tabela-de-rececoes";
+import { textos } from "../textos";
 
 /**
  * O ecrã Receber — "o que chegou, e está certo?".
@@ -72,7 +73,7 @@ export function EcraDeReceber() {
       {/* O nome do ecrã está no header do shell, com o grupo. Aqui fica o `h1` do
           documento, para quem navega por cabeçalhos — visível seria a mesma
           palavra duas vezes a 40px de distância. */}
-      <h1 className="sr-only">Receber — o que chegou, e está certo?</h1>
+      <h1 className="sr-only">{textos.receber.titulo}</h1>
 
       {resumo.isPending ? <EsqueletoDosNumerosDeRececoes /> : null}
       {resumo.isError ? (
@@ -90,7 +91,7 @@ export function EcraDeReceber() {
 
       {rececoes.isError ? (
         <ErroAoCarregar
-          titulo="Não foi possível carregar as receções"
+          titulo={textos.receber.erroAoCarregar}
           mensagem={mensagemDeErro(rececoes.error)}
           aoTentarOutraVez={() => {
             void rececoes.refetch();
@@ -101,36 +102,36 @@ export function EcraDeReceber() {
       {linhas === undefined ? null : (
         <>
           <p aria-live="polite" className="sr-only">
-            {linhas.length === 1 ? "1 receção" : `${String(linhas.length)} receções`}
+            {textos.receber.contagem(linhas.length)}
           </p>
 
           {linhas.length === 0 ? (
             vista === undefined ? (
               <EstadoVazio
                 icone={Truck}
-                titulo="Ainda não entrou mercadoria"
-                descricao="Cada entrada começa num documento do fornecedor — uma fatura, uma fatura simplificada do cash & carry, ou uma guia de remessa. Nada entra no stock sem alguém confirmar as linhas."
+                titulo={textos.receber.vazioTitulo}
+                descricao={textos.receber.vazioCorpo}
               >
                 <Button asChild>
                   <Link to="/receber/fotografar" search={true}>
                     <Camera aria-hidden="true" />
-                    Fotografar fatura
+                    {textos.comuns.fotografarFatura}
                   </Link>
                 </Button>
               </EstadoVazio>
             ) : (
               <EstadoVazio
                 icone={Search}
-                titulo="Nenhuma receção neste filtro"
+                titulo={textos.receber.filtroVazioTitulo}
                 descricao={
                   vista === "revisao"
-                    ? "Não há documentos à espera de revisão. Tudo o que chegou já deu entrada no stock."
-                    : "Nenhuma receção foi confirmada no dia de negócio de hoje."
+                    ? textos.receber.filtroVazioRevisao
+                    : textos.receber.filtroVazioHoje
                 }
               >
                 <Button asChild variant="outline">
                   <Link to="/receber" search={() => ({})}>
-                    Ver tudo
+                    {textos.receber.verTudo}
                   </Link>
                 </Button>
               </EstadoVazio>
@@ -142,9 +143,7 @@ export function EcraDeReceber() {
                   pagam pixéis acima da dobra: quem chega ao fundo da tabela é
                   quem precisa de saber porque é que ela não está por data. */}
               <p className="px-celula-x py-3 text-xs text-muted-foreground">
-                {linhas.length === 1 ? "1 documento" : `${String(linhas.length)} documentos`}
-                {truncada ? ` de ${String(total)}` : ""}, o que precisa de revisão primeiro.
-                Nenhum entra no stock sem ser confirmado.
+                {textos.receber.rodapeDaLista(linhas.length, truncada ? total : null)}
               </p>
             </>
           )}
@@ -169,7 +168,7 @@ export function EcraDeReceber() {
         <Button asChild>
           <Link to="/receber/fotografar" search={true}>
             <Camera aria-hidden="true" />
-            Fotografar fatura
+            {textos.comuns.fotografarFatura}
           </Link>
         </Button>
       </div>

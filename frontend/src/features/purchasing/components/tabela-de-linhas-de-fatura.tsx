@@ -22,6 +22,7 @@ import {
 } from "@/lib/format";
 
 import type { LinhaDeRececao } from "../schemas";
+import { textos } from "../textos";
 import { tintaDoTextoDoEstado, tintaDoTrilhoDoEstado } from "../tinta-do-estado";
 import {
   rotuloCurtoDeValidade,
@@ -127,18 +128,18 @@ const COLUNAS: readonly ColunaDeTabela[] = [
   // coluna ficava com 159px (126 úteis) e truncava "Nata para bater 35% UHT 1L",
   // que precisa de 192. O `Recebido` desceu a `w-28` (o cabeçalho "RECEBIDO" em
   // caixa alta precisa de 110 e tem 112) e a validade encurtou o seu rótulo.
-  { chave: "artigo", rotulo: "Artigo" },
-  { chave: "recebido", rotulo: "Recebido", classe: "w-28 text-right" },
-  { chave: "stock", rotulo: "Stock", classe: "w-28 text-right" },
-  { chave: "valor", rotulo: "Valor", classe: "w-36 text-right" },
-  { chave: "lote", rotulo: "Lote", classe: "w-28" },
-  { chave: "validade", rotulo: "Validade", classe: "w-32" },
-  { chave: "estado", rotulo: "Estado", classe: "w-28" },
-  { chave: "accao", rotulo: "Acção", classe: "w-24" },
+  { chave: "artigo", rotulo: textos.linhas.colunas.artigo },
+  { chave: "recebido", rotulo: textos.linhas.colunas.recebido, classe: "w-28 text-right" },
+  { chave: "stock", rotulo: textos.linhas.colunas.stock, classe: "w-28 text-right" },
+  { chave: "valor", rotulo: textos.linhas.colunas.valor, classe: "w-36 text-right" },
+  { chave: "lote", rotulo: textos.linhas.colunas.lote, classe: "w-28" },
+  { chave: "validade", rotulo: textos.linhas.colunas.validade, classe: "w-32" },
+  { chave: "estado", rotulo: textos.linhas.colunas.estado, classe: "w-28" },
+  { chave: "accao", rotulo: textos.linhas.colunas.accao, classe: "w-24" },
 ];
 
 const LARGURA_MINIMA = "min-w-5xl";
-const ROTULO = "Linhas do documento, na ordem em que estão impressas nele";
+const ROTULO = textos.linhas.tabela;
 
 interface Erros {
   readonly lote?: string;
@@ -186,10 +187,8 @@ function FormularioDeLinha({
     }
 
     const problemas: Erros = {
-      ...(LOTE_VALIDO.test(lote)
-        ? {}
-        : { lote: "Escreva o lote que está na embalagem, como está impresso." }),
-      ...(validade === "" ? { validade: "Escreva a validade da embalagem." } : {}),
+      ...(LOTE_VALIDO.test(lote) ? {} : { lote: textos.formularios.escrevaOLote }),
+      ...(validade === "" ? { validade: textos.formularios.escrevaAValidade } : {}),
     };
     setErros(problemas);
     if (problemas.lote !== undefined || problemas.validade !== undefined) return;
@@ -202,8 +201,10 @@ function FormularioDeLinha({
       {linha.requires_lot ? (
         <div className="flex flex-wrap items-start gap-2">
           <div className="flex w-full max-w-48 flex-col gap-1">
+            {/* O rótulo do campo é o da coluna: é o mesmo campo, e duas chaves
+                para a mesma palavra divergiam na primeira tradução. */}
             <Label htmlFor={idLote} className="text-xs">
-              Lote
+              {textos.linhas.colunas.lote}
             </Label>
             <Input
               id={idLote}
@@ -213,7 +214,7 @@ function FormularioDeLinha({
               spellCheck={false}
               maxLength={40}
               defaultValue={linha.lot_code ?? ""}
-              placeholder="como está na embalagem"
+              placeholder={textos.linhas.lotePlaceholder}
               className="font-mono"
               aria-invalid={erros.lote === undefined ? undefined : true}
               aria-describedby={erros.lote === undefined ? undefined : idErroDeLote}
@@ -222,8 +223,8 @@ function FormularioDeLinha({
           <div className="flex w-full max-w-48 flex-col gap-1">
             <Label htmlFor={idValidade} className="text-xs">
               {linha.expiry_kind === null
-                ? "Validade"
-                : `Validade (${rotuloCurtoDeValidade(linha.expiry_kind)})`}
+                ? textos.linhas.colunas.validade
+                : textos.linhas.validadeCom(rotuloCurtoDeValidade(linha.expiry_kind))}
             </Label>
             <Input
               id={idValidade}
@@ -252,7 +253,7 @@ function FormularioDeLinha({
       )}
 
       <Button type="submit" variant="outline" disabled={aRevisar} className="self-start">
-        {aRevisar ? "A guardar…" : "Confirmar linha"}
+        {aRevisar ? textos.comuns.aGuardar : textos.linhas.confirmarLinha}
       </Button>
     </form>
   );
@@ -281,33 +282,35 @@ function DossierDaLinha({ linha }: { readonly linha: LinhaDeRececao }) {
 
       {linha.stock_quantity !== null && temConversao(linha) ? (
         <p className="text-muted-foreground">
-          <span data-numeric>{textoDaUnidadeDeCompra(linha)}</span> dão{" "}
-          <span data-numeric>{textoNaUnidadeBase(linha.stock_quantity)}</span> no stock, que é a
-          unidade em que o ledger guarda.
+          <span data-numeric>{textoDaUnidadeDeCompra(linha)}</span>{" "}
+          {textos.linhas.conversaoMeio}{" "}
+          <span data-numeric>{textoNaUnidadeBase(linha.stock_quantity)}</span>{" "}
+          {textos.linhas.conversaoFim}
         </p>
       ) : null}
 
       {linha.unit_price === null ? (
         // A guia de remessa não traz preços, e isso não é um campo em falta: a
         // fatura vem a fim de mês.
-        <p className="text-muted-foreground">Esta guia não traz preços.</p>
+        <p className="text-muted-foreground">{textos.linhas.guiaSemPrecos}</p>
       ) : (
         <p className="text-muted-foreground">
-          A fatura cobra{" "}
+          {textos.linhas.aFaturaCobra}{" "}
           <span data-numeric>
             {textoDeQuantidadeDaFatura(linha.quantity_invoiced, linha.invoice_unit)}
           </span>{" "}
-          a <span data-numeric>{formatMoney(linha.unit_price)}</span>/{linha.invoice_unit}
+          {textos.linhas.aoPreco} <span data-numeric>{formatMoney(linha.unit_price)}</span>/
+          {linha.invoice_unit}
           {linha.vat_rate === null ? null : (
             <>
-              {", com IVA de "}
+              {textos.linhas.comIvaDe}{" "}
               <span data-numeric>{formatRate(linha.vat_rate)}</span>
-              {" — a taxa que vem na linha, não a do artigo"}
+              {textos.linhas.taxaDaLinha}
             </>
           )}
           {linha.line_total === null ? null : (
             <>
-              {". Total da linha: "}
+              {textos.linhas.totalDaLinha}{" "}
               <span data-numeric>{formatMoney(linha.line_total)}</span>
             </>
           )}
@@ -320,55 +323,59 @@ function DossierDaLinha({ linha }: { readonly linha: LinhaDeRececao }) {
         // entre o documento e a prateleira. Não há nada a corrigir no ecrã; há
         // uma conversa a ter com o fornecedor, e o ecrã dá-lhe o número.
         <p className="text-warning">
-          Faturados{" "}
+          {textos.linhas.faturadosInicio}{" "}
           <span data-numeric>
             {textoDeQuantidadeDaFatura(linha.quantity_invoiced, linha.invoice_unit)}
           </span>
-          , entraram{" "}
+          {textos.linhas.faturadosMeio}{" "}
           <span data-numeric>
             {textoDeQuantidadeDaFatura(linha.quantity_received, linha.invoice_unit)}
           </span>
-          {" — a fatura cobra os que faturou."}
+          {textos.linhas.faturadosFim}
         </p>
       ) : null}
 
       {historico === null ? null : (
         <p className={historico.change_pct > 0 ? "text-warning" : "text-success"}>
           <span data-numeric>{formatPercentChange(historico.change_pct)}</span>{" "}
-          {historico.change_pct > 0 ? "acima" : "abaixo"} das últimas compras (
-          <span data-numeric>{formatMoney(historico.last_price)}</span>/{historico.unit_label} em{" "}
-          {historico.reference}). O aviso aparece acima de{" "}
+          {historico.change_pct > 0 ? textos.linhas.acima : textos.linhas.abaixo}{" "}
+          {textos.linhas.dasUltimasCompras} (
+          <span data-numeric>{formatMoney(historico.last_price)}</span>/{historico.unit_label}{" "}
+          {textos.linhas.historicoEm} {historico.reference}).{" "}
+          {textos.linhas.oAvisoApareceAcimaDe}{" "}
           {/* O limiar entra na frase, que é onde ele se contesta em voz alta: um
               painel de limiares está proibido (guião §4, nº 7). */}
           <span data-numeric>{formatPercentPoints(historico.threshold_pct)}</span>.
         </p>
       )}
 
+      {/* As frases do catálogo acabam em espaço de propósito: só aparecem quando
+          a linha as tem, e a que vem depois encosta-se-lhe. */}
       <p className="text-muted-foreground">
-        {linha.kind === "deposit" ? "Vasilhame: linha com valor que não é stock consumível. " : ""}
-        {linha.kind === "charge" ? "Encargo: valor sem mercadoria. " : ""}
+        {linha.kind === "deposit" ? textos.linhas.vasilhame : ""}
+        {linha.kind === "charge" ? textos.linhas.encargo : ""}
         {linha.conservation === "ambient"
           ? null
-          : `Conserva-se ${rotuloDeConservacao(linha.conservation)}. `}
-        {linha.variable_weight ? "Peso variável: pesado peça a peça na fatura. " : ""}
+          : textos.linhas.conservaSe(rotuloDeConservacao(linha.conservation))}
+        {linha.variable_weight ? textos.linhas.pesoVariavel : ""}
         {linha.expires_at === null || linha.expiry_kind === null
           ? null
-          : `A validade desta linha é «${rotuloDeValidade(linha.expiry_kind)}». `}
-        Entra em {linha.location.name}.
+          : textos.linhas.aValidadeDestaLinha(rotuloDeValidade(linha.expiry_kind))}
+        {textos.linhas.entraEm(linha.location.name)}
       </p>
 
       {linha.reviewed_by === null ? null : (
         <p className="text-muted-foreground">
-          Revista por {linha.reviewed_by}
+          {textos.linhas.revistaPor(linha.reviewed_by)}
           {linha.reviewed_at === null ? null : (
             <>
-              {" às "}
-              <span data-numeric>{formatTime(linha.reviewed_at)}</span>
+              {" "}
+              {textos.comuns.as} <span data-numeric>{formatTime(linha.reviewed_at)}</span>
             </>
           )}
           {linha.movement === null
-            ? ". O movimento só existe quando o documento for confirmado."
-            : ". Já está no stock."}
+            ? textos.linhas.semMovimentoAinda
+            : textos.linhas.jaEstaNoStock}
         </p>
       )}
     </div>
@@ -411,7 +418,7 @@ function LinhaDeFatura({
         <th scope="row" className={`${CLASSE_CELULA} max-w-0 text-left font-medium`}>
           {linha.product === null || linha.product_name === null ? (
             <span className={`block truncate ${semArtigo ? "text-warning" : "text-muted-foreground"}`}>
-              {semArtigo ? "sem artigo no catálogo" : rotuloDeEspecie(linha.kind)}
+              {semArtigo ? textos.linhas.semArtigo : rotuloDeEspecie(linha.kind)}
             </span>
           ) : (
             <Link
@@ -443,17 +450,23 @@ function LinhaDeFatura({
           className={`${CLASSE_CELULA} w-32 text-right ${parcial ? "text-warning" : ""}`}
           {...(parcial
             ? {
-                title: `Faturados ${textoDeQuantidadeDaFatura(linha.quantity_invoiced, linha.invoice_unit)}, entraram ${textoDeQuantidadeDaFatura(linha.quantity_received, linha.invoice_unit)} — a fatura cobra os que faturou.`,
+                title: textos.linhas.faturados(
+                  textoDeQuantidadeDaFatura(linha.quantity_invoiced, linha.invoice_unit),
+                  textoDeQuantidadeDaFatura(linha.quantity_received, linha.invoice_unit),
+                ),
               }
             : {})}
         >
           {textoDeQuantidadeDaFatura(linha.quantity_received, linha.invoice_unit)}
           {parcial ? (
             <span className="block text-xs">
-              fat. {textoDeQuantidadeDaFatura(linha.quantity_invoiced, linha.invoice_unit)}
+              {textos.linhas.faturadoCurto}{" "}
+              {textoDeQuantidadeDaFatura(linha.quantity_invoiced, linha.invoice_unit)}
             </span>
           ) : linha.variable_weight ? (
-            <span className="block text-xs text-muted-foreground">peso variável</span>
+            <span className="block text-xs text-muted-foreground">
+              {textos.linhas.pesoVariavelNota}
+            </span>
           ) : null}
         </td>
 
@@ -465,7 +478,7 @@ function LinhaDeFatura({
             // linha de tara **não é** stock, e uma linha sem artigo no catálogo
             // não tem por onde converter — o ecrã não inventa nenhum dos dois.
             <span className="font-sans text-xs text-muted-foreground">
-              {semArtigo ? "sem conversão" : "não é stock"}
+              {semArtigo ? textos.linhas.semConversao : textos.linhas.naoEStock}
             </span>
           ) : (
             <>
@@ -484,7 +497,7 @@ function LinhaDeFatura({
                 // um OCR: até o documento ser confirmado, esta quantidade é uma
                 // promessa; depois, é uma linha do ledger.
                 <span className="block font-sans text-xs text-muted-foreground">
-                  já no stock
+                  {textos.linhas.jaNoStock}
                 </span>
               )}
             </>
@@ -502,10 +515,12 @@ function LinhaDeFatura({
           className={`${CLASSE_CELULA} w-36 text-right`}
           {...(linha.vat_rate === null
             ? {}
-            : { title: `IVA ${formatRate(linha.vat_rate)} — a taxa que vem na linha da fatura` })}
+            : { title: textos.linhas.ivaDaLinha(formatRate(linha.vat_rate)) })}
         >
           {linha.line_total === null ? (
-            <span className="font-sans text-xs text-muted-foreground">sem preço</span>
+            <span className="font-sans text-xs text-muted-foreground">
+              {textos.linhas.semPreco}
+            </span>
           ) : (
             formatMoney(linha.line_total)
           )}
@@ -554,16 +569,14 @@ function LinhaDeFatura({
         <td className={`${CLASSE_CELULA} w-28`}>
           <span
             className={`block truncate ${porRever ? tintaDoTextoDoEstado(linha.status) : "text-muted-foreground"}`}
-            {...(foraDaEntrada
-              ? { title: "Fica fora desta entrada — não gera movimento." }
-              : {})}
+            {...(foraDaEntrada ? { title: textos.linhas.ficaDeFora } : {})}
           >
             {rotuloDeEstadoDeLinha(linha.status)}
           </span>
           {linha.reviewed_by === null ? null : (
             <span
               className="block truncate text-xs text-muted-foreground"
-              title={`Revista por ${linha.reviewed_by}`}
+              title={textos.linhas.revistaPor(linha.reviewed_by)}
             >
               {linha.reviewed_by}
             </span>
@@ -579,9 +592,15 @@ function LinhaDeFatura({
             onClick={aoAlternar}
             aria-expanded={aberto}
             aria-controls={idDoPainel}
-            aria-label={`${porRever || foraDaEntrada ? "Rever" : "Ver"} a linha ${linha.description}`}
+            // Uma função por verbo e não o verbo interpolado numa frase: numa
+            // frase inglesa ele não fica onde está na portuguesa.
+            aria-label={
+              porRever || foraDaEntrada
+                ? textos.linhas.reverALinha(linha.description)
+                : textos.linhas.verALinha(linha.description)
+            }
           >
-            {porRever || foraDaEntrada ? "Rever" : "Ver"}
+            {porRever || foraDaEntrada ? textos.linhas.rever : textos.linhas.ver}
           </Button>
         </td>
       </tr>
@@ -601,22 +620,18 @@ function LinhaDeFatura({
 
               {foraDaEntrada ? (
                 <div className="flex flex-col items-start gap-2">
-                  <p className="text-sm text-muted-foreground">
-                    Fica fora desta entrada — não gera movimento.
-                  </p>
+                  <p className="text-sm text-muted-foreground">{textos.linhas.ficaDeFora}</p>
                   <Button variant="outline" disabled={aRevisar} onClick={aoVoltarARever}>
-                    {aRevisar ? "A guardar…" : "Voltar a rever"}
+                    {aRevisar ? textos.comuns.aGuardar : textos.linhas.voltarARever}
                   </Button>
                 </div>
               ) : porRever && semArtigo ? (
                 <div className="flex flex-col items-start gap-2">
                   <p className="text-pretty text-sm text-muted-foreground">
-                    A fatura traz isto e o catálogo não tem. Sem artigo não há conversão para a
-                    unidade de stock, por isso a linha não entra — fica fora desta entrada, ou
-                    cria-se o artigo no catálogo primeiro.
+                    {textos.linhas.semArtigoCorpo}
                   </p>
                   <Button variant="outline" disabled={aRevisar} onClick={aoDeixarFora}>
-                    {aRevisar ? "A guardar…" : "Deixar fora desta entrada"}
+                    {aRevisar ? textos.comuns.aGuardar : textos.linhas.deixarFora}
                   </Button>
                 </div>
               ) : porRever ? (
@@ -712,7 +727,7 @@ export function EsqueletoDaTabelaDeLinhas() {
       colunas={COLUNAS}
       larguraMinima={LARGURA_MINIMA}
       comTrilho
-      rotulo="A carregar as linhas da fatura…"
+      rotulo={textos.linhas.aCarregar}
       linhas={3}
     />
   );

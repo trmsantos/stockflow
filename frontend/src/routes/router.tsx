@@ -8,12 +8,10 @@ import { rotaDaApp } from "./app";
 import { rotaDeArtigo } from "./artigo";
 import { rotaDeAtivacao } from "./ativar";
 import { rotaDeContar, rotaDeFechoDeContagem } from "./contar";
-import { rotaDeConfiguracao } from "./configuracao";
-import { rotaDeConvites } from "./convites";
+import { rotaDeDefinicoes } from "./definicoes";
 import { rotaDeEntrada } from "./entrar";
 import { rotaInicial } from "./inicio";
 import { rotaDoPainel } from "./painel";
-import { rotaDePreferencias } from "./preferencias";
 import { rotaPublica } from "./publico";
 import { rotaDeFotografar, rotaDeRececao, rotaDeReceber } from "./receber";
 import { rotaRaiz } from "./root";
@@ -96,12 +94,11 @@ const arvoreDeRotas = rotaRaiz.addChildren([
     rotaDeContar,
     rotaDeFechoDeContagem,
     rotaDeAlertas,
-    rotaDeConvites,
-    rotaDeConfiguracao,
-    // Sem entrada no registo de rotas, e é a única assim: o ponto de entrada é o
-    // pé da sidebar e não o menu (ADR 0017). A razão está no ficheiro da rota, ao
-    // lado da `/configuracao`, que é o outro lado da mesma decisão.
-    rotaDePreferencias,
+    // A única rota da app **sem** entrada no registo de rotas, e por isso a
+    // única que o menu não pode nomear nem esconder: definições não respondem a
+    // uma pergunta de operação (ADR 0019). Substituiu as três que havia —
+    // `/preferencias`, `/configuracao` e `/convites`.
+    rotaDeDefinicoes,
     ...rotasDeDesenvolvimento,
   ]),
 ]);

@@ -976,3 +976,16 @@ export function useGuardarEstabelecimento(): UseMutationResult<
     },
   });
 }
+
+/* ---------------------------------------------------------------------------
+ * A porta da feature, para a rota (ADR 0008, decisão 2).
+ *
+ * Uma rota só pode importar `screens/<ecrã>` e `api` de uma feature, e o
+ * `validateSearch` das Definições precisa da união das secções. Reexportá-la
+ * aqui é a alternativa a escrever a lista das quatro secções uma segunda vez em
+ * `src/routes/` — duas definições do mesmo parâmetro divergem na primeira secção
+ * que entre ou saia, e o sintoma seria uma secção válida no URL sem nome no ecrã.
+ * É a mesma linha que o `features/reporting/api.ts` tem para o `?aba=`.
+ * ------------------------------------------------------------------------ */
+export { secaoSchema } from "./secoes";
+export type { SecaoDeDefinicoes } from "./secoes";

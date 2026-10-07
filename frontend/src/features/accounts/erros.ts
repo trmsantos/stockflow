@@ -2,6 +2,8 @@ import type { ZodError } from "zod";
 
 import { ApiError, mensagemDeErro } from "@/lib/api/errors";
 
+import { textos } from "./textos";
+
 /**
  * Ler uma recusa da autenticação — e **só** ler: nada aqui reescreve uma
  * mensagem do servidor.
@@ -93,9 +95,9 @@ export function statusDaRecusa(erro: unknown): number | null {
 export function mensagemDaRecusa(erro: unknown): string {
   if (erro instanceof ApiError && erro.detail === null) {
     if (erro.status === 403) {
-      return "A página perdeu o token de segurança. Recarregue e tente outra vez.";
+      return textos.recusas.semToken;
     }
-    return "Não foi possível falar com o servidor. Verifique a ligação e tente outra vez.";
+    return textos.recusas.semServidor;
   }
   return mensagemDeErro(erro);
 }

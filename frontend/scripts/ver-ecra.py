@@ -46,6 +46,15 @@ fotografou o ecrã ou o esqueleto dele.
 aqui**: sem espera fotografa-se o estado de carregamento e conclui-se que o ecrã
 está vazio.
 
+`LINGUA=en` (ou `pt-PT`) move os **dois** sinais da língua — o que o
+`navigator.languages` diz e o `Accept-Language` dos pedidos — com **um** comando,
+o `Emulation.setUserAgentOverride`. Mover só um media uma divergência que nenhum
+utilizador tem: o browser manda os dois da mesma configuração (ADR 0019,
+decisão 2), e um screenshot com a UI numa língua e as mensagens de erro noutra
+seria um defeito do instrumento e não da app. (Esta linha dizia
+`setLocaleOverride`, e está medido no corpo que esse comando move o `Intl` e
+**não** o `navigator.languages` — o JSON trazia `pt-PT,pt` com `LINGUA=en`.)
+
 `TEMA=claro` (ou `meio_termo`, ou `escuro`) escreve o `data-tema` no `<html>`
 antes do disparo. Existe desde as três paletas (ADR 0015) e é a forma de
 fotografar uma que não é o default: a selecção é um atributo, não uma media
@@ -178,6 +187,25 @@ def main():
         ws = WS(alvo())
         ws.chamar("Network.enable")
         ws.chamar("Page.enable")
+
+        # A língua, **antes** do `Page.navigate`: o `navigator.languages` é lido
+        # no módulo de entrada e o `Accept-Language` vai no primeiro pedido.
+        #
+        # `setUserAgentOverride` com `acceptLanguage` e **não**
+        # `setLocaleOverride`: medido, o segundo move o `Intl` e deixa o
+        # `navigator.languages` como estava — com ele, uma captura com `LINGUA=en`
+        # trazia `navegador: "pt-PT,pt"` e a app resolvia português. O
+        # `acceptLanguage` deste comando move os **dois** sinais de uma vez (o
+        # header e o `navigator`), que é exactamente o que um browser real faz.
+        #
+        # O `userAgent` é obrigatório e vai o que o browser já tem: trocá-lo
+        # mudava uma variável que não é a desta medição.
+        lingua = os.environ.get("LINGUA", "")
+        if lingua:
+            ua = ws.chamar(
+                "Runtime.evaluate", expression="navigator.userAgent", returnByValue=True
+            )["result"]["value"]
+            ws.chamar("Emulation.setUserAgentOverride", userAgent=ua, acceptLanguage=lingua)
         # `deviceScaleFactor: 1` com `mobile: false`: o override de métricas é o
         # que permite larguras abaixo do piso de ~500px da janela do headless.
         ws.chamar("Emulation.setDeviceMetricsOverride",
@@ -236,6 +264,12 @@ def main():
                diz de que tema é, e é o mesmo tipo de engano que o campo
                `arranque` abaixo cobre — medir uma coisa e fotografar outra. */
             tema: document.documentElement.getAttribute('data-tema') ?? 'escuro',
+            /* A língua que o documento afirma e a que o browser diz preferir. As
+               duas, porque é a divergência entre elas que trai um instrumento mal
+               apontado: com `LINGUA=en` e uma só movida, a UI vinha numa língua e
+               as recusas do servidor noutra. */
+            lang: document.documentElement.lang || null,
+            navegador: navigator.languages.slice(0, 2).join(','),
             /* A cópia local do nome da paleta (ADR 0016, decisão 3) — é ela que
                torna a primeira pintura correcta, antes de haver rede. Está aqui
                porque é a diferença entre "o tema certo porque o servidor

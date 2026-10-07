@@ -44,6 +44,7 @@ import {
   type ResumoDoPeriodo,
   type SeriesDoPeriodo,
 } from "../schemas";
+import { textos } from "../textos";
 import { rotuloDaGranularidade, rotuloDoPeriodo } from "../vocabulario";
 
 /**
@@ -109,6 +110,15 @@ import { rotuloDaGranularidade, rotuloDoPeriodo } from "../vocabulario";
  * do que um painel vazio.
  */
 
+/**
+ * O ecrã do sistema visual, só em desenvolvimento.
+ *
+ * Numa constante e não escrito duas vezes porque **é o mesmo caminho** no `href`
+ * e no texto do link, e um caminho não é copy: não tem tradução e não entra no
+ * catálogo. A constante é também o que o impede de divergir entre os dois sítios.
+ */
+const CAMINHO_DOS_TOKENS = "/dev/tokens";
+
 /** Nada aconteceu nesta janela: três zeros, e os três do servidor. */
 function semAtividade(resumo: ResumoDoPeriodo): boolean {
   return (
@@ -164,7 +174,7 @@ export function EcraDoPainel() {
     <section className="flex w-full flex-col">
       {/* O `<h1>` muda com a aba, e é o que diz onde se está a quem ouve o ecrã:
           o realce da aba activa e o trilho de 4px não chegam a quem não vê. */}
-      <h1 className="sr-only">Painel de gestão — {perguntaDaAba(aba)}</h1>
+      <h1 className="sr-only">{textos.painel.tituloComPergunta(perguntaDaAba(aba))}</h1>
 
       {/* A barra **não** aparece a quem foi recusado, e isso é deliberado: três
           abas e cinco botões de período são controlos que não fazem nada quando
@@ -200,12 +210,12 @@ export function EcraDoPainel() {
               decisão 7). Compacto: uma linha por declaração, e uma linha só
               quando não há nada a declarar. */}
           <BlocoDoPainel
-            titulo="O que este painel não sabe"
+            titulo={textos.painel.naoSabe}
             acao={<BotaoDeExplicar ligado={explicar} />}
           >
             {qualidade === undefined ? (
               <div aria-busy="true" className="flex flex-col gap-2 px-celula-x pb-3">
-                <span className="sr-only">A carregar o que o painel declara…</span>
+                <span className="sr-only">{textos.painel.aCarregarDeclaracoes}</span>
                 <Skeleton className="h-4 w-full max-w-md" />
                 <Skeleton className="h-4 w-full max-w-sm" />
               </div>
@@ -232,12 +242,12 @@ export function EcraDoPainel() {
         // (ADR 0008, decisão 3) — a autenticação, não: essa é o backend a sério.
         // Em produção este ramo não existe no bundle.
         <p className="px-celula-x py-3 text-xs text-muted-foreground">
-          Os números do painel são de demonstração. O sistema visual está em{" "}
+          {textos.painel.demonstracao}{" "}
           <a
-            href="/dev/tokens"
+            href={CAMINHO_DOS_TOKENS}
             className="text-primary underline underline-offset-4 hover:no-underline"
           >
-            /dev/tokens
+            {CAMINHO_DOS_TOKENS}
           </a>
           .
         </p>
@@ -285,10 +295,10 @@ function AbaDoDinheiro({
       <>
         <EsqueletoDosNumeros />
         <FilaDePaineis>
-          <BlocoDoPainel titulo="O dinheiro e a mercadoria">
+          <BlocoDoPainel titulo={textos.painel.dinheiroEMercadoria}>
             <EsqueletoDoDinheiro />
           </BlocoDoPainel>
-          <BlocoDoPainel titulo="Vendas e compras">
+          <BlocoDoPainel titulo={textos.painel.vendasECompras}>
             <EsqueletoDaVariacao />
           </BlocoDoPainel>
         </FilaDePaineis>
@@ -313,14 +323,14 @@ function AbaDoDinheiro({
     return (
       <>
         <NumerosDoPeriodo resumo={dados} />
-        <BlocoDoPainel titulo={`Nada registado ${rotuloDoPeriodo(periodo)}`}>
+        <BlocoDoPainel titulo={textos.painel.nadaRegistado(rotuloDoPeriodo(periodo))}>
           <EstadoVazio
             icone={PackageOpen}
-            titulo="Sem vendas, sem compras e sem consumo nesta janela"
-            descricao="Não há aqui quatro linhas de zeros porque zeros não respondem a nada. Comece por dar entrada à mercadoria que chegou: as compras aparecem no painel no dia em que a receção é confirmada."
+            titulo={textos.painel.vazioTitulo}
+            descricao={textos.painel.vazioCorpo}
           >
             <Button asChild>
-              <Link to="/receber">Receber mercadoria</Link>
+              <Link to="/receber">{textos.painel.receberMercadoria}</Link>
             </Button>
           </EstadoVazio>
         </BlocoDoPainel>
@@ -333,28 +343,31 @@ function AbaDoDinheiro({
       <NumerosDoPeriodo resumo={dados} />
       <FilaDePaineis>
         <BlocoDoPainel
-          titulo="O dinheiro e a mercadoria"
+          titulo={textos.painel.dinheiroEMercadoria}
           acao={<BotaoDeExplicar ligado={explicar} />}
         >
           <DinheiroDoPeriodo resumo={dados} explicar={explicar} />
         </BlocoDoPainel>
 
         <BlocoDoPainel
-          titulo="Vendas e compras"
+          titulo={textos.painel.vendasECompras}
           nota={
             series.data === undefined
               ? undefined
               : // Formatado pelo `Intl` e nunca impresso cru: o `scale_max_eur`
                 // chega como `"1300.00"`, que é a forma do `Decimal` do Django e
                 // não a forma de o ler em pt-PT.
-                `${rotuloDaGranularidade(series.data.granularity)} · até ${formatMoneyRounded(series.data.scale_max_eur)}`
+                textos.painel.notaDoGrafico(
+                  rotuloDaGranularidade(series.data.granularity),
+                  formatMoneyRounded(series.data.scale_max_eur),
+                )
           }
         >
           {series.isPending ? <EsqueletoDaVariacao /> : null}
           {series.isError ? (
             <div className="px-celula-x pb-3">
               <ErroAoCarregar
-                titulo="Não foi possível carregar o gráfico"
+                titulo={textos.painel.erroDoGrafico}
                 mensagem={mensagemDeErro(series.error)}
                 aoTentarOutraVez={() => {
                   void series.refetch();
@@ -389,7 +402,7 @@ function AbaDasPerdas({
 }) {
   if (resumo.isPending) {
     return (
-      <BlocoDoPainel titulo="Desperdício e quebra desconhecida">
+      <BlocoDoPainel titulo={textos.painel.perdas}>
         <EsqueletoDasPerdas />
       </BlocoDoPainel>
     );
@@ -412,7 +425,7 @@ function AbaDasPerdas({
 
   return (
     <BlocoDoPainel
-      titulo="Desperdício e quebra desconhecida"
+      titulo={textos.painel.perdas}
       // A **condição** e não uma explicação: um zero de quebra desconhecida sem
       // a data da última contagem é a afirmação optimista que a ADR 0013
       // (decisão 7) existe para proibir. Fica à vista em qualquer camada.
@@ -444,7 +457,7 @@ function AbaDoPessoal({
 }) {
   if (fecho.isPending) {
     return (
-      <BlocoDoPainel titulo={`Fecho de ${formatMonth(mes)}`}>
+      <BlocoDoPainel titulo={textos.painel.fechoDe(formatMonth(mes))}>
         <EsqueletoDoMes />
       </BlocoDoPainel>
     );
@@ -454,7 +467,7 @@ function AbaDoPessoal({
     return (
       <div className="px-celula-x py-3">
         <ErroAoCarregar
-          titulo="Não foi possível carregar o fecho do mês"
+          titulo={textos.painel.erroDoFecho}
           mensagem={mensagemDeErro(fecho.error)}
           aoTentarOutraVez={() => {
             void fecho.refetch();
@@ -469,10 +482,9 @@ function AbaDoPessoal({
 
   if (mesSemNada(dados)) {
     return (
-      <BlocoDoPainel titulo={`Fecho de ${formatMonth(mes)}`}>
+      <BlocoDoPainel titulo={textos.painel.fechoDe(formatMonth(mes))}>
         <p className="px-celula-x pb-3 text-sm text-muted-foreground">
-          Não há nada registado em {formatMonth(mes)}. Use a navegação de mês, na barra acima, para
-          um mês com movimento.
+          {textos.painel.mesSemNada(formatMonth(mes))}
         </p>
       </BlocoDoPainel>
     );
@@ -484,13 +496,13 @@ function AbaDoPessoal({
       <NumerosDoMes mes={dados} />
 
       <BlocoDoPainel
-        titulo={`Resultado de ${formatMonth(mes)}`}
+        titulo={textos.painel.resultadoDe(formatMonth(mes))}
         acao={<BotaoDeExplicar ligado={explicar} />}
       >
         <ResultadoDoMes mes={dados} explicar={explicar} />
       </BlocoDoPainel>
 
-      <BlocoDoPainel titulo="Custo por cargo">
+      <BlocoDoPainel titulo={textos.painel.custoPorCargo}>
         <CargosDoMes mes={dados} />
       </BlocoDoPainel>
     </>

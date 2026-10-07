@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { textos } from "./textos";
 
 /**
  * O estado pendente de um painel com um formulário: **skeleton e não spinner**
@@ -21,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function EsqueletoDePainel() {
   return (
     <div className="flex flex-col gap-4" aria-busy="true">
-      <span className="sr-only">A carregar…</span>
+      <span className="sr-only">{textos.aCarregar}</span>
       <Skeleton className="h-7 w-32" />
       <Skeleton className="h-4 w-full" />
       <Skeleton className="h-controlo w-full" />

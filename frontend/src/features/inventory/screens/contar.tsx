@@ -34,6 +34,7 @@ import {
   ProgressoDaContagem,
 } from "../components/progresso-da-contagem";
 import type { Localizacao, NivelDeStock } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * O ecrã Contar — "o que está na prateleira é o que o sistema diz?".
@@ -97,18 +98,18 @@ function SemContagem() {
     <>
       <EstadoVazio
         icone={ClipboardList}
-        titulo="Nenhuma contagem a decorrer"
-        descricao="Uma contagem percorre uma loja por zonas, na ordem física: Balcão, Frigorífico, Arca, Armazém. Escolha onde quer contar."
+        titulo={textos.contagem.semContagemTitulo}
+        descricao={textos.contagem.semContagemCorpo}
       >
         <div className="flex w-full max-w-xs flex-col gap-1.5">
-          <Label htmlFor="contagem-localizacao">Onde quer contar</Label>
+          <Label htmlFor="contagem-localizacao">{textos.contagem.ondeContar}</Label>
           <Select
             value={local ?? ""}
             onValueChange={setEscolhida}
             disabled={localizacoes.length === 0}
           >
             <SelectTrigger id="contagem-localizacao" className="w-full">
-              <SelectValue placeholder="Escolha a loja" />
+              <SelectValue placeholder={textos.contagem.escolhaALoja} />
             </SelectTrigger>
             <SelectContent>
               {localizacoes.map((localizacao) => (
@@ -127,7 +128,7 @@ function SemContagem() {
           }}
         >
           <ClipboardCheck aria-hidden="true" />
-          {iniciar.isPending ? "A começar…" : "Começar contagem"}
+          {iniciar.isPending ? textos.contagem.aComecar : textos.contagem.comecar}
         </Button>
       </EstadoVazio>
 
@@ -141,19 +142,24 @@ function SemContagem() {
           responde a "então e a de hoje de manhã?" sem obrigar a abrir outra. */}
       {ultima.data === null || ultima.data === undefined ? null : (
         <div className="flex flex-col items-start gap-2 border-t border-border px-4 py-4">
-          <h2 className="text-sm font-semibold">Última contagem fechada</h2>
+          <h2 className="text-sm font-semibold">{textos.contagem.ultimaFechada}</h2>
           <p className="text-sm text-muted-foreground">
             {ultima.data.location.name} ·{" "}
             {ultima.data.closed_at === null
               ? ""
-              : `${formatDate(ultima.data.closed_at)} às ${formatTime(ultima.data.closed_at)}`}{" "}
-            · <span data-numeric>{ultima.data.counted_lines}</span> de{" "}
-            <span data-numeric>{ultima.data.total_lines}</span> linhas
-            {ultima.data.closing_reason === null ? "" : ` · «${ultima.data.closing_reason}»`}
+              : textos.contagem.dataEHora(
+                  formatDate(ultima.data.closed_at),
+                  formatTime(ultima.data.closed_at),
+                )}{" "}
+            · <span data-numeric>{ultima.data.counted_lines}</span> {textos.contagem.de}{" "}
+            <span data-numeric>{ultima.data.total_lines}</span> {textos.contagem.linhas}
+            {ultima.data.closing_reason === null
+              ? ""
+              : textos.contagem.justificacao(ultima.data.closing_reason)}
           </p>
           <Button asChild variant="outline">
             <Link to="/contar/fechar" search={{ contagem: ultima.data.id }}>
-              Ver as diferenças
+              {textos.contagem.verAsDiferencas}
             </Link>
           </Button>
         </div>
@@ -200,7 +206,7 @@ export function EcraDeContar() {
     <section className="flex w-full flex-col">
       {/* O nome do ecrã já está no header do shell; repeti-lo em grande custava
           uma das sete linhas do orçamento de 360×640. */}
-      <h1 className="sr-only">Contar — o que está na prateleira é o que o sistema diz?</h1>
+      <h1 className="sr-only">{textos.contagem.titulo}</h1>
 
       {contagem.isPending ? (
         <>
@@ -211,7 +217,7 @@ export function EcraDeContar() {
 
       {contagem.isError ? (
         <ErroDaLista
-          titulo="Não foi possível carregar a contagem"
+          titulo={textos.contagem.erroDaContagem}
           mensagem={mensagemDeErro(contagem.error)}
           aoTentarOutraVez={() => {
             void contagem.refetch();
@@ -229,7 +235,7 @@ export function EcraDeContar() {
 
           {linhas.isError ? (
             <ErroDaLista
-              titulo="Não foi possível carregar as linhas"
+              titulo={textos.contagem.erroDasLinhas}
               mensagem={mensagemDeErro(linhas.error)}
               aoTentarOutraVez={() => {
                 void linhas.refetch();
@@ -240,12 +246,12 @@ export function EcraDeContar() {
           {resultados === undefined ? null : resultados.length === 0 ? (
             <EstadoVazio
               icone={Search}
-              titulo="Esta zona não tem nada para contar"
-              descricao="Nenhum artigo desta contagem está nesta zona. As outras zonas continuam no topo."
+              titulo={textos.contagem.zonaVaziaTitulo}
+              descricao={textos.contagem.zonaVaziaCorpo}
             >
               <Button asChild variant="outline">
                 <Link to="/contar" search={() => ({})}>
-                  Ver todas as zonas
+                  {textos.contagem.verTodasAsZonas}
                 </Link>
               </Button>
             </EstadoVazio>
@@ -289,12 +295,12 @@ export function EcraDeContar() {
               <div className="flex flex-col items-start gap-1.5 border-t border-border px-celula-x py-4">
                 <Button asChild>
                   <Link to="/contar/fechar" search={{ contagem: aberta.id }}>
-                    Fechar contagem
+                    {textos.fecho.fechar}
                   </Link>
                 </Button>
                 <p className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Lock aria-hidden="true" className="size-3 shrink-0" />
-                  só o {aberta.closing_role} fecha a contagem, e as diferenças aparecem antes
+                  {textos.contagem.soOPapelFecha(aberta.closing_role)}
                 </p>
               </div>
             </>

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 import type { Rececao } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * A temperatura à entrega.
@@ -45,7 +46,7 @@ export function TemperaturaAEntrega({
     const escrito = (typeof campo === "string" ? campo : "").trim();
 
     if (!GRAUS.test(escrito)) {
-      setErro("Escreva os graus, por exemplo -18 ou 4,5.");
+      setErro(textos.formularios.escrevaOsGraus);
       return;
     }
 
@@ -57,7 +58,7 @@ export function TemperaturaAEntrega({
   return (
     <form onSubmit={aoSubmeter} className="flex flex-col gap-1.5 px-4">
       <Label htmlFor={idCampo} className="text-sm">
-        Temperatura à entrega (°C)
+        {textos.temperatura.rotulo}
       </Label>
       <div className="flex items-start gap-2">
         <Input
@@ -77,12 +78,12 @@ export function TemperaturaAEntrega({
           aria-describedby={erro === null ? undefined : idErro}
         />
         <Button type="submit" variant="outline" disabled={aGuardar}>
-          {aGuardar ? "A guardar…" : "Guardar"}
+          {aGuardar ? textos.comuns.aGuardar : textos.temperatura.guardar}
         </Button>
         {rececao.temperature_c === null || aGuardar ? null : (
           <span className="flex items-center gap-1 pt-3 text-xs text-muted-foreground">
             <CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />
-            registada
+            {textos.temperatura.registada}
           </span>
         )}
       </div>

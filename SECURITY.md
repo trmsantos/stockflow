@@ -56,6 +56,15 @@ SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SECURE = True
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS")
 SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# Email: obrigatório, e o TLS é derivado da porta (587 STARTTLS, 465 implícito).
+# Sem default de propósito — um backend que caia na consola dá um convite
+# "enviado" para o stdout de um contentor, sem erro nenhum e sem ninguém do
+# outro lado. E não há caminho para desligar os dois TLS, que era a porta por
+# onde a password de SMTP saía em claro na rede.
+EMAIL_HOST = env("EMAIL_HOST")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")   # segredo, como a SECRET_KEY
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL")     # sem isto, SPF rejeita
 SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 X_FRAME_OPTIONS = "DENY"
 
@@ -272,6 +281,11 @@ devolve zero linhas — falha fechada.
   com acesso é fechada por âmbito no `eslint.config.js` (um bloco `files: ["src/lib/tema.ts"]`), o
   `sessionStorage` continua proibido também lá, e alargá-la é um diff visível com uma razão a
   escrever.
+- **O `django.conf.urls.i18n` não é encaminhado** (ADR 0019). O `set_language` é um **POST anónimo
+  que escreve um cookie**, que é exactamente a família de endpoint que o §5 obriga a proteger — e o
+  cookie `django_language` **ganha** ao `Accept-Language` no `LocaleMiddleware`, logo um cookie velho
+  passava a mandar no lado da API sem mandar no lado do React. Dois sinais a divergir é o que a
+  escolha de ler a língua do browser existe para evitar. Afirmado em `backend/tests/test_i18n.py`.
 - `fetch` com `credentials: "include"` e header `X-CSRFToken`.
 - Sem `dangerouslySetInnerHTML`; se inevitável, `DOMPurify.sanitize` e revisão obrigatória.
 - Links externos com `rel="noopener noreferrer"`.

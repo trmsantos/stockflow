@@ -15,6 +15,7 @@ import { mensagemDeErro } from "@/lib/api/errors";
 
 import { useRegistarDesperdicio } from "../api";
 import { motivoQuebraSchema, type MotivoQuebra, type NivelDeStock } from "../schemas";
+import { textos } from "../textos";
 import { MOTIVOS_DE_DESPERDICIO, rotuloDeMotivo } from "../vocabulario";
 
 /**
@@ -68,10 +69,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
 
   if (primeiraLocalizacao === undefined) {
     return (
-      <p className="px-4 text-sm text-muted-foreground">
-        Este artigo não tem nenhuma localização com movimentos, por isso não há de onde registar
-        desperdício.
-      </p>
+      <p className="px-4 text-sm text-muted-foreground">{textos.desperdicio.semLocalizacao}</p>
     );
   }
 
@@ -85,8 +83,8 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
     const problemas: Erros = {
       ...(DECIMAL_POSITIVO.test(valor) && Number(valor) > 0
         ? {}
-        : { quantidade: `Escreva a quantidade em ${unidadeBase}, maior do que zero.` }),
-      ...(motivo === "" ? { motivo: "Escolha o motivo do desperdício." } : {}),
+        : { quantidade: textos.desperdicio.escrevaAQuantidade(unidadeBase) }),
+      ...(motivo === "" ? { motivo: textos.desperdicio.escolhaOMotivo } : {}),
     };
 
     setErros(problemas);
@@ -115,16 +113,17 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
 
   return (
     <section className="flex flex-col gap-3 px-4">
-      <h2 className="text-sm font-semibold">Registar desperdício</h2>
+      <h2 className="text-sm font-semibold">{textos.desperdicio.registar}</h2>
 
       <form onSubmit={aoSubmeter} className="flex flex-col gap-3">
         {nivel.by_location.length === 1 ? (
           <p className="text-sm text-muted-foreground">
-            Localização: <span className="text-foreground">{primeiraLocalizacao.name}</span>
+            {textos.desperdicio.localizacaoPrefixo}{" "}
+            <span className="text-foreground">{primeiraLocalizacao.name}</span>
           </p>
         ) : (
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor={idLocalizacao}>Localização</Label>
+            <Label htmlFor={idLocalizacao}>{textos.desperdicio.localizacao}</Label>
             <Select value={localizacao} onValueChange={setLocalizacao}>
               <SelectTrigger id={idLocalizacao} className="w-full">
                 <SelectValue />
@@ -141,7 +140,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
         )}
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor={idQuantidade}>Quantidade em {unidadeBase}</Label>
+          <Label htmlFor={idQuantidade}>{textos.desperdicio.quantidadeEm(unidadeBase)}</Label>
           <Input
             id={idQuantidade}
             name="quantidade"
@@ -152,7 +151,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
             onChange={(evento) => {
               setQuantidade(evento.target.value);
             }}
-            placeholder={`por exemplo, 2000 ${unidadeBase}`}
+            placeholder={textos.desperdicio.exemploDeQuantidade(unidadeBase)}
             aria-invalid={erros.quantidade === undefined ? undefined : true}
             aria-describedby={
               erros.quantidade === undefined ? idUnidade : `${idUnidade} ${idErroDeQuantidade}`
@@ -160,8 +159,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
           />
           {unidadeBase === unidadeMostrada ? null : (
             <p id={idUnidade} className="text-xs text-muted-foreground">
-              A lista mostra este artigo em {unidadeMostrada}; o ledger guarda-o em {unidadeBase},
-              e é nesta unidade que se registra.
+              {textos.desperdicio.unidadeDeRegisto(unidadeMostrada, unidadeBase)}
             </p>
           )}
           {erros.quantidade === undefined ? null : (
@@ -172,7 +170,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor={idMotivo}>Motivo</Label>
+          <Label htmlFor={idMotivo}>{textos.desperdicio.motivo}</Label>
           <Select
             value={motivo}
             onValueChange={(valor) => {
@@ -190,7 +188,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
               aria-invalid={erros.motivo === undefined ? undefined : true}
               aria-describedby={erros.motivo === undefined ? undefined : idErroDeMotivo}
             >
-              <SelectValue placeholder="Escolha o motivo" />
+              <SelectValue placeholder={textos.desperdicio.escolhaOMotivoPista} />
             </SelectTrigger>
             <SelectContent>
               {MOTIVOS_DE_DESPERDICIO.map((opcao) => (
@@ -208,7 +206,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
         </div>
 
         <Button type="submit" disabled={registar.isPending} className="self-start">
-          {registar.isPending ? "A registar…" : "Registar desperdício"}
+          {registar.isPending ? textos.accoes.aRegistar : textos.desperdicio.registar}
         </Button>
       </form>
 
@@ -220,8 +218,9 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
           <>
             <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-success" />
             <span>
-              Desperdício registado
-              {registar.data.lot_code === null ? "" : ` no lote ${registar.data.lot_code}`}.
+              {registar.data.lot_code === null
+                ? textos.desperdicio.registado
+                : textos.desperdicio.registadoNoLote(registar.data.lot_code)}
             </span>
           </>
         ) : null}

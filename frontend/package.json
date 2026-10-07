@@ -12,7 +12,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings 0 && node scripts/check-design-tokens.mjs && node scripts/check-fixtures.mjs && node scripts/check-variantes.mjs",
+    "lint": "eslint . --max-warnings 0 && node scripts/check-design-tokens.mjs && node scripts/check-fixtures.mjs && node scripts/check-variantes.mjs && node scripts/check-textos.mjs && node scripts/check-marca.mjs",
     "gen:api": "bash scripts/gen-api.sh"
   },
   "dependencies": {

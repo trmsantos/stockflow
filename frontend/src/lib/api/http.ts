@@ -4,6 +4,7 @@ import { readCookie } from "./cookies";
 import { ApiError, ResponseShapeError, TenantConflictError } from "./errors";
 import { anunciarPerdaDeSessao, CODIGO_SEM_SESSAO } from "./sessao-perdida";
 import { getActiveTenantId } from "./tenant";
+import { textos } from "../textos";
 
 /**
  * Cliente HTTP da API.
@@ -88,7 +89,7 @@ async function send(path: string, init: ApiRequestInit): Promise<Response> {
       throw new ApiError({
         status: 0,
         code: "csrf_ausente",
-        detail: "Esta sessão não tem token CSRF. Recarregue a página e tente outra vez.",
+        detail: textos.erros.csrfAusente,
         payload: null,
         message: "Cookie csrftoken ausente.",
       });

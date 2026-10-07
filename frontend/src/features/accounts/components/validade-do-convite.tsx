@@ -3,6 +3,7 @@ import { CircleCheck, CircleSlash, Clock, type LucideIcon } from "lucide-react";
 import { formatDate, formatDayMonth, formatDaysAway } from "@/lib/format";
 
 import type { Convite } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * Quando é que este link deixa de servir — **semáforo por token e texto, nunca
@@ -68,7 +69,8 @@ function leituraDe(convite: Convite): Leitura | null {
 
   if (convite.estado === "expirado") {
     return {
-      texto: dias === 0 ? "expirou hoje" : `expirou ${formatDaysAway(dias)}`,
+      texto:
+        dias === 0 ? textos.validade.expirouHoje : textos.validade.expirouQuando(formatDaysAway(dias)),
       corDoTexto: "text-warning",
       icone: CircleSlash,
       corDoIcone: "text-warning",
@@ -80,7 +82,7 @@ function leituraDe(convite: Convite): Leitura | null {
     // o relógio do servidor. Diz-se o que se sabe ("acaba hoje") em vez de se
     // escolher entre duas afirmações, e o `estado` ao lado é a autoridade.
     return {
-      texto: "acaba hoje",
+      texto: textos.validade.acabaHoje,
       corDoTexto: "text-warning",
       icone: Clock,
       corDoIcone: "text-warning",
@@ -89,7 +91,7 @@ function leituraDe(convite: Convite): Leitura | null {
 
   if (dias <= DIAS_PARA_AVISAR) {
     return {
-      texto: `expira ${formatDaysAway(dias)}`,
+      texto: textos.validade.expiraQuando(formatDaysAway(dias)),
       corDoTexto: "text-warning",
       icone: Clock,
       corDoIcone: "text-warning",
@@ -97,7 +99,7 @@ function leituraDe(convite: Convite): Leitura | null {
   }
 
   return {
-    texto: `válido até ${formatDayMonth(convite.expira_em)}`,
+    texto: textos.validade.validoAte(formatDayMonth(convite.expira_em)),
     corDoTexto: "text-muted-foreground",
     icone: CircleCheck,
     corDoIcone: "text-success",
@@ -113,7 +115,7 @@ export function ValidadeDoConvite({ convite }: { readonly convite: Convite }) {
         {/* Um travessão sozinho é lido como "menos" por alguns leitores de ecrã,
             e aqui o que falta não é um valor — é o significado. A palavra está
             à vista para todos e não escondida num `sr-only`. */}
-        sem prazo
+        {textos.validade.semPrazo}
       </span>
     );
   }
@@ -123,7 +125,7 @@ export function ValidadeDoConvite({ convite }: { readonly convite: Convite }) {
   return (
     <span
       className={`flex min-w-0 items-center gap-1.5 ${leitura.corDoTexto}`}
-      title={`O link expira a ${formatDate(convite.expira_em)}`}
+      title={textos.validade.linkExpiraA(formatDate(convite.expira_em))}
     >
       <Icone aria-hidden="true" className={`size-3.5 shrink-0 ${leitura.corDoIcone}`} />
       <span className="truncate">{leitura.texto}</span>

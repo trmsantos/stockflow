@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "@/App";
 import { esconderArranque } from "@/lib/arranque";
+import { aplicarLingua } from "@/lib/i18n";
 import { aplicarTemaDoEspelho } from "@/lib/tema";
 import { syncThemeColor } from "@/lib/theme-color";
 
@@ -23,6 +24,16 @@ if (container === null) {
 // verdade entre duas imagens, que silenciosamente parava de aplicar o tema no
 // dia em que o script mudasse. A ADR mede antes de escalar.
 aplicarTemaDoEspelho();
+
+// A língua, ao lado do tema e pela mesma razão de **ordem**: o `lang` do `<html>`
+// é o que diz ao leitor de ecrã que voz usar, e um texto português lido com
+// pronúncia inglesa é inintelegível — não é só feio.
+//
+// Custa menos do que o tema e é por isso que não tem espelho nenhum: a língua
+// vem do `navigator.languages`, que já está na máquina antes do primeiro pixel
+// (ADR 0019, decisão 2). O `index.html` tem `lang="pt-PT"` escrito à mão para a
+// primeira pintura; esta linha corrige-o quando a língua resolvida é outra.
+aplicarLingua();
 
 // Depois do tema: o `theme-color` lê o `--color-background` **da paleta activa**,
 // e lê-o uma vez à cabeça. Trocado de ordem, a barra do browser nascia com a cor

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 
 import { useSair } from "../api";
 import { mensagemDaRecusa } from "../erros";
+import { textos } from "../textos";
 
 /**
  * Terminar sessão, a partir do ramo público.
@@ -41,7 +42,7 @@ export function BotaoDeSair({ rotulo }: { readonly rotulo: string }) {
         }}
       >
         <LogOut aria-hidden="true" />
-        {sair.isPending ? "A sair…" : rotulo}
+        {sair.isPending ? textos.accoes.aSair : rotulo}
       </Button>
       {sair.isError ? (
         // Um logout que falha é quase sempre rede. Dizê-lo em texto, aqui, em
