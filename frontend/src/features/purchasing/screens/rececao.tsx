@@ -27,6 +27,7 @@ import {
 } from "../components/tabela-de-linhas-de-fatura";
 import { TemperaturaAEntrega } from "../components/temperatura-a-entrega";
 import type { LinhaDeRececao } from "../schemas";
+import { textos } from "../textos";
 import { textoNaUnidadeBase } from "../vocabulario";
 
 /**
@@ -123,7 +124,7 @@ export function EcraDeRececao() {
         {/* `search={busca}` devolve a lista no mesmo filtro em que estava. */}
         <Link to="/receber" search={busca}>
           <ArrowLeft aria-hidden="true" />
-          Receber
+          {textos.comuns.receber}
         </Link>
       </Button>
 
@@ -131,7 +132,7 @@ export function EcraDeRececao() {
 
       {documento.isError ? (
         <ErroAoCarregar
-          titulo="Não foi possível carregar esta receção"
+          titulo={textos.rececao.erroAoCarregar}
           mensagem={mensagemDeErro(documento.error)}
           aoTentarOutraVez={() => {
             void documento.refetch();
@@ -142,12 +143,12 @@ export function EcraDeRececao() {
       {dados === null ? (
         <EstadoVazio
           icone={FileQuestion}
-          titulo="Esta receção não existe"
-          descricao="O endereço aponta para um documento que já não está neste estabelecimento."
+          titulo={textos.rececao.naoExisteTitulo}
+          descricao={textos.rececao.naoExisteCorpo}
         >
           <Button asChild variant="outline">
             <Link to="/receber" search={() => ({})}>
-              Ver as receções
+              {textos.comuns.verAsRececoes}
             </Link>
           </Button>
         </EstadoVazio>
@@ -173,15 +174,12 @@ export function EcraDeRececao() {
               <div className="px-celula-x">
                 <Alert className="border-success-border bg-success-surface">
                   <CircleCheck aria-hidden="true" className="text-success" />
-                  <AlertTitle>A mercadoria está no stock</AlertTitle>
+                  <AlertTitle>{textos.rececao.noStockTitulo}</AlertTitle>
                   <AlertDescription className="flex flex-col items-start gap-2 text-pretty">
-                    <span>
-                      Cada linha confirmada gerou um movimento de entrada com o lote, a validade e
-                      o autor. Nada se reescreve: para corrigir, registra-se um movimento novo.
-                    </span>
+                    <span>{textos.rececao.noStockCorpo}</span>
                     <Button asChild variant="outline">
                       <Link to="/stock" search={() => ({})}>
-                        Ver no stock
+                        {textos.rececao.verNoStock}
                       </Link>
                     </Button>
                   </AlertDescription>
@@ -196,7 +194,7 @@ export function EcraDeRececao() {
               outra lêem-se como um bloco só, e o cabeçalho deixava de se ver
               como cabeçalho. É a mesma razão do "cromado contado" do §2. */}
           <h2 className="border-b border-border px-celula-x py-2 text-sm font-semibold">
-            Linhas do documento
+            {textos.rececao.linhasDoDocumento}
           </h2>
 
           {/* O resultado de cada revisão, anunciado uma vez: o painel fecha-se
@@ -210,7 +208,7 @@ export function EcraDeRececao() {
 
           {linhas.isError ? (
             <ErroAoCarregar
-              titulo="Não foi possível carregar as linhas"
+              titulo={textos.rececao.erroDasLinhas}
               mensagem={mensagemDeErro(linhas.error)}
               aoTentarOutraVez={() => {
                 void linhas.refetch();
@@ -221,12 +219,12 @@ export function EcraDeRececao() {
           {resultados === undefined ? null : resultados.length === 0 ? (
             <EstadoVazio
               icone={FileQuestion}
-              titulo="Este documento não tem linhas"
-              descricao="Sem linhas não há nada para rever nem nada para dar entrada. Costuma ser um documento fotografado ao contrário."
+              titulo={textos.rececao.semLinhasTitulo}
+              descricao={textos.rececao.semLinhasCorpo}
             >
               <Button asChild variant="outline">
                 <Link to="/receber" search={() => ({})}>
-                  Ver as receções
+                  {textos.comuns.verAsRececoes}
                 </Link>
               </Button>
             </EstadoVazio>
@@ -256,7 +254,7 @@ export function EcraDeRececao() {
                     {
                       onSuccess: () => {
                         setAberta(null);
-                        setUltimo(`Linha revista: ${nomeDaLinha(linha)}.`);
+                        setUltimo(textos.rececao.linhaRevista(nomeDaLinha(linha)));
                       },
                     },
                   );
@@ -267,9 +265,7 @@ export function EcraDeRececao() {
                     {
                       onSuccess: () => {
                         setAberta(null);
-                        setUltimo(
-                          `${nomeDaLinha(linha)} fica fora desta entrada — não gera movimento.`,
-                        );
+                        setUltimo(textos.rececao.linhaDeFora(nomeDaLinha(linha)));
                       },
                     },
                   );
@@ -280,7 +276,7 @@ export function EcraDeRececao() {
                     {
                       onSuccess: () => {
                         setAberta(null);
-                        setUltimo(`${nomeDaLinha(linha)} volta a precisar de revisão.`);
+                        setUltimo(textos.rececao.linhaVoltaARever(nomeDaLinha(linha)));
                       },
                     },
                   );
@@ -301,13 +297,12 @@ export function EcraDeRececao() {
                   <div className="flex flex-col gap-1">
                     <h2 className="text-sm font-semibold">
                       {entram.length === 0
-                        ? "Nada entra no stock ainda"
-                        : "O que entra no stock quando confirmar"}
+                        ? textos.rececao.nadaEntraAinda
+                        : textos.rececao.oQueEntra}
                     </h2>
                     {entram.length === 0 ? (
                       <p className="text-pretty text-sm text-muted-foreground">
-                        Nenhuma linha está revista. Confirme as linhas acima — o lote e a validade
-                        estão na embalagem, não no documento.
+                        {textos.rececao.nenhumaRevista}
                       </p>
                     ) : (
                       // Sem um visto verde por item: eram quinze ícones iguais
@@ -321,7 +316,7 @@ export function EcraDeRececao() {
                                 ? ""
                                 : textoNaUnidadeBase(linha.stock_quantity)}
                             </span>{" "}
-                            de {linha.product_name} em {linha.location.name}
+                            {textos.rececao.entraNoStock(linha.product_name, linha.location.name)}
                           </li>
                         ))}
                       </ul>
@@ -334,14 +329,9 @@ export function EcraDeRececao() {
                     // o ecrã faz é dizer o que vai acontecer, não impedir.
                     <Alert className="border-warning-border bg-warning-surface">
                       <TriangleAlert aria-hidden="true" className="text-warning" />
-                      <AlertTitle>
-                        {foram.length === 1
-                          ? "1 linha fica de fora"
-                          : `${String(foram.length)} linhas ficam de fora`}
-                      </AlertTitle>
+                      <AlertTitle>{textos.rececao.linhasDeFora(foram.length)}</AlertTitle>
                       <AlertDescription className="text-pretty">
-                        Sem revisão não há movimento, logo essa mercadoria não aparece no stock.
-                        Pode confirmar assim e tratar dela depois — ou rever as linhas primeiro.
+                        {textos.rececao.linhasDeForaCorpo}
                       </AlertDescription>
                     </Alert>
                   )}
@@ -353,12 +343,13 @@ export function EcraDeRececao() {
                     }}
                   >
                     <CircleCheck aria-hidden="true" />
-                    {confirmar.isPending ? "A dar entrada…" : "Confirmar e dar entrada"}
+                    {confirmar.isPending
+                      ? textos.rececao.aDarEntrada
+                      : textos.rececao.confirmarEDarEntrada}
                   </Button>
 
                   <p className="text-pretty text-xs text-muted-foreground">
-                    É este toque que cria os movimentos de entrada. Até aqui, o stock deste
-                    estabelecimento é o mesmo que era antes de a mercadoria chegar.
+                    {textos.rececao.esteToqueCria}
                   </p>
 
                   {confirmar.isError ? (
@@ -373,7 +364,7 @@ export function EcraDeRececao() {
               {/* O resultado anunciado uma vez, para quem não está a olhar para
                   o ecrã: a tabela muda de estado em silêncio. */}
               <p role="status" className="px-celula-x text-sm">
-                {confirmar.isSuccess ? "Receção confirmada: a mercadoria entrou no stock." : null}
+                {confirmar.isSuccess ? textos.rececao.confirmada : null}
               </p>
             </>
           )}

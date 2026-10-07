@@ -4,6 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { formatDate, formatMoney, formatRate, formatTime } from "@/lib/format";
 
 import type { Rececao } from "../schemas";
+import { textos } from "../textos";
 import { nomeDoDocumento, textoDeNif } from "../vocabulario";
 import {
   BadgeDeConfirmada,
@@ -33,10 +34,13 @@ function Adquirente({ rececao }: { readonly rececao: Rececao }) {
   if (rececao.customer_nif === null || rececao.customer_nif === rececao.company_nif) return null;
 
   return (
+    // Duas funções do catálogo e não uma frase: os dois NIF vão em
+    // `data-numeric` e ficam entre elas.
     <p className="text-pretty text-xs text-muted-foreground">
-      Emitida a {rececao.customer_name ?? "outro adquirente"} · NIF{" "}
-      <span data-numeric>{textoDeNif(rececao.customer_nif)}</span>. A empresa é{" "}
-      {rececao.company_name} · NIF <span data-numeric>{textoDeNif(rececao.company_nif)}</span>.
+      {textos.cabecalho.emitidaA(rececao.customer_name ?? textos.comuns.outroAdquirente)}{" "}
+      <span data-numeric>{textoDeNif(rececao.customer_nif)}</span>.{" "}
+      {textos.cabecalho.aEmpresaE(rececao.company_name)}{" "}
+      <span data-numeric>{textoDeNif(rececao.company_nif)}</span>.
     </p>
   );
 }
@@ -59,11 +63,15 @@ export function AvisoDeTotais({ rececao }: { readonly rececao: Rececao }) {
     <div className="px-4">
       <Alert className="border-warning-border bg-warning-surface">
         <TriangleAlert aria-hidden="true" className="text-warning" />
-        <AlertTitle>Os totais não batem</AlertTitle>
+        <AlertTitle>{textos.cabecalho.totaisNaoBatemTitulo}</AlertTitle>
+        {/* Três partes nomeadas: os dois valores do meio são `data-numeric`, e
+            uma frase só tirava o mono aos algarismos que ele vai comparar. */}
         <AlertDescription className="text-pretty">
-          O total impresso é <span data-numeric>{formatMoney(impresso)}</span> e a soma das linhas dá{" "}
-          <span data-numeric>{formatMoney(somado)}</span>. Costuma ser um desconto de rodapé ou
-          portes que ficaram de fora. Pode confirmar assim.
+          {textos.cabecalho.totaisNaoBatemInicio}{" "}
+          <span data-numeric>{formatMoney(impresso)}</span>{" "}
+          {textos.cabecalho.totaisNaoBatemMeio}{" "}
+          <span data-numeric>{formatMoney(somado)}</span>
+          {textos.cabecalho.totaisNaoBatemFim}
         </AlertDescription>
       </Alert>
     </div>
@@ -88,10 +96,11 @@ export function CabecalhoDaRececao({ rececao }: { readonly rececao: Rececao }) {
         <BadgeDeTipo tipo={rececao.doc_type} />
         <span>
           {nomeDoDocumento(rececao.doc_type)}{" "}
-          {rececao.doc_number ?? <span className="italic">sem número</span>}
+          {rececao.doc_number ?? <span className="italic">{textos.comuns.semNumero}</span>}
         </span>
         <span>
-          · recebida <span data-numeric>{formatDate(rececao.received_at)}</span> às{" "}
+          · {textos.cabecalho.recebida}{" "}
+          <span data-numeric>{formatDate(rececao.received_at)}</span> {textos.comuns.as}{" "}
           <span data-numeric>{formatTime(rececao.received_at)}</span>
         </span>
       </p>
@@ -108,10 +117,7 @@ export function CabecalhoDaRececao({ rececao }: { readonly rececao: Rececao }) {
         // A guia de remessa: a mercadoria entra antes de existir fatura, e a
         // fatura de fim de mês reconcilia N entregas. É o normal de quem compra
         // a distribuidores, por isso a frase é informativa e não um aviso.
-        <p className="text-pretty text-xs text-muted-foreground">
-          Entrou por guia de remessa, sem preços. A fatura do fornecedor vem a fim de mês e
-          reconcilia as entregas do período.
-        </p>
+        <p className="text-pretty text-xs text-muted-foreground">{textos.comuns.entrouPorGuia}</p>
       ) : null}
 
       {rececao.doc_type === "NC" ? (
@@ -121,14 +127,14 @@ export function CabecalhoDaRececao({ rececao }: { readonly rececao: Rececao }) {
         // caso que separa "confirmar um documento" de "dar entrada de
         // mercadoria", e é dito aqui porque é aqui que ele o pergunta.
         <p className="text-pretty text-xs text-muted-foreground">
-          Uma nota de crédito credita valor; não dá entrada de mercadoria.
+          {textos.cabecalho.notaDeCredito}
         </p>
       ) : null}
 
       <p className="text-xs text-muted-foreground">
         {/* "Em" e não "entra em": o mesmo texto serve um documento que dá
             entrada de mercadoria e um que não dá. */}
-        Em{" "}
+        {textos.cabecalho.em}{" "}
         {rececao.locations.map((local, indice) => (
           <span key={local.id}>
             {indice === 0 ? "" : " · "}
@@ -137,11 +143,14 @@ export function CabecalhoDaRececao({ rececao }: { readonly rececao: Rececao }) {
         ))}
         {rececao.confirmed_at === null ? null : (
           <>
-            {" · confirmada "}
-            <span data-numeric>{formatDate(rececao.confirmed_at)}</span>
-            {" às "}
+            {" · "}
+            {textos.cabecalho.confirmada}{" "}
+            <span data-numeric>{formatDate(rececao.confirmed_at)}</span>{" "}
+            {textos.comuns.as}{" "}
             <span data-numeric>{formatTime(rececao.confirmed_at)}</span>
-            {rececao.confirmed_by === null ? null : <> por {rececao.confirmed_by}</>}
+            {rececao.confirmed_by === null ? null : (
+              <> {textos.cabecalho.por(rececao.confirmed_by)}</>
+            )}
           </>
         )}
       </p>
@@ -160,9 +169,7 @@ export function CabecalhoDaRececao({ rececao }: { readonly rececao: Rececao }) {
 export function TotaisDaRececao({ rececao }: { readonly rececao: Rececao }) {
   if (rececao.lines_total === null) {
     return (
-      <p className="px-4 py-3 text-xs text-muted-foreground">
-        Esta guia não traz preços — não há totais para conferir. O valor chega com a fatura.
-      </p>
+      <p className="px-4 py-3 text-xs text-muted-foreground">{textos.cabecalho.guiaSemPrecos}</p>
     );
   }
 
@@ -171,7 +178,7 @@ export function TotaisDaRececao({ rececao }: { readonly rececao: Rececao }) {
       {rececao.vat_breakdown.map((taxa) => (
         <p key={taxa.rate} className="flex items-baseline justify-between gap-3 text-xs">
           <span className="text-muted-foreground">
-            base a IVA <span data-numeric>{formatRate(taxa.rate)}</span>
+            {textos.cabecalho.baseAIva} <span data-numeric>{formatRate(taxa.rate)}</span>
           </span>
           <span className="flex items-baseline gap-3">
             <span data-numeric className="text-muted-foreground">
@@ -184,12 +191,12 @@ export function TotaisDaRececao({ rececao }: { readonly rececao: Rececao }) {
         </p>
       ))}
       <p className="flex items-baseline justify-between gap-3 text-sm font-medium">
-        <span>total</span>
+        <span>{textos.cabecalho.total}</span>
         <span data-numeric>{formatMoney(rececao.lines_total)}</span>
       </p>
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <CircleCheck aria-hidden="true" className="size-3 shrink-0" />
-        as taxas são as de cada linha da fatura — não são deduzidas do artigo
+        {textos.cabecalho.taxasDaLinha}
       </p>
     </div>
   );

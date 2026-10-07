@@ -11,6 +11,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 
 import type { ResumoDeRececoes } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * Os dois números do topo: o que falta rever e o que já foi confirmado hoje
@@ -84,17 +85,17 @@ export function NumerosDeRececoes({
     <ReguaDeContadores>
       <ContadorDeVista
         figura={String(resumo.needs_review_count)}
-        campo="por rever"
-        nota={linhas === 1 ? "1 linha por rever" : `${String(linhas)} linhas por rever`}
-        titulo="Documentos que ainda não deram entrada no stock — nada entra sem revisão"
+        campo={textos.vocabulario.porRever}
+        nota={textos.comuns.linhasPorRever(linhas)}
+        titulo={textos.numeros.porReverTitulo}
         ativo={vistaAtiva === "revisao"}
         vista="revisao"
       />
       <ContadorDeVista
         figura={String(resumo.confirmed_today_count)}
-        campo="confirmadas hoje"
-        nota={`desde as ${resumo.business_day_starts_at}`}
-        titulo={`O dia de negócio deste estabelecimento começa às ${resumo.business_day_starts_at} — o que foi confirmado antes dessa hora conta no dia anterior`}
+        campo={textos.numeros.confirmadasHoje}
+        nota={textos.numeros.desdeAs(resumo.business_day_starts_at)}
+        titulo={textos.numeros.diaDeNegocio(resumo.business_day_starts_at)}
         ativo={vistaAtiva === "hoje"}
         vista="hoje"
       />
@@ -105,7 +106,7 @@ export function NumerosDeRececoes({
 /** Pendente: um aviso só, no contentor, para quem ouve o ecrã. */
 export function EsqueletoDosNumerosDeRececoes() {
   return (
-    <ReguaDeContadores aria-busy="true" rotulo="A carregar os números…">
+    <ReguaDeContadores aria-busy="true" rotulo={textos.numeros.aCarregar}>
       {[0, 1].map((indice) => (
         <div key={indice} className={CLASSE_CONTADOR}>
           <Skeleton className="h-3 w-24" />
@@ -124,8 +125,8 @@ export function ErroDosNumerosDeRececoes({
   return (
     <div className="border-b border-border px-celula-x py-3">
       <ErroAoCarregar
-        titulo="Não foi possível contar as receções"
-        mensagem="A lista abaixo continua a funcionar. Os dois números voltam à segunda tentativa."
+        titulo={textos.numeros.erroTitulo}
+        mensagem={textos.numeros.erroCorpo}
         aoTentarOutraVez={aoTentarOutraVez}
       />
     </div>

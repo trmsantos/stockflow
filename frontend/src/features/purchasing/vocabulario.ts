@@ -10,6 +10,7 @@ import type {
   TipoDeDocumento,
   TipoValidade,
 } from "./schemas";
+import { textos } from "./textos";
 
 /**
  * O vocabulário do módulo `purchasing`: os enums do contrato em português
@@ -28,11 +29,13 @@ import type {
  * porque é assim que se diz em voz alta (guião §1).
  */
 const SIGLA = new Map<TipoDeDocumento, string>([
+  // As quatro primeiras são a chave do contrato e o que está impresso no papel:
+  // não são copy e por isso não passam pelo catálogo. A da guia é, e passa.
   ["FT", "FT"],
   ["FR", "FR"],
   ["FS", "FS"],
   ["NC", "NC"],
-  ["GR", "guia"],
+  ["GR", textos.vocabulario.siglaDeGuia],
 ]);
 
 export function siglaDeDocumento(tipo: TipoDeDocumento): string {
@@ -41,11 +44,11 @@ export function siglaDeDocumento(tipo: TipoDeDocumento): string {
 
 /** O nome por extenso, para o `title` e para quem lê o ecrã por áudio. */
 const NOME_DO_DOCUMENTO = new Map<TipoDeDocumento, string>([
-  ["FT", "Fatura"],
-  ["FR", "Fatura-recibo"],
-  ["FS", "Fatura simplificada"],
-  ["NC", "Nota de crédito"],
-  ["GR", "Guia de remessa"],
+  ["FT", textos.vocabulario.documentoFatura],
+  ["FR", textos.vocabulario.documentoFaturaRecibo],
+  ["FS", textos.vocabulario.documentoFaturaSimplificada],
+  ["NC", textos.vocabulario.documentoNotaDeCredito],
+  ["GR", textos.vocabulario.documentoGuiaDeRemessa],
 ]);
 
 export function nomeDoDocumento(tipo: TipoDeDocumento): string {
@@ -62,8 +65,8 @@ export function nomeDoDocumento(tipo: TipoDeDocumento): string {
  * do ecrã: "por rever" é mercadoria cujo stock ainda não existe.
  */
 const ESTADO_DE_RECECAO = new Map<EstadoDeRececao, string>([
-  ["needs_review", "por rever"],
-  ["confirmed", "no stock"],
+  ["needs_review", textos.vocabulario.porRever],
+  ["confirmed", textos.vocabulario.noStock],
 ]);
 
 export function rotuloDeEstadoDeRececao(estado: EstadoDeRececao): string {
@@ -79,9 +82,11 @@ export function rotuloDeEstadoDeRececao(estado: EstadoDeRececao): string {
  * coluna do stock que o diz.
  */
 const ESTADO_DE_LINHA = new Map<EstadoDeLinha, string>([
-  ["needs_review", "por rever"],
-  ["confirmed", "revista"],
-  ["skipped", "de fora"],
+  // A mesma chave do catálogo que o estado do documento usa: é a mesma palavra
+  // para a mesma coisa, e separá-las era deixá-las divergir.
+  ["needs_review", textos.vocabulario.porRever],
+  ["confirmed", textos.vocabulario.linhaRevista],
+  ["skipped", textos.vocabulario.linhaDeFora],
 ]);
 
 export function rotuloDeEstadoDeLinha(estado: EstadoDeLinha): string {
@@ -89,9 +94,9 @@ export function rotuloDeEstadoDeLinha(estado: EstadoDeLinha): string {
 }
 
 const CONSERVACAO = new Map<Conservacao, string>([
-  ["frozen", "congelado"],
-  ["chilled", "refrigerado"],
-  ["ambient", "ambiente"],
+  ["frozen", textos.vocabulario.congelado],
+  ["chilled", textos.vocabulario.refrigerado],
+  ["ambient", textos.vocabulario.ambiente],
 ]);
 
 export function rotuloDeConservacao(conservacao: Conservacao): string {
@@ -104,9 +109,9 @@ export function rotuloDeConservacao(conservacao: Conservacao): string {
  * tem quantidade.
  */
 const ESPECIE = new Map<EspecieDeLinha, string>([
-  ["goods", "mercadoria"],
-  ["deposit", "vasilhame"],
-  ["charge", "encargo"],
+  ["goods", textos.vocabulario.mercadoria],
+  ["deposit", textos.vocabulario.vasilhame],
+  ["charge", textos.vocabulario.encargo],
 ]);
 
 export function rotuloDeEspecie(especie: EspecieDeLinha): string {
@@ -120,8 +125,8 @@ export function rotuloDeEspecie(especie: EspecieDeLinha): string {
  * onde é lida.
  */
 const VALIDADE = new Map<TipoValidade, string>([
-  ["use_by", "consumir até"],
-  ["best_before", "consumir de preferência antes de"],
+  ["use_by", textos.vocabulario.consumirAte],
+  ["best_before", textos.vocabulario.consumirDePreferenciaAntesDe],
 ]);
 
 export function rotuloDeValidade(tipo: TipoValidade): string {
@@ -145,8 +150,9 @@ export function rotuloDeValidade(tipo: TipoValidade): string {
  * só se vê a medir.
  */
 const VALIDADE_CURTA = new Map<TipoValidade, string>([
-  ["use_by", "consumir até"],
-  ["best_before", "melhor antes"],
+  // A mesma chave da forma por extenso: o "consumir até" é curto de nascença.
+  ["use_by", textos.vocabulario.consumirAte],
+  ["best_before", textos.vocabulario.melhorAntes],
 ]);
 
 export function rotuloCurtoDeValidade(tipo: TipoValidade): string {
@@ -162,20 +168,24 @@ export function rotuloCurtoDeValidade(tipo: TipoValidade): string {
  * adivinhado — "2 garrafãos" é pior do que "2 garrafão". Só o primeiro termo do
  * rótulo é pluralizado, porque o resto é o descritivo da embalagem ("caixa
  * 12×1 L" → "caixas 12×1 L").
+ *
+ * O singular **e** o plural vêm do catálogo, par a par: a palavra procurada é
+ * tão da língua como a resposta, e a entrada inglesa mantém as duas em português
+ * de propósito (o rótulo que se procura é texto que o fornecedor escreveu).
  */
 const PLURAL = new Map<string, string>([
-  ["caixa", "caixas"],
-  ["bloco", "blocos"],
-  ["saco", "sacos"],
-  ["pacote", "pacotes"],
-  ["rolo", "rolos"],
-  ["grade", "grades"],
-  ["garrafão", "garrafões"],
-  ["plateau", "plateaus"],
-  ["peça", "peças"],
-  ["lata", "latas"],
-  ["embalagem", "embalagens"],
-  ["bola", "bolas"],
+  [textos.plurais.caixa.singular, textos.plurais.caixa.plural],
+  [textos.plurais.bloco.singular, textos.plurais.bloco.plural],
+  [textos.plurais.saco.singular, textos.plurais.saco.plural],
+  [textos.plurais.pacote.singular, textos.plurais.pacote.plural],
+  [textos.plurais.rolo.singular, textos.plurais.rolo.plural],
+  [textos.plurais.grade.singular, textos.plurais.grade.plural],
+  [textos.plurais.garrafao.singular, textos.plurais.garrafao.plural],
+  [textos.plurais.plateau.singular, textos.plurais.plateau.plural],
+  [textos.plurais.peca.singular, textos.plurais.peca.plural],
+  [textos.plurais.lata.singular, textos.plurais.lata.plural],
+  [textos.plurais.embalagem.singular, textos.plurais.embalagem.plural],
+  [textos.plurais.bola.singular, textos.plurais.bola.plural],
 ]);
 
 function pluralizar(rotulo: string, quantidade: number): string {
