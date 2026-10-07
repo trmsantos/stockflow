@@ -85,9 +85,6 @@ const RAIZ = "src";
  */
 const SEM_CATALOGO = new Set([
   // ## accounts — o que falta das Definições e dos convites
-  "src/features/accounts/components/formulario-de-convite.tsx",
-  "src/features/accounts/components/segredo-do-convite.tsx",
-  "src/features/accounts/components/tabela-de-convites.tsx",
   // ## O que é de toda a aplicação, e por isso se traduz primeiro
   // ## inventory — os ecrãs de operação, pela ordem de uso
   "src/features/inventory/screens/stock.tsx",

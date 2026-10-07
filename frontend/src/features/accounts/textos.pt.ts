@@ -245,6 +245,79 @@ export const PT = {
    * no `schemas.ts`, que é onde um valor novo no contrato tem de deixar de
    * compilar. O catálogo guarda palavras.
    */
+  convite: {
+    criar: "Criar convite",
+    aCriar: "A criar…",
+    erroAoCriar: "Não foi possível criar o convite",
+    nome: "Nome",
+    nomePista: "Como aparece na lista de membros deste estabelecimento.",
+    papel: "Papel",
+    /**
+     * Os dois `placeholder` são **exemplos**, e por isso traduzem-se: um
+     * `pessoa@exemplo.pt` num ecrã inglês lê-se como um endereço real de um
+     * domínio português. O nome segue a mesma regra.
+     */
+    exemploDeEmail: "pessoa@exemplo.pt",
+    exemploDeNome: "Ana Silva",
+  },
+
+  segredo: {
+    criado: "Convite criado. Entregue este link a quem convidou.",
+    reenviado: "Link novo. O link anterior deixou de funcionar.",
+    /**
+     * A frase do destinatário, em três partes porque o email vai em mono e com
+     * `translate="no"`: um email traduzido pelo browser é uma pessoa que não se
+     * encontra, e dissolver a frase numa string só tirava-lhe esse invólucro.
+     */
+    para: "Para",
+    como: ", como",
+    semEmail: ". Não é enviado nenhum email: copie o link e entregue-o a essa pessoa.",
+    linkDeActivacao: "Link de activação",
+    copiado: "Copiado",
+    copiarLink: "Copiar link",
+    /**
+     * O atalho leva espaços que não quebram (`\u00a0`): um "Ctrl + C" partido ao
+     * fim da linha deixa de ser um atalho e passa a ser duas letras perdidas.
+     */
+    copiaFalhou:
+      "O browser não deixou copiar automaticamente. Seleccione o texto do campo e copie com Ctrl\u00a0+\u00a0C.",
+    naoVoltaAAparecer: "Este link não volta a aparecer.",
+    seOPerderInicio: "Se o perder, use",
+    seOPerderFim: "na linha do convite — isso cria um link novo e invalida este.",
+    jaGuardei: "Já guardei",
+  },
+
+  convites: {
+    colunas: {
+      email: "Email",
+      nome: "Nome",
+      papel: "Papel",
+      estado: "Estado",
+      validade: "Link",
+      criado: "Criado",
+      accoes: "Acções",
+    },
+    tabela: "Convites enviados, do mais recente para o mais antigo",
+    aCarregar: "A carregar os convites…",
+    revogarEFinal: "Revogar é final.",
+    confirmar: "Confirmar",
+    aRevogar: "A revogar…",
+    cancelar: "Cancelar",
+    /**
+     * O que estes `sr-only` acrescentam ao nome acessível do botão: numa tabela
+     * de dez linhas, dez botões chamados "Reenviar" são dez botões
+     * indistinguíveis para quem navega por lista de controlos. Começam com
+     * espaço porque continuam o texto do botão.
+     */
+    daRevogacaoDe: (email: string) => ` a revogação do convite de ${email}`,
+    doConviteDe: (email: string) => ` o convite de ${email}`,
+    reenviar: "Reenviar",
+    aReenviar: "A reenviar…",
+    reenviarPista: "Cria um link novo e invalida o anterior",
+    revogar: "Revogar",
+    revogarPista: "Cancela o convite. Pede confirmação, e é final.",
+  },
+
   equipa: {
     erroDaSessao: "Não foi possível ler a sessão",
     estadoMudou: "O estado deste convite mudou",

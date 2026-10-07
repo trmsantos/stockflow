@@ -21,6 +21,7 @@ import {
   type Papel,
 } from "../schemas";
 import { Aviso } from "./aviso";
+import { textos } from "../textos";
 
 /**
  * O formulário de convite — **uma linha de ERP**, não um cartão centrado.
@@ -198,13 +199,13 @@ export function FormularioDeConvite({
       className="flex scroll-mt-cabecalho flex-col gap-3 rounded-xl border border-border bg-surface p-celula-x"
     >
       <h2 id={`${prefixo}-titulo`} className="text-sm font-semibold">
-        Convidar alguém
+        {textos.equipa.convidarAlguem}
       </h2>
 
       {mostrarBanner ? (
         <Aviso
           tom="danger"
-          titulo="Não foi possível criar o convite"
+          titulo={textos.convite.erroAoCriar}
           mensagem={mensagemDaRecusa(erroDoServidor)}
         />
       ) : null}
@@ -219,7 +220,7 @@ export function FormularioDeConvite({
       >
         <CampoDoConvite
           id={idDoEmail}
-          rotulo="Email"
+          rotulo={textos.campos.email}
           erro={erroDoEmail}
           className="md:flex-1"
         >
@@ -241,7 +242,7 @@ export function FormularioDeConvite({
             // autocomplete de credencial oferecia aqui o de quem está a convidar.
             autoComplete="off"
             maxLength={254}
-            placeholder="pessoa@exemplo.pt"
+            placeholder={textos.convite.exemploDeEmail}
             // Um email é um identificador, não prosa: a tradução automática do
             // browser não tem nada que lhe tocar, e quando toca garante um
             // convite entregue a um endereço que não existe.
@@ -254,9 +255,9 @@ export function FormularioDeConvite({
 
         <CampoDoConvite
           id={idDoNome}
-          rotulo="Nome"
+          rotulo={textos.convite.nome}
           erro={erroDoNome}
-          pista="Como aparece na lista de membros deste estabelecimento."
+          pista={textos.convite.nomePista}
           className="md:flex-1"
         >
           <Input
@@ -275,7 +276,7 @@ export function FormularioDeConvite({
             autoCorrect="off"
             spellCheck={false}
             maxLength={150}
-            placeholder="Ana Silva"
+            placeholder={textos.convite.exemploDeNome}
             aria-invalid={erroDoNome === undefined ? undefined : true}
             aria-describedby={
               erroDoNome === undefined
@@ -288,7 +289,7 @@ export function FormularioDeConvite({
 
         <CampoDoConvite
           id={idDoPapel}
-          rotulo="Papel"
+          rotulo={textos.convite.papel}
           erro={erroDoPapel}
           className="md:w-40 md:shrink-0"
         >
@@ -328,7 +329,7 @@ export function FormularioDeConvite({
             aria-busy={aSubmeter}
           >
             <UserPlus aria-hidden="true" />
-            {aSubmeter ? "A criar…" : "Criar convite"}
+            {aSubmeter ? textos.convite.aCriar : textos.convite.criar}
           </Button>
         </div>
       </form>
