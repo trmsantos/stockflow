@@ -53,9 +53,6 @@ const RAIZ = "src";
  * A ordem é a de uso dos ecrãs, que é a ordem por que a ADR 0019 manda traduzi-los.
  */
 const SEM_CATALOGO = new Set([
-  // Entrada e activação: quem não os entende não chega a lado nenhum.
-  "src/features/accounts/screens/entrar.tsx",
-  "src/features/accounts/screens/ativar.tsx",
   // As Definições e as suas quatro secções.
   "src/features/accounts/screens/definicoes.tsx",
   "src/features/accounts/components/secao-aparencia.tsx",
@@ -93,7 +90,9 @@ const SEM_CATALOGO = new Set([
   "src/features/reporting/components/pessoal-do-mes.tsx",
   "src/features/reporting/components/resultado-do-mes.tsx",
   "src/features/reporting/components/variacao-no-periodo.tsx",
-  // Componentes partilhados.
+  // Componentes partilhados. O `barras-ordenadas` tem **uma** palavra visível
+  // ("Proporção") e um catálogo próprio para ela era desproporcionado: sai desta
+  // lista com os ecrãs do `reporting`, que são os que o usam.
   "src/components/barras-ordenadas.tsx",
 ]);
 

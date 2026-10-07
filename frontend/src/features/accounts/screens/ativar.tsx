@@ -18,6 +18,7 @@ import {
   mensagemDaRecusa,
 } from "../erros";
 import { formularioDeAtivacaoSchema } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * `/ativar` — aceitar um convite, com o segredo no **fragmento** do URL.
@@ -76,18 +77,18 @@ export function EcraDeAtivacao() {
  * esse POST levaria um 400 por campo, que é outra forma e não esta.
  */
 const FRASE_DE_CONVITE_INVALIDO =
-  "Este convite não é válido. Peça um convite novo a quem administra o estabelecimento.";
+  textos.ativar.conviteInvalidoCorpo;
 
 function LinkIncompleto() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Convite inválido</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{textos.ativar.conviteInvalidoTitulo}</h1>
       </div>
-      <Aviso tom="danger" titulo="Este link não serve" mensagem={FRASE_DE_CONVITE_INVALIDO} />
+      <Aviso tom="danger" titulo={textos.ativar.linkNaoServe} mensagem={FRASE_DE_CONVITE_INVALIDO} />
       <Button asChild variant="outline" className="h-controlo w-fit">
         <Link to="/entrar">
-          Ir para a entrada
+          {textos.ativar.irParaEntrada}
           <ArrowRight aria-hidden="true" />
         </Link>
       </Button>
@@ -101,13 +102,13 @@ function avisoDaRecusa(codigo: string | null): { tom: TomDoAviso; titulo: string
     case CODIGO_CONVITE_EXIGE_SESSAO:
       // Não é uma falha: é uma instrução em dois passos, e o convite continua
       // válido. Tom de aviso e uma saída.
-      return { tom: "warning", titulo: "Esta conta já existe" };
+      return { tom: "warning", titulo: textos.ativar.contaJaExiste };
     case CODIGO_CONVITE_DE_OUTRA_CONTA:
-      return { tom: "warning", titulo: "Este convite é de outra conta" };
+      return { tom: "warning", titulo: textos.ativar.conviteDeOutraConta };
     case CODIGO_CONVITE_INVALIDO:
-      return { tom: "danger", titulo: "Este convite não serve" };
+      return { tom: "danger", titulo: textos.ativar.conviteNaoServe };
     default:
-      return { tom: "danger", titulo: "Não foi possível activar o convite" };
+      return { tom: "danger", titulo: textos.ativar.erroAoActivar };
   }
 }
 
@@ -176,15 +177,14 @@ function FormularioDeAtivacao({ fragmento }: { readonly fragmento: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Activar a sua conta</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{textos.ativar.titulo}</h1>
         {/* A frase de abertura só vale quando há formulário. Com um dos três
             códigos estáveis não há password a escolher, e manter "escolha uma
             password" por cima de um ecrã sem campo nenhum é a contradição que
             faz quem lê duvidar do resto do ecrã. */}
         {comPassword ? (
           <p className="text-pretty text-sm text-muted-foreground">
-            Foi convidado para um estabelecimento no StockFlow. Escolha uma password para activar o
-            acesso — este link só serve uma vez.
+            {textos.ativar.subtitulo}
           </p>
         ) : null}
       </div>
@@ -199,13 +199,13 @@ function FormularioDeAtivacao({ fragmento }: { readonly fragmento: string }) {
             // existe para preservar.
             <Button asChild variant="outline" className="h-controlo">
               <Link to="/entrar" search={{ destino: "/ativar" }} hash={fragmento}>
-                Entrar com esta conta
+                {textos.ativar.entrarComEstaConta}
                 <ArrowRight aria-hidden="true" />
               </Link>
             </Button>
           ) : null}
           {codigo === CODIGO_CONVITE_DE_OUTRA_CONTA ? (
-            <BotaoDeSair rotulo="Sair e entrar com a conta convidada" />
+            <BotaoDeSair rotulo={textos.ativar.sairEEntrarComAConvidada} />
           ) : null}
           {codigo === CODIGO_CONVITE_INVALIDO ? (
             // Não há retry que valha: o convite não melhora à segunda
@@ -214,7 +214,7 @@ function FormularioDeAtivacao({ fragmento }: { readonly fragmento: string }) {
             // morto na mão tem de poder ir a algum sítio.
             <Button asChild variant="outline" className="h-controlo">
               <Link to="/entrar">
-                Ir para a entrada
+                {textos.ativar.irParaEntrada}
                 <ArrowRight aria-hidden="true" />
               </Link>
             </Button>
@@ -236,13 +236,13 @@ function FormularioDeAtivacao({ fragmento }: { readonly fragmento: string }) {
             // `AUTH_PASSWORD_VALIDATORS` do servidor, e o cliente não a
             // reimplementa: duas definições de "password forte" divergiriam na
             // primeira vez que a política mudasse.
-            pista="Pelo menos 12 caracteres. Não pode ser uma password comum nem só dígitos."
+            pista={textos.ativar.regraDaPassword}
             autoComplete="new-password"
             desativado={ativar.isPending}
           />
           <CampoDeTexto
             id="confirmacao"
-            rotulo="Repita a password"
+            rotulo={textos.ativar.repitaAPassword}
             tipo="password"
             valor={confirmacao}
             aoMudar={setConfirmacao}
@@ -257,7 +257,7 @@ function FormularioDeAtivacao({ fragmento }: { readonly fragmento: string }) {
             aria-busy={ativar.isPending}
           >
             <KeyRound aria-hidden="true" />
-            {ativar.isPending ? "A activar…" : "Activar e entrar"}
+            {ativar.isPending ? textos.ativar.aActivar : textos.ativar.activarEEntrar}
           </Button>
         </form>
       ) : null}
@@ -267,7 +267,7 @@ function FormularioDeAtivacao({ fragmento }: { readonly fragmento: string }) {
         // `convite_de_outra_conta` acontece **por** ser outra conta, e ver o
         // email é como quem está à frente do ecrã percebe qual.
         <p className="text-xs text-muted-foreground">
-          Sessão de <span className="font-mono">{utilizador.email}</span>
+          {textos.ativar.sessaoDe} <span className="font-mono">{utilizador.email}</span>
         </p>
       )}
     </div>

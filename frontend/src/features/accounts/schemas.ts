@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { TEMAS } from "@/lib/tema";
 
+import { textos } from "./textos";
+
 /**
  * O contrato de autenticação e de activação, em Zod (ADR 0010).
  *
@@ -417,8 +419,8 @@ export const sessaoSchema = z
  * o escreveu.
  */
 export const credenciaisSchema = z.object({
-  email: z.string().trim().min(1, "Escreva o email da sua conta.").max(254),
-  password: z.string().min(1, "Escreva a sua password."),
+  email: z.string().trim().min(1, textos.formularios.escrevaOEmail).max(254),
+  password: z.string().min(1, textos.formularios.escrevaAPassword),
 });
 
 /**
@@ -449,11 +451,11 @@ export const credenciaisSchema = z.object({
  */
 export const formularioDeAtivacaoSchema = z
   .object({
-    password: z.string().min(1, "Escolha uma password para activar a sua conta."),
+    password: z.string().min(1, textos.formularios.escolhaUmaPassword),
     confirmacao: z.string(),
   })
   .refine((campos) => campos.confirmacao === campos.password, {
-    error: "As duas passwords não são iguais.",
+    error: textos.formularios.passwordsDiferentes,
     path: ["confirmacao"],
   });
 
@@ -608,12 +610,12 @@ export const conviteCriadoSchema = z.object({
  * dois: cortá-los aqui é mandar o mesmo valor que o servidor ia usar.
  */
 export const conviteParaCriarSchema = z.object({
-  email: z.string().trim().min(1, "Escreva o email de quem quer convidar.").max(254),
+  email: z.string().trim().min(1, textos.formularios.escrevaOEmailDeQuemConvida).max(254),
   nome: z
     .string()
     .trim()
-    .min(1, "Escreva o nome desta pessoa neste estabelecimento.")
-    .max(150, "O nome não pode ter mais de 150 caracteres."),
+    .min(1, textos.formularios.escrevaONome)
+    .max(150, textos.formularios.nomeDemasiadoLongo),
   papel: papelSchema,
 });
 
