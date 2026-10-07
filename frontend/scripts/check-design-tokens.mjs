@@ -7,7 +7,7 @@
  * nenhum linter conhece:
  *
  *  - **a paleta em vigor completa, e nenhuma paleta a meio**. Ver
- *    `verificarPaletaUnica`: é aqui que este gate mudou de alvo a 2026-10-01, e
+ *    `verificarPaletas`: é aqui que este gate mudou de alvo, duas vezes, e
  *    a razão está escrita lá porque daqui a três meses parece a mesma coisa;
  *  - **contraste WCAG AA medido** contra a pior superfície, e **gamut sRGB**,
  *    que eram as duas afirmações do DESIGN.md §2 sem mecanismo nenhum a
@@ -171,11 +171,31 @@ function verificarFicheiros() {
  * apontam e por isso são separadas das literais mais abaixo.
  */
 function declaracoesDeCor(fonte) {
+  return declaracoesDe(fonte, "color");
+}
+
+/**
+ * Declarações `--<prefixo>-<nome>: <valor>` de um pedaço de CSS.
+ *
+ * Genérico desde 2026-10-07 porque **uma paleta não é só `--color-*`**: o
+ * `--shadow-sm` codifica "num fundo preto a sombra não separa, o que separa é o
+ * fio de luz na aresta de cima" (DESIGN.md §2), e num fundo claro isso
+ * inverte-se — um fio de luz branco sobre papel não existe. Um tema claro com as
+ * sombras do escuro é um tema a 16 de 18 que o gate antigo dava por completo
+ * (ADR 0015, decisão 4).
+ */
+function declaracoesDe(fonte, prefixo) {
   const encontradas = new Map();
-  const padrao = /--color-([a-z0-9-]+)\s*:\s*([^;]+);/g;
+  // Um padrão **literal** com o prefixo em grupo, e não um `new RegExp` com o
+  // prefixo interpolado: o `security/detect-non-literal-regexp` do
+  // `eslint.config.js` acusa a construção dinâmica, e com `--max-warnings 0`
+  // isso é fatal. A regra tem razão em geral (um padrão vindo de fora é um vector
+  // de ReDoS) e aqui os dois chamadores passam literais — mas silenciá-la para
+  // provar que este caso é seguro custa mais do que escrever o padrão fixo.
+  const padrao = /--(color|shadow)-([a-z0-9-]+)\s*:\s*([^;]+);/g;
   let encontro = padrao.exec(fonte);
   while (encontro !== null) {
-    encontradas.set(encontro[1], encontro[2].trim());
+    if (encontro[1] === prefixo) encontradas.set(encontro[2], encontro[3].trim());
     encontro = padrao.exec(fonte);
   }
   return encontradas;
@@ -186,14 +206,22 @@ function literaisDe(declaracoes) {
 }
 
 /**
- * Os blocos `@media` de um CSS, com o corpo delimitado por contagem de chaves
- * (um `@media` pode conter regras com chaves, logo um `indexOf("}")` não
- * serve). Corre sobre o CSS já sem comentários, senão um `@media` dentro de um
- * comentário — como o que explica esta função — contava como bloco.
+ * Os blocos `:root[data-tema="<nome>"]` de um CSS, com o corpo delimitado por
+ * contagem de chaves (um bloco pode conter regras com chaves, logo um
+ * `indexOf("}")` não serve). Corre sobre o CSS já sem comentários, senão um
+ * selector dentro de um comentário — como o que explica esta função — contava
+ * como bloco.
+ *
+ * **Eram blocos `@media (prefers-color-scheme: …)` até 2026-10-07**, e a troca é
+ * a decisão 1 da ADR 0015: a preferência de tema é **da pessoa** e vive no
+ * servidor, não na configuração do sistema operativo de quem olha; e uma media
+ * query tem dois estados para três paletas. O `prefers-color-scheme` passou a
+ * ser proibido em `src/**` inteiro — deixou de selecionar o que quer que seja, e
+ * uma segunda forma de escolher paleta é uma segunda fonte de verdade.
  */
-function blocosDeMedia(limpo) {
+function blocosDeTema(limpo) {
   const blocos = [];
-  const padrao = /@media([^{]*)\{/g;
+  const padrao = /:root\[data-tema=["']?([a-z_]+)["']?\]\s*\{/g;
   let encontro = padrao.exec(limpo);
   while (encontro !== null) {
     const abre = padrao.lastIndex - 1;
@@ -210,7 +238,7 @@ function blocosDeMedia(limpo) {
       }
     }
     blocos.push({
-      condicao: encontro[1].trim(),
+      nome: encontro[1],
       corpo: limpo.slice(abre + 1, fecha),
       inicio: encontro.index,
       fim: fecha + 1,
@@ -221,22 +249,39 @@ function blocosDeMedia(limpo) {
   return blocos;
 }
 
+/** O nome da paleta que vive sem atributo: é o default e a identidade aprovada. */
+const PALETA_DEFAULT = "escuro";
+
 /**
- * Separa uma fonte na **paleta em vigor** (tudo o que está fora de `@media`) e
- * nas paletas alternativas (um bloco `prefers-color-scheme` cada).
+ * Separa uma fonte nas suas paletas: a **default** (tudo o que está fora de um
+ * bloco de tema, isto é o `@theme static`) e uma por `:root[data-tema=…]`.
+ *
+ * Cada paleta traz as cores **e as sombras**, porque as duas definem o aspecto
+ * de uma superfície e a completude é medida sobre as duas (ADR 0015, decisão 4).
+ *
+ * Os blocos de tema são removidos do texto da default antes de a ler, senão os
+ * tokens de um tema entravam na paleta que ele sobrepõe — e a default passaria a
+ * ter dois valores para o mesmo nome, com o último a ganhar por acidente de
+ * ordem.
  */
 function paletasDe(fonte) {
   const limpo = semComentarios(fonte);
-  const medias = blocosDeMedia(limpo);
+  const blocos = blocosDeTema(limpo);
   let base = limpo;
-  for (const bloco of [...medias].reverse()) {
+  for (const bloco of [...blocos].reverse()) {
     base = base.slice(0, bloco.inicio) + base.slice(bloco.fim);
   }
   return {
-    base: declaracoesDeCor(base),
-    alternativas: medias
-      .filter((bloco) => bloco.condicao.includes("prefers-color-scheme"))
-      .map((bloco) => ({ condicao: bloco.condicao, cores: declaracoesDeCor(bloco.corpo) })),
+    default: {
+      nome: PALETA_DEFAULT,
+      cores: declaracoesDeCor(base),
+      sombras: declaracoesDe(base, "shadow"),
+    },
+    temas: blocos.map((bloco) => ({
+      nome: bloco.nome,
+      cores: declaracoesDeCor(bloco.corpo),
+      sombras: declaracoesDe(bloco.corpo, "shadow"),
+    })),
   };
 }
 
@@ -287,82 +332,154 @@ const PAPEIS = ["", "-surface", "-border"];
  * O que **não** mudou: a paridade token a token entre o DESIGN.md §2 e este
  * ficheiro, que continua a falhar nos dois sentidos.
  */
-function verificarPaletaUnica() {
-  const { base, alternativas } = paletasDe(readFileSync(TOKENS_CSS, "utf8"));
-  const literais = literaisDe(base);
+/** As duas sombras. Uma paleta não é só `--color-*` (ADR 0015, decisão 4). */
+const SOMBRAS = ["sm", "lg"];
 
-  for (const nome of ESTRUTURAIS) {
-    if (!literais.has(nome)) {
-      relatar(TOKENS_CSS, 1, `a paleta não tem --color-${nome}, e sem ele não se mede`);
+/**
+ * As paletas: quantas há, se cada uma está completa, e se nenhuma segunda forma
+ * de as escolher apareceu.
+ *
+ * ## Este gate mudou de alvo duas vezes, e as duas estão escritas
+ *
+ * Até 2026-10-01 exigia **paridade entre dois modos**: 18 tokens na paleta clara
+ * e os mesmos 18 redefinidos num `@media (prefers-color-scheme: dark)`. Com a
+ * identidade "Cabine" (escura) e a decisão "escuro primário, claro depois", essa
+ * paridade passou a ser uma afirmação sobre um conjunto vazio — passava sempre.
+ * Passou então a exigir **uma** paleta completa e nenhuma alternativa parcial.
+ *
+ * A 2026-10-07 o dono do produto pediu claro, escuro e um meio termo, e o alvo
+ * mudou outra vez (ADR 0015): **N paletas, cada uma completa e cada uma medida**.
+ * O que não mudou nas três versões é a propriedade: nunca se relaxou o que o
+ * gate afirma — mudou-se o que ele afirma, porque a coisa mudou. A diferença
+ * importa, e é a razão de isto estar escrito em vez de reescrito em silêncio.
+ *
+ * ## O que se exige, por paleta
+ *
+ *  1. os nove tokens de **estrutura** e os **três papéis** de cada cor de estado;
+ *  2. as **duas sombras** — o `--shadow-sm` codifica "num fundo preto a sombra
+ *     não separa, o que separa é o fio de luz na aresta de cima", e num fundo
+ *     claro isso inverte-se. Um tema claro com as sombras do escuro é um tema a
+ *     16 de 18 que a versão anterior deste gate dava por completo;
+ *  3. todo o token literal legível como `oklch(L C h)`, senão entrava na paleta
+ *     sem ser medido;
+ *  4. **igualdade de conjuntos** contra a default, nos dois sentidos: um token a
+ *     menos é um tema a meio, e um a mais é um token que a default não tem e que
+ *     ninguém mede no caso em que o tema está inactivo.
+ *
+ * O gamut e o contraste são medidos à parte, em `verificarCorEMedidas`, porque é
+ * lá que vive a matemática — e são medidos para **cada** paleta: o mesmo `oklch`
+ * que dá 5,5:1 sobre quase-preto dá muito menos sobre papel. O gate não exige que
+ * os valores difiram entre paletas; exige que cada uma passe a **sua** medição, e
+ * um valor copiado falha na paleta onde não passa. Tornar impossível em vez de
+ * proibir, que é a mecânica do resto deste sistema.
+ */
+function verificarPaletas() {
+  const { default: base, temas } = paletasDe(readFileSync(TOKENS_CSS, "utf8"));
+
+  const completude = (paleta) => {
+    const literais = literaisDe(paleta.cores);
+
+    for (const nome of ESTRUTURAIS) {
+      if (!literais.has(nome)) {
+        relatar(
+          TOKENS_CSS,
+          1,
+          `paleta \`${paleta.nome}\`: não tem --color-${nome}, e sem ele não se mede`,
+        );
+      }
     }
-  }
 
-  for (const [nome, valor] of literais) {
-    if (!/^oklch\(\s*[-\d.]+\s+[-\d.]+\s+[-\d.]+\s*\)$/.test(valor)) {
-      relatar(
-        TOKENS_CSS,
-        1,
-        `--color-${nome} é \`${valor}\` e não um oklch(L C h) — entrava na paleta sem ser medido`,
-      );
+    for (const sufixo of SOMBRAS) {
+      if (!paleta.sombras.has(sufixo)) {
+        relatar(
+          TOKENS_CSS,
+          1,
+          `paleta \`${paleta.nome}\`: não tem --shadow-${sufixo}. Uma paleta não é só cor — ` +
+            "o fio de luz na aresta de cima que separa num fundo preto não existe sobre papel",
+        );
+      }
     }
-  }
 
-  // As famílias de estado vêm do **nome**: tudo o que não é estrutura é uma cor
-  // de estado, e uma cor de estado tem três papéis. Um `--color-info` novo
-  // passa a exigir `-surface` e `-border` sozinho, sem ninguém o inscrever.
-  const familias = new Set(
-    [...literais.keys()]
-      .filter((nome) => !ESTRUTURAIS.includes(nome))
-      .map((nome) => nome.replace(/-(?:surface|border)$/, "")),
-  );
-  for (const familia of familias) {
-    const faltam = PAPEIS.map((papel) => `${familia}${papel}`).filter(
-      (nome) => !literais.has(nome),
+    for (const [nome, valor] of literais) {
+      if (!/^oklch\(\s*[-\d.]+\s+[-\d.]+\s+[-\d.]+\s*\)$/.test(valor)) {
+        relatar(
+          TOKENS_CSS,
+          1,
+          `paleta \`${paleta.nome}\`: --color-${nome} é \`${valor}\` e não um oklch(L C h) — ` +
+            "entrava na paleta sem ser medido",
+        );
+      }
+    }
+
+    // As famílias de estado vêm do **nome**: tudo o que não é estrutura é uma cor
+    // de estado, e uma cor de estado tem três papéis. Um `--color-info` novo
+    // passa a exigir `-surface` e `-border` nas **três** paletas sozinho, sem
+    // ninguém o inscrever.
+    const familias = new Set(
+      [...literais.keys()]
+        .filter((nome) => !ESTRUTURAIS.includes(nome))
+        .map((nome) => nome.replace(/-(?:surface|border)$/, "")),
     );
-    if (faltam.length > 0) {
-      relatar(
-        TOKENS_CSS,
-        1,
-        `a cor de estado \`${familia}\` tem de ter os três papéis (DESIGN.md §2); falta ${faltam
-          .map((nome) => `--color-${nome}`)
-          .join(", ")}`,
+    for (const familia of familias) {
+      const faltam = PAPEIS.map((papel) => `${familia}${papel}`).filter(
+        (nome) => !literais.has(nome),
       );
+      if (faltam.length > 0) {
+        relatar(
+          TOKENS_CSS,
+          1,
+          `paleta \`${paleta.nome}\`: a cor de estado \`${familia}\` tem de ter os três papéis ` +
+            `(DESIGN.md §2); falta ${faltam.map((nome) => `--color-${nome}`).join(", ")}`,
+        );
+      }
     }
-  }
 
-  for (const alternativa of alternativas) {
-    const suas = literaisDe(alternativa.cores);
-    const faltam = [...literais.keys()].filter((nome) => !suas.has(nome));
-    const aMais = [...suas.keys()].filter((nome) => !literais.has(nome));
+    return literais;
+  };
+
+  const daDefault = completude(base);
+
+  for (const tema of temas) {
+    completude(tema);
+    const suas = literaisDe(tema.cores);
+    const faltam = [...daDefault.keys()].filter((nome) => !suas.has(nome));
+    const aMais = [...suas.keys()].filter((nome) => !daDefault.has(nome));
     if (faltam.length > 0 || aMais.length > 0) {
       relatar(
         TOKENS_CSS,
         1,
-        `paleta parcial em \`@media ${alternativa.condicao}\`: ` +
+        `paleta parcial em \`data-tema="${tema.nome}"\`: ` +
           `${faltam.length} token(s) por redefinir${faltam.length > 0 ? ` (${faltam.join(", ")})` : ""}` +
-          `${aMais.length > 0 ? ` e ${aMais.length} que não existem na paleta em vigor (${aMais.join(", ")})` : ""}.` +
-          " Um segundo modo entra completo e medido, ou não entra",
+          `${aMais.length > 0 ? ` e ${aMais.length} que a paleta \`${PALETA_DEFAULT}\` não tem (${aMais.join(", ")})` : ""}.` +
+          " Um tema entra completo e medido, ou não entra",
       );
     }
   }
 
+  // `prefers-color-scheme` deixou de selecionar paleta nenhuma (ADR 0015,
+  // decisão 1) e passa a ser proibido em `src/**` **inteiro**, incluindo este
+  // ficheiro: uma segunda forma de escolher paleta é uma segunda fonte de
+  // verdade, e esta já não escolhe nada — seria um mecanismo morto a parecer
+  // vivo. A excepção é o `index.html`, que está fora de `src/` e onde a única
+  // media query que resta é a de `prefers-reduced-motion`.
   for (const ficheiro of ficheirosDe(join(RAIZ, "src"), [".css"])) {
-    if (ficheiro === TOKENS_CSS) continue;
     const linhas = semComentarios(readFileSync(ficheiro, "utf8")).split("\n");
     linhas.forEach((linha, indice) => {
       if (linha.includes("prefers-color-scheme")) {
         relatar(
           ficheiro,
           indice + 1,
-          "paleta fora do tokens.css — `prefers-color-scheme` só lá, onde é medido",
+          "`prefers-color-scheme` não selecciona paleta nenhuma desde a ADR 0015: " +
+            "o tema é um atributo `data-tema` no `<html>`, escolhido pela pessoa e guardado no servidor",
         );
       }
     });
   }
 
+  const nomes = [PALETA_DEFAULT, ...temas.map((tema) => tema.nome)];
   console.log(
-    `check-design: paleta em vigor com ${literais.size} tokens de cor` +
-      `${alternativas.length === 0 ? ", e nenhuma paleta alternativa" : `, mais ${alternativas.length} em \`@media prefers-color-scheme\``}.`,
+    `check-design: ${nomes.length} paleta(s) — ${nomes.join(", ")} — ` +
+      `com ${daDefault.size} tokens de cor e ${SOMBRAS.length} sombras cada.`,
   );
 }
 
@@ -462,15 +579,36 @@ function medirPaleta(etiqueta, tintas) {
     medicoes.push({ token, canais, dentro });
   }
 
-  // A pior das três superfícies é o `surface-2` — o mais claro dos três pretos,
-  // logo o pior fundo para texto claro — e é contra ela que o DESIGN.md §2
-  // exige a medição, não contra o `background`.
-  const pior = tintas.get("surface-2");
-  if (!pior) {
-    relatar(TOKENS_CSS, 1, `${etiqueta}: falta --color-surface-2, sem ele não há contra o que medir`);
+  const frente = tintas.get("foreground");
+  if (!frente) {
+    relatar(TOKENS_CSS, 1, `${etiqueta}: falta --color-foreground, sem ele não há o que medir`);
     return medicoes;
   }
-  const frente = tintas.get("foreground");
+
+  // **A pior superfície é calculada, não nomeada** (ADR 0015, decisão 4.2).
+  //
+  // Era `tintas.get("surface-2")`, com a razão escrita: "o mais claro dos três
+  // pretos, logo o pior fundo para texto claro". Verdade numa paleta escura, e
+  // falso numa clara — ali o pior fundo para texto escuro é o **mais escuro** dos
+  // três. Nomear o `surface-2` numa paleta clara seria medir contra o melhor
+  // fundo e chamar-lhe o pior, que é a forma de um gate passar a mentir sem
+  // mudar uma linha.
+  //
+  // Calcula-se: das três superfícies, aquela contra a qual o `foreground` tem o
+  // **menor** contraste. No escuro isso devolve o `surface-2`, que é o que o §2
+  // já diz; no claro devolve a mais escura. E o gate imprime qual é, por paleta,
+  // em cada corrida — se mudar, muda num diff.
+  const candidatas = [...SUPERFICIES]
+    .map((nome) => ({ nome, tinta: tintas.get(nome) }))
+    .filter((candidata) => candidata.tinta !== undefined);
+  if (candidatas.length === 0) {
+    relatar(TOKENS_CSS, 1, `${etiqueta}: não há superfície nenhuma contra a qual medir`);
+    return medicoes;
+  }
+  const piorSuperficie = candidatas.reduce((a, b) =>
+    contraste(frente, a.tinta) <= contraste(frente, b.tinta) ? a : b,
+  );
+  const pior = piorSuperficie.tinta;
 
   for (const medicao of medicoes) {
     const { token } = medicao;
@@ -484,6 +622,7 @@ function medirPaleta(etiqueta, tintas) {
       medicao.papel = papel.tipo;
       medicao.razao = contraste(tinta, pior);
       medicao.minimo = 0;
+      medicao.piorSuperficie = piorSuperficie.nome;
       continue;
     }
 
@@ -502,12 +641,13 @@ function medirPaleta(etiqueta, tintas) {
     medicao.papel = papel.tipo;
     medicao.razao = razao;
     medicao.minimo = papel.minimo;
+    medicao.piorSuperficie = piorSuperficie.nome;
     if (razao < papel.minimo) {
       const descricao = {
         tinta: `--color-foreground sobre --color-${token}`,
-        fronteira: `--color-${token} como fronteira de componente sobre surface-2`,
+        fronteira: `--color-${token} como fronteira de componente sobre ${piorSuperficie.nome}`,
         "texto-sobre-primary": `--color-${token} sobre --color-primary`,
-        texto: `--color-${token} como texto sobre surface-2`,
+        texto: `--color-${token} como texto sobre ${piorSuperficie.nome}`,
       }[papel.tipo];
       relatar(
         TOKENS_CSS,
@@ -540,20 +680,19 @@ function verificarCorEMedidas() {
   const doCss = paletasDe(readFileSync(TOKENS_CSS, "utf8"));
   const doMd = paletasDe(readFileSync(DESIGN_MD, "utf8"));
 
-  const paletas = [
-    { etiqueta: "paleta em vigor", cores: doCss.base },
-    ...doCss.alternativas.map((alternativa) => ({
-      etiqueta: `@media ${alternativa.condicao}`,
-      cores: alternativa.cores,
-    })),
-  ];
+  const paletas = [doCss.default, ...doCss.temas].map((paleta) => ({
+    etiqueta: `paleta \`${paleta.nome}\``,
+    cores: paleta.cores,
+  }));
 
   let tintasMedidas = 0;
   const piores = new Map();
+  const medicoesPorPaleta = new Map();
   for (const paleta of paletas) {
     const tintas = tintasDasDeclaracoes(paleta.cores);
     tintasMedidas += tintas.size;
     const medicoes = medirPaleta(paleta.etiqueta, tintas);
+    medicoesPorPaleta.set(paleta.etiqueta, medicoes);
     for (const medicao of medicoes) {
       if (!medicao.minimo || medicao.razao === undefined) continue;
       const atual = piores.get(medicao.papel);
@@ -563,25 +702,35 @@ function verificarCorEMedidas() {
   }
 
   // A paridade com o §2 do DESIGN.md: token a token, nos dois sentidos, e
-  // também no **número de paletas** — um modo documentado que não existe no CSS
+  // também nos **nomes das paletas** — um tema documentado que não existe no CSS
   // (ou o contrário) é a mesma divergência que um token com outro valor.
-  if (doCss.alternativas.length !== doMd.alternativas.length) {
+  //
+  // Compara-se por **nome** e não por ordem, desde que as paletas passaram a
+  // ter nome (ADR 0015): com blocos `@media` anónimos a única chave era a
+  // posição, e trocar a ordem dos dois blocos no documento passava calado.
+  const nomesCss = [doCss.default.nome, ...doCss.temas.map((t) => t.nome)];
+  const nomesMd = [doMd.default.nome, ...doMd.temas.map((t) => t.nome)];
+  const soNoCss = nomesCss.filter((nome) => !nomesMd.includes(nome));
+  const soNoMd = nomesMd.filter((nome) => !nomesCss.includes(nome));
+  if (soNoCss.length > 0 || soNoMd.length > 0) {
     relatar(
       DESIGN_MD,
       1,
-      `o §2 documenta ${doMd.alternativas.length} paleta(s) alternativa(s) e o tokens.css tem ${doCss.alternativas.length}`,
+      `as paletas do §2 e do tokens.css não são as mesmas: ` +
+        `${soNoCss.length > 0 ? `só no tokens.css ${soNoCss.join(", ")}` : ""}` +
+        `${soNoCss.length > 0 && soNoMd.length > 0 ? "; " : ""}` +
+        `${soNoMd.length > 0 ? `só no §2 ${soNoMd.join(", ")}` : ""}`,
     );
   }
 
-  const pares = [["paleta em vigor", doCss.base, doMd.base]];
-  const alternativas = Math.min(doCss.alternativas.length, doMd.alternativas.length);
-  for (let i = 0; i < alternativas; i += 1) {
-    pares.push([
-      `@media ${doCss.alternativas[i].condicao}`,
-      doCss.alternativas[i].cores,
-      doMd.alternativas[i].cores,
+  const porNomeMd = new Map([doMd.default, ...doMd.temas].map((t) => [t.nome, t]));
+  const pares = [doCss.default, ...doCss.temas]
+    .filter((paleta) => porNomeMd.has(paleta.nome))
+    .map((paleta) => [
+      `paleta \`${paleta.nome}\``,
+      paleta.cores,
+      porNomeMd.get(paleta.nome).cores,
     ]);
-  }
 
   for (const [etiqueta, css, md] of pares) {
     const tintasCss = tintasDasDeclaracoes(css);
@@ -608,9 +757,21 @@ function verificarCorEMedidas() {
   const resumo = [...piores.entries()]
     .map(([papel, medicao]) => `${papel} ${medicao.razao.toFixed(3)}:1 (--color-${medicao.token})`)
     .join(", ");
+  // A pior superfície de cada paleta é impressa **por nome**: é ela o fundo
+  // contra o qual todo o texto e toda a fronteira foram medidos, e é calculada e
+  // não nomeada em código. Se mudar, muda num diff — que é a única forma de
+  // alguém reparar.
+  const fundos = paletas
+    .map((paleta) => {
+      const medicoes = medicoesPorPaleta.get(paleta.etiqueta) ?? [];
+      const qual = medicoes.find((medicao) => medicao.piorSuperficie !== undefined);
+      return `${paleta.etiqueta} mede contra ${qual ? qual.piorSuperficie : "—"}`;
+    })
+    .join("; ");
   console.log(
     `check-design: ${tintasMedidas} tintas oklch no gamut sRGB, §2 em dia. Pior de cada papel: ${resumo}.`,
   );
+  console.log(`check-design: ${fundos}.`);
   if (!DETALHE) console.log("check-design: `--detalhe` imprime a tabela token a token.");
 }
 
@@ -659,7 +820,7 @@ function verificarFontes() {
 }
 
 verificarFicheiros();
-verificarPaletaUnica();
+verificarPaletas();
 verificarCorEMedidas();
 verificarFontes();
 
