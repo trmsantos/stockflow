@@ -226,7 +226,16 @@ class ItemDeMenuInSerializer(serializers.Serializer):
     """
 
     route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
-    grupo = serializers.CharField(max_length=LIMITE_DO_GRUPO)
+    #: `grupo` e `rotulo` são os dois opcionais e anuláveis, e desde 2026-10-07
+    #: pela mesma razão: `null` (ou ausente) quer dizer "usa o default", que é
+    #: copy do cliente e não viaja no arame (ADR 0019, decisão 5). Antes disto o
+    #: `grupo` era obrigatório, e como este `PUT` é substituição total a primeira
+    #: gravação congelava "Inventário" na linha do tenant.
+    grupo = serializers.CharField(
+        max_length=LIMITE_DO_GRUPO,
+        required=False,
+        allow_null=True,
+    )
     ordem = serializers.IntegerField(min_value=0, max_value=ORDEM_MAXIMA)
     visivel = serializers.BooleanField()
     rotulo = serializers.CharField(
@@ -381,7 +390,7 @@ class ItemDeMenuOutSerializer(serializers.Serializer):
     """
 
     route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
-    grupo = serializers.CharField(max_length=LIMITE_DO_GRUPO)
+    grupo = serializers.CharField(max_length=LIMITE_DO_GRUPO, allow_null=True)
     ordem = serializers.IntegerField()
     visivel = serializers.BooleanField()
     rotulo = serializers.CharField(max_length=LIMITE_DO_ROTULO, allow_null=True)
@@ -422,8 +431,6 @@ class RotaDeMenuOutSerializer(serializers.Serializer):
     """
 
     route_id = serializers.ChoiceField(choices=RotaDeMenu.choices)
-    rotulo_default = serializers.CharField(max_length=LIMITE_DO_ROTULO)
-    grupo_default = serializers.CharField(max_length=LIMITE_DO_GRUPO)
     papeis_permitidos = serializers.ListField(
         child=serializers.ChoiceField(choices=Papel.choices)
     )

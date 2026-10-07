@@ -876,7 +876,7 @@ class RotaDeMenu(models.TextChoices):
     `pnpm typecheck`. É isso — e não a cardinalidade — que substitui a garantia
     dos "4 itens" que morreu com a tab bar (ADR 0009).
 
-    Os oito ids são exactamente os do `frontend/src/shell/registo-de-rotas.ts`,
+    Os seis ids são exactamente os do `frontend/src/shell/registo-de-rotas.ts`,
     que os escreveu primeiro (incluindo o `convites`, que entrou lá no mesmo dia
     em que esta tabela nasceu). Acrescentar um aqui **faz o `pnpm typecheck` do
     frontend falhar** até o `Record` dele o ter, e tirar um falha do mesmo modo
@@ -901,8 +901,6 @@ class RotaDeMenu(models.TextChoices):
     STOCK = "stock", "Stock"
     CONTAR = "contar", "Contar"
     RECEBER = "receber", "Receber"
-    CONVITES = "convites", "Convites"
-    CONFIGURACAO = "configuracao", "Configuração"
 
 
 class TenantMenuItem(TenantModel):
@@ -967,7 +965,15 @@ class TenantMenuItem(TenantModel):
         choices=RotaDeMenu.choices,
         verbose_name="rota",
     )
-    grupo = models.CharField(max_length=50, verbose_name="grupo")
+    #: O grupo, **em branco quando o tenant não sobrepôs nada** — a mesma
+    #: assimetria do `rotulo`, e desde 2026-10-07 pela mesma razão (ADR 0019).
+    #:
+    #: Tinha `blank=False` e viajava resolvido, e o preço estava medido: o
+    #: `PUT /menu` é substituição total, logo a primeira gravação congelava
+    #: "Inventário" nesta coluna e nenhuma tradução a voltava a alcançar. O nome
+    #: por omissão de um grupo é copy do produto e vive no registo do cliente;
+    #: o que esta coluna guarda é o nome que **esta empresa** escolheu.
+    grupo = models.CharField(max_length=50, blank=True, verbose_name="grupo")
     #: `PositiveSmallIntegerField` e não `IntegerField`: um menu com mais de
     #: 32767 posições não existe, e o teto na base de dados é a rede do
     #: `max_value` do serializer. Não é único — duas rotas com a mesma ordem

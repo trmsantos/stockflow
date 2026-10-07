@@ -272,6 +272,11 @@ devolve zero linhas — falha fechada.
   com acesso é fechada por âmbito no `eslint.config.js` (um bloco `files: ["src/lib/tema.ts"]`), o
   `sessionStorage` continua proibido também lá, e alargá-la é um diff visível com uma razão a
   escrever.
+- **O `django.conf.urls.i18n` não é encaminhado** (ADR 0019). O `set_language` é um **POST anónimo
+  que escreve um cookie**, que é exactamente a família de endpoint que o §5 obriga a proteger — e o
+  cookie `django_language` **ganha** ao `Accept-Language` no `LocaleMiddleware`, logo um cookie velho
+  passava a mandar no lado da API sem mandar no lado do React. Dois sinais a divergir é o que a
+  escolha de ler a língua do browser existe para evitar. Afirmado em `backend/tests/test_i18n.py`.
 - `fetch` com `credentials: "include"` e header `X-CSRFToken`.
 - Sem `dangerouslySetInnerHTML`; se inevitável, `DOMPurify.sanitize` e revisão obrigatória.
 - Links externos com `rel="noopener noreferrer"`.

@@ -40,14 +40,18 @@ import type { SessaoDoShell } from "./sessao-do-shell";
  * fecho com Escape, clique fora, navegação por teclado, foco devolvido ao
  * botão e `aria-expanded` correcto.
  *
- * ## A entrada das preferências, desde 2026-10-07
+ * ## A entrada das Definições, desde 2026-10-07
  *
- * O `/preferencias` é o único ecrã da app **sem** entrada no menu, e a razão é
- * da ADR 0017: o menu é uma projecção **por tenant**, e uma rota pessoal lá
- * dentro deixava uma empresa esconder um ecrã pessoal aos seus colaboradores. O
- * sítio dela é aqui — ao lado do email e da saída da conta é onde "a tua conta"
- * vive, e é o shell que é o lado certo porque o tema é da pessoa e não do
- * estabelecimento.
+ * O `/definicoes` é o único ecrã da app **sem** entrada no menu, e por duas
+ * razões que se somam: o menu é uma projecção **por tenant**, e uma rota pessoal
+ * lá dentro deixava uma empresa esconder um ecrã pessoal aos seus colaboradores
+ * (ADR 0017); e **definições não respondem a uma pergunta de operação**, que é o
+ * que uma entrada no registo significa (ADR 0019, decisão 7). O sítio dela é aqui
+ * — ao lado do email e da saída da conta é onde "a tua conta" vive.
+ *
+ * Desde 2026-10-07 **todas** as definições estão lá dentro, em secções: a
+ * aparência, o estabelecimento, a navegação e a equipa. Os itens "Convites" e
+ * "Configuração" saíram da sidebar e o grupo "Equipa" desapareceu com eles.
  *
  * É um `<Link>` e não um controlo de tema: há **um** sítio onde a paleta se
  * troca, e um segundo controlo aqui era uma segunda fonte para o mesmo gesto. O
@@ -232,10 +236,10 @@ export function RodapeDaSidebar({
             {sessao.email}
           </span>
         )}
-        <Button asChild variant="ghost" size="icon" className="shrink-0" title="Preferências">
-          <Link to="/preferencias">
+        <Button asChild variant="ghost" size="icon" className="shrink-0" title="Definições">
+          <Link to="/definicoes">
             <SlidersHorizontal aria-hidden="true" />
-            <span className="sr-only">Preferências</span>
+            <span className="sr-only">Definições</span>
           </Link>
         </Button>
         <Button

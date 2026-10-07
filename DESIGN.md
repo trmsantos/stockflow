@@ -545,11 +545,28 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   o botão em repouso responde "onde estou?" sem abrir a lista, o item responde "qual deles é?" com
   ela aberta, e a cor nunca comunica sozinha.
 - O **seletor de tenant** vive no pé da sidebar (é do shell); o **seletor de loja** fica na barra do
-  ecrã (é do ecrã). Parecem a mesma coisa e não são. É também no pé da sidebar que vive a **entrada**
-  para as preferências da pessoa, ao lado do email e da saída da conta — um `<Link>` para
-  `/preferencias` e **não** um segundo controlo de tema: há um sítio onde a paleta se troca, e dois
-  eram duas fontes para o mesmo gesto. As **definições da empresa** são um item de menu restrito ao
-  `owner`, e são dois ecrãs e não dois separadores do mesmo (ADR 0017).
+  ecrã (é do ecrã). Parecem a mesma coisa e não são. É também no pé da sidebar que vive a **entrada
+  para as Definições**, ao lado do email e da saída da conta — um `<Link>` para `/definicoes` e
+  **não** um segundo controlo de tema: há um sítio onde a paleta se troca, e dois eram duas fontes
+  para o mesmo gesto.
+- **"Definições" e não "Configurações"**: é o termo pt-PT, e o outro é pt-BR. Vale para a copy e não
+  para o código (`GET /inventory/configuracao` é um identificador, e renomeá-lo é churn sem leitor);
+  o caminho da rota **é** copy e muda com a palavra (ADR 0008: "os URLs são em português porque são
+  copy de produto").
+- **Todas as definições num ecrã, em secções** (ADR 0019, que supersede a decisão 1 da ADR 0017 —
+  dois ecrãs). Aparência · Estabelecimento · Navegação · Equipa, com a **pessoal primeiro** e uma
+  **separação visível** antes das da empresa: é o que substitui a fronteira que a ADR 0017 punha no
+  menu, onde uma família era um item restrito e a outra não. Cada secção da empresa nomeia o
+  **estabelecimento** no seu `<h2>`, que é também a resposta a "qual destas casas é que eu estou a
+  configurar?" para quem tem duas. Com **uma secção só não há régua** — uma régua de um segmento é um
+  controlo que não escolhe —, logo um `staff` vê "Definições" com a Aparência e mais nada. A secção é
+  um search param com queda para o default, e a queda vive no **render**: o papel é por tenant e
+  trocar de estabelecimento muda-o sem mudar o URL.
+- **Nenhum rótulo nosso viaja no arame.** O que atravessa a API é um id de união fechada ou texto que
+  o **tenant** escreveu; o nome e o grupo por omissão de uma rota são copy do produto e vivem no
+  registo do cliente, que os resolve. Antes de 2026-10-07 o `grupo` vinha resolvido, e como o
+  `PUT /menu` é substituição total a primeira gravação **congelava** "Inventário" na linha do tenant
+  — medido na base de dados, e nenhuma tradução a voltava a alcançar.
 - **Um selector de opções fixas é uma régua de segmentos, não uma pilha de cartões.** O
   `/preferencias` escolhe a paleta numa moldura com três segmentos encostados, separados pela régua de
   1px das colunas da tabela, com o escolhido marcado pelo trilho de 4px. A primeira versão eram três

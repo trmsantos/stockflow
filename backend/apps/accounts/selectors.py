@@ -215,11 +215,13 @@ def projeccao_de_menu(*, tenant_id: UUID, papel: str | None = None) -> tuple[Ite
         itens.append(
             ItemDeMenu(
                 route_id=route_id,
-                grupo=linha.grupo if linha is not None else registo.grupo_default,
+                # `""` na coluna é "sem sobreposição", e o contrato diz isso
+                # com `null` — a tradução é aqui e num sítio só (ver o modelo).
+                # **Vale para o `grupo` e para o `rotulo`**: os dois são copy do
+                # produto, e copy não viaja no arame (ADR 0019, decisão 5).
+                grupo=(linha.grupo or None) if linha is not None else None,
                 ordem=linha.ordem if linha is not None else registo.ordem_default,
                 visivel=linha.visivel if linha is not None else True,
-                # `""` na coluna é "sem sobreposição", e o contrato diz isso com
-                # `null` — a tradução é aqui e num sítio só (ver o modelo).
                 rotulo=(linha.rotulo or None) if linha is not None else None,
             )
         )

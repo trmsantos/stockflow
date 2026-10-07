@@ -1536,11 +1536,13 @@ def guardar_menu(*, tenant_id: UUID, itens: list[dict[str, Any]]) -> tuple[ItemD
             TenantMenuItem(
                 tenant_id=tenant_id,
                 route_id=item["route_id"],
-                grupo=item["grupo"],
                 ordem=item["ordem"],
                 visivel=item["visivel"],
-                # `None` do contrato e `""` na coluna são a mesma ausência, e a
-                # coluna não é nulável de propósito (ver o modelo).
+                # `None` do contrato e `""` na coluna são a mesma ausência, e as
+                # colunas não são nuláveis de propósito (ver o modelo). Vale para
+                # os **dois** desde 2026-10-07: o `grupo` deixou de viajar
+                # resolvido, porque resolvido congelava o default na linha.
+                grupo=item.get("grupo") or "",
                 rotulo=item.get("rotulo") or "",
             )
             for item in itens

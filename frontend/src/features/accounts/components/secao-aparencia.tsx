@@ -148,7 +148,7 @@ function SegmentoDeTema({
   );
 }
 
-export function EcraDePreferencias() {
+export function SecaoAparencia() {
   const sessao = useSessao();
   const guardar = useGuardarTema();
 
@@ -159,16 +159,7 @@ export function EcraDePreferencias() {
   const tema = temaDe(sessao.data?.utilizador?.tema);
 
   return (
-    <div className="flex max-w-3xl flex-col gap-6 p-4">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-balance">Preferências</h1>
-        <p className="text-sm text-muted-foreground">
-          São suas e seguem a sua conta: muda aqui e fica igual no computador do escritório e no do
-          balcão. Não mudam nada para o resto da equipa.
-        </p>
-      </header>
-
-      <section aria-labelledby="titulo-da-paleta" className="flex flex-col gap-3">
+    <section aria-labelledby="titulo-da-paleta" className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <h2
             id="titulo-da-paleta"
@@ -216,7 +207,6 @@ export function EcraDePreferencias() {
             ))}
           </div>
         )}
-      </section>
-    </div>
+    </section>
   );
 }

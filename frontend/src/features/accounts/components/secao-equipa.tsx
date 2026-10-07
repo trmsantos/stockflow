@@ -13,16 +13,26 @@ import {
   useRevogarConvite,
   useSessao,
 } from "../api";
-import { Aviso } from "../components/aviso";
-import { FormularioDeConvite } from "../components/formulario-de-convite";
-import { SegredoDoConvite, type SegredoEmitido } from "../components/segredo-do-convite";
-import { EsqueletoDeConvites, TabelaDeConvites } from "../components/tabela-de-convites";
+import { Aviso } from "./aviso";
+import { FormularioDeConvite } from "./formulario-de-convite";
+import { SegredoDoConvite, type SegredoEmitido } from "./segredo-do-convite";
+import { EsqueletoDeConvites, TabelaDeConvites } from "./tabela-de-convites";
 import { CODIGO_CONVITE_NAO_PENDENTE, codigoDaRecusa, mensagemDaRecusa } from "../erros";
 import { nomeDoPapel, type Convite, type Papel } from "../schemas";
 
 /**
- * `/convites` — "quem tem acesso a este estabelecimento, e quem está por
- * entrar?".
+ * A secção **Equipa** das Definições — "quem tem acesso a esta casa, e quem
+ * está por entrar?".
+ *
+ * Era o ecrã `/convites`, com entrada própria no menu da sidebar, até 2026-10-07.
+ * Passou a secção por decisão do dono do produto, e o invariante que a ADR 0019
+ * fixou para não litigar item a item no futuro é este: **uma rota do registo
+ * responde a uma pergunta de operação** — é para isso que o campo `pergunta`
+ * existe (DESIGN.md §1) — **e definições não respondem a nenhuma**. "Quem tem
+ * acesso?" não é uma pergunta da manhã.
+ *
+ * Perdeu o `<h1>`: o título é do ecrã que a emoldura, e dois `<h1>` davam dois
+ * títulos de página a quem navega por cabeçalhos.
  *
  * Até hoje convidava-se por `curl`. O ecrã existe porque o fluxo inteiro da ADR
  * 0010 — criar, entregar o link, reenviar, revogar — era inutilizável sem ele, e
@@ -85,7 +95,7 @@ import { nomeDoPapel, type Convite, type Papel } from "../schemas";
 const PREFIXO_DO_FORMULARIO = "convite";
 const ID_DO_CAMPO_DE_EMAIL = `${PREFIXO_DO_FORMULARIO}-email`;
 
-export function EcraDeConvites() {
+export function SecaoEquipa() {
   const sessao = useSessao();
   const podeConvidar = usePodeConvidar();
 
@@ -237,7 +247,7 @@ export function EcraDeConvites() {
             titulo={
               estadoMudou
                 ? "O estado deste convite mudou"
-                : "Não foi possível concluir essa operação"
+                : "Não foi possível concluir esta operação"
             }
             mensagem={mensagemDaRecusa(erroDeGestao)}
           />
@@ -320,7 +330,6 @@ function Pagina({ children }: { readonly children: ReactNode }) {
           O documento continua a ter um `h1`, para quem navega por cabeçalhos — e
           é `sr-only` pela mesma razão que nos outros ecrãs de lista: repeti-lo em
           grande custava uma linha de tabela. */}
-      <h1 className="sr-only">Convites — quem tem acesso a este estabelecimento</h1>
       {children}
     </section>
   );
@@ -340,8 +349,12 @@ function Pagina({ children }: { readonly children: ReactNode }) {
 function BarraDoEcra({ total }: { readonly total: number | null }) {
   return (
     <div className="sticky top-cabecalho z-10 flex items-center justify-between gap-2 border-b border-border bg-background px-celula-x py-2">
+      {/* A pergunta saiu daqui a 2026-10-07: a secção já a faz no seu `<h2>`
+          ("Quem tem acesso, e quem está por entrar?") e o ecrã mostrava-a duas
+          vezes seguidas — visto num screenshot. O que fica é a parte que a
+          pergunta não diz e que vale repetir, porque é a regra do produto. */}
       <p className="text-pretty text-sm text-muted-foreground">
-        Quem tem acesso, e quem está por entrar. O acesso é sempre por convite.
+        O acesso é sempre por convite.
       </p>
       {total === null ? null : (
         <p className="shrink-0 text-xs text-muted-foreground">
@@ -370,7 +383,7 @@ function ListaVazia() {
       <EstadoVazio
         icone={MailPlus}
         titulo="Ainda não convidou ninguém"
-        descricao="Só quem tem um convite consegue entrar neste estabelecimento. O link aparece aqui uma vez, e é entregue por você — não é enviado nenhum email."
+        descricao="Só quem tem um convite consegue entrar neste estabelecimento. O link aparece aqui uma vez, e é entregue por si — não é enviado nenhum email."
       >
         <div className="flex flex-col items-start gap-2">
           <Button

@@ -153,7 +153,14 @@ export const estadoDaSessaoSchema = z.enum([
  */
 export const itemDeMenuSchema = z.object({
   route_id: z.string().min(1),
-  grupo: z.string().min(1),
+  /**
+   * `null` = usa o grupo do registo, e **é anulável desde 2026-10-07** (ADR
+   * 0019, decisão 5), a par do `rotulo`. Vinha resolvido e obrigatório, e como o
+   * `PUT /menu` é substituição total a primeira gravação congelava "Inventário"
+   * na linha do tenant — medido na base de dados. Um grupo é copy do produto; o
+   * que a empresa escreveu é texto dela e nunca se traduz.
+   */
+  grupo: z.string().min(1).nullable(),
   ordem: z.number().int(),
   visivel: z.boolean(),
   rotulo: z.string().min(1).nullable(),
@@ -248,9 +255,11 @@ export const estabelecimentoParaGuardarSchema = z.object({
  * o grupo por omissão, quem as pode ver, e se foram desenhadas para 360px.
  * Nenhuma linha de base de dados é lida para a produzir.
  *
- * Serve um ecrã só — o `/configuracao` — e é por isso que carrega os defaults:
- * são eles que permitem mostrar "o que esta rota se chama se ninguém lhe mexer",
- * que é a informação que falta a quem está a decidir se lhe mexe.
+ * Serve um ecrã só — a secção Navegação das Definições — e **já não carrega os
+ * defaults**: o `rotulo_default` e o `grupo_default` saíram do contrato a
+ * 2026-10-07 (ADR 0019, decisão 5), porque nenhum rótulo nosso viaja no arame.
+ * O ecrã mostra "o que esta rota se chama se ninguém lhe mexer" a partir do
+ * **registo do cliente**, que é onde essa copy vive e onde se traduz.
  *
  * `route_id` é `z.string()` pela razão do `itemDeMenuSchema`, e aqui a
  * consequência é ainda mais benigna: uma rota que este bundle não conheça
@@ -265,8 +274,6 @@ export const estabelecimentoParaGuardarSchema = z.object({
  */
 export const rotaDeMenuSchema = z.object({
   route_id: z.string().min(1),
-  rotulo_default: z.string().min(1),
-  grupo_default: z.string().min(1),
   papeis_permitidos: z.array(papelSchema),
   campo: z.boolean(),
 });
@@ -295,8 +302,11 @@ export const itemDeMenuParaGuardarSchema = z.object({
   grupo: z
     .string()
     .trim()
-    .min(1, "Escreva o nome do grupo.")
-    .max(50, "O nome do grupo não pode ter mais de 50 caracteres."),
+    .max(50, "O nome do grupo não pode ter mais de 50 caracteres.")
+    .nullable()
+    // `""` do input é a mesma ausência que `null` do contrato, como no `rotulo`:
+    // quem apaga o campo quer o grupo por omissão, não um grupo sem nome.
+    .transform((valor) => (valor === "" ? null : valor)),
   ordem: z
     .number()
     .int("A ordem é um número inteiro.")

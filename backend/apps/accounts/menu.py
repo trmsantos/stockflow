@@ -88,7 +88,6 @@ from typing import Final
 from apps.accounts.models import Papel, RotaDeMenu
 
 __all__ = [
-    "GRUPOS_DEFAULT",
     "ItemDeMenu",
     "REGISTO_DE_ROTAS",
     "RotaDoRegisto",
@@ -118,14 +117,27 @@ class RotaDoRegisto:
 
     `ordem_default` não sai no contrato de `GET /menu/rotas` e sai na projecção,
     que é onde serve: quem precisa da ordem por omissão recebe-a já aplicada no
-    `menu` da sessão. `rotulo_default` e `grupo_default` saem nos dois sítios,
-    porque o painel precisa deles para mostrar "o default é este" ao lado de um
-    valor que o tenant sobrepôs.
+    `menu` da sessão.
+
+    ## E **não há** `rotulo_default` nem `grupo_default`, desde 2026-10-07
+
+    Tinha os dois, e saíam no contrato "porque o painel precisa deles para
+    mostrar o default ao lado de um valor que o tenant sobrepôs". Saíram, e a
+    razão é a regra que a ADR 0019 fixou: **nenhum rótulo nosso viaja no arame.**
+    O que atravessa a API é um id de união fechada ou texto que o **tenant**
+    escreveu; o nome por omissão de uma rota é copy do produto, e copy traduz-se
+    no catálogo do cliente — um rótulo servido pelo servidor seria uma segunda
+    fonte para a mesma palavra, numa língua só.
+
+    O `rotulo` já era assim (o contrato manda `null` e o cliente resolve contra o
+    seu registo); o `grupo` **não era**, e o preço estava medido: o `grupo`
+    viajava resolvido e obrigatório, e como o `PUT /menu` é substituição total, a
+    primeira gravação congelava "Inventário" na linha do tenant e nenhuma
+    tradução a voltava a alcançar. Agora os dois são `null` no contrato e os dois
+    caem no registo do cliente.
     """
 
     route_id: str
-    rotulo_default: str
-    grupo_default: str
     ordem_default: int
     #: Os papéis que podem ver este item. Conjunto e não mínimo — ver o módulo.
     papeis: frozenset[str]
@@ -153,44 +165,25 @@ class ItemDeMenu:
     é exactamente a tupla que a ADR 0009 fixa: uma lista com um nível de
     agrupamento, nunca uma árvore.
 
-    `rotulo` é `None` quando o tenant não sobrepôs nada, e **não** o rótulo do
-    registo já resolvido. É a assimetria com `grupo` e `ordem`, e é deliberada:
-    o registo do frontend tem um rótulo por rota e não tem grupo nem ordem
-    nenhuns, logo só o rótulo tem para onde cair do lado do cliente
-    (`entrada.rotulo ?? registo.rotulo`). Resolvê-lo aqui fazia-o voltar no
-    próximo `PUT` como sobreposição explícita, e um dia em que o default
-    mudasse o tenant ficava preso ao antigo sem nunca ter escolhido nada.
+    **`rotulo` e `grupo` são `None` quando o tenant não sobrepôs nada**, e não o
+    valor do registo já resolvido. Resolvê-los aqui fazia-os voltar no próximo
+    `PUT` como sobreposição explícita, e um dia em que o default mudasse o tenant
+    ficava preso ao antigo sem nunca ter escolhido nada — e, pior, nenhuma
+    tradução alcançava o que estava congelado na linha.
+
+    A assimetria fica com o `ordem`, que viaja **resolvido**, e a razão é a que
+    separa as duas coisas: `ordem` é um número e não é copy. O registo do cliente
+    tem um rótulo e um grupo por rota (foi o que a ADR 0019 lá pôs, decisão 5) e
+    não tem ordem nenhuma, logo é o único dos três que não tem para onde cair do
+    lado de lá.
     """
 
     route_id: str
-    grupo: str
+    grupo: str | None
     ordem: int
     visivel: bool
     rotulo: str | None
 
-
-#: Os grupos por omissão, com nome e não com id: a ADR 0009 fixa "uma lista com
-#: um nível de agrupamento" e o grupo é uma **string** — renomear um grupo é
-#: escrever outro nome, sem uma segunda tabela para manter em dia. Constantes
-#: porque três rotas partilham dois deles e um erro de dedo num deles partia o
-#: agrupamento em dois sem ninguém ver.
-GRUPO_PAINEL: Final = "Painel"
-GRUPO_INVENTARIO: Final = "Inventário"
-GRUPO_COMPRAS: Final = "Compras"
-#: "Equipa" e não "Contas": o nome do grupo é copy de produto e não o nome do
-#: módulo do backend — é o que a pessoa vai fazer ali. É também onde "Membros" e
-#: "Configuração" entram sem um grupo novo. O nome vem do shell, que o escolheu
-#: primeiro (`frontend/src/shell/menu.ts`).
-GRUPO_EQUIPA: Final = "Equipa"
-
-#: A ordem dos grupos é a do primeiro item de cada um (ADR 0009 via o
-#: `montarMenu` do shell), logo não há uma segunda coluna de ordenação de grupos.
-GRUPOS_DEFAULT: Final[tuple[str, ...]] = (
-    GRUPO_PAINEL,
-    GRUPO_INVENTARIO,
-    GRUPO_COMPRAS,
-    GRUPO_EQUIPA,
-)
 
 #: As rotas, pela ordem em que o menu por omissão as mostra. A `ordem_default`
 #: vai de dez em dez pela razão de sempre: inserir um item entre dois não obriga
@@ -202,16 +195,12 @@ GRUPOS_DEFAULT: Final[tuple[str, ...]] = (
 _ROTAS: Final[tuple[RotaDoRegisto, ...]] = (
     RotaDoRegisto(
         route_id=RotaDeMenu.INICIO,
-        rotulo_default="Início",
-        grupo_default=GRUPO_PAINEL,
         ordem_default=10,
         papeis=TODOS_OS_PAPEIS,
         campo=False,
     ),
     RotaDoRegisto(
         route_id=RotaDeMenu.PAINEL,
-        rotulo_default="Painel de gestão",
-        grupo_default=GRUPO_PAINEL,
         ordem_default=15,
         # **A segunda rota restrita, e pela mesma mecânica do `convites`.** O
         # painel de gestão mostra o resultado do mês, a folha salarial e o custo
@@ -230,77 +219,27 @@ _ROTAS: Final[tuple[RotaDoRegisto, ...]] = (
     ),
     RotaDoRegisto(
         route_id=RotaDeMenu.ALERTAS,
-        rotulo_default="Alertas",
-        grupo_default=GRUPO_PAINEL,
         ordem_default=20,
         papeis=TODOS_OS_PAPEIS,
         campo=False,
     ),
     RotaDoRegisto(
         route_id=RotaDeMenu.STOCK,
-        rotulo_default="Stock",
-        grupo_default=GRUPO_INVENTARIO,
         ordem_default=30,
         papeis=TODOS_OS_PAPEIS,
         campo=False,
     ),
     RotaDoRegisto(
         route_id=RotaDeMenu.CONTAR,
-        rotulo_default="Contar",
-        grupo_default=GRUPO_INVENTARIO,
         ordem_default=40,
         papeis=TODOS_OS_PAPEIS,
         campo=True,
     ),
     RotaDoRegisto(
         route_id=RotaDeMenu.RECEBER,
-        rotulo_default="Receber",
-        grupo_default=GRUPO_COMPRAS,
         ordem_default=50,
         papeis=TODOS_OS_PAPEIS,
         campo=True,
-    ),
-    RotaDoRegisto(
-        route_id=RotaDeMenu.CONVITES,
-        rotulo_default="Convites",
-        grupo_default=GRUPO_EQUIPA,
-        ordem_default=60,
-        # **A primeira rota restrita, e não foi esta ADR que a restringiu.** Convidar
-        # é só do `owner` (ADR 0010), e é o `ConviteViewSet` que o impõe com
-        # `TemPapel.exige(Papel.OWNER)`. Mostrar o item a um `staff` era pôr no
-        # menu um caminho que acaba em 403 — o caso literal do "esconder um item
-        # que um `staff` não pode usar é autorização e não preferência"
-        # (ADR 0011). Não é uma ordem entre papéis: é o conjunto `{owner}`, que é
-        # exactamente o que o `permission_classes` daquela view já diz.
-        papeis=frozenset({Papel.OWNER}),
-        # Escritório: um formulário de três campos e uma tabela de sete colunas,
-        # feitos ao computador. A 360px funciona, com a tabela a deslizar na
-        # horizontal — o que o DESIGN.md §4 declara em vez de tratar como
-        # defeito. É o mesmo valor que o registo do shell declara.
-        campo=False,
-    ),
-    RotaDoRegisto(
-        route_id=RotaDeMenu.CONFIGURACAO,
-        rotulo_default="Configuração",
-        # No grupo "Equipa" e não num grupo novo, e a razão está escrita lá em
-        # cima: "Equipa" é onde a configuração entra sem um grupo a mais. Fica
-        # **depois** dos convites porque é a definição da casa e eles são a porta
-        # de entrada para ela — quem abre este grupo vem quase sempre convidar.
-        grupo_default=GRUPO_EQUIPA,
-        ordem_default=70,
-        # **A terceira rota restrita, e é a mais literal das três.** A ADR 0017
-        # decide que a distinção entre as definições da pessoa e as da empresa
-        # fica legível **no próprio menu**: a um `staff` este item simplesmente
-        # não existe, em vez de existir e levar a um 403. É o único "como se lê no
-        # ecrã" desta ADR que não é um ícone a explicar uma regra.
-        #
-        # Segue a permissão real do endpoint, como manda o docstring deste
-        # módulo: o `GET /estabelecimento` é `owner` em leitura e escrita no v1.
-        papeis=frozenset({Papel.OWNER}),
-        # Escritório. É um ecrã de formulários e de uma tabela de configuração do
-        # menu, feito sentado — e a hora a que o dia de negócio começa não se
-        # muda no telemóvel entre duas mesas.
-        campo=False,
     ),
 )
 

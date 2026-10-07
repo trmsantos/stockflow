@@ -61,7 +61,8 @@ export interface EntradaDaProjeccao {
    */
   readonly route_id: string;
   /** O cabeçalho sob o qual o item aparece. Caixa alta é apresentação. */
-  readonly grupo: string;
+  /** `null` = usa o grupo do registo. A mesma ausência que o `rotulo`. */
+  readonly grupo: string | null;
   /** Ordena **dentro e entre** grupos: a ordem dos grupos é a do seu 1.º item. */
   readonly ordem: number;
   /** Esconder é apresentação, não autorização (ADR 0009): a rota continua lá. */
@@ -131,14 +132,19 @@ export function montarMenu(projeccao: readonly EntradaDaProjeccao[]): readonly G
     const registo = entradaDoRegisto(entrada.route_id);
     if (registo === undefined) continue;
 
-    const itens = grupos.get(entrada.grupo) ?? [];
+    // **`?? registo.grupo` desde 2026-10-07**, a par do `rotulo` e pela mesma
+    // razão: o grupo é copy do produto, o contrato manda `null` quando a empresa
+    // não sobrepôs nada, e resolvê-lo no servidor congelava-o na linha do tenant
+    // no primeiro `PUT` (ADR 0019, decisão 5).
+    const grupo = entrada.grupo ?? registo.grupo;
+    const itens = grupos.get(grupo) ?? [];
     itens.push({
       ...registo,
       id: entrada.route_id,
       rotulo: entrada.rotulo ?? registo.rotulo,
       exacto: registo.caminho === "/",
     });
-    grupos.set(entrada.grupo, itens);
+    grupos.set(grupo, itens);
   }
 
   return [...grupos].map(([nome, itens]) => ({ nome, itens }));

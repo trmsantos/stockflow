@@ -119,7 +119,7 @@ export function SegredoDoConvite({
             , como{" "}
             {nomeDoPapel(segredo.convite.papel)}
             {segredo.convite.nome === "" ? null : <> ({segredo.convite.nome})</>}. Não é enviado
-            nenhum email: copie o link e entregue-o você.
+            nenhum email: copie o link e entregue-o a essa pessoa.
           </p>
         </div>
       </div>

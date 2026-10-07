@@ -67,7 +67,6 @@ from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
 from apps.accounts.menu import (
-    GRUPOS_DEFAULT,
     REGISTO_DE_ROTAS,
     TODOS_OS_PAPEIS,
     RotaDoRegisto,
@@ -228,8 +227,6 @@ def test_o_enum_tem_exatamente_os_ids_do_registo_do_shell() -> None:
         "stock",
         "contar",
         "receber",
-        "convites",
-        "configuracao",
     ]
 
 
@@ -273,27 +270,12 @@ def test_as_rotas_restritas_sao_tres_e_as_tres_sao_do_owner() -> None:
     }
     assert restritas == {
         RotaDeMenu.PAINEL: [Papel.OWNER],
-        RotaDeMenu.CONVITES: [Papel.OWNER],
-        RotaDeMenu.CONFIGURACAO: [Papel.OWNER],
     }, (
         "a lista de rotas restritas a um subconjunto de papéis mudou. Esconder "
         "um item que um papel não pode usar é autorização (ADR 0011), logo cada "
         "entrada tem de corresponder à permissão real do ecrã que serve — e não "
         "a uma ordem entre papéis, que este projeto não tem (Q7)."
     )
-
-
-def test_os_grupos_por_omissao_estao_pela_ordem_do_primeiro_item() -> None:
-    """A ordem dos grupos é a do primeiro item de cada um, não uma segunda coluna.
-
-    Lido do registo e não da projecção: esta asserção é sobre código e não toca
-    na base de dados, logo não precisa de âmbito nenhum.
-    """
-    vistos: list[str] = []
-    for rota in rotas_do_registo():
-        if rota.grupo_default not in vistos:
-            vistos.append(rota.grupo_default)
-    assert tuple(vistos) == GRUPOS_DEFAULT
 
 
 def test_o_contrato_do_item_de_menu_e_a_tupla_da_adr() -> None:
@@ -314,8 +296,6 @@ def test_o_contrato_do_item_de_menu_e_a_tupla_da_adr() -> None:
     }
     assert set(RotaDeMenuOutSerializer().fields) == {
         "route_id",
-        "rotulo_default",
-        "grupo_default",
         "papeis_permitidos",
         "campo",
     }
@@ -343,17 +323,18 @@ def test_sem_linhas_o_menu_e_o_dos_defaults(cenario: Cenario) -> None:
         "cliente que faz `rotulo ?? registo.rotulo`, e resolvê-lo no servidor "
         "prendia o tenant a um default que ele nunca escolheu."
     )
-    assert [item["grupo"] for item in menu] == [
-        "Painel",
-        "Painel",
-        "Painel",
-        "Inventário",
-        "Inventário",
-        "Compras",
-        "Equipa",
-        "Equipa",
-    ]
-    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 40, 50, 60, 70]
+    # **`grupo` vem `null` em todos**, como o `rotulo`, e desde 2026-10-07 pela
+    # mesma razão: o nome por omissão de um grupo é copy do produto e vive no
+    # registo do cliente, que o resolve (`entrada.grupo ?? registo.grupo`). Antes
+    # disto vinha resolvido, e como o `PUT` é substituição total a primeira
+    # gravação congelava "Inventário" na linha do tenant — nenhuma tradução a
+    # voltava a alcançar (ADR 0019, decisão 5).
+    assert all(item["grupo"] is None for item in menu), (
+        "`grupo` tem de vir `null` quando o tenant não sobrepôs nada: é o cliente "
+        "que faz `grupo ?? registo.grupo`, e resolvê-lo no servidor prendia o "
+        "tenant a um default que ele nunca escolheu — e numa língua só."
+    )
+    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 40, 50]
 
 
 def test_sem_estabelecimento_ativo_o_menu_vem_vazio(cenario: Cenario) -> None:
@@ -386,8 +367,6 @@ def test_o_owner_guarda_o_menu_e_a_sessao_passa_a_devolve_lo(cenario: Cenario) -
         _item(RotaDeMenu.PAINEL, grupo="Gestão", ordem=35),
         _item(RotaDeMenu.ALERTAS, grupo="Gestão", ordem=40),
         _item(RotaDeMenu.STOCK, grupo="Gestão", ordem=50, visivel=False),
-        _item(RotaDeMenu.CONVITES, grupo="Equipa", ordem=60),
-        _item(RotaDeMenu.CONFIGURACAO, grupo="Equipa", ordem=70),
     ]
 
     resposta = _put(_cliente(cenario.ana, cenario.alfa.id), corpo)
@@ -441,7 +420,9 @@ def test_uma_rota_fora_do_corpo_volta_ao_default(cenario: Cenario) -> None:
     assert len(_linhas_no_ambito(cenario.alfa.id)) == 1
     por_id = {item["route_id"]: item for item in resposta.json()}
     assert por_id[RotaDeMenu.STOCK]["grupo"] == "Só esta"
-    assert por_id[RotaDeMenu.INICIO]["grupo"] == "Painel"
+    # A rota que ficou fora do corpo volta ao default — e o default do `grupo`
+    # é **`null`**, não a palavra: quem resolve é o cliente.
+    assert por_id[RotaDeMenu.INICIO]["grupo"] is None
     assert por_id[RotaDeMenu.INICIO]["ordem"] == 10
 
 
@@ -627,8 +608,6 @@ def test_o_registo_de_rotas_sai_inteiro_para_o_owner(cenario: Cenario) -> None:
     assert [rota["route_id"] for rota in corpo] == list(RotaDeMenu.values)
     assert corpo[0] == {
         "route_id": "inicio",
-        "rotulo_default": "Início",
-        "grupo_default": "Painel",
         "papeis_permitidos": ["owner", "manager", "staff"],
         "campo": False,
     }
@@ -657,8 +636,6 @@ def _restringir(
     original = REGISTO_DE_ROTAS[route_id]
     restrita = RotaDoRegisto(
         route_id=original.route_id,
-        rotulo_default=original.rotulo_default,
-        grupo_default=original.grupo_default,
         ordem_default=original.ordem_default,
         papeis=frozenset(papeis),
         campo=original.campo,
@@ -691,7 +668,7 @@ def test_as_rotas_do_owner_desaparecem_do_menu_de_quem_nao_e_owner(
     do_owner = _menu_da_sessao(_cliente(cenario.ana, cenario.alfa.id))
     do_outro = _menu_da_sessao(_cliente(user, cenario.alfa.id))
 
-    so_do_owner = {RotaDeMenu.CONVITES, RotaDeMenu.PAINEL, RotaDeMenu.CONFIGURACAO}
+    so_do_owner = {RotaDeMenu.PAINEL}
     assert so_do_owner <= {item["route_id"] for item in do_owner}
     assert so_do_owner.isdisjoint({item["route_id"] for item in do_outro})
     assert len(do_outro) == len(do_owner) - len(so_do_owner)
@@ -703,23 +680,28 @@ def test_o_filtro_por_papel_nao_depende_da_configuracao_do_tenant(
     """Configurar um item restrito não o torna visível a quem não o pode ver.
 
     É a diferença entre apresentação e autorização: o `visivel` do tenant decide
-    o primeiro, e o registo decide o segundo. Um `owner` que ponha o item dos
-    convites visível e no topo não o dá ao `staff` — e é essa assimetria que faz
+    o primeiro, e o registo decide o segundo. Um `owner` que ponha o item do
+    painel visível e no topo não o dá ao `staff` — e é essa assimetria que faz
     deste filtro um controlo e não uma preferência.
+
+    Era o item dos **convites** até 2026-10-07, e passou a ser o do painel porque
+    os convites deixaram de ser uma rota do menu: viraram a secção Equipa das
+    Definições (ADR 0019, decisão 7). A propriedade medida é a mesma — o que
+    mudou foi qual é a rota restrita que sobrou.
     """
     _put(
         _cliente(cenario.ana, cenario.alfa.id),
-        [_item(RotaDeMenu.CONVITES, grupo="Topo", ordem=1, visivel=True)],
+        [_item(RotaDeMenu.PAINEL, grupo="Topo", ordem=1, visivel=True)],
     )
 
     do_staff = _menu_da_sessao(_cliente(cenario.clara, cenario.alfa.id))
 
-    assert RotaDeMenu.CONVITES not in {item["route_id"] for item in do_staff}
+    assert RotaDeMenu.PAINEL not in {item["route_id"] for item in do_staff}
     # E o `owner` vê o que configurou, para a asserção acima não passar por o
     # `PUT` ter falhado em silêncio.
     do_owner = _menu_da_sessao(_cliente(cenario.ana, cenario.alfa.id))
     assert do_owner[0] == {
-        "route_id": RotaDeMenu.CONVITES,
+        "route_id": RotaDeMenu.PAINEL,
         "grupo": "Topo",
         "ordem": 1,
         "visivel": True,
