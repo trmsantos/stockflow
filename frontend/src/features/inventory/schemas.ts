@@ -203,7 +203,7 @@ export const quebraParaRegistarSchema = z.object({
   quantity: decimal,
   reason: motivoQuebraSchema,
   /**
-   * O lote de onde sai, quando quem registra já o sabe — é o caso do ecrã
+   * O lote de onde sai, quando quem regista já o sabe — é o caso do ecrã
    * Alertas, onde o alerta **é** sobre um lote ("L. 240928 · amanhã") e deitar
    * fora outro seria deitar fora o lote errado. Omitido, o servidor escolhe por
    * FEFO (`inventory-domain` §4), que é o que o ecrã de Stock faz: lá a ação

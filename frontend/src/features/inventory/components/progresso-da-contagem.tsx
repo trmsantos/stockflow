@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import type { Contagem, ProgressoDeZona } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * O topo do ecrã Contar: **progresso** e **zona actual** (guião §1).
@@ -72,15 +73,16 @@ export function ProgressoDaContagem({
             {contagem.counted_lines}
           </span>
           <span className="text-sm text-muted-foreground">
-            de <span data-numeric>{contagem.total_lines}</span> contados
+            {textos.contagem.de} <span data-numeric>{contagem.total_lines}</span>{" "}
+            {textos.contagem.contados}
           </span>
         </p>
         <p className="min-w-0 truncate text-sm">
           {zonaMostrada === null ? (
-            <span className="text-muted-foreground">tudo contado</span>
+            <span className="text-muted-foreground">{textos.contagem.tudoContado}</span>
           ) : (
             <>
-              <span className="text-muted-foreground">zona: </span>
+              <span className="text-muted-foreground">{textos.contagem.zonaPrefixo}{" "}</span>
               <span className="font-medium">{zonaMostrada.name}</span>
             </>
           )}
@@ -90,13 +92,13 @@ export function ProgressoDaContagem({
       {/* `flex-wrap` e não um carrossel horizontal: com quatro zonas a 360px a
           quarta ficaria fora do ecrã, e uma zona escondida é uma zona que não
           se conta. */}
-      <nav aria-label="Zonas da contagem" className="flex flex-wrap gap-1.5">
+      <nav aria-label={textos.contagem.zonas} className="flex flex-wrap gap-1.5">
         <Pastilha
           ativa={zonaAtiva === undefined}
           para={undefined}
-          titulo="Ver as linhas de todas as zonas, na ordem do percurso"
+          titulo={textos.contagem.todasAsZonasPista}
         >
-          Todas
+          {textos.contagem.todasAsZonas}
         </Pastilha>
         {contagem.zones.map((zona) => (
           <Pastilha
@@ -105,8 +107,8 @@ export function ProgressoDaContagem({
             para={zona.slug}
             titulo={
               zona.blind
-                ? `${zona.name} — contagem cega: o esperado não aparece`
-                : `${zona.name} — o esperado aparece ao lado do campo`
+                ? textos.contagem.zonaCegaPista(zona.name)
+                : textos.contagem.zonaAbertaPista(zona.name)
             }
           >
             {zona.blind ? <EyeOff aria-hidden="true" className="size-3.5 shrink-0" /> : null}
@@ -114,7 +116,7 @@ export function ProgressoDaContagem({
             <span data-numeric className="text-muted-foreground">
               {zona.counted_lines}/{zona.total_lines}
             </span>
-            {zona.blind ? <span className="sr-only">(contagem cega)</span> : null}
+            {zona.blind ? <span className="sr-only">{textos.contagem.cegaSrOnly}</span> : null}
           </Pastilha>
         ))}
       </nav>
@@ -129,7 +131,7 @@ export function EsqueletoDoProgresso() {
       aria-busy="true"
       className="flex flex-col gap-2 border-b border-border px-4 pt-3 pb-2"
     >
-      <span className="sr-only">A carregar a contagem…</span>
+      <span className="sr-only">{textos.contagem.aCarregarContagem}</span>
       <div className="flex items-center justify-between gap-3">
         <Skeleton className="h-7 w-32" />
         <Skeleton className="h-4 w-24" />

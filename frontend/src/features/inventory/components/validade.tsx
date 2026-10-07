@@ -1,5 +1,6 @@
 import { leituraDe, tituloDe } from "../leitura-da-validade";
 import type { ValidadeProxima } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * A validade mais próxima — o quarto dos quatro dados de uma linha de Stock.
@@ -38,7 +39,7 @@ export function TextoDeValidade({
   readonly limiarEmDias: number;
 }) {
   if (validade === null) {
-    return <span className="text-muted-foreground">sem validade</span>;
+    return <span className="text-muted-foreground">{textos.validade.semValidade}</span>;
   }
 
   const leitura = leituraDe(validade, limiarEmDias);

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/format";
 
 import type { Alerta, MotivoQuebra } from "../schemas";
+import { textos } from "../textos";
 import { tintaDoTextoDeGravidade, tintaDoTrilhoDeGravidade } from "../tinta-do-estado";
 import { MOTIVOS_DE_DESPERDICIO, rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
 import { TextoDeValidade } from "./validade";
@@ -54,7 +55,7 @@ import { TextoDeValidade } from "./validade";
  * deita fora o que não há, logo uma falta não tem botão — e não tem um botão
  * `disabled`, que numa tabela densa é uma pergunta em cada linha.
  *
- * Os dois toques mantêm-se: o primeiro abre os motivos, o segundo registra. Um
+ * Os dois toques mantêm-se: o primeiro abre os motivos, o segundo regista. Um
  * movimento é append-only (ADR 0006), logo deitar fora ao primeiro toque era um
  * movimento irreversível por acidente.
  */
@@ -72,17 +73,17 @@ import { TextoDeValidade } from "./validade";
  * truncado lê-se mesmo assim, e o nome completo está no link que se segue.
  */
 const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "artigo", rotulo: "Artigo" },
-  { chave: "quantidade", rotulo: "Quantidade", classe: "w-36 text-right" },
-  { chave: "valor", rotulo: "Valor", classe: "w-24 text-right" },
-  { chave: "porque", rotulo: "Porquê", classe: "w-60" },
-  { chave: "lote", rotulo: "Lote", classe: "w-32" },
-  { chave: "onde", rotulo: "Onde", classe: "w-24" },
-  { chave: "accao", rotulo: "Acção", classe: "w-32" },
+  { chave: "artigo", rotulo: textos.colunas.artigo },
+  { chave: "quantidade", rotulo: textos.colunas.quantidade, classe: "w-36 text-right" },
+  { chave: "valor", rotulo: textos.colunas.valor, classe: "w-24 text-right" },
+  { chave: "porque", rotulo: textos.colunas.porque, classe: "w-60" },
+  { chave: "lote", rotulo: textos.colunas.lote, classe: "w-32" },
+  { chave: "onde", rotulo: textos.colunas.onde, classe: "w-24" },
+  { chave: "accao", rotulo: textos.colunas.accao, classe: "w-32" },
 ];
 
 const LARGURA_MINIMA = "min-w-4xl";
-const ROTULO = "Alertas de validade e de falta, o pior primeiro";
+const ROTULO = textos.alertas.tabela;
 
 /**
  * A frase de uma falta. Três palavras e não duas: um stock **negativo** não é
@@ -100,10 +101,10 @@ const ROTULO = "Alertas de validade e de falta, o pior primeiro";
  */
 function fraseDaFalta(alerta: Alerta): string {
   return alerta.quantity.base.startsWith("-")
-    ? "stock negativo"
+    ? textos.alertas.stockNegativo
     : Number(alerta.quantity.base) === 0
-      ? "sem stock"
-      : "abaixo do mínimo";
+      ? textos.alertas.semStock
+      : textos.alertas.abaixoDoMinimo;
 }
 
 function LinhaDeAlerta({
@@ -124,9 +125,13 @@ function LinhaDeAlerta({
   readonly idDoPainel: string;
 }) {
   const deValidade = alerta.reason === "expiry";
-  const rotuloDaAccao = `Deitei fora — ${alerta.short_name}, ${
-    alerta.lot === null ? "" : `lote ${alerta.lot.lot_code}, `
-  }${textoDeQuantidade(alerta.quantity)}`;
+  // Duas frases inteiras e não uma com um buraco: um alerta de falta não tem
+  // lote, e uma frase montada por pedaços não se traduz.
+  const quantidade = textoDeQuantidade(alerta.quantity);
+  const rotuloDaAccao =
+    alerta.lot === null
+      ? textos.alertas.deitarForaAccao(alerta.short_name, quantidade)
+      : textos.alertas.deitarForaAccaoComLote(alerta.short_name, alerta.lot.lot_code, quantidade);
 
   return (
     <>
@@ -149,7 +154,7 @@ function LinhaDeAlerta({
           {/* O mínimo, onde ele se lê: debaixo do número que ele julga. */}
           {alerta.min_quantity === null ? null : (
             <span className="block text-xs text-muted-foreground">
-              mín. {textoDeQuantidade(alerta.min_quantity)}
+              {textos.alertas.minimoAbreviado} {textoDeQuantidade(alerta.min_quantity)}
             </span>
           )}
         </td>
@@ -181,7 +186,9 @@ function LinhaDeAlerta({
                   voz alta em vez de a ir mudar num painel (guião §4, nº 7). */}
               {alerta.threshold_days === null ? null : (
                 <span className="block text-xs text-muted-foreground">
-                  aviso a <span data-numeric>{alerta.threshold_days}</span> dias
+                  {textos.alertas.avisoAInicio}{" "}
+                  <span data-numeric>{alerta.threshold_days}</span>{" "}
+                  {textos.alertas.avisoAFim}
                 </span>
               )}
             </>
@@ -198,7 +205,7 @@ function LinhaDeAlerta({
             coluna do porquê. */}
         <td className={`${CLASSE_CELULA} w-24 text-muted-foreground`}>
           <span className="block truncate">
-            {alerta.location?.name ?? (deValidade ? "" : "todas")}
+            {alerta.location?.name ?? (deValidade ? "" : textos.alertas.todasAsLojas)}
           </span>
         </td>
 
@@ -218,7 +225,7 @@ function LinhaDeAlerta({
               aria-controls={idDoPainel}
               aria-label={rotuloDaAccao}
             >
-              Deitei fora
+              {textos.alertas.deitarFora}
             </Button>
           ) : null}
         </td>
@@ -233,8 +240,10 @@ function LinhaDeAlerta({
           <td id={idDoPainel} colSpan={COLUNAS.length} className="bg-surface-2 px-celula-x py-3">
             <div className="flex flex-col gap-2">
               <p className="text-sm">
-                Deitar fora <span data-numeric>{textoDeQuantidade(alerta.quantity)}</span>
-                {alerta.lot === null ? "" : ` do lote ${alerta.lot.lot_code}`} — porquê?
+                {textos.alertas.deitarForaInicio}{" "}
+                <span data-numeric>{textoDeQuantidade(alerta.quantity)}</span>
+                {alerta.lot === null ? "" : textos.alertas.doLote(alerta.lot.lot_code)}
+                {textos.alertas.deitarForaPorque}
               </p>
               <div className="flex flex-wrap gap-2">
                 {MOTIVOS_DE_DESPERDICIO.map((motivo) => (
@@ -251,10 +260,12 @@ function LinhaDeAlerta({
                   </Button>
                 ))}
                 <Button variant="ghost" size="sm" disabled={aRegistar} onClick={aoAlternar}>
-                  Cancelar
+                  {textos.alertas.cancelar}
                 </Button>
                 {aRegistar ? (
-                  <span className="self-center text-sm text-muted-foreground">A registar…</span>
+                  <span className="self-center text-sm text-muted-foreground">
+                    {textos.accoes.aRegistar}
+                  </span>
                 ) : null}
               </div>
               {erro === null ? null : (
@@ -322,7 +333,7 @@ export function EsqueletoDaTabelaDeAlertas() {
       colunas={COLUNAS}
       larguraMinima={LARGURA_MINIMA}
       comTrilho
-      rotulo="A carregar os alertas…"
+      rotulo={textos.alertas.aCarregar}
     />
   );
 }

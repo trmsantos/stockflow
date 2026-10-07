@@ -11,6 +11,7 @@ import { mensagemDeErro } from "@/lib/api/errors";
 import { useContagemAberta, useFecharContagem, useFechoDeContagem } from "../api";
 import { ErroDaLista } from "../components/estados-da-lista";
 import { FormularioDeFecho, ResumoDoFecho } from "../components/fecho-de-contagem";
+import { textos } from "../textos";
 
 /**
  * O fecho da contagem — "as diferenças, em quantidade e em euros" (guião §1).
@@ -30,7 +31,7 @@ function Voltar() {
     <Button asChild variant="ghost" className="self-start">
       <Link to="/contar" search={() => ({})}>
         <ArrowLeft aria-hidden="true" />
-        Contar
+        {textos.fecho.voltar}
       </Link>
     </Button>
   );
@@ -55,18 +56,18 @@ export function EcraDeFechoDeContagem() {
       <Voltar />
 
       <h1 className="px-4 text-2xl font-semibold text-balance">
-        {fechada ? "Contagem fechada" : "Fechar contagem"}
+        {fechada ? textos.fecho.fechada : textos.fecho.fechar}
       </h1>
 
       {id === undefined && !aberta.isPending ? (
         <EstadoVazio
           icone={ClipboardList}
-          titulo="Não há contagem para fechar"
-          descricao="Este endereço aponta para uma contagem que já não existe, ou não há nenhuma a decorrer."
+          titulo={textos.fecho.semContagemTitulo}
+          descricao={textos.fecho.semContagemCorpo}
         >
           <Button asChild variant="outline">
             <Link to="/contar" search={() => ({})}>
-              Ir para Contar
+              {textos.fecho.irParaContar}
             </Link>
           </Button>
         </EstadoVazio>
@@ -74,7 +75,7 @@ export function EcraDeFechoDeContagem() {
 
       {fecho.isPending && id !== undefined ? (
         <div aria-busy="true" className="flex flex-col gap-3">
-          <span className="sr-only">A carregar as diferenças…</span>
+          <span className="sr-only">{textos.fecho.aCarregar}</span>
           {/* O esqueleto tem a forma da régua e não de três mosaicos: senão o
               layout salta no momento em que os totais chegam. */}
           <ReguaDeContadores>
@@ -94,7 +95,7 @@ export function EcraDeFechoDeContagem() {
 
       {fecho.isError ? (
         <ErroDaLista
-          titulo="Não foi possível calcular as diferenças"
+          titulo={textos.fecho.erroAoCalcular}
           mensagem={mensagemDeErro(fecho.error)}
           aoTentarOutraVez={() => {
             void fecho.refetch();
@@ -108,11 +109,12 @@ export function EcraDeFechoDeContagem() {
             <div className="px-4">
               <Alert className="border-success-border bg-success-surface">
                 <CircleCheck aria-hidden="true" className="text-success" />
-                <AlertTitle>Fechada, e o ajuste está no ledger</AlertTitle>
+                <AlertTitle>{textos.fecho.fechadaTitulo}</AlertTitle>
                 <AlertDescription>
-                  Cada diferença gerou um movimento de ajuste com o autor e a justificação. Nada
-                  foi reescrito: para corrigir, conta-se outra vez.
-                  {dados.closing_reason === null ? "" : ` Justificação: «${dados.closing_reason}».`}
+                  {textos.fecho.fechadaCorpo}
+                  {dados.closing_reason === null
+                    ? ""
+                    : textos.fecho.justificacao(dados.closing_reason)}
                 </AlertDescription>
               </Alert>
             </div>
@@ -124,7 +126,7 @@ export function EcraDeFechoDeContagem() {
             <div className="flex flex-col items-start gap-2 px-4">
               <Button asChild variant="outline">
                 <Link to="/contar" search={() => ({})}>
-                  Voltar a Contar
+                  {textos.fecho.voltarAContar}
                 </Link>
               </Button>
             </div>

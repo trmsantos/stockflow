@@ -11,6 +11,7 @@ import {
 import { formatDate, formatDaysAway, formatTime } from "@/lib/format";
 
 import type { Movimento } from "../schemas";
+import { textos } from "../textos";
 import {
   eEventoEconomico,
   rotuloDeMotivo,
@@ -97,17 +98,17 @@ function agrupar(movimentos: readonly Movimento[]): readonly Grupo[] {
 }
 
 const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "hora", rotulo: "Hora", classe: "w-24 text-right" },
-  { chave: "movimento", rotulo: "Movimento", classe: "w-52" },
-  { chave: "quantidade", rotulo: "Quantidade", classe: "w-32 text-right" },
-  { chave: "motivo", rotulo: "Motivo", classe: "w-32" },
-  { chave: "quem", rotulo: "Quem" },
-  { chave: "onde", rotulo: "Onde" },
-  { chave: "lote", rotulo: "Lote", classe: "w-32" },
+  { chave: "hora", rotulo: textos.colunas.hora, classe: "w-24 text-right" },
+  { chave: "movimento", rotulo: textos.colunas.movimento, classe: "w-52" },
+  { chave: "quantidade", rotulo: textos.colunas.quantidade, classe: "w-32 text-right" },
+  { chave: "motivo", rotulo: textos.colunas.motivo, classe: "w-32" },
+  { chave: "quem", rotulo: textos.colunas.quem },
+  { chave: "onde", rotulo: textos.colunas.onde },
+  { chave: "lote", rotulo: textos.colunas.lote, classe: "w-32" },
 ];
 
 const LARGURA_MINIMA = "min-w-4xl";
-const ROTULO = "Movimentos do artigo, do mais recente para o mais antigo";
+const ROTULO = textos.movimentos.tabela;
 
 function LinhaDeMovimento({ movimento }: { readonly movimento: Movimento }) {
   // Uma perna de produção ou de transferência não é perda nem ganho (ADR 0014).
@@ -176,13 +177,13 @@ export function HistoricoDeMovimentos({
 }) {
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="px-celula-x text-sm font-semibold">Movimentos</h2>
+      <h2 className="px-celula-x text-sm font-semibold">{textos.movimentos.titulo}</h2>
 
       {aCarregar ? (
         <EsqueletoDeTabela
           colunas={COLUNAS}
           larguraMinima={LARGURA_MINIMA}
-          rotulo="A carregar os movimentos…"
+          rotulo={textos.movimentos.aCarregar}
           linhas={4}
         />
       ) : null}
@@ -190,7 +191,7 @@ export function HistoricoDeMovimentos({
       {mensagemDeErro === null ? null : (
         <div className="px-celula-x">
           <ErroAoCarregar
-            titulo="Não foi possível carregar os movimentos"
+            titulo={textos.movimentos.erroAoCarregar}
             mensagem={mensagemDeErro}
             aoTentarOutraVez={aoTentarOutraVez}
           />
@@ -200,9 +201,9 @@ export function HistoricoDeMovimentos({
       {movimentos === undefined ? null : movimentos.length === 0 ? (
         <div className="flex flex-col items-start gap-2 px-celula-x py-6">
           <ScrollText aria-hidden="true" className="size-6 text-muted-foreground" />
-          <p className="font-medium">Sem movimentos</p>
+          <p className="font-medium">{textos.movimentos.vazioTitulo}</p>
           <p className="text-pretty text-sm text-muted-foreground">
-            Este artigo ainda não tem entradas, consumos nem desperdício registados.
+            {textos.movimentos.vazioCorpo}
           </p>
         </div>
       ) : (
@@ -230,7 +231,7 @@ export function HistoricoDeMovimentos({
           </MolduraDeTabela>
           {total > movimentos.length ? (
             <p className="px-celula-x py-2 text-xs text-muted-foreground">
-              Os {movimentos.length} movimentos mais recentes, de {total}.
+              {textos.movimentos.rodape(movimentos.length, total)}
             </p>
           ) : null}
         </>

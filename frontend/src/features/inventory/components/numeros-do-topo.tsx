@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatMoneyRounded } from "@/lib/format";
 
 import type { ResumoDeStock } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * Os três números do topo do Stock: artigos em falta · a expirar dentro do
@@ -42,7 +43,7 @@ export function EsqueletoDosNumeros() {
   return (
     // O aviso de "a carregar" é **um**, no contentor: medido numa renderização,
     // um por campo dava três anúncios iguais a quem ouve o ecrã.
-    <ReguaDeContadores aria-busy="true" rotulo="A carregar os números…">
+    <ReguaDeContadores aria-busy="true" rotulo={textos.numeros.aCarregar}>
       {[0, 1, 2].map((indice) => (
         <div key={indice} className={CLASSE_CONTADOR}>
           <Skeleton className="h-3 w-20" />
@@ -57,8 +58,8 @@ export function ErroDosNumeros({ aoTentarOutraVez }: { readonly aoTentarOutraVez
   return (
     <div className="border-b border-border px-celula-x py-3">
       <ErroAoCarregar
-        titulo="Não foi possível contar os artigos em falta"
-        mensagem="A tabela abaixo continua a funcionar. Os três números voltam à segunda tentativa."
+        titulo={textos.numeros.erroDeStockTitulo}
+        mensagem={textos.numeros.erroDeStockCorpo}
         aoTentarOutraVez={aoTentarOutraVez}
       />
     </div>
@@ -112,24 +113,27 @@ export function NumerosDoTopo({
     <ReguaDeContadores>
       <ContadorDeFiltro
         figura={String(resumo.below_min_count)}
-        campo="em falta"
-        nota="abaixo do mínimo"
-        titulo="Artigos abaixo do mínimo de stock"
+        campo={textos.numeros.emFalta}
+        nota={textos.numeros.abaixoDoMinimo}
+        titulo={textos.numeros.artigosAbaixoDoMinimo}
         ativo={filtroAtivo === "falta"}
         filtro="falta"
       />
       <ContadorDeFiltro
         figura={String(resumo.expiring_count)}
-        campo="a expirar"
-        nota={`dentro de ${String(dias)} dias`}
-        titulo={`Artigos com validade dentro de ${String(dias)} dias — o limiar é do servidor`}
+        campo={textos.numeros.aExpirar}
+        nota={textos.numeros.dentroDeDias(String(dias))}
+        titulo={textos.numeros.artigosComValidade(String(dias))}
         ativo={filtroAtivo === "validade"}
         filtro="validade"
       />
       {/* Leitura, não filtro: um `<div>` sem `onClick` e sem `hover`, para não
           prometer um toque que não existe. */}
       <div className={CLASSE_CONTADOR}>
-        <CorpoDoContador campo="valor de stock" figura={formatMoneyRounded(resumo.stock_value_eur)} />
+        <CorpoDoContador
+          campo={textos.numeros.valorDeStock}
+          figura={formatMoneyRounded(resumo.stock_value_eur)}
+        />
       </div>
     </ReguaDeContadores>
   );

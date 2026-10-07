@@ -6,6 +6,8 @@ import { EstadoVazio } from "@/components/estado-vazio";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { textos } from "../textos";
+
 /**
  * Os três estados que a lista tem sempre (DESIGN.md §3) — e não são um extra:
  * "o que aparece quando não há nada?" é uma das perguntas da sessão 0, logo o
@@ -26,7 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
  * carregar o stock" num ecrã de alertas é pior do que não dizer nada.
  */
 export function EsqueletoDaLista({
-  rotulo = "A carregar o stock…",
+  rotulo = textos.accoes.aCarregarStock,
   linhas = 7,
 }: {
   readonly rotulo?: string;
@@ -63,7 +65,7 @@ export function EsqueletoDaLista({
  * para um ecrã de faturas não poder dizer "não foi possível carregar o stock".
  */
 export function ErroDaLista({
-  titulo = "Não foi possível carregar o stock",
+  titulo = textos.lista.erroDeStock,
   mensagem,
   aoTentarOutraVez,
 }: {
@@ -86,14 +88,14 @@ export function ListaVazia({ comFiltros }: { readonly comFiltros: boolean }) {
     return (
       <EstadoVazio
         icone={Search}
-        titulo="Nenhum artigo corresponde"
-        descricao="A procura e os filtros do topo não deixaram passar nada. O stock continua lá."
+        titulo={textos.lista.semCorrespondenciaTitulo}
+        descricao={textos.lista.semCorrespondenciaCorpo}
       >
         <Button asChild variant="outline">
           {/* Um reducer que devolve o objeto vazio limpa os três filtros do URL
               de uma vez — e é um link, logo funciona com o clique do meio. */}
           <Link to="/stock" search={() => ({})}>
-            Limpar filtros
+            {textos.lista.limparFiltros}
           </Link>
         </Button>
       </EstadoVazio>
@@ -103,11 +105,11 @@ export function ListaVazia({ comFiltros }: { readonly comFiltros: boolean }) {
   return (
     <EstadoVazio
       icone={PackageOpen}
-      titulo="Ainda não há stock registado"
-      descricao="O stock aparece aqui à medida que a mercadoria entra. Comece por uma entrada de fornecedor."
+      titulo={textos.lista.vazioTitulo}
+      descricao={textos.lista.vazioCorpo}
     >
       <Button asChild>
-        <Link to="/receber">Receber mercadoria</Link>
+        <Link to="/receber">{textos.lista.receberMercadoria}</Link>
       </Button>
     </EstadoVazio>
   );
