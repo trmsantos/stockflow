@@ -54,6 +54,14 @@
  * nenhum dos dois sabe se alguém lê a chave. Um catálogo cresce por acrescento e
  * ninguém o poda.
  *
+ * A leitura das chaves vê **quatro** formas, e as duas últimas entraram a
+ * 2026-10-07 porque um catálogo novo as usou e o gate calou-se sobre elas: a
+ * chave numa linha com o valor (`a: "…"`), a secção (`a: {`), **um objecto numa
+ * linha só** (`caixa: { singular: "…", plural: "…" }`) e **uma chave cujo valor o
+ * Prettier desceu para a linha seguinte**. As duas últimas deixavam 24 chaves do
+ * `purchasing` sem verificação — um gate a dizer "sem problemas" sobre o que não
+ * olhou é pior do que não ter gate.
+ *
  * ## Porque é que a lista fechada não é uma supressão
  *
  * Um ficheiro na lista está a dizer "esta copy ainda não foi traduzida", que é
@@ -87,55 +95,8 @@ const SEM_CATALOGO = new Set([
   // ## accounts — o que falta das Definições e dos convites
   // ## O que é de toda a aplicação, e por isso se traduz primeiro
   // ## inventory — os ecrãs de operação, pela ordem de uso
-  "src/features/inventory/screens/stock.tsx",
-  "src/features/inventory/screens/alertas.tsx",
-  "src/features/inventory/screens/artigo.tsx",
-  "src/features/inventory/screens/contar.tsx",
-  "src/features/inventory/screens/fecho-de-contagem.tsx",
-  "src/features/inventory/components/barra-de-filtros.tsx",
-  "src/features/inventory/components/estados-da-lista.tsx",
-  "src/features/inventory/components/fecho-de-contagem.tsx",
-  "src/features/inventory/components/formulario-de-desperdicio.tsx",
-  "src/features/inventory/components/historico-de-movimentos.tsx",
-  "src/features/inventory/components/linha-de-contagem.tsx",
-  "src/features/inventory/components/numeros-do-topo.tsx",
-  "src/features/inventory/components/numeros-dos-alertas.tsx",
-  "src/features/inventory/components/progresso-da-contagem.tsx",
-  "src/features/inventory/components/tabela-de-alertas.tsx",
-  "src/features/inventory/components/tabela-de-desperdicio.tsx",
-  "src/features/inventory/components/tabela-de-stock.tsx",
-  "src/features/inventory/components/validade.tsx",
-  "src/features/inventory/leitura-da-validade.ts",
-  "src/features/inventory/vocabulario.ts",
   // ## purchasing
-  "src/features/purchasing/screens/receber.tsx",
-  "src/features/purchasing/screens/rececao.tsx",
-  "src/features/purchasing/screens/fotografar.tsx",
-  "src/features/purchasing/components/badges-de-rececao.tsx",
-  "src/features/purchasing/components/cabecalho-da-rececao.tsx",
-  "src/features/purchasing/components/esqueletos.tsx",
-  "src/features/purchasing/components/numeros-de-rececoes.tsx",
-  "src/features/purchasing/components/tabela-de-linhas-de-fatura.tsx",
-  "src/features/purchasing/components/tabela-de-rececoes.tsx",
-  "src/features/purchasing/components/temperatura-a-entrega.tsx",
-  "src/features/purchasing/vocabulario.ts",
   // ## reporting
-  "src/features/reporting/screens/inicio.tsx",
-  "src/features/reporting/screens/painel.tsx",
-  "src/features/reporting/abas.ts",
-  "src/features/reporting/components/abas-do-painel.tsx",
-  "src/features/reporting/components/barra-do-painel.tsx",
-  "src/features/reporting/components/cartoes-do-inicio.tsx",
-  "src/features/reporting/components/dinheiro-do-periodo.tsx",
-  "src/features/reporting/components/fecho-do-mes.tsx",
-  "src/features/reporting/components/numeros-do-periodo.tsx",
-  "src/features/reporting/components/perdas-do-periodo.tsx",
-  "src/features/reporting/components/pessoal-do-mes.tsx",
-  "src/features/reporting/components/qualidade-dos-dados.tsx",
-  "src/features/reporting/components/resultado-do-mes.tsx",
-  "src/features/reporting/components/variacao-no-periodo.tsx",
-  "src/features/reporting/contagem.ts",
-  "src/features/reporting/vocabulario.ts",
   // ## Componentes partilhados. O `barras-ordenadas` tem **uma** palavra visível
   // ("Proporção") e um catálogo próprio para ela era desproporcionado: sai desta
   // lista com os ecrãs do `reporting`, que são os que o usam.
@@ -329,17 +290,39 @@ for (const caminho of catalogos) {
   // fechava a secção inteira, e todas as chaves abaixo dela ficavam com o
   // caminho errado: seis falsos "não é usada em sítio nenhum" de uma só vez.
   const pilha = [];
-  for (const linha of fonte.split("\n")) {
+  const linhas = fonte.split("\n");
+  const acusar = (caminhoDaChave) => {
+    if (![...chavesUsadas].some((u) => u === caminhoDaChave || u.startsWith(`${caminhoDaChave}.`))) {
+      problemas.push(`${caminho}: a chave \`${caminhoDaChave}\` não é usada em sítio nenhum.`);
+    }
+  };
+
+  for (const [indice, linha] of linhas.entries()) {
     const abre = /^(\s*)(\w+):\s*\{\s*$/.exec(linha);
     const folha = /^\s*(\w+):\s*(?:"|\(|`)/.exec(linha);
+    // Um objecto numa linha só (`caixa: { singular: "…", plural: "…" }`): as
+    // folhas dele são as chaves de dentro, e sem isto ficavam **sem ser
+    // verificadas** — 24 das 202 chaves do `purchasing`, que é um gate a dizer
+    // "sem problemas" sobre o que não olhou.
+    const numaLinha = /^\s*(\w+):\s*\{(.+)\},?\s*$/.exec(linha);
+    // Uma chave cujo valor o Prettier desceu para a linha seguinte. O que a
+    // distingue de um `abre` é a linha de baixo: um `{` abre uma secção, uma
+    // string é o valor desta chave.
+    const partida =
+      /^\s*(\w+):\s*$/.exec(linha) !== null && !/^\s*\{/.test(linhas[indice + 1] ?? "")
+        ? /^\s*(\w+):\s*$/.exec(linha)
+        : null;
     const fecha = /^(\s*)\},?\s*$/.exec(linha);
+    const prefixo = pilha.map((nivel) => nivel.chave);
+
     if (abre) pilha.push({ chave: abre[2], indentacao: abre[1].length });
-    else if (folha) {
-      const chave = [...pilha.map((nivel) => nivel.chave), folha[1]].join(".");
-      if (![...chavesUsadas].some((u) => u === chave || u.startsWith(`${chave}.`))) {
-        problemas.push(`${caminho}: a chave \`${chave}\` não é usada em sítio nenhum.`);
+    else if (numaLinha) {
+      for (const dentro of numaLinha[2].matchAll(/(\w+):\s*(?:"|\(|`)/g)) {
+        acusar([...prefixo, numaLinha[1], dentro[1]].join("."));
       }
-    } else if (fecha && pilha.at(-1)?.indentacao === fecha[1].length) pilha.pop();
+    } else if (folha) acusar([...prefixo, folha[1]].join("."));
+    else if (partida) acusar([...prefixo, partida[1]].join("."));
+    else if (fecha && pilha.at(-1)?.indentacao === fecha[1].length) pilha.pop();
   }
 }
 
