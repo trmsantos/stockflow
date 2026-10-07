@@ -301,37 +301,15 @@ const ESTRUTURAIS = [
 /** Os três papéis de uma cor de estado (DESIGN.md §2). */
 const PAPEIS = ["", "-surface", "-border"];
 
-/**
- * A paleta — uma só, completa, e nenhuma paleta a meio. **É aqui que este gate
- * mudou de alvo, e a razão fica escrita porque daqui a três meses parece a
- * mesma coisa.**
- *
- * Até 2026-10-01 o que se exigia era **paridade entre dois modos**: 18 tokens
- * na paleta clara e os mesmos 18 redefinidos no `@media
- * (prefers-color-scheme: dark)`, a falhar nos dois sentidos. A identidade
- * escolhida ("Cabine") é escura e a decisão do dono do produto é "escuro
- * primário, claro depois": com um modo só, essa paridade passou a ser uma
- * afirmação sobre um conjunto vazio — passava sempre e deixava de proteger o
- * que protegia.
- *
- * **Relaxar um gate é afirmar menos sobre a mesma coisa; mudar o que ele
- * afirma, porque a coisa mudou, é outra.** O alvo novo é mais forte no caso que
- * de facto vai acontecer, que é alguém começar o modo claro e deixá-lo a meio:
- *
- *  1. a paleta em vigor tem de estar **completa** — os nove tokens de estrutura
- *     e os **três papéis** de cada cor de estado. A checklist do DESIGN.md §6
- *     prometia isto e nada o media;
- *  2. todo o token literal tem de ser um `oklch(L C h)` legível, senão entrava
- *     na paleta sem ser medido;
- *  3. qualquer bloco `prefers-color-scheme` que apareça tem de redefinir a
- *     paleta **inteira** — e é medido com a mesma matemática (gamut e
- *     contraste, em `verificarCorEMedidas`). Um modo claro a meio não passa;
- *  4. a paleta vive só no `tokens.css`: um `prefers-color-scheme` noutro `.css`
- *     de `src/` é uma segunda fonte de verdade.
- *
- * O que **não** mudou: a paridade token a token entre o DESIGN.md §2 e este
- * ficheiro, que continua a falhar nos dois sentidos.
- */
+/* Aqui vivia a descrição do alvo **anterior** deste gate ("uma paleta só,
+ * completa, e nenhum `prefers-color-scheme` parcial"), órfã em cima do
+ * `SOMBRAS` depois da reescrita de 2026-10-07 e já falsa em dois pontos: o
+ * `prefers-color-scheme` deixou de ser medido para passar a ser proibido, e as
+ * paletas são N. A história das três versões do alvo — que é o que valia a pena
+ * guardar — está inteira no comentário do `verificarPaletas`, abaixo. Duas
+ * versões da mesma história no mesmo ficheiro é a forma de a errada ser a que
+ * alguém lê. */
+
 /** As duas sombras. Uma paleta não é só `--color-*` (ADR 0015, decisão 4). */
 const SOMBRAS = ["sm", "lg"];
 

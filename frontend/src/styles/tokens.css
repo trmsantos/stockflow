@@ -6,17 +6,25 @@
  * industrial na UI e mono a sério nos dados. A referência é o Bloomberg
  * Terminal e os ecrãs de cozinha (KDS) do Toast e do Square.
  *
- * **Uma paleta, e é escura.** Não há `prefers-color-scheme` aqui: a decisão é
- * "escuro primário, claro depois", e o modo claro é dívida nomeada no
- * DESIGN.md §2 — entra quando estiver completo e medido, não a meio. O
- * `scripts/check-design-tokens.mjs` já não exige paridade entre dois modos
- * (com um modo só, essa paridade é vazia); exige uma paleta completa, medida,
- * e **falha** se aparecer um bloco `prefers-color-scheme` com uma paleta
- * parcial.
+ * **Três paletas, e a identidade é a escura.** O `escuro` é o default e vive
+ * na `:root` sem atributo; o `claro` e o `meio_termo` vivem em
+ * `:root[data-tema=…]` no fim deste ficheiro. A selecção é o atributo
+ * `data-tema` no `<html>`, escrito a partir da preferência **da pessoa**
+ * (ADR 0016) — e não `prefers-color-scheme`, que é a configuração do sistema
+ * de quem olha e tem dois estados para três paletas. Desde a ADR 0015 um
+ * `prefers-color-scheme` em `src/**` é erro de lint: deixou de selecionar o
+ * que quer que seja, e uma segunda forma de escolher paleta é uma segunda
+ * fonte de verdade.
  *
- * Os valores de cor são os mesmos que o dono viu, e são os mesmos do
+ * Cada paleta entra **completa e medida**: os nove tokens de estrutura, os
+ * três papéis de cada cor de estado e as **duas sombras** — uma paleta não é
+ * só `--color-*`. O `scripts/check-design-tokens.mjs` recalcula o gamut (a
+ * 1e-6) e o contraste de cada uma contra a **sua** pior superfície, que ele
+ * calcula em vez de nomear, e falha se um tema entrar a 17 de 18.
+ *
+ * Os valores do `escuro` são os mesmos que o dono viu, e são os mesmos do
  * DESIGN.md §2 sem alteração. Medidos (oklch -> sRGB -> WCAG 2.1) contra a
- * pior das três superfícies, que é o `surface-2` (o mais claro dos três
+ * pior das três superfícies, que aqui é o `surface-2` (o mais claro dos três
  * pretos, logo o pior fundo para texto claro): texto de 5.535:1
  * (`muted-foreground`) a 14.864:1 (`foreground`), fronteiras de componente de
  * 3.349:1 (`border-strong`) a 4.960:1 (`warning-border`), e `foreground`
@@ -37,10 +45,12 @@
  *
  * Os primitivos do shadcn trazem nove utilities `dark:` (`dark:bg-input/30`,
  * `dark:border-input`, `dark:hover:bg-muted/50`, ...). No default do Tailwind
- * v4 o `dark:` é `prefers-color-scheme: dark` — e com uma paleta escura única
- * isso passava a significar "o aspecto do input depende da configuração do
- * sistema de quem olha", que é um bug e não um tema: o mesmo ecrã, a mesma
- * paleta, dois aspectos.
+ * v4 o `dark:` é `prefers-color-scheme: dark`, e isso passava a significar "o
+ * aspecto do input depende da configuração do sistema de quem olha", que é um
+ * bug e não um tema: o mesmo ecrã, a mesma paleta, dois aspectos. Desde a ADR
+ * 0015 há uma segunda razão independente — o variant tem dois estados e as
+ * paletas são **três**, e a paleta vive nos tokens, pelo que nenhum componente
+ * precisa de saber qual está activa.
  *
  * Deixá-las **sempre** activas (`@custom-variant dark (&)`) foi medido e
  * rejeitado: `dark:bg-input/30` compõe 30% de `--color-input` sobre o
@@ -64,8 +74,9 @@
    * valores estáticos da utility, e continuam a funcionar. */
   --color-*: initial;
 
-  /* Superfícies — três degraus de preto frio. O `surface-2` é o mais claro dos
-   * três e portanto a pior superfície para texto: é contra ele que se mede. */
+  /* Superfícies — três degraus de preto frio. Nesta paleta o `surface-2` é o
+   * mais claro dos três e portanto a pior superfície para texto: é contra ele
+   * que se mede. Nas outras duas a pior é outra, e o gate calcula qual. */
   --color-background:  oklch(0.145 0.008 240);
   --color-surface:     oklch(0.19 0.009 240);
   --color-surface-2:   oklch(0.245 0.01 240);
@@ -254,20 +265,192 @@
 }
 
 /* ---------------------------------------------------------------------------
- * `color-scheme: dark` — a linha que faz o browser alinhar o que não é nosso.
+ * `color-scheme` — a linha que faz o browser alinhar o que não é nosso.
  *
  * Sem ela, as barras de scroll, o caret, o autofill, os controlos nativos e os
- * menus de `<select>` vêm do modo claro por cima de uma página preta. É o
- * detalhe que trai uma app escura feita a meio, e é também por isso que é
- * `dark` e não `light dark`: não há dois modos para o sistema escolher.
+ * menus de `<select>` vêm do modo errado por cima da página. É o detalhe que
+ * trai uma app feita a meio, e é essa a razão pela qual a linha existe — e
+ * também a razão pela qual é **por paleta** e nunca `light dark`: `dark` aqui
+ * e no `meio_termo`, `light` no `claro`. Com `light dark` quem escolhe passava
+ * a ser o sistema operativo de quem olha, que é precisamente o que o
+ * `data-tema` tirou de cima da mesa.
  *
  * Os dois aliases sem o prefixo `--color-` são para dois primitivos do shadcn
  * que referem `var(--secondary)` e `var(--foreground)` diretamente dentro de
  * um `color-mix()`, e não através da utility. Sem eles, esse `color-mix` fica
- * inválido e o estado de hover desaparece sem erro nenhum.
+ * inválido e o estado de hover desaparece sem erro nenhum. Seguem o token, e
+ * por isso não se redefinem por tema: os blocos abaixo redefinem o
+ * `--color-foreground` e o `--color-surface-2` e o `var()` resolve-se outra vez.
  * ------------------------------------------------------------------------- */
 :root {
   color-scheme: dark;
   --foreground: var(--color-foreground);
   --secondary: var(--color-surface-2);
+}
+
+/* ---------------------------------------------------------------------------
+ * `data-tema="claro"` — a Cabine com as luzes da copa acesas, não um caderno.
+ *
+ * Cinzento frio no mesmo hue 240 do escuro, e **não** papel morno: o morno era
+ * a identidade rejeitada a 2026-10-01 ("Caderno de Caixa", papel e tinta azul)
+ * e trazê-lo de volta por uma porta lateral era repor a candidata que perdeu.
+ *
+ * As três superfícies invertem a direcção e não a estrutura: a tela é a mais
+ * clara (`background`), o cromado desce um degrau (`surface`) e o cabeçalho de
+ * tabela desce outro (`surface-2`). Logo o `surface-2` continua a ser o degrau
+ * mais afastado da tela e **continua a ser a pior superfície** — agora por ser
+ * a mais escura das três, e não a mais clara. O gate calcula-a e imprime-a; isto
+ * é só a descrição do que ele mede.
+ *
+ * **O acento teve de ser re-derivado, e o argumento do §1 sobreviveu.** O ciano
+ * do escuro — L 0.76 — mede **1.644:1** sobre o `surface-2` desta paleta e
+ * 1.994:1 sobre a tela: como texto não existe. O **matiz não mudou** (225, o
+ * mesmo número), porque mudá-lo era o que o §1 proíbe: a gama de estado gasta o
+ * verde, o âmbar e o vermelho e o §5 proíbe o roxo, logo um acento noutro matiz
+ * repetia uma cor de estado e o item activo do menu passava a parecer um
+ * alerta. O que mudou foi a luminosidade e a croma, e nem isso por gosto: a
+ * 4.5:1 sobre o `surface-2` o tecto é L 0.50, e a croma que o sRGB tem neste
+ * matiz é 0.095 a esse L e 0.093 ao L 0.49 escolhido — o acento claro é o que
+ * cabe nessas duas paredes, com 12% de folga até à de gamut. Ciano de painel
+ * profundo em vez de ciano de lâmpada, que é o que o papel permite.
+ *
+ * Medido contra o `surface-2`: texto de 4.774:1 (`warning`) a 13.152:1
+ * (`foreground`), fronteiras de 3.331:1 (`danger-border`) a 3.381:1
+ * (`success-border`), `foreground` sobre as tintas de estado de 12.156:1 a
+ * 12.716:1, `primary-foreground` sobre o `primary` a 5.942:1. A margem é mais
+ * apertada do que no escuro e isso é uma propriedade do papel: uma cor que seja
+ * ao mesmo tempo legível como texto e reconhecível como sinal tem menos espaço
+ * acima de uma tela clara do que acima de uma preta.
+ * ------------------------------------------------------------------------- */
+:root[data-tema="claro"] {
+  color-scheme: light;
+
+  /* Superfícies — três degraus de cinzento frio, do mais claro (a tela) para o
+   * mais escuro (o cabeçalho de tabela). O `surface-2` é a pior superfície. */
+  --color-background:  oklch(0.985 0.004 240);
+  --color-surface:     oklch(0.952 0.006 240);
+  --color-surface-2:   oklch(0.92 0.008 240);
+
+  /* Bordas — os mesmos dois papéis, um degrau abaixo das superfícies */
+  --color-border:        oklch(0.855 0.01 240);   /* separador decorativo; 1.35:1 sobre o surface */
+  --color-border-strong: oklch(0.58 0.014 240);   /* fronteira de componente: 3.375:1 */
+
+  /* Texto */
+  --color-foreground:       oklch(0.235 0.014 240);
+  --color-muted-foreground: oklch(0.485 0.016 240);
+
+  /* Marca — o mesmo ciano (matiz 225), à luminosidade e croma que o papel
+   * deixa: 4.830:1 como texto, com o quase-branco por cima do botão sólido. */
+  --color-primary:            oklch(0.49 0.082 225);
+  --color-primary-foreground: oklch(0.99 0.004 240);
+
+  /* Estado — a cor de texto escurece até passar 4.5:1 sobre a pior superfície,
+   * e a tinta sobe até ser papel colorido. O âmbar é o que mais se afasta do
+   * sinal do escuro: a 4.5:1 sobre esta tela ele é ocre, porque o amarelo é a
+   * cor mais luminosa do sRGB e não há amarelo escuro que continue amarelo. */
+  --color-success:         oklch(0.485 0.125 148);
+  --color-success-surface: oklch(0.9 0.085 148);
+  --color-success-border:  oklch(0.565 0.145 148);
+
+  --color-warning:         oklch(0.5 0.09 85);
+  --color-warning-surface: oklch(0.9 0.08 85);
+  --color-warning-border:  oklch(0.585 0.105 85);
+
+  --color-danger:          oklch(0.52 0.19 25);
+  --color-danger-surface:  oklch(0.9 0.045 25);
+  --color-danger-border:   oklch(0.61 0.215 25);
+
+  /* Sombras — **sem o fio de luz**, e é por isso que as sombras são parte da
+   * paleta (ADR 0015). Num fundo preto a sombra não separa e o que separa é um
+   * fio de luz de 1px na aresta de cima; sobre papel um fio de luz branco não
+   * existe, e a sombra volta a ser o que separa. Continuam dois níveis e
+   * nenhuma é colorida: o que separa painéis aqui é sobretudo a borda de 1px. */
+  --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 0.07), 0 8px 20px -14px oklch(0 0 0 / 0.22);
+  --shadow-lg: 0 14px 36px -10px oklch(0 0 0 / 0.28);
+}
+
+/* ---------------------------------------------------------------------------
+ * `data-tema="meio_termo"` — grafite com texto claro.
+ *
+ * A mesma direcção do escuro, logo a mesma identidade e a mesma leitura de dois
+ * metros do §1: as três superfícies, o separador e as três tintas de estado
+ * sobem **+0.105 em L** — um degrau — e o texto desce de 0.97 para 0.94.
+ *
+ * Não é um claro esbatido: isso seria uma paleta clara com menos contraste, ou
+ * seja pior do que o claro precisamente naquilo para que o claro serve. E não é
+ * um `opacity` sobre o escuro: um factor multiplicativo não redefine token
+ * nenhum, e um token que caísse a 4.4:1 não apareceria em medição alguma porque
+ * não existiria como valor (ADR 0015, decisão 2).
+ *
+ * O que a subida compra: o `foreground` sobre a tela passa de 18.1:1 para
+ * 13.4:1 e a tela passa de 0.3% para 1.5% de luminância — cinco vezes mais luz
+ * debaixo do texto, que é o que mata a halation do texto claro sobre
+ * quase-preto num monitor barato com a persiana aberta.
+ *
+ * **Quem decidiu o que mudou foi a medição, e a contabilidade é esta.** Quatro
+ * tokens do escuro **falham** sobre este grafite: `muted-foreground` a 3.854:1,
+ * `border-strong` a 2.332:1, `danger` a 3.888:1 e `danger-border` a 2.395:1.
+ * Dois **passam por uma margem que esta casa recusa** e sobem com ela —
+ * `success-border` a 3.048:1, isto é 0.048 acima da barra, e `warning-border` a
+ * 3.454:1 (o mesmo tipo de margem que o §2 rejeitou no `dark:bg-input/30`, a
+ * 0.012 da barra). O `foreground` desce por **decisão** e não por medição: a
+ * 0.97 dava 10.350:1 e passava — baixá-lo é metade do remédio para a halation,
+ * sendo a outra metade a subida das superfícies. O acento e dois dos três
+ * sinais ficam com o valor do escuro, sem uma linha de diferença: o gate não
+ * exige que os valores difiram, exige que cada paleta passe a sua medição.
+ *
+ * O `danger` é o caso instrutivo e vale a frase: o vermelho **saturado** do
+ * sRGB tem luminância relativa máxima de 0.213, e sobre este grafite são
+ * precisos 0.358 para 4.5:1. Nenhum vermelho saturado passa aqui, por
+ * aritmética e não por escolha: o alarme tem de clarear para salmão. É também
+ * isto que limita a altura das superfícies — mais um degrau e o alarme ficava
+ * rosa.
+ *
+ * Medido contra o `surface-2`: texto de 5.082:1 (`danger`) a 9.470:1
+ * (`foreground`), fronteiras de 3.298:1 (`border-strong`) a 4.186:1
+ * (`warning-border`), `foreground` sobre as tintas de 6.969:1 a 7.792:1,
+ * `primary-foreground` sobre o `primary` a 8.863:1.
+ * ------------------------------------------------------------------------- */
+:root[data-tema="meio_termo"] {
+  color-scheme: dark;
+
+  /* Superfícies — grafite, os três degraus do escuro +0.105 em L */
+  --color-background:  oklch(0.25 0.008 240);
+  --color-surface:     oklch(0.295 0.009 240);
+  --color-surface-2:   oklch(0.35 0.01 240);
+
+  /* Bordas — o separador acompanha a subida; a fronteira de componente foi
+   * re-derivada, porque a do escuro cai a 2.332:1 sobre este grafite. */
+  --color-border:        oklch(0.41 0.011 240);   /* separador decorativo; isento dos 3:1 */
+  --color-border-strong: oklch(0.635 0.014 240);  /* fronteira de componente: 3.298:1 */
+
+  /* Texto — o `foreground` desce de propósito (é metade do remédio para a
+   * halation) e o `muted-foreground` sobe porque a 0.675 caía a 3.854:1. */
+  --color-foreground:       oklch(0.94 0.005 240);
+  --color-muted-foreground: oklch(0.755 0.016 240);
+
+  /* Marca — o acento aprovado, sem uma alteração: 5.424:1 sobre o grafite */
+  --color-primary:            oklch(0.76 0.13 225);
+  --color-primary-foreground: oklch(0.19 0.02 240);
+
+  /* Estado — as três cores de sinal do escuro passam a medição e ficam como
+   * estão; o `danger` não passa (3.888:1) e clareia para salmão. As tintas
+   * sobem com as superfícies e as fronteiras de banner com elas. */
+  --color-success:         oklch(0.76 0.17 148);
+  --color-success-surface: oklch(0.405 0.05 148);
+  --color-success-border:  oklch(0.66 0.15 148);
+
+  --color-warning:         oklch(0.82 0.15 85);
+  --color-warning-surface: oklch(0.425 0.05 85);
+  --color-warning-border:  oklch(0.7 0.125 85);
+
+  --color-danger:          oklch(0.765 0.125 25);
+  --color-danger-surface:  oklch(0.405 0.06 25);
+  --color-danger-border:   oklch(0.67 0.18 25);
+
+  /* Sombras — o fio de luz fica, mais fraco, porque sobre grafite já não é a
+   * única coisa que separa: a sombra começa a funcionar outra vez e ganha o
+   * peso que o fio perde. */
+  --shadow-sm: inset 0 1px 0 0 oklch(1 0 0 / 0.04), 0 10px 26px -16px oklch(0 0 0 / 0.6);
+  --shadow-lg: 0 16px 40px -12px oklch(0 0 0 / 0.7);
 }

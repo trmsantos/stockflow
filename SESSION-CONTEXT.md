@@ -18,7 +18,9 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Stock é um **ledger** append-only de `StockMovement`; quantidades são projeções. Nunca editáveis.
 - A IA só produz **drafts**; um humano confirma antes de qualquer escrita no ledger.
 - Sem estética genérica de IA: DESIGN.md define a identidade **"Cabine"** (escolhida pelo dono em
-  2026-10-01 entre duas propostas opostas): paleta **escura única**, Archivo em UI e IBM Plex Mono nos
+  2026-10-01 entre duas propostas opostas): **três paletas** desde 2026-10-07 — `escuro` (o default e
+  a identidade aprovada), `claro` e `meio_termo`, escolhidas pelo atributo `data-tema` e nunca por
+  `prefers-color-scheme` (ADR 0015) —, Archivo em UI e IBM Plex Mono nos
   números, um só acento ciano, densidade densa de ERP. **Desktop-primeiro** (1440 de desenho, 1280
   obrigatório); o telemóvel serve os fluxos de campo (contar, receber) e **não** há tab bar — ela
   saiu do §4 com a mudança de direcção, e o `src/shell/tab-bar.tsx` ainda existe à espera da tarefa

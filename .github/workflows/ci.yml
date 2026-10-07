@@ -191,11 +191,19 @@ jobs:
           # a tabela de cobertura saiu do SECURITY.md §9: um gate vazio é pior
           # que nenhum, porque parece cobertura.
           #
-          # Quem voltar a prototipar uma paleta numa rota de dev (o modo claro,
-          # que é dívida nomeada no DESIGN.md) acrescenta a sentinela dela — e
-          # isso aparece no diff, ao contrário de uma pré-posicionada que
-          # silenciosamente nunca disparou.
-          for padrao in "dados-falsos-stockflow" "Pastelaria Aurora" "tokens-page"; do
+          # Quem voltar a prototipar numa rota de dev acrescenta a sentinela
+          # dela — e isso aparece no diff, ao contrário de uma pré-posicionada
+          # que silenciosamente nunca disparou.
+          #
+          # A terceira sentinela entrou a 2026-10-07 com o interruptor de tema
+          # da `/dev/tokens` (ADR 0015): é um **rótulo** do `src/dev/tema.ts`, e
+          # não o nome de uma paleta nem o atributo `data-tema`, porque esses
+          # vivem no `tokens.css` e chegam ao `dist/` com razão. O que esta
+          # sentinela apanha é o único erro possível aqui: código de produto a
+          # importar o interruptor de desenvolvimento, caso em que o rótulo
+          # viaja com ele — uma string literal sobrevive à minificação.
+          for padrao in "dados-falsos-stockflow" "Pastelaria Aurora" "tokens-page" \
+                        "grafite com texto claro"; do
             if grep -rl "$padrao" dist/ 2>/dev/null; then
               echo "::error::'$padrao' chegou ao dist/"
               falhou=1
