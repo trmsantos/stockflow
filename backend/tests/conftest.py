@@ -137,6 +137,13 @@ def prod_env(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CSRF_TRUSTED_ORIGINS", "https://stockflow.example.pt")
     monkeypatch.setenv("DJANGO_ADMIN_URL", "gestao-interna/")
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    # O SMTP é obrigatório no `prod.py` desde 2026-10-07: sem isto, **todos** os
+    # testes de settings de produção falhariam no `required(env, "EMAIL_HOST")` e
+    # a mensagem apontava para o email em vez de para o que o teste mede.
+    monkeypatch.setenv("EMAIL_HOST", "smtp.example.pt")
+    monkeypatch.setenv("EMAIL_HOST_USER", "stockflow@example.pt")
+    monkeypatch.setenv("EMAIL_HOST_PASSWORD", "sem-valor-nao-e-segredo")
+    monkeypatch.setenv("DEFAULT_FROM_EMAIL", "StockFlow <stockflow@example.pt>")
 
 
 def reload_settings(name: str) -> ModuleType:

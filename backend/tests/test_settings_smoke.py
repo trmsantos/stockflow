@@ -17,6 +17,7 @@ import sys
 
 import pytest
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
 from config.log import JsonFormatter, RequestContextFilter
 from tests.conftest import reload_settings as _reload
@@ -229,3 +230,77 @@ def test_num_proxies_definido_em_todos_os_ambientes(
     `REMOTE_ADDR`; em prod é o nº de proxies de confiança.
     """
     assert _reload(modulo).REST_FRAMEWORK["NUM_PROXIES"] == esperado
+
+
+# ---------------------------------------------------------------------------
+# Email (SMTP) em produção
+# ---------------------------------------------------------------------------
+def test_prod_exige_smtp_e_nao_cai_na_consola(
+    prod_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Um email "enviado" para o stdout de um contentor é a pior falha possível.
+
+    Não levanta, não aparece em log nenhum, e a pessoa do outro lado fica à
+    espera de um convite que nunca existiu. É por isso que o `EMAIL_HOST` é
+    `required` e não tem default: um arranque que falha por falta de
+    configuração é ruidoso e corrige-se em dois minutos.
+
+    O teste afirma as duas metades: com configuração, o backend é o de SMTP; sem
+    ela, o módulo não importa.
+    """
+    prod = _reload("prod")
+
+    assert prod.EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend"
+    assert prod.EMAIL_HOST == "smtp.example.pt"
+    assert prod.DEFAULT_FROM_EMAIL == "StockFlow <stockflow@example.pt>"
+
+    monkeypatch.delenv("EMAIL_HOST")
+    with pytest.raises(ImproperlyConfigured, match="EMAIL_HOST"):
+        _reload("prod")
+
+
+@pytest.mark.parametrize(
+    ("porta", "ssl", "tls"),
+    [(587, False, True), (465, True, False), (25, False, True), (2525, False, True)],
+)
+def test_o_tls_do_smtp_e_derivado_da_porta_e_nunca_os_dois(
+    prod_env: None, monkeypatch: pytest.MonkeyPatch, porta: int, ssl: bool, tls: bool
+) -> None:
+    """`EMAIL_USE_SSL` e `EMAIL_USE_TLS` são mutuamente exclusivos no Django.
+
+    Ligar os dois faz o `smtplib` falhar com uma mensagem que não aponta para
+    isto, e deixar os dois desligados manda a password de SMTP em claro na rede.
+    Daí serem **derivados da porta** em vez de duas variáveis: não há forma de
+    discordarem, e não há caminho para desligar os dois.
+
+    A porta 465 é TLS implícito (liga já cifrado) e tudo o resto é STARTTLS
+    (liga em claro e promove) — incluindo a 25 e as portas alternativas que
+    alguns serviços usam, que é o caso de `2525` estar aqui.
+    """
+    monkeypatch.setenv("EMAIL_PORT", str(porta))
+
+    prod = _reload("prod")
+
+    assert prod.EMAIL_PORT == porta
+    assert prod.EMAIL_USE_SSL is ssl
+    assert prod.EMAIL_USE_TLS is tls
+    assert prod.EMAIL_USE_SSL != prod.EMAIL_USE_TLS, (
+        "os dois não podem estar ligados nem desligados ao mesmo tempo"
+    )
+
+
+def test_o_dev_escreve_na_consola_e_o_test_guarda_em_memoria(clean_env: None) -> None:
+    """E é por isso que nada disto é preciso para desenvolver.
+
+    Vale um teste porque é a razão pela qual o `prod.py` **pode** ser
+    intransigente: quem desenvolve nunca precisa de um SMTP, logo exigir um em
+    produção não custa nada a ninguém que esteja a trabalhar.
+    """
+    assert (
+        _reload("dev").EMAIL_BACKEND
+        == "django.core.mail.backends.console.EmailBackend"
+    )
+    assert (
+        _reload("test").EMAIL_BACKEND
+        == "django.core.mail.backends.locmem.EmailBackend"
+    )
