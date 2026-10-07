@@ -196,3 +196,39 @@ msgstr "Não existe conta com o email {email}. O demo não cria contas."
 
 msgid "This is the demonstration establishment: the name does not change. The rest of the configuration changes normally."
 msgstr "Este é o estabelecimento de demonstração: o nome não se altera. O resto da configuração muda normalmente."
+
+# ---------------------------------------------------------------------------
+# O recurso /documents (ADR 0021, fatia 1)
+# ---------------------------------------------------------------------------
+# As quatro recusas do `purchasing/services.py` e as quatro validações de
+# ficheiro do `purchasing/serializers.py`. Os `{nome}` são interpolados **depois**
+# da tradução, com `.format()`: um f-string antes do `_()` fazia o msgid variar
+# com os dados e nenhuma tradução o alcançava.
+#
+# A frase do tipo recusado diz **o que se aceita** e não "tipo inválido", de
+# propósito: a lista é fechada (PDF, JPEG, PNG) e quem recebe a recusa tem de
+# saber o que enviar em vez de adivinhar.
+
+msgid "This document is closed and does not take more pages. Open a new one."
+msgstr "Este documento está fechado e não aceita mais páginas. Abra um novo."
+
+msgid "This document was discarded."
+msgstr "Este documento foi descartado."
+
+msgid "This document has no pages yet, so there is nothing to close."
+msgstr "Este documento ainda não tem páginas, logo não há nada para fechar."
+
+msgid "A document takes at most {limite} pages."
+msgstr "Um documento aceita no máximo {limite} páginas."
+
+msgid "Only a PDF, a JPEG or a PNG. What decides is the content of the file and never its name or the declared type."
+msgstr "Só um PDF, um JPEG ou um PNG. O que decide é o conteúdo do ficheiro e nunca o seu nome nem o tipo declarado."
+
+msgid "This file has no content."
+msgstr "Este ficheiro não tem conteúdo."
+
+msgid "This file is larger than {limite} MiB."
+msgstr "Este ficheiro é maior do que {limite} MiB."
+
+msgid "This PDF has {paginas} pages and a document takes at most {limite}."
+msgstr "Este PDF tem {paginas} páginas e um documento aceita no máximo {limite}."

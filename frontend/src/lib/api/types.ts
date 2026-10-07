@@ -296,6 +296,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Documentos de fornecedor do estabelecimento ativo
+         * @description Os documentos com pelo menos uma página, mais recentes primeiro, paginados. **Um slot sem páginas nunca aparece aqui** e um documento descartado também não — para esses há o `GET` por `id`, que é o alvo do polling enquanto a fotografia não chega.
+         */
+        get: operations["documentos_listar"];
+        put?: never;
+        /**
+         * Abrir um documento — com ficheiro, ou vazio para captura
+         * @description Com `ficheiro`, é o upload de um só gesto: o documento nasce **fechado** e o trabalho fica agendado. Sem `ficheiro`, é o slot que o QR nomeia: nasce aberto, espera 15 minutos pela primeira página e é fechado por uma pessoa.
+         */
+        post: operations["documentos_criar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Um documento, com páginas e o que o modelo leu
+         * @description O alvo do polling do bloco do QR (2 s enquanto o bloco está aberto, com desistência aos 3 minutos). Serve **também** um slot ainda sem páginas e um documento descartado: é precisamente esse o estado que o desktop está a sondar.
+         */
+        get: operations["documentos_ler"];
+        put?: never;
+        post?: never;
+        /**
+         * Descartar um documento
+         * @description Descarte **suave**: a linha fica com `discarded_at` e sai da lista. Os bytes só são apagados se o documento não tiver páginas — o original de um documento fiscal não se apaga enquanto não houver política de retenção.
+         */
+        delete: operations["documentos_descartar"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/closing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fechar o documento: não vêm mais páginas
+         * @description Repetível dentro do mesmo estado: fechar duas vezes devolve 200 e não agenda trabalho duas vezes. Um documento sem páginas não se fecha — morre pelo relógio.
+         */
+        post: operations["documentos_fechar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Anexar um ficheiro (uma fotografia, ou um PDF)
+         * @description Um ficheiro por pedido. **201 na primeira vez e 200 na repetição**: os mesmos bytes no mesmo documento não criam uma segunda página, e o código de status é o que torna essa idempotência observável — uma retentativa numa rede má não deve parecer um erro.
+         */
+        post: operations["documentos_anexar_ficheiro"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/pages/{posicao}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A imagem normalizada de uma página
+         * @description Servida por esta view e nunca pelo proxy: o `MEDIA_URL` não tem valor e o `/media/` não é encaminhado (ADR 0020, decisão 4). `inline`, `nosniff`, `Cache-Control: private`. 404 enquanto a página não estiver normalizada — e hoje nenhuma está, porque não há rasterizador nas dependências deste projecto.
+         */
+        get: operations["documentos_imagem_da_pagina"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/estabelecimento": {
         parameters: {
             query?: never;
@@ -600,6 +708,62 @@ export interface components {
          */
         ConviteOutEstadoEnum: "pendente" | "expirado" | "aceite" | "revogado";
         /**
+         * @description O corpo do `POST /documents`: um ficheiro, ou nada.
+         *
+         *     **Nada** é o slot que o QR nomeia (ADR 0020, decisão 2): o desktop cria o
+         *     documento vazio, o telemóvel anexa-lhe páginas. **Um ficheiro** é o upload de
+         *     um só gesto, que é o que o dono pediu para o desktop.
+         *
+         *     `source` não está aqui de propósito: a origem é derivada de vir ou não
+         *     ficheiro (ver `services.criar_documento`), e um campo que o cliente
+         *     declarasse era mais uma coisa que ele pode pôr errada.
+         */
+        DocumentoInRequest: {
+            /** Format: binary */
+            ficheiro?: string;
+        };
+        /**
+         * @description O `DocumentoOut` da decisão 9 da ADR 0021, campo a campo.
+         *
+         *     É a resposta das **cinco** operações que devolvem um documento — criar,
+         *     anexar, fechar, ler um, listar —, e é deliberado: um cliente que faz uma
+         *     escrita recebe o estado completo e não precisa de uma segunda leitura para o
+         *     descobrir (é também o que faz o polling da ADR 0020 poder ser só um `GET`).
+         *
+         *     Três campos que merecem nota:
+         *
+         *     * `state` é **derivado** e nunca guardado. Ver `models.estado_do_documento`;
+         *     * `expires_at` é `created_at + 15 min`, sempre — também num documento que já
+         *       tem páginas, onde não quer dizer nada. É o que o bloco do QR do desktop usa
+         *       para contar o tempo, e servi-lo nulo depois da primeira página obrigava o
+         *       cliente a guardar o valor anterior;
+         *     * `receipt` é **sempre nulo nesta fatia**. O campo está no contrato desde já
+         *       para o `types.ts` não mudar de forma na fatia 2, que é quando o
+         *       `purchasing_receipt` nasce; hoje não há tabela nenhuma que o possa
+         *       preencher. É a única mentira possível deste payload, e por isso está dita
+         *       aqui.
+         */
+        DocumentoOut: {
+            /** Format: date-time */
+            closed_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** Format: date-time */
+            expires_at: string;
+            extraction: components["schemas"]["ExtracaoOut"] | null;
+            files: components["schemas"]["FicheiroOut"][];
+            /** Format: uuid */
+            id: string;
+            page_count: number;
+            page_limit: number;
+            pages: components["schemas"]["PaginaOut"][];
+            /** Format: uuid */
+            receipt: string | null;
+            source: components["schemas"]["OrigemDoDocumentoEnum"];
+            state: components["schemas"]["EstadoDoDocumentoEnum"];
+        };
+        /**
          * @description O corpo de uma recusa: `code` estável para ramificar, `detail` para ler.
          *
          *     É a mesma forma que o `TenantMiddleware` já devolve (`sem_sessao`,
@@ -679,6 +843,92 @@ export interface components {
             vat_regime: components["schemas"]["VatRegimeEnum"];
         };
         /**
+         * @description * `pendente` - a chamada começou e não acabou
+         *     * `lido` - o modelo respondeu e a resposta valida
+         *     * `ilegivel` - o modelo respondeu e a resposta não valida
+         *     * `erro` - a chamada falhou
+         * @enum {string}
+         */
+        EstadoDaLeituraEnum: "pendente" | "lido" | "ilegivel" | "erro";
+        /**
+         * @description * `aguarda_captura` - slot aberto, à espera da primeira página
+         *     * `expirado` - o slot expirou sem página nenhuma
+         *     * `a_normalizar` - há páginas e a imagem ainda não está pronta
+         *     * `a_extrair` - o modelo está a ler o documento
+         *     * `lido` - o modelo leu e o resultado está disponível
+         *     * `ilegivel` - o modelo respondeu algo que não se consegue validar
+         *     * `erro` - a extração falhou ou nunca acabou
+         *     * `descartado` - descartado por uma pessoa
+         * @enum {string}
+         */
+        EstadoDoDocumentoEnum: "aguarda_captura" | "expirado" | "a_normalizar" | "a_extrair" | "lido" | "ilegivel" | "erro" | "descartado";
+        /**
+         * @description O que o modelo leu, num painel **só de leitura**.
+         *
+         *     É a entrega da fatia 1 ao dono: *"arrastar um PDF no desktop, ver as páginas,
+         *     e ver o que o modelo leu"*. Nada disto é a verdade do estabelecimento — a
+         *     verdade é o que uma pessoa confirmar na revisão, que é a fatia 2 — e por isso
+         *     o cabeçalho e as linhas vêm **vazios** quando o estado não é `lido`.
+         *
+         *     `reason` é a razão legível de um `erro`, e existe porque hoje o erro é sempre
+         *     o mesmo e tem uma explicação curta: não há modelo configurado. Um estado
+         *     `erro` sem frase mandava alguém ler logs do worker. **Não está no
+         *     `ExtracaoOut` da ADR** — é um campo aditivo, e o nome vai em inglês como os
+         *     vizinhos (decisão 9), apesar de o campo do DTO interno se chamar `motivo`
+         *     como o resto do Python deste repositório.
+         */
+        ExtracaoOut: {
+            /** Format: decimal */
+            confidence: string | null;
+            customer_nif: string;
+            doc_number: string;
+            doc_type: string;
+            /** Format: date */
+            issued_at: string | null;
+            lines: components["schemas"]["LinhaLidaOut"][];
+            /** Format: date-time */
+            read_at: string | null;
+            reason: string;
+            state: components["schemas"]["EstadoDaLeituraEnum"];
+            supplier_name: string;
+            supplier_nif: string;
+            /** Format: decimal */
+            total: string | null;
+        };
+        /**
+         * @description O corpo do `POST /documents/<id>/files`: **um** ficheiro, obrigatório.
+         *
+         *     Um e não uma lista: *"um ficheiro é um documento, com N páginas, e nunca é
+         *     partido automaticamente"* (ADR 0020, decisão 5), e duas fotografias são dois
+         *     pedidos — o que é também o que faz uma retentativa de rede má poder ser
+         *     idempotente por `sha256`, que uma lista parcialmente aceite não poderia.
+         */
+        FicheiroDeDocumentoInRequest: {
+            /** Format: binary */
+            ficheiro: string;
+        };
+        /**
+         * @description Um ficheiro: o que entrou, quando, e o que os bytes diziam.
+         *
+         *     `content_type` é o **real** (bytes mágicos) e não o que o cliente declarou —
+         *     é a única forma deste campo, e é também o que o torna útil num relatório de
+         *     suporte. `received_at` é o `created_at` da linha: a mesma coisa com o nome que
+         *     o contrato lhe dá.
+         *
+         *     Não sai o `path`: é um caminho no armazenamento do servidor, não tem valor
+         *     nenhum para o cliente, e um payload que o traga é um payload que ensina a
+         *     estrutura do disco a quem o ler.
+         */
+        FicheiroOut: {
+            byte_size: number;
+            content_type: string;
+            original_filename: string;
+            pages_detected: number;
+            position: number;
+            /** Format: date-time */
+            received_at: string;
+        };
+        /**
          * @description Uma linha do corpo do `PUT /menu`: o que o tenant decidiu sobre uma rota.
          *
          *     Os quatro campos configuráveis, e nada mais. **Não** há `campo`, e isso é
@@ -746,6 +996,34 @@ export interface components {
             visivel: boolean;
         };
         /**
+         * @description Uma linha **como o modelo a leu**. Texto não confiável, já validado.
+         *
+         *     Chega aqui depois de o `agents` a ter validado contra o seu schema à escrita
+         *     **e** à leitura (ADR 0021, decisão 4: *"é a única coluna do sistema em que
+         *     nada se confia"*). O que este serializer acrescenta é a terceira passagem, a
+         *     da forma do contrato: os `max_length` e os `decimal_places` são os que o
+         *     `types.ts` vai prometer ao frontend.
+         *
+         *     Os números são `Decimal` com `coerce_to_string` implícito (o default do DRF):
+         *     saem como string no JSON, que é a única forma de um preço não passar por um
+         *     `float` do JavaScript.
+         */
+        LinhaLidaOut: {
+            /** Format: decimal */
+            confidence: string | null;
+            description: string;
+            /** Format: decimal */
+            line_total: string | null;
+            position: number;
+            /** Format: decimal */
+            quantity: string | null;
+            unit: string;
+            /** Format: decimal */
+            unit_price: string | null;
+            /** Format: decimal */
+            vat_rate: string | null;
+        };
+        /**
          * @description O corpo do `POST /auth/login`: um email e uma password, e nada mais.
          *
          *     O `max_length` do email é o do `EmailField` do modelo (254, o limite do
@@ -765,6 +1043,31 @@ export interface components {
             email: string;
             password: string;
         };
+        /**
+         * @description * `upload` - ficheiro enviado
+         *     * `capture` - fotografado no telemóvel
+         * @enum {string}
+         */
+        OrigemDoDocumentoEnum: "upload" | "capture";
+        /**
+         * @description Uma página: a ordem, a imagem e a geometria.
+         *
+         *     `image_url` é **sempre** servido, mesmo quando não há imagem, e quem decide
+         *     se vale a pena pedi-lo é o `normalized`. A alternativa — um `image_url` nulo
+         *     — dava ao cliente dois campos para a mesma pergunta e um tipo
+         *     `string | null` para um caminho que nunca muda.
+         *
+         *     Não sai o `id` da página: o endereço dela é `(documento, position)`, que é o
+         *     que o path usa, e um segundo identificador no payload era mais uma coisa para
+         *     o cliente escolher mal.
+         */
+        PaginaOut: {
+            height: number | null;
+            image_url: string;
+            normalized: boolean;
+            position: number;
+            width: number | null;
+        };
         PaginatedConviteOutList: {
             /** @example 123 */
             count: number;
@@ -779,6 +1082,21 @@ export interface components {
              */
             previous?: string | null;
             results: components["schemas"]["ConviteOut"][];
+        };
+        PaginatedDocumentoOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["DocumentoOut"][];
         };
         /**
          * @description * `owner` - dono
@@ -806,6 +1124,28 @@ export interface components {
          */
         PreferenciasInRequest: {
             tema: components["schemas"]["TemaEnum"];
+        };
+        /**
+         * @description O corpo de uma recusa: `code` estável para ramificar, `detail` para ler.
+         *
+         *     A mesma forma do `ErroOutSerializer` do `accounts`, numa classe própria e não
+         *     reutilizada — o `apps/accounts/serializers.py` não é importável de fora do
+         *     módulo (import-linter: entre módulos só `api.py`), e expor um serializer na
+         *     porta do `accounts` para poupar duas linhas era alargar uma interface pública
+         *     para arrumação.
+         *
+         *     Nome diferente (`RecusaDeDocumentoOut`) e não um segundo `ErroOut`: dois
+         *     componentes com o mesmo nome no OpenAPI são um aviso, e o `pnpm gen:api` corre
+         *     com `--fail-on-warn`.
+         *
+         *     O `code` é uma string e não um enum fechado, pela razão escrita no `accounts`:
+         *     o conjunto de códigos é **por endpoint** e um enum com a união de todos
+         *     sugeria ao frontend ramos que aquele endpoint nunca devolve. Os códigos de
+         *     cada resposta estão nos docstrings do `views.py`.
+         */
+        RecusaDeDocumentoOut: {
+            code: string;
+            detail: string;
         };
         /**
          * @description Uma rota do **registo**: o que existe para configurar, e os seus defaults.
@@ -1256,6 +1596,206 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+    documentos_listar: {
+        parameters: {
+            query?: {
+                /** @description A page number within the paginated result set. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedDocumentoOutList"];
+                };
+            };
+        };
+    };
+    documentos_criar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "multipart/form-data": components["schemas"]["DocumentoInRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentoOut"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDeDocumentoOut"];
+                };
+            };
+        };
+    };
+    documentos_ler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this documento de fornecedor. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentoOut"];
+                };
+            };
+        };
+    };
+    documentos_descartar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this documento de fornecedor. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No response body */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    documentos_fechar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this documento de fornecedor. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentoOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDeDocumentoOut"];
+                };
+            };
+        };
+    };
+    documentos_anexar_ficheiro: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this documento de fornecedor. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["FicheiroDeDocumentoInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentoOut"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentoOut"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDeDocumentoOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDeDocumentoOut"];
+                };
+            };
+        };
+    };
+    documentos_imagem_da_pagina: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this documento de fornecedor. */
+                id: string;
+                /** @description A ordem da página dentro do documento, a começar em 1. */
+                posicao: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/webp": string;
                 };
             };
         };
