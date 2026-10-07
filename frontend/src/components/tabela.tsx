@@ -118,7 +118,43 @@ export function MolduraDeTabela({
     // `overscroll-x-contain`: a tabela desliza na horizontal a 360px, e sem isto
     // chegar ao fim do deslize passava o gesto à página — que num iOS é a
     // navegação para trás. Quem está a ler a última coluna não quer sair do ecrã.
-    <div className="w-full overflow-x-auto overscroll-x-contain">
+    //
+    // **`min-w-0` é o que faz o `overflow-x-auto` funcionar, e sem ele esta
+    // moldura não continha nada.** Era um defeito em todos os ecrãs com tabela,
+    // medido a 2026-10-07 com o `scripts/ver-ecra.py`: a 360px o
+    // `document.documentElement.scrollWidth` era 947 num viewport de 360 — ou
+    // seja, **a página inteira** deslizava, com a sidebar e a barra de topo a
+    // sair do ecrã, em vez de a tabela deslizar por dentro da moldura.
+    //
+    // A causa é a regra de flexbox que ninguém decora: o `min-width` de um item
+    // de flex é `auto`, não `0`, logo um item **cresce para caber o conteúdo**
+    // mesmo com `w-full` — e esta moldura é sempre filha de um `flex flex-col`.
+    // O `w-full` pedia 100% e o `min-width: auto` dava-lhe 960px, que ganha.
+    //
+    // É a diferença entre o que o DESIGN.md §4 declara e o que acontecia: o §4
+    // aceita a **tabela** a deslizar na horizontal a 360px; nunca aceitou o ecrã
+    // a deslizar. Fica aqui e não nos ecrãs porque a moldura é uma e os ecrãs são
+    // quatro.
+    //
+    // **`relative` é a segunda metade, e sozinho o `min-w-0` não bastava.** Com
+    // ele a moldura ficava nos 328px certos e o ecrã **continuava** a deslizar
+    // 587px para preto — medido com `window.scrollTo(600, 0)`, que é a pergunta
+    // honesta ("a página desliza?") em vez do `scrollWidth`, que é só um número.
+    // A causa é que o bloco da `<table>` contribuía para a área de scroll da
+    // **raiz**: sem um bloco contentor pelo meio, a sobreposição de um
+    // descendente propaga-se ao documento mesmo clipada por um ancestral.
+    // `position: relative` faz desta moldura esse bloco contentor e a
+    // sobreposição fica local.
+    //
+    // Foram medidos cinco candidatos: `relative`, `contain: paint` e
+    // `contain: layout` resolvem os três (deslize 0, e a tabela continua a
+    // deslizar por dentro); `display: grid` e `max-width: 100%` não resolvem
+    // nada. Ficou o `relative` por ser o mais barato e o que não tem efeitos
+    // colaterais de containment. **E não ficou um `overflow-x-clip` no invólucro
+    // do shell**, que foi a primeira tentativa: a medição mostrou deslize de 587
+    // com e sem ele, e uma linha com um comentário a afirmar o que a medição nega
+    // é pior do que linha nenhuma.
+    <div className="relative w-full min-w-0 overflow-x-auto overscroll-x-contain">
       <table className={`w-full ${larguraMinima} border-collapse text-sm`}>
         <caption className="sr-only">{rotulo}</caption>
         <thead>

@@ -443,6 +443,15 @@ Regras de composição:
   campo usa o mesmo tratamento do `<th>` da tabela que vem abaixo. É essa rima que faz o topo e a
   tabela lerem-se como um instrumento só. Os campos empacotam à esquerda e **não esticam**: três
   células a dividir 1024px dariam 340px cada para um número de dois dígitos.
+- **"A tabela desliza a 360px" é sobre a tabela, nunca sobre o ecrã — e até 2026-10-07 era o ecrã
+  que deslizava.** A moldura tem `overflow-x-auto` desde que nasceu e não continha nada: um item de
+  flex tem `min-width: auto`, logo crescia para caber as colunas, e o bloco da `<table>` contribuía
+  para a área de scroll da **raiz** mesmo clipado. Medido a 360px com o `scripts/ver-ecra.py`, e foi
+  a fotografia que o mostrou: 360px de aplicação e 587px de preto deslizável, num telemóvel, em
+  quatro ecrãs. São duas classes na moldura (`min-w-0` para conter, `relative` para a sobreposição
+  ficar local) e a razão está escrita no `components/tabela.tsx`, com os cinco candidatos medidos.
+  O que se declara aqui é a **tabela** a deslizar por dentro da sua moldura; um ecrã que desliza para
+  o lado leva a sidebar e a barra de topo com ele, e isso nunca foi aceite.
 - **O "cabeçalho sticky" saiu desta linha, e a razão é de CSS e não de preguiça.** Uma tabela de ERP
   a 360px desliza na horizontal (`overflow-x-auto`, que o §4 aceita e manda declarar), e esse
   invólucro torna-se o *scrollport* do `position: sticky`. Como ele não rola na **vertical**, um
