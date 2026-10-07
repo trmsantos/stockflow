@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 
 import type { GrupoDeMenu } from "./menu";
+import { textos } from "./textos";
 
 /**
  * A lista de navegação — **uma**, renderizada em dois contentores.
@@ -59,7 +60,7 @@ export function MenuDeNavegacao({
     return (
       <div className="flex min-h-0 flex-1 flex-col items-start gap-3 p-celula-x">
         <p className="text-pretty text-sm text-muted-foreground">
-          Este estabelecimento não tem itens de menu configurados.
+          {textos.navegacao.semItens}
         </p>
         {/* `min-h-linha` (44px) e não só texto: provar que este estado é
             alcançável (ver acima) tornou real uma pergunta que era teórica — num
@@ -73,7 +74,7 @@ export function MenuDeNavegacao({
           className="inline-flex min-h-linha items-center text-sm text-primary underline underline-offset-4 hover:no-underline"
           onClick={aoNavegar}
         >
-          Ir para o início
+          {textos.navegacao.irParaInicio}
         </Link>
       </div>
     );

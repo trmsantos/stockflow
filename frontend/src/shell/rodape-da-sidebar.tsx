@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 
 import type { SessaoDoShell } from "./sessao-do-shell";
+import { textos } from "./textos";
 
 /**
  * O pé da sidebar: **o estabelecimento ativo, com troca sem sair**, e a saída da
@@ -125,7 +126,7 @@ export function RodapeDaSidebar({
                 : "text-xs font-bold tracking-microrotulo text-muted-foreground uppercase"
             }
           >
-            Estabelecimento
+            {textos.rodape.estabelecimento}
           </Label>
           <Select
             value={ativo.id}
@@ -144,12 +145,12 @@ export function RodapeDaSidebar({
               aria-label={
                 recolhida
                   ? `Estabelecimento: ${nomeDoAtivo}${
-                      ativo.demonstracao ? " (demonstração)" : ""
+                      ativo.demonstracao ? textos.rodape.sufixoDeDemonstracao : ""
                     }`
                   : undefined
               }
               aria-busy={aTrocar}
-              title={soUm ? nomeDoAtivo : "Trocar de estabelecimento"}
+              title={soUm ? nomeDoAtivo : textos.rodape.trocar}
               className={recolhida ? "w-full justify-center px-1.5" : "w-full"}
             >
               {/* O nome, e **não** um `<SelectValue/>`: o primitivo envolve os
@@ -213,7 +214,7 @@ export function RodapeDaSidebar({
                       // Para quem ouve: o ícone é decorativo e o papel sozinho
                       // não distingue um demo de uma casa a sério com o mesmo
                       // nome. A cor nunca comunica sozinha (DESIGN.md §2).
-                      <span className="sr-only"> (demonstração)</span>
+                      <span className="sr-only">{textos.rodape.sufixoDeDemonstracao}</span>
                     ) : null}
                   </span>
                   {/* O papel distingue dois nomes parecidos, e é o que diz o que
@@ -236,10 +237,10 @@ export function RodapeDaSidebar({
             {sessao.email}
           </span>
         )}
-        <Button asChild variant="ghost" size="icon" className="shrink-0" title="Definições">
+        <Button asChild variant="ghost" size="icon" className="shrink-0" title={textos.rodape.definicoes}>
           <Link to="/definicoes">
             <SlidersHorizontal aria-hidden="true" />
-            <span className="sr-only">Definições</span>
+            <span className="sr-only">{textos.rodape.definicoes}</span>
           </Link>
         </Button>
         <Button
@@ -247,13 +248,13 @@ export function RodapeDaSidebar({
           variant="ghost"
           size="icon"
           className="shrink-0"
-          title={sessao.email === null ? "Terminar sessão" : `Terminar sessão (${sessao.email})`}
+          title={sessao.email === null ? textos.rodape.terminarSessao : `Terminar sessão (${sessao.email})`}
           disabled={aSair}
           aria-busy={aSair}
           onClick={sair}
         >
           <LogOut aria-hidden="true" />
-          <span className="sr-only">{aSair ? "A sair…" : "Terminar sessão"}</span>
+          <span className="sr-only">{aSair ? textos.rodape.aSair : textos.rodape.terminarSessao}</span>
         </Button>
       </div>
     </div>

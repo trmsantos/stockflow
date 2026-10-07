@@ -9,6 +9,7 @@ import { GavetaDeNavegacao } from "./gaveta-de-navegacao";
 import { localizarNoMenu, type GrupoDeMenu } from "./menu";
 import { rotuloDoCaminho } from "./registo-de-rotas";
 import type { SessaoDoShell } from "./sessao-do-shell";
+import { textos } from "./textos";
 
 /**
  * A barra de topo: 56px (`h-cabecalho`, DESIGN.md §2), fixa, e o único sítio de
@@ -128,8 +129,8 @@ export function AppHeader({
             {/* A palavra inteira a partir de `sm`, e "Demo" num telemóvel: a
                 barra tem 56px e o nome do ecrã à esquerda, e um rótulo que
                 empurre o nome para fora é pior do que um rótulo curto. */}
-            <span className="hidden sm:inline">Estabelecimento de demonstração</span>
-            <span className="sm:hidden">Demonstração</span>
+            <span className="hidden sm:inline">{textos.cabecalho.demonstracao}</span>
+            <span className="sm:hidden">{textos.cabecalho.demonstracaoCurta}</span>
           </span>
         ) : null}
 
@@ -139,7 +140,7 @@ export function AppHeader({
           // sério. Dizê-lo no ecrã é a mesma honestidade da abertura da sessão 0.
           // Em produção este ramo não existe.
           <Badge variant="outline" className="shrink-0">
-            dados de demonstração
+            {textos.cabecalho.dadosDeDemonstracao}
           </Badge>
         ) : null}
       </span>

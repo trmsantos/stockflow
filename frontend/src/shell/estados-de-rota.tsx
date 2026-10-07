@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { textos } from "./textos";
 
 /**
  * Os três estados que uma rota tem sempre, e que o DESIGN.md §3 exige em tudo o
@@ -18,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function EsqueletoDeEcra() {
   return (
     <div className="flex w-full max-w-6xl flex-col gap-3 px-4 py-6" aria-busy="true">
-      <span className="sr-only">A carregar…</span>
+      <span className="sr-only">{textos.estados.aCarregar}</span>
       <Skeleton className="h-8 w-48" />
       <Skeleton className="h-4 w-full max-w-md" />
       <Skeleton className="h-32 w-full" />
@@ -33,7 +34,7 @@ export function EsqueletoDeEcra() {
  */
 function mensagemDe(erro: unknown): string {
   if (erro instanceof Error && erro.message !== "") return erro.message;
-  return "Erro inesperado. Verifique a ligação e tente outra vez.";
+  return textos.estados.erroGenerico;
 }
 
 /**
@@ -47,10 +48,10 @@ export function ErroDeEcra({ error, reset }: { error: unknown; reset: () => void
       role="alert"
       className="m-4 flex w-full max-w-md flex-col items-start gap-3 rounded-xl border border-danger-border bg-danger-surface p-4"
     >
-      <p className="font-medium">Não foi possível abrir este ecrã.</p>
+      <p className="font-medium">{textos.estados.erroTitulo}</p>
       <p className="text-sm text-muted-foreground">{mensagemDe(error)}</p>
       <Button type="button" variant="outline" onClick={reset}>
-        Tentar outra vez
+        {textos.estados.tentarOutraVez}
       </Button>
     </div>
   );
@@ -76,12 +77,12 @@ export function ErroDeEcra({ error, reset }: { error: unknown; reset: () => void
 export function NaoEncontrado() {
   return (
     <div className="m-auto flex w-full max-w-md flex-col items-start gap-3 px-4 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Este ecrã não existe</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{textos.estados.naoEncontradoTitulo}</h1>
       <p className="text-pretty text-muted-foreground">
-        O endereço que abriu não corresponde a nenhum ecrã do StockFlow.
+        {textos.estados.naoEncontradoCorpo}
       </p>
       <Button asChild variant="outline">
-        <Link to="/">Voltar ao início</Link>
+        <Link to="/">{textos.estados.voltarAoInicio}</Link>
       </Button>
     </div>
   );

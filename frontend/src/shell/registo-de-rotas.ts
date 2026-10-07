@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import type { components } from "@/lib/api/types";
+import { textos } from "./textos";
 
 /**
  * O registo de rotas — **a lista fechada do que existe para navegar**, e a
@@ -167,18 +168,18 @@ export interface EntradaDoRegisto {
 export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
   inicio: {
     caminho: "/",
-    rotulo: "Início",
-    grupo: "Painel",
+    rotulo: textos.rotas.inicio.rotulo,
+    grupo: textos.grupos.painel,
     icone: House,
-    pergunta: "O que é que tenho de fazer hoje?",
+    pergunta: textos.rotas.inicio.pergunta,
     campo: false,
   },
   painel: {
     caminho: "/painel",
-    rotulo: "Painel",
-    grupo: "Painel",
+    rotulo: textos.rotas.painel.rotulo,
+    grupo: textos.grupos.painel,
     icone: ChartNoAxesColumn,
-    pergunta: "Quanto entrou, quanto saiu, e como fechou o mês?",
+    pergunta: textos.rotas.painel.pergunta,
     // **Não** é rota de campo: é o ecrã mais denso da aplicação — três abas,
     // tabelas de dinheiro e dois gráficos — e lê-se ao computador. A 360px
     // funciona, com as tabelas a deslizar na horizontal, que é o que o
@@ -190,34 +191,34 @@ export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
   },
   alertas: {
     caminho: "/alertas",
-    rotulo: "Alertas",
-    grupo: "Painel",
+    rotulo: textos.rotas.alertas.rotulo,
+    grupo: textos.grupos.painel,
     icone: TriangleAlert,
-    pergunta: "O que expira? O que falta? Quanto deitei fora?",
+    pergunta: textos.rotas.alertas.pergunta,
     campo: false,
   },
   stock: {
     caminho: "/stock",
-    rotulo: "Stock",
-    grupo: "Inventário",
+    rotulo: textos.rotas.stock.rotulo,
+    grupo: textos.grupos.inventario,
     icone: Boxes,
-    pergunta: "O que é que eu tenho, e quanto?",
+    pergunta: textos.rotas.stock.pergunta,
     campo: false,
   },
   contar: {
     caminho: "/contar",
-    rotulo: "Contar",
-    grupo: "Inventário",
+    rotulo: textos.rotas.contar.rotulo,
+    grupo: textos.grupos.inventario,
     icone: ClipboardCheck,
-    pergunta: "O que está na prateleira é o que o sistema diz?",
+    pergunta: textos.rotas.contar.pergunta,
     campo: true,
   },
   receber: {
     caminho: "/receber",
-    rotulo: "Receber",
-    grupo: "Compras",
+    rotulo: textos.rotas.receber.rotulo,
+    grupo: textos.grupos.compras,
     icone: Truck,
-    pergunta: "O que chegou, e está certo?",
+    pergunta: textos.rotas.receber.pergunta,
     campo: true,
   },
 };

@@ -1,5 +1,5 @@
 /**
- * Formatação para pt-PT, via `Intl`. Nenhum formato à mão.
+ * Formatação via `Intl`. Nenhum formato à mão.
  *
  * Quantidades e dinheiro vêm da API como strings (`Decimal` no Django, para
  * não perder precisão em JSON). Aqui só se formatam para mostrar — nenhuma
@@ -7,8 +7,39 @@
  *
  * O espaço entre o número e a unidade é um espaço inquebrável: "12,5 kg" não
  * se parte no fim da linha.
+ *
+ * ## Dois locales, e a divisão é "forma de dado" contra "palavra" (ADR 0019)
+ *
+ * **A forma do número e da data fica em pt-PT, em qualquer língua.** Vírgula
+ * decimal, euro em sufixo, dia primeiro. Não é inércia — são três razões que se
+ * somam:
+ *
+ *  - é a forma dos dados do **negócio**: a factura que a pessoa tem na mão diz
+ *    `1.234,56 €`, e um ecrã que diga `$1,234.56` obriga-a a traduzir de cabeça
+ *    enquanto confere;
+ *  - as **larguras de coluna** do DESIGN.md §3 foram medidas nesta forma, e a
+ *    vírgula decimal e o ponto de milhares não ocupam o mesmo que o contrário;
+ *  - o `<input>` do Contar tem **um** parser. Duas formas de escrever `12,5` são
+ *    duas leituras possíveis de uma quantidade de stock, e a que estiver errada
+ *    entra no ledger.
+ *
+ * **As palavras que o `Intl` produz seguem a língua**, e são três: o nome do mês
+ * (`mesEAno`), o mês abreviado (`diaEMesCurto`) e o relativo ("ontem", "em 3
+ * dias"). Um ecrã inglês com "setembro de 2026" e "ontem" está meio traduzido no
+ * sítio mais visível que existe — o título de um painel.
+ *
+ * **Consultar `domain-expert`** antes de mexer nisto: a decisão de manter a
+ * vírgula decimal nas duas línguas toca em quantidades de stock e no campo de
+ * contagem, e é afirmação de domínio e não de estilo.
  */
+import { LINGUA } from "./i18n";
+
+/** A forma dos **dados**. Fixa, em qualquer língua. Ver o docstring. */
 const LOCALE = "pt-PT";
+
+/** A língua das **palavras** que o `Intl` produz. Segue o browser. */
+const LOCALE_DAS_PALAVRAS = LINGUA;
+
 const NBSP = " ";
 
 const quantidade = new Intl.NumberFormat(LOCALE, {
@@ -53,9 +84,18 @@ const data = new Intl.DateTimeFormat(LOCALE, {
 
 const diaEMes = new Intl.DateTimeFormat(LOCALE, { day: "2-digit", month: "2-digit" });
 
-const mesEAno = new Intl.DateTimeFormat(LOCALE, { month: "long", year: "numeric" });
+// Três formatadores com `LOCALE_DAS_PALAVRAS` e não `LOCALE`: são os únicos que
+// produzem **palavras** em vez de dígitos. "setembro" e "Sep" são texto, e texto
+// segue a língua de quem lê.
+const mesEAno = new Intl.DateTimeFormat(LOCALE_DAS_PALAVRAS, {
+  month: "long",
+  year: "numeric",
+});
 
-const diaEMesCurto = new Intl.DateTimeFormat(LOCALE, { day: "numeric", month: "short" });
+const diaEMesCurto = new Intl.DateTimeFormat(LOCALE_DAS_PALAVRAS, {
+  day: "numeric",
+  month: "short",
+});
 
 const hora = new Intl.DateTimeFormat(LOCALE, { hour: "2-digit", minute: "2-digit" });
 
@@ -70,7 +110,7 @@ function paraData(valor: Date | string): Date {
   return new Date(valor.length === 10 ? `${valor}T00:00:00` : valor);
 }
 
-const relativo = new Intl.RelativeTimeFormat(LOCALE, { numeric: "auto" });
+const relativo = new Intl.RelativeTimeFormat(LOCALE_DAS_PALAVRAS, { numeric: "auto" });
 
 /** `12,500 kg` — três decimais, como o ledger guarda, e unidade sempre visível. */
 export function formatQuantity(value: string | number, unit: string): string {
