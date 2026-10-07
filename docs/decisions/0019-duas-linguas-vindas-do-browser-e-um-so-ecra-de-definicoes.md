@@ -328,3 +328,62 @@ aceite. E **o cabeçalho de tabela `sticky`** continua por decidir, como o `DESI
 4. **"pt de Portugal" e "não pt-BR" não são a mesma afirmação.** Esta ADR faz a primeira (medida, com
    gate). A segunda — excluir o pt-BR como língua — não está decidida, e um cozinheiro brasileiro é
    servido aqui por pt-PT. Se um dia quiseres pt-BR a sério, é uma terceira língua e não um ajuste.
+
+---
+
+## Adenda — 2026-10-07: o gate media menos do que prometia, e a lista era metade
+
+Esta ADR fez a lista fechada do `check-textos.mjs` o **gate** de quando o inglês liga: "no commit em
+que a última linha sair". Ao traduzir as Definições descobriu-se que a lista não media o que prometia.
+
+**A medição.** Com a regra 1 a olhar só para nós de texto de JSX e três atributos, a lista dizia **32
+ficheiros por traduzir**. Uma varredura por strings acentuadas em todo o `src/` deu **60**. Os 28 que
+faltavam não eram ecrãs esquecidos: eram ficheiros onde a copy **nunca passa por JSX** — um
+`vocabulario.ts` inteiro, os rótulos e as perguntas do `secoes.ts`, as mensagens de Zod dos
+`schemas.ts`, os nomes das paletas no `lib/tema.ts`, as frases de erro da camada de rede. Esvaziar a
+lista de 32 não teria ligado o inglês: teria ligado **metade** dele, que é precisamente o estado que a
+decisão 9 existe para proibir.
+
+**O que mudou no gate** (três alterações, cada uma medida antes de ser adoptada):
+
+1. **a regra 1 passou a ver strings de código**, e não só JSX. O varredor consome cada literal até ao
+   seu próprio delimitador — um `matchAll` de templates emparelhava o fecho de um com a abertura do
+   seguinte e acusava quatro strings que não existiam;
+2. **o critério do nó de JSX passou de "tem acento" a "tem uma palavra"**. Num ficheiro já traduzido um
+   nó de texto não tem palavra nenhuma: o que lá está é `{textos.x}`, um `·` ou um número. Apanhou seis
+   strings reais que o acento não via, entre elas um "Tentar outra vez" em dois ecrãs de erro;
+3. **numa string de código, o acento ganhou um segundo sinal** — começar por maiúscula e ter uma
+   segunda palavra. Apanhou mais três, entre elas o `Estabelecimento: ${nome}` do pé da sidebar.
+
+Fica **declarado** o que continua a escapar: uma palavra só sem acento num atributo (um
+`rotulo="Email"`). Distinguir "Email" de "icon-sm" sem um dicionário era um gate em que ninguém
+confia, e os dois rótulos que existem foram traduzidos porque alguém os leu — está dito no catálogo, ao
+lado deles.
+
+**O que não é copy passou a ser uma lista fechada por string** (`NAO_E_COPY`), e não uma excepção por
+ficheiro: um `schemas.ts` tem as duas coisas lado a lado — a mensagem do formulário, que se lê, e a da
+resposta do servidor, que vive no `cause` de um `ErroDeContrato` e ninguém lê. Uma excepção por
+ficheiro deixava passar a primeira. A primeira versão da lista tinha um erro que a revisão apanhou: a
+frase do `ResponseShapeError` estava lá como diagnóstico, e é falso — o `mensagemDeErro` cai para o
+`message` de qualquer `Error`, logo ela aparece debaixo de um `<Alert>` como qualquer outra.
+
+**Quatro catálogos novos**, pela mesma regra da decisão 3 (a copy vive ao lado de quem a usa):
+`src/components/` para o que aparece em todos os ecrãs, `src/lib/` para as frases da camada de rede e
+as paletas, e um por feature de domínio.
+
+**A forma do catálogo cresceu em três sentidos**, e os três estão no `accounts` para quem copiar:
+
+- **função** quando a frase interpola um valor (`diaDeNegocioExplicacao(hora)`). A assinatura faz parte
+  do `typeof PT`, logo mudá-la numa língua e não na outra não compila;
+- **partes nomeadas** quando a frase tem ênfase no meio (`<strong>As validades não mudam…</strong>`).
+  Juntá-las perdia o negrito que o DESIGN.md §2 escolheu; pô-las numa string com HTML pedia um
+  `dangerouslySetInnerHTML` que o `eslint.config.js` proíbe;
+- **`accoes`**, uma secção com os verbos que aparecem em mais do que um sítio (Guardar · A guardar… ·
+  Desfazer · A sair…). É a regra de escrita do DESIGN.md — uma acção mantém o mesmo nome em todo o
+  produto — e três secções com três chaves `guardar` eram três sítios onde ela se podia perder.
+
+**E o `Record` fica no código, não no catálogo.** Onde a copy é indexada por uma união do contrato (os
+papéis, os estados de um convite, os regimes de IVA, os motivos de desperdício), o
+`Record<Uniao, string>` continua no `schemas.ts`/`vocabulario.ts` e só as palavras vêm do catálogo,
+**nomeadas uma a uma**. São duas garantias diferentes e as duas fazem falta: o `Record` é o que deixa
+de compilar quando o contrato ganha um valor; o catálogo é o que exige a entrada inglesa.
