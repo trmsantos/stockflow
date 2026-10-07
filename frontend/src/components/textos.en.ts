@@ -5,4 +5,5 @@ export const EN: typeof PT = {
   tentarOutraVez: "Try again",
   aCarregar: "Loading…",
   aFiltrarPor: "Filtering by ",
+  proporcao: "Share",
 };

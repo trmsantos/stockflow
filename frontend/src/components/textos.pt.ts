@@ -21,4 +21,9 @@ export const PT = {
    * com espaço de propósito: o que se lê a seguir é o nome do campo.
    */
   aFiltrarPor: "A filtrar por ",
+  /**
+   * O cabeçalho da coluna da barra, só para quem ouve: a barra não tem eixo,
+   * logo um rótulo visível em cima dela era uma etiqueta sem conteúdo.
+   */
+  proporcao: "Proporção",
 };

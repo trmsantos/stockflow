@@ -43,6 +43,8 @@
  * porque o resultado continua a ser uma barra plausível.
  */
 
+import { textos } from "./textos";
+
 export interface BarraOrdenada {
   readonly chave: string;
   readonly rotulo: string;
@@ -117,7 +119,7 @@ export function BarrasOrdenadas({
               número à direita, e um rótulo em cima de um desenho sem eixo seria
               uma etiqueta sem conteúdo. */}
           <th scope="col" className="w-1/2">
-            <span className="sr-only">Proporção</span>
+            <span className="sr-only">{textos.proporcao}</span>
           </th>
           <th scope="col" className={`${CELULA} ${VALOR} ${micro}`}>
             {rotuloDoValor}
