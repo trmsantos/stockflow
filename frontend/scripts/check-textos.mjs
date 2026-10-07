@@ -11,11 +11,22 @@
  * sentidos.
  *
  * **1. Prosa acentuada fora de um catálogo é erro.** Um literal com uma letra
- * acentuada num nó de texto de JSX, ou num `title`/`aria-label`/`placeholder`,
- * fora dos `textos.*.ts`. O critério é o acento e isso **diz-se em vez de se
- * prometer**: apanha "Não foi possível" e **não** apanha "Save" nem "Total". É um
- * gate de cobertura parcial com um critério legível, e a alternativa — tentar
- * distinguir prosa de identificador — era um gate que ninguém confia.
+ * acentuada num nó de texto de JSX **ou numa string de código**, fora dos
+ * `textos.*.ts`. O critério é o acento e isso **diz-se em vez de se prometer**:
+ * apanha "Não foi possível" e **não** apanha "Save" nem "Total". É um gate de
+ * cobertura parcial com um critério legível, e a alternativa — tentar distinguir
+ * prosa de identificador — era um gate que ninguém confia. Os atributos não têm
+ * regra própria porque um `title="…"` **é** uma string de código.
+ *
+ * A segunda forma entrou a 2026-10-07 e **a medição que a trouxe importa**: com a
+ * regra só em JSX, a lista fechada dizia 32 ficheiros por traduzir e havia 60 com
+ * prosa. Um `vocabulario.ts`, um `secoes.ts` e as mensagens de Zod dos
+ * `schemas.ts` são copy que nunca passa por um nó de JSX — logo a lista media uma
+ * coisa mais pequena do que a que prometia, e esvaziá-la não teria ligado o
+ * inglês: teria ligado metade dele.
+ *
+ * O que **não** é copy declara-se no `NAO_E_COPY`, por string exacta e com a
+ * razão ao lado.
  *
  * **2. Um ficheiro de `screens/` ou de `shell/` sem catálogo é erro**, salvo
  * lista fechada. É o grão certo: um ecrã está traduzido ou não está, e um ecrã a
@@ -51,46 +62,78 @@ const RAIZ = "src";
  * é um `Record` sobre a união das línguas.
  *
  * A ordem é a de uso dos ecrãs, que é a ordem por que a ADR 0019 manda traduzi-los.
+ *
+ * A lista subiu de 32 para 60 a 2026-10-07, e **não foi uma regressão**: foi o
+ * gate a passar a ver as strings de código (ver a regra 1 acima). Os 28 que
+ * entraram tinham a copy toda fora de JSX, e já estavam por traduzir antes de
+ * alguém os contar.
  */
 const SEM_CATALOGO = new Set([
-  // As Definições e as suas quatro secções.
-  "src/features/accounts/screens/definicoes.tsx",
-  "src/features/accounts/components/secao-aparencia.tsx",
-  "src/features/accounts/components/secao-estabelecimento.tsx",
-  "src/features/accounts/components/secao-navegacao.tsx",
+  // ## accounts — o que falta das Definições e dos convites
   "src/features/accounts/components/secao-equipa.tsx",
   "src/features/accounts/components/formulario-de-convite.tsx",
   "src/features/accounts/components/segredo-do-convite.tsx",
   "src/features/accounts/components/tabela-de-convites.tsx",
-  // Os ecrãs de operação, pela ordem de uso.
+  "src/features/accounts/components/validade-do-convite.tsx",
+  "src/features/accounts/erros.ts",
+  "src/features/accounts/schemas.ts",
+  "src/features/accounts/secoes.ts",
+  // ## O que é de toda a aplicação, e por isso se traduz primeiro
+  "src/features/accounts/screens/entrar.tsx",
+  "src/lib/api/errors.ts",
+  "src/lib/api/http.ts",
+  "src/lib/tema.ts",
+  "src/shell/rodape-da-sidebar.tsx",
+  // ## inventory — os ecrãs de operação, pela ordem de uso
   "src/features/inventory/screens/stock.tsx",
   "src/features/inventory/screens/alertas.tsx",
   "src/features/inventory/screens/artigo.tsx",
   "src/features/inventory/screens/contar.tsx",
   "src/features/inventory/screens/fecho-de-contagem.tsx",
   "src/features/inventory/components/barra-de-filtros.tsx",
+  "src/features/inventory/components/estados-da-lista.tsx",
   "src/features/inventory/components/fecho-de-contagem.tsx",
   "src/features/inventory/components/formulario-de-desperdicio.tsx",
   "src/features/inventory/components/historico-de-movimentos.tsx",
   "src/features/inventory/components/linha-de-contagem.tsx",
+  "src/features/inventory/components/numeros-do-topo.tsx",
+  "src/features/inventory/components/numeros-dos-alertas.tsx",
+  "src/features/inventory/components/progresso-da-contagem.tsx",
+  "src/features/inventory/components/tabela-de-alertas.tsx",
+  "src/features/inventory/components/tabela-de-desperdicio.tsx",
+  "src/features/inventory/components/tabela-de-stock.tsx",
+  "src/features/inventory/leitura-da-validade.ts",
+  "src/features/inventory/vocabulario.ts",
+  // ## purchasing
   "src/features/purchasing/screens/receber.tsx",
   "src/features/purchasing/screens/rececao.tsx",
   "src/features/purchasing/screens/fotografar.tsx",
+  "src/features/purchasing/components/badges-de-rececao.tsx",
   "src/features/purchasing/components/cabecalho-da-rececao.tsx",
   "src/features/purchasing/components/esqueletos.tsx",
+  "src/features/purchasing/components/numeros-de-rececoes.tsx",
   "src/features/purchasing/components/tabela-de-linhas-de-fatura.tsx",
   "src/features/purchasing/components/tabela-de-rececoes.tsx",
   "src/features/purchasing/components/temperatura-a-entrega.tsx",
+  "src/features/purchasing/vocabulario.ts",
+  // ## reporting
   "src/features/reporting/screens/inicio.tsx",
   "src/features/reporting/screens/painel.tsx",
+  "src/features/reporting/abas.ts",
   "src/features/reporting/components/abas-do-painel.tsx",
   "src/features/reporting/components/barra-do-painel.tsx",
+  "src/features/reporting/components/cartoes-do-inicio.tsx",
+  "src/features/reporting/components/dinheiro-do-periodo.tsx",
   "src/features/reporting/components/fecho-do-mes.tsx",
+  "src/features/reporting/components/numeros-do-periodo.tsx",
   "src/features/reporting/components/perdas-do-periodo.tsx",
   "src/features/reporting/components/pessoal-do-mes.tsx",
+  "src/features/reporting/components/qualidade-dos-dados.tsx",
   "src/features/reporting/components/resultado-do-mes.tsx",
   "src/features/reporting/components/variacao-no-periodo.tsx",
-  // Componentes partilhados. O `barras-ordenadas` tem **uma** palavra visível
+  "src/features/reporting/contagem.ts",
+  "src/features/reporting/vocabulario.ts",
+  // ## Componentes partilhados. O `barras-ordenadas` tem **uma** palavra visível
   // ("Proporção") e um catálogo próprio para ela era desproporcionado: sai desta
   // lista com os ecrãs do `reporting`, que são os que o usam.
   "src/components/barras-ordenadas.tsx",
@@ -102,6 +145,33 @@ const IGNORAR = [
   "src/components/ui/",
   "src/lib/api/types.ts",
 ];
+
+/**
+ * As strings acentuadas que **não são copy** e por isso vivem fora de um
+ * catálogo. Lista fechada, por string exacta.
+ *
+ * O critério é um só: **ninguém as lê**. Uma mensagem de Zod sobre a forma da
+ * *resposta* do servidor não chega a um ecrã — um contrato partido vira
+ * `ErroDeContrato` e o ecrã mostra a frase do `erros.ts` —, e uma recusa de
+ * search param também não, porque a ADR 0008 manda cair para o default sem dizer
+ * nada. Traduzi-las era prometer que alguém as lê.
+ *
+ * Por string e não por ficheiro de propósito: um `schemas.ts` tem as duas coisas
+ * lado a lado — a mensagem do formulário, que se lê, e a da resposta, que não — e
+ * uma excepção por ficheiro deixava passar a primeira.
+ */
+const NAO_E_COPY = new Set([
+  // Zod sobre a forma da resposta: o consumidor é o `ErroDeContrato`.
+  "decimal inválido",
+  "hora inválida",
+  "NIF inválido",
+  "mês inválido (YYYY-MM)",
+  "A resposta de ${path} não tem a forma esperada.",
+  "A sessão diz-se ativa sem estabelecimento, ou o contrário: o invariante da ADR 0010 não se verifica nesta resposta.",
+  // Recusas de search param: a ADR 0008 cai para o default em silêncio.
+  "o destino tem de ser um caminho desta aplicação",
+  "o destino não pode ser a entrada",
+]);
 
 function ficheiros(dir) {
   const saida = [];
@@ -123,7 +193,42 @@ function semComentarios(fonte) {
 
 const ACENTUADA = /[À-ÿ]/;
 const TEXTO_JSX = />([^<>{}]*[À-ÿ][^<>{}]*)</g;
-const ATRIBUTO = /(?:aria-label|title|placeholder|alt)="([^"]*[À-ÿ][^"]*)"/g;
+
+/**
+ * As strings do ficheiro, **consumidas pela ordem em que aparecem**.
+ *
+ * Um `matchAll` com `` /`[^`]*`/ `` não serve, e a primeira versão disto
+ * provou-o: um template sem acento é saltado, e então o delimitador de fecho dele
+ * emparelha com o de abertura do seguinte — o que fica no meio é código, e se
+ * esse código tiver JSX acentuado o gate acusa uma string que não existe. Deu
+ * quatro falsos positivos em quatro ficheiros, um deles no `http.ts`.
+ *
+ * Consumir resolve-o: cada literal fecha o seu próprio delimitador antes de a
+ * varredura continuar. Uma `'` solta em prosa de JSX (um `d'água`) não parte
+ * nada — não havendo fecho na linha, a varredura avança um carácter e segue.
+ */
+function literais(fonte) {
+  const saida = [];
+  let i = 0;
+  while (i < fonte.length) {
+    const abre = fonte[i];
+    if (abre === '"' || abre === "'" || abre === "`") {
+      let j = i + 1;
+      while (j < fonte.length && fonte[j] !== abre) {
+        if (fonte[j] === "\\") j += 1;
+        else if (abre !== "`" && fonte[j] === "\n") break;
+        j += 1;
+      }
+      if (fonte[j] === abre) {
+        saida.push(fonte.slice(i + 1, j));
+        i = j + 1;
+        continue;
+      }
+    }
+    i += 1;
+  }
+  return saida;
+}
 
 const problemas = [];
 const todos = ficheiros(RAIZ)
@@ -145,14 +250,18 @@ for (const caminho of todos) {
 
   if (SEM_CATALOGO.has(caminho)) continue;
 
-  // 1. Prosa acentuada fora do catálogo.
-  const achados = [];
+  // 1. Prosa acentuada fora do catálogo, nas duas formas.
+  const achados = new Set();
   for (const m of fonte.matchAll(TEXTO_JSX)) {
     const t = m[1].trim();
-    if (t) achados.push(t);
+    if (ACENTUADA.test(t)) achados.add(t);
   }
-  for (const m of fonte.matchAll(ATRIBUTO)) achados.push(m[1]);
+  for (const bruta of literais(fonte)) {
+    const t = bruta.trim();
+    if (ACENTUADA.test(t)) achados.add(t);
+  }
   for (const t of achados) {
+    if (NAO_E_COPY.has(t)) continue;
     problemas.push(`${caminho}: prosa fora do catálogo — ${JSON.stringify(t.slice(0, 60))}`);
   }
 
