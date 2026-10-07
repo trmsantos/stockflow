@@ -113,6 +113,7 @@ from django.db.models import F, Func, Value
 from django.db.models.functions import Lower
 from django.http import HttpRequest
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 from apps.accounts.api import (
     TenantOption,
@@ -183,13 +184,13 @@ CODIGO_CREDENCIAIS_INVALIDAS = "credenciais_invalidas"
 
 #: A frase genérica que acompanha o código acima. Uma constante e não um
 #: literal em três sítios: a propriedade que interessa é que seja **uma** frase.
-DETALHE_CREDENCIAIS_INVALIDAS = "Email ou password incorretos."
+DETALHE_CREDENCIAIS_INVALIDAS = _("Wrong email or password.")
 
 #: A frase do 403 da troca de estabelecimento. Reutiliza o código que o
 #: `TenantMiddleware` já definiu (`tenant_desconhecido`) de propósito: é a mesma
 #: condição — a política não devolveu pertença ativa — e o frontend já sabe o
 #: que fazer com ela (limpar o estabelecimento ativo e voltar ao seletor).
-DETALHE_TENANT_DESCONHECIDO = "Não tem acesso ativo a este estabelecimento."
+DETALHE_TENANT_DESCONHECIDO = _("You do not have active access to this establishment.")
 
 #: Os códigos que uma `RecusaDeSessao` pode transportar, em lista fechada. Quem
 #: lhes dá um status HTTP é o `views.py`, e há um teste que afirma que os dois
@@ -215,7 +216,7 @@ CODIGOS_DE_RECUSA: frozenset[str] = frozenset(
 #: recusa que estes cinco caminhos levantam.
 CODIGO_CONVITE_INVALIDO = "convite_invalido"
 
-DETALHE_CONVITE_INVALIDO = "Este convite não é válido. Peça um convite novo."
+DETALHE_CONVITE_INVALIDO = _("This invitation is not valid. Ask for a new one.")
 
 #: O email convidado já tem uma conta com password utilizável (409). A
 #: activação **não** define password numa conta que já tem uma — a password é
@@ -224,16 +225,16 @@ DETALHE_CONVITE_INVALIDO = "Este convite não é válido. Peça um convite novo.
 #: estabelecimentos dela lá dentro (ADR 0010). O cliente manda entrar primeiro.
 CODIGO_CONVITE_EXIGE_SESSAO = "convite_exige_sessao"
 
-DETALHE_CONVITE_EXIGE_SESSAO = (
-    "Esta conta já existe. Inicie sessão e abra o link outra vez para aceitar."
+DETALHE_CONVITE_EXIGE_SESSAO = _(
+    "This account already exists. Sign in and open the link again to accept."
 )
 
 #: A sessão é de outra conta (403). Nunca uma concessão à conta errada: a
 #: pertença que este convite cria é para o email do convite e para mais nenhum.
 CODIGO_CONVITE_DE_OUTRA_CONTA = "convite_de_outra_conta"
 
-DETALHE_CONVITE_DE_OUTRA_CONTA = (
-    "Este convite é para outra conta. Termine a sessão e entre com a conta convidada."
+DETALHE_CONVITE_DE_OUTRA_CONTA = _(
+    "This invitation is for another account. Sign out and sign in with the invited account."
 )
 
 #: Reenviar ou revogar um convite que já não está em estado de o permitir (409).
@@ -1334,8 +1335,10 @@ def _email_ja_convidado() -> ValidationError:
     return ValidationError(
         {
             "email": [
-                "Já existe um convite para este email neste estabelecimento. "
-                "Reenvie-o ou revogue-o."
+                _(
+                    "There is already an invitation for this email in this "
+                    "establishment. Resend it or revoke it."
+                )
             ]
         }
     )
@@ -1401,7 +1404,7 @@ def _validar_password(password: str, *, email: str) -> str:
     """
     if not password:
         raise ValidationError(
-            {"password": ["Escolha uma password para activar a sua conta."]}
+            {"password": [_("Choose a password to activate your account.")]}
         )
     try:
         # O `User` por gravar é só para o validador de semelhança poder comparar
@@ -1445,7 +1448,7 @@ def _exigir_email_convidavel(*, tenant_id: UUID, email: str) -> None:
     )
     if ja_e_membro:
         raise ValidationError(
-            {"email": ["Esta pessoa já é membro deste estabelecimento."]}
+            {"email": [_("This person is already a member of this establishment.")]}
         )
 
     # A mesma condição do índice parcial `invitation_pendente_uniq`, incluindo o
@@ -1688,8 +1691,10 @@ def guardar_estabelecimento(
         raise ValidationError(
             {
                 "nome": [
-                    "Este é o estabelecimento de demonstração: o nome não se altera. "
-                    "O resto da configuração muda normalmente."
+                    _(
+                        "This is the demonstration establishment: the name does "
+                        "not change. The rest of the configuration changes normally."
+                    )
                 ]
             }
         )
@@ -1778,7 +1783,17 @@ def semear_demonstracao(*, email: str, nome: str, display_name: str) -> Demonstr
         # `ValidationError` por campo e não `ValueError`: quem chama é um comando
         # de operador, e o `email` é o campo que ele escreveu mal.
         raise ValidationError(
-            {"email": [f"Não existe conta com o email {email}. O demo não cria contas."]}
+            {
+                "email": [
+                    # `.format` **depois** do `_()` e não um f-string: com o
+                    # f-string, o msgid muda com o email e não há tradução
+                    # nenhuma que o alcance.
+                    _(
+                        "There is no account with the email {email}. "
+                        "The demo does not create accounts."
+                    ).format(email=email)
+                ]
+            }
         ) from erro
 
     revogados = _revogar_demonstracoes_anteriores(user)

@@ -37,6 +37,7 @@ from collections import Counter
 from datetime import time
 from typing import Any
 
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from apps.accounts.models import EstadoDoConvite, Papel, RegimeDeIva, RotaDeMenu, Tema
@@ -192,8 +193,10 @@ class MenuInListSerializer(serializers.ListSerializer):
         repetidos = sorted(rota for rota, quantas in vistos.items() if quantas > 1)
         if repetidos:
             raise serializers.ValidationError(
-                f"rotas repetidas no menu: {', '.join(repetidos)}. O PUT é uma "
-                "substituição total e cada rota aparece no máximo uma vez."
+                _(
+                    "Repeated routes in the menu: {rotas}. The PUT is a full "
+                    "replacement and each route appears at most once."
+                ).format(rotas=", ".join(repetidos))
             )
         return attrs
 
@@ -493,10 +496,14 @@ class EstabelecimentoInSerializer(serializers.Serializer):
     def validate_business_day_starts_at(self, valor: time) -> time:
         if not DIA_DE_NEGOCIO_MINIMO <= valor <= DIA_DE_NEGOCIO_MAXIMO:
             raise serializers.ValidationError(
-                "O dia de negócio começa entre as "
-                f"{DIA_DE_NEGOCIO_MINIMO:%H:%M} e as {DIA_DE_NEGOCIO_MAXIMO:%H:%M}. "
-                "Esta hora separa um dia do seguinte nos totais: fora desta janela, "
-                "um serviço de noite ficaria partido em dois dias."
+                _(
+                    "The business day starts between {minimo} and {maximo}. This "
+                    "hour separates one day from the next in the totals: outside "
+                    "this window, an evening service would be split across two days."
+                ).format(
+                    minimo=f"{DIA_DE_NEGOCIO_MINIMO:%H:%M}",
+                    maximo=f"{DIA_DE_NEGOCIO_MAXIMO:%H:%M}",
+                )
             )
         return valor
 

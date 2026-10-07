@@ -42,6 +42,7 @@ bilhetes.
 from __future__ import annotations
 
 import pathlib
+import re
 
 from django.conf import settings
 from django.test import Client, override_settings
@@ -137,6 +138,15 @@ def _mensagens_que_esta_api_emite() -> dict[str, str]:
         ):
             excecao = getattr(exceptions, nome)
             mensagens[str(excecao.default_detail)] = f"{nome}.default_detail"
+        # O `Throttled` é a única excepção do DRF com **duas** frases: o
+        # `default_detail` e a espera, que ele junta com `ngettext`. Faltavam
+        # aqui, e quem o apanhou foi o
+        # `test_o_catalogo_nao_tem_entradas_que_ninguem_usa` — as duas entradas
+        # do `.po` apareciam órfãs porque este varredor não as conhecia. É o
+        # gate de uma direcção a corrigir o varredor da outra, que é o que
+        # fechar uma lista nos dois sentidos compra.
+        mensagens[str(exceptions.Throttled.extra_detail_singular)] = "Throttled.extra_singular"
+        mensagens[str(exceptions.Throttled.extra_detail_plural)] = "Throttled.extra_plural"
     return mensagens
 
 
@@ -237,6 +247,86 @@ def test_nenhuma_mensagem_desta_api_sai_em_ingles() -> None:
     assert em_ingles == [], (
         "mensagens sem tradução pt-PT, que saem em inglês a quem lê em "
         f"português. Acrescenta-as ao {CAMINHO_PO.name}.\n  " + "\n  ".join(em_ingles)
+    )
+
+
+def _msgids_do_nosso_codigo() -> dict[str, str]:
+    """Os `_("...")` que esta app escreve, colhidos do **código fonte**.
+
+    É a direcção que o compilador não cobre e que a varredura do DRF também não:
+    uma mensagem nova envolvida em `_()` e esquecida no `.po` sai **em inglês** a
+    um utilizador português, sem erro nenhum. É o mesmo modo de falha do `.mo`
+    esquecido, por outra porta.
+
+    Lê o texto e não os objectos: um `gettext_lazy` ao nível do módulo já está
+    avaliado quando o teste corre, e perseguir os objectos obrigava a enumerar os
+    módulos — que é uma lista a manter. O ficheiro é a fonte, e a regex casa a
+    forma que este repositório usa (`_(` com um ou mais literais adjacentes).
+
+    **Os comentários são removidos primeiro**, e isso não é zelo: o
+    `config/settings/base.py` tem um `_("English")` **dentro de um comentário**, a
+    explicar como se liga a segunda língua. Sem esta limpeza, o gate exigia uma
+    tradução para uma string que nenhum código emite — e a primeira corrida
+    apanhou-a.
+    """
+    encontrados: dict[str, str] = {}
+    for raiz in ("apps", "config"):
+        for caminho in sorted(pathlib.Path(settings.BASE_DIR, raiz).rglob("*.py")):
+            if "migrations" in caminho.parts:
+                continue
+            fonte = re.sub(r"^\s*#.*$", "", caminho.read_text(encoding="utf-8"), flags=re.M)
+            for bloco in re.finditer(r"\b_\(\s*((?:\s*\"(?:[^\"\\\\]|\\\\.)*\"\s*)+)\)", fonte):
+                partes = re.findall(r"\"((?:[^\"\\\\]|\\\\.)*)\"", bloco.group(1))
+                encontrados["".join(partes)] = str(caminho.relative_to(settings.BASE_DIR))
+    return encontrados
+
+
+def test_nenhuma_mensagem_nossa_sai_em_ingles() -> None:
+    """Cada `_()` do nosso código tem tradução pt-PT, e isso é medido no código.
+
+    Sem este gate, o custo de pôr os msgid em inglês era pago pelo utilizador
+    português: uma mensagem nova envolvida em `_()` e esquecida no `.po` sai em
+    inglês, e nada no sistema o diz. Com ele, esquecer é vermelho.
+
+    É também o que faz a escolha de msgid em inglês ser simétrica: o inglês sai
+    de graça (é o msgid) e o português é **exigido**. No caminho inverso — msgid
+    em português — era o inglês que saía em silêncio, e não há gate que o apanhe
+    sem uma lista de strings a manter à mão.
+    """
+    nossos = _msgids_do_nosso_codigo()
+    assert len(nossos) >= 15, f"âncora: só {len(nossos)} msgid nossos, a varredura não varre"
+
+    sem_traducao: list[str] = []
+    with translation.override("pt-pt"):
+        for msgid, origem in sorted(nossos.items()):
+            if translation.gettext(msgid) == msgid:
+                sem_traducao.append(f"{origem}: {msgid[:60]!r}")
+
+    assert sem_traducao == [], (
+        f"{len(sem_traducao)} mensagem(ns) nossa(s) sem tradução pt-PT — saem em "
+        f"inglês a quem lê em português. Acrescenta-as ao {CAMINHO_PO.name}.\n  "
+        + "\n  ".join(sem_traducao)
+    )
+
+
+def test_o_catalogo_nao_tem_entradas_que_ninguem_usa() -> None:
+    """Uma entrada que nenhum código nem o DRF emitem é peso morto.
+
+    A direcção contrária do teste acima, e a razão de ela valer um teste: um
+    `.po` cresce por acrescento e ninguém o poda. Uma entrada órfã não quebra
+    nada — e é exactamente por isso que fica lá para sempre, a fazer parecer que
+    algo está traduzido quando a frase já não existe.
+
+    O que conta como "usada": um msgid do nosso código, ou um msgid que o DRF
+    consegue emitir nesta app. As duas fontes são as mesmas que os outros testes
+    deste ficheiro usam.
+    """
+    usadas = set(_msgids_do_nosso_codigo()) | set(_mensagens_que_esta_api_emite())
+    orfas = [msgid for msgid, _msgstr in _entradas_do_po() if msgid not in usadas]
+
+    assert orfas == [], (
+        "entradas do catálogo que nada emite. Tira-as, ou confirma quem as usa:\n  "
+        + "\n  ".join(repr(o) for o in orfas)
     )
 
 

@@ -143,6 +143,7 @@ from typing import Any
 from axes.helpers import get_failure_limit
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.utils.translation import gettext_lazy as _
 
 from apps.accounts.api import normalizar_email
 
@@ -153,9 +154,9 @@ from apps.accounts.api import normalizar_email
 CODIGO_CONTA_BLOQUEADA = "conta_bloqueada"
 
 #: A frase que acompanha o código. Sem número: ver a parte 3 do docstring.
-DETALHE_CONTA_BLOQUEADA = (
-    "Demasiadas tentativas de entrada falhadas. "
-    "Esta conta está temporariamente bloqueada; tente mais tarde."
+DETALHE_CONTA_BLOQUEADA = _(
+    "Too many failed sign-in attempts. "
+    "This account is temporarily locked; try again later."
 )
 
 #: Escada de espera, a partir do momento em que `AXES_FAILURE_LIMIT` é atingido.

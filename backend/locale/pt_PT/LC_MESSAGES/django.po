@@ -135,3 +135,64 @@ msgstr "Tente outra vez dentro de {wait} segundo."
 
 msgid "Expected available in {wait} seconds."
 msgstr "Tente outra vez dentro de {wait} segundos."
+
+# ===========================================================================
+# As nossas mensagens (ADR 0019, decisão 4)
+# ===========================================================================
+# As frases que esta app escreve e que chegam ao utilizador: o `detalhe` das
+# recusas e as mensagens de validação escritas à mão. As do DRF estão acima.
+#
+# O português aqui é **igual ao que a app servia antes de este catálogo
+# existir** — palavra por palavra, incluindo o "activar" com c do
+# `DETALHE`/`password` e o "rotas repetidas" em minúscula. Não é descuido: esta
+# alteração move strings, não as reescreve, e um utilizador português não deve
+# notar nada. A copy melhora-se num diff que seja sobre copy.
+#
+# Os `{nome}` são interpolados **depois** da tradução, com `.format()`: um
+# f-string antes do `_()` fazia o msgid variar com os dados e nenhuma tradução
+# o alcançava.
+
+msgid "Wrong email or password."
+msgstr "Email ou password incorretos."
+
+msgid "You do not have active access to this establishment."
+msgstr "Não tem acesso ativo a este estabelecimento."
+
+msgid "No active establishment in this session."
+msgstr "Não há estabelecimento ativo nesta sessão."
+
+msgid "The establishment of this request is not the one in the session. Reload before continuing."
+msgstr "O estabelecimento deste pedido não é o da sessão. Recarregue antes de continuar."
+
+msgid "This invitation is not valid. Ask for a new one."
+msgstr "Este convite não é válido. Peça um convite novo."
+
+msgid "This account already exists. Sign in and open the link again to accept."
+msgstr "Esta conta já existe. Inicie sessão e abra o link outra vez para aceitar."
+
+msgid "This invitation is for another account. Sign out and sign in with the invited account."
+msgstr "Este convite é para outra conta. Termine a sessão e entre com a conta convidada."
+
+msgid "There is already an invitation for this email in this establishment. Resend it or revoke it."
+msgstr "Já existe um convite para este email neste estabelecimento. Reenvie-o ou revogue-o."
+
+msgid "This person is already a member of this establishment."
+msgstr "Esta pessoa já é membro deste estabelecimento."
+
+msgid "Choose a password to activate your account."
+msgstr "Escolha uma password para activar a sua conta."
+
+msgid "Too many failed sign-in attempts. This account is temporarily locked; try again later."
+msgstr "Demasiadas tentativas de entrada falhadas. Esta conta está temporariamente bloqueada; tente mais tarde."
+
+msgid "Repeated routes in the menu: {rotas}. The PUT is a full replacement and each route appears at most once."
+msgstr "rotas repetidas no menu: {rotas}. O PUT é uma substituição total e cada rota aparece no máximo uma vez."
+
+msgid "The business day starts between {minimo} and {maximo}. This hour separates one day from the next in the totals: outside this window, an evening service would be split across two days."
+msgstr "O dia de negócio começa entre as {minimo} e as {maximo}. Esta hora separa um dia do seguinte nos totais: fora desta janela, um serviço de noite ficaria partido em dois dias."
+
+msgid "There is no account with the email {email}. The demo does not create accounts."
+msgstr "Não existe conta com o email {email}. O demo não cria contas."
+
+msgid "This is the demonstration establishment: the name does not change. The rest of the configuration changes normally."
+msgstr "Este é o estabelecimento de demonstração: o nome não se altera. O resto da configuração muda normalmente."
