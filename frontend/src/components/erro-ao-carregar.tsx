@@ -2,6 +2,7 @@ import { CircleAlert, RotateCcw } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { textos } from "./textos";
 
 /**
  * O estado de erro de um bloco que carrega dados, **com retry**.
@@ -39,7 +40,7 @@ export function ErroAoCarregar({
           <span>{mensagem}</span>
           <Button variant="outline" onClick={aoTentarOutraVez}>
             <RotateCcw aria-hidden="true" />
-            Tentar outra vez
+            {textos.tentarOutraVez}
           </Button>
         </AlertDescription>
       </Alert>

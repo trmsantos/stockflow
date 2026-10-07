@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { textos } from "./textos";
 
 /**
  * A régua de contadores — a faixa de números no topo de um ecrã de operação.
@@ -126,7 +127,7 @@ export function CorpoDoContador({
       ) : null}
 
       <span className="text-xs font-bold tracking-microrotulo text-muted-foreground uppercase">
-        {ativo ? <span className="sr-only">A filtrar por </span> : null}
+        {ativo ? <span className="sr-only">{textos.aFiltrarPor}</span> : null}
         {campo}
       </span>
 

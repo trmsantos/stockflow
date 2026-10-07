@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { textos } from "@/components/textos";
 
 /**
  * Um **cartão de pré-visualização**: a vidraça que mostra as primeiras linhas de
@@ -242,7 +243,7 @@ export function CartaoDeEcra({
                 className="relative z-20"
                 onClick={aoTentarOutraVez}
               >
-                Tentar outra vez
+                {textos.tentarOutraVez}
               </Button>
             </div>
           );

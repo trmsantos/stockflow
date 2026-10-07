@@ -10,12 +10,20 @@
  * traduz. É isso que este ficheiro mede, em três metades que falham nos dois
  * sentidos.
  *
- * **1. Prosa acentuada fora de um catálogo é erro.** Um literal com uma letra
- * acentuada num nó de texto de JSX **ou numa string de código**, fora dos
- * `textos.*.ts`. O critério é o acento e isso **diz-se em vez de se prometer**:
- * apanha "Não foi possível" e **não** apanha "Save" nem "Total". É um gate de
- * cobertura parcial com um critério legível, e a alternativa — tentar distinguir
- * prosa de identificador — era um gate que ninguém confia. Os atributos não têm
+ * **1. Copy fora de um catálogo é erro**, em duas formas com dois critérios
+ * diferentes — e a diferença é o que os torna honestos.
+ *
+ * **1a. Num nó de texto de JSX, qualquer palavra.** Num ficheiro já traduzido um
+ * nó de texto não tem palavra nenhuma: o que lá está é `{textos.x}`, um `·` ou um
+ * número. Logo o critério não precisa de adivinhar o que é prosa — basta uma
+ * palavra. Foi medido antes de ser adoptado: nos ficheiros traduzidos deu seis
+ * strings reais ("Tentar outra vez", "A carregar…", "A filtrar por", …), todas
+ * copy que o critério do acento não via, mais o nome do produto.
+ *
+ * **1b. Numa string de código, só prosa acentuada.** Aqui a regra de 1a não serve
+ * — o código é feito de strings — e o acento é o que separa uma frase de um
+ * identificador: apanha "Não foi possível" e **não** apanha "Save" nem "Total".
+ * É cobertura parcial, e **diz-se em vez de se prometer**. Os atributos não têm
  * regra própria porque um `title="…"` **é** uma string de código.
  *
  * A segunda forma entrou a 2026-10-07 e **a medição que a trouxe importa**: com a
@@ -102,6 +110,7 @@ const SEM_CATALOGO = new Set([
   "src/features/inventory/components/tabela-de-alertas.tsx",
   "src/features/inventory/components/tabela-de-desperdicio.tsx",
   "src/features/inventory/components/tabela-de-stock.tsx",
+  "src/features/inventory/components/validade.tsx",
   "src/features/inventory/leitura-da-validade.ts",
   "src/features/inventory/vocabulario.ts",
   // ## purchasing
@@ -171,6 +180,9 @@ const NAO_E_COPY = new Set([
   // Recusas de search param: a ADR 0008 cai para o default em silêncio.
   "o destino tem de ser um caminho desta aplicação",
   "o destino não pode ser a entrada",
+  // O nome do produto. Entra por causa da regra 1a, que conta palavras: é a
+  // única palavra que aparece num nó de texto de JSX e **não** se traduz.
+  "StockFlow",
 ]);
 
 function ficheiros(dir) {
@@ -192,7 +204,20 @@ function semComentarios(fonte) {
 }
 
 const ACENTUADA = /[À-ÿ]/;
-const TEXTO_JSX = />([^<>{}]*[À-ÿ][^<>{}]*)</g;
+const PALAVRA = /[A-Za-zÀ-ÿ]{2,}/;
+
+/**
+ * Um nó de texto de JSX: o que fica entre um `>` que fecha uma tag e o `<` que
+ * abre a seguinte.
+ *
+ * O `(?<![=!<>-])` é o que separa uma tag de código: sem ele, o `>` de um `=>`
+ * emparelha com o `<` de um genérico e o gate acusa o "new Map" de um
+ * `useState(() => new Map<Campo, string>())` — medido, era o único falso positivo
+ * da regra 1a. O `CODIGO` abaixo apanha o resto: o que tem `=` ou `;` no meio é
+ * código, não uma frase.
+ */
+const TEXTO_JSX = /(?<![=!<>-])>([^<>{}]+)</g;
+const CODIGO = /[=;]|\breturn\b|\bconst\b/;
 
 /**
  * As strings do ficheiro, **consumidas pela ordem em que aparecem**.
@@ -252,9 +277,22 @@ for (const caminho of todos) {
 
   // 1. Prosa acentuada fora do catálogo, nas duas formas.
   const achados = new Set();
-  for (const m of fonte.matchAll(TEXTO_JSX)) {
-    const t = m[1].trim();
-    if (ACENTUADA.test(t)) achados.add(t);
+  // A regra 1a só se aplica a `.tsx`: num `.ts` não há JSX, e o `>` de um
+  // genérico emparelha com o `<` do seguinte (o `escolher<T>(catalogos: Record<…`
+  // do `i18n.ts` era um falso positivo exactamente assim).
+  for (const m of (caminho.endsWith(".tsx") ? fonte.matchAll(TEXTO_JSX) : [])) {
+    const bruta = m[1];
+    const t = bruta.trim();
+    if (!t || CODIGO.test(t)) continue;
+    // Numa linha só, basta uma palavra. Em várias linhas há duas coisas com a
+    // mesma forma — um parágrafo embrulhado pelo Prettier, que é prosa a sério, e
+    // o código de JSX de um ternário (`) : x.isError ? (`) — e o que as separa é
+    // o parêntese: a prosa deste produto não o usa a meio de um nó de texto, e o
+    // ternário não vive sem ele. Com parêntese o critério recua para o acento,
+    // que o ternário não tem; sem parêntese basta a palavra.
+    const ambiguo = bruta.includes("\n") && /[()]/.test(t);
+    const criterio = ambiguo ? ACENTUADA : PALAVRA;
+    if (criterio.test(t)) achados.add(t);
   }
   for (const bruta of literais(fonte)) {
     const t = bruta.trim();
