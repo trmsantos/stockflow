@@ -50,8 +50,14 @@ está vazio.
 antes do disparo. Existe desde as três paletas (ADR 0015) e é a forma de
 fotografar uma que não é o default: a selecção é um atributo, não uma media
 query, logo não há `--force-prefers-color-scheme` nem nada no Chrome que a mude.
-A persistência da preferência é do servidor (ADR 0016) e ainda não existe; o
-`data-tema` escrito aqui vale para esta captura e mais nada.
+
+Desde a ADR 0016 a preferência **existe** e vive no servidor, pelo que sem
+`TEMA=` o que esta captura mostra é a paleta da conta a que os cookies pertencem
+— o que, para fotografar um ecrã, é o que se quer. O `TEMA=` continua a servir
+para a pergunta inversa ("como é que este ecrã fica no claro?") e escreve só o
+atributo, como a página `/dev/tokens`: não toca no espelho em `localStorage` nem
+na conta. O JSON traz os dois lados (`tema` e `espelho`) para a diferença ser
+legível em vez de deduzida.
 """
 import base64, http.client, json, os, socket, struct, subprocess, sys, time, urllib.request
 
@@ -230,6 +236,13 @@ def main():
                diz de que tema é, e é o mesmo tipo de engano que o campo
                `arranque` abaixo cobre — medir uma coisa e fotografar outra. */
             tema: document.documentElement.getAttribute('data-tema') ?? 'escuro',
+            /* A cópia local do nome da paleta (ADR 0016, decisão 3) — é ela que
+               torna a primeira pintura correcta, antes de haver rede. Está aqui
+               porque é a diferença entre "o tema certo porque o servidor
+               respondeu" e "o tema certo porque o espelho já o sabia", e as duas
+               fotografias são idênticas. `null` num perfil novo é o caso normal:
+               é o relâmpago por máquina que a ADR diz ser inevitável. */
+            espelho: (() => { try { return localStorage.getItem('stockflow.tema'); } catch { return null; } })(),
             fundo: getComputedStyle(document.documentElement).getPropertyValue('--color-background').trim(),
             h1: document.querySelector('h1')?.textContent ?? null,
             scrollHorizontal: document.documentElement.scrollWidth > document.documentElement.clientWidth,

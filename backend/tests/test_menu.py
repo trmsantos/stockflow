@@ -18,11 +18,15 @@ uma escrita para outro tenant de dentro do âmbito é recusada pela própria
 política (`test_a_politica_recusa_escrever_o_menu_de_outro_tenant`).
 
 **3. O filtro por papel é autorização e não preferência** (ADR 0011). Medido com
-a única restrição real que existe — `convites` é do `owner` porque a ADR 0010 o
-decidiu e porque é o que o `ConviteViewSet` impõe —, em
-`test_os_convites_desaparecem_do_menu_de_quem_nao_pode_convidar`. Nenhuma outra
-rota é restrita, e o `apps/accounts/menu.py` diz porquê: inventar restrições era
-responder à Q7 sem ninguém ter perguntado.
+as duas restrições reais que existem — os `convites` são do `owner` porque a ADR
+0010 o decidiu e porque é o que o `ConviteViewSet` impõe, e o `painel` é do
+`owner` porque a ADR 0013 o decidiu e porque é o que as permissões do
+`reporting` impõem —, em
+`test_as_rotas_do_owner_desaparecem_do_menu_de_quem_nao_e_owner`. As outras cinco
+não são restritas, e o `apps/accounts/menu.py` diz porquê: inventar restrições
+era responder à Q7 sem ninguém ter perguntado. Que sejam exactamente estas duas
+está fechado nos dois sentidos em
+`test_as_rotas_restritas_sao_duas_e_as_duas_sao_do_owner`.
 
 **4. O `PUT` é uma substituição total.** O que não vem no corpo volta ao default,
 e a resposta é a configuração **inteira e sem filtro de papel** — o contrário

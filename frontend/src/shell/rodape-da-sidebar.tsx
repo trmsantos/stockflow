@@ -1,4 +1,5 @@
-import { Building2, CircleAlert, LogOut } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Building2, CircleAlert, LogOut, SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,19 @@ import type { SessaoDoShell } from "./sessao-do-shell";
  * O primitivo do shadcn dá o que um popover feito à mão não dá de graça:
  * fecho com Escape, clique fora, navegação por teclado, foco devolvido ao
  * botão e `aria-expanded` correcto.
+ *
+ * ## A entrada das preferências, desde 2026-10-07
+ *
+ * O `/preferencias` é o único ecrã da app **sem** entrada no menu, e a razão é
+ * da ADR 0017: o menu é uma projecção **por tenant**, e uma rota pessoal lá
+ * dentro deixava uma empresa esconder um ecrã pessoal aos seus colaboradores. O
+ * sítio dela é aqui — ao lado do email e da saída da conta é onde "a tua conta"
+ * vive, e é o shell que é o lado certo porque o tema é da pessoa e não do
+ * estabelecimento.
+ *
+ * É um `<Link>` e não um controlo de tema: há **um** sítio onde a paleta se
+ * troca, e um segundo controlo aqui era uma segunda fonte para o mesmo gesto. O
+ * gatilho para o acrescentar, escrito na ADR 0017, é alguém à procura dele.
  *
  * ## O estado recolhido
  *
@@ -177,6 +191,12 @@ export function RodapeDaSidebar({
             {sessao.email}
           </span>
         )}
+        <Button asChild variant="ghost" size="icon" className="shrink-0" title="Preferências">
+          <Link to="/preferencias">
+            <SlidersHorizontal aria-hidden="true" />
+            <span className="sr-only">Preferências</span>
+          </Link>
+        </Button>
         <Button
           type="button"
           variant="ghost"

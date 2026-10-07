@@ -17,8 +17,8 @@ export interface paths {
          * Activar um convite
          * @description `POST /api/v1/auth/ativar` — aceita um convite e devolve a sessão.
          *
-         *     É a quinta view dispensada de âmbito, e a razão é a do login: corre **antes**
-         *     de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
+         *     É uma das seis views dispensadas de âmbito, e a razão é a do login: corre
+         *     **antes** de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
          *     esta view **abre** um âmbito, e o valor que o escolhe vem do **link**:
          *     `/ativar#<uuid-do-tenant>.<token>`. O uuid é argumento e não credencial, e
          *     quem concede é a política do `accounts_invitation`, que é uma política normal
@@ -116,6 +116,63 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/preferencias": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Guardar as preferências desta pessoa
+         * @description `PATCH /api/v1/auth/preferencias` — as definições desta pessoa (ADR 0016).
+         *
+         *     Hoje tem um campo, o `tema`, e é `PATCH` e não `PUT` porque é uma alteração
+         *     parcial de uma entidade que vai ganhar campos: um `PUT` com um campo obriga
+         *     o cliente a reenviar tudo no dia em que houver três, e um cliente antigo
+         *     apagava o que não conhecesse.
+         *
+         *     Devolve `SessaoOut` e não uma forma própria, pelo argumento da ADR 0010: o
+         *     cliente guarda **uma** entrada de cache e qualquer destas respostas a
+         *     substitui, em vez de uma quinta forma e um quinto ramo de Zod.
+         *
+         *     ## Dispensada de âmbito, e porque é que isso aqui não dispensa de CSRF
+         *
+         *     Escreve numa tabela sem política (`accounts_user`, ADR 0007) e tem de
+         *     funcionar em `escolha_pendente` e em `sem_estabelecimento`: um tema que só se
+         *     possa trocar depois de escolher o estabelecimento é um tema que não se troca
+         *     no ecrã onde o relâmpago da primeira pintura se vê.
+         *
+         *     **Não leva `csrf_protect`, e a ausência é deliberada** — é a diferença exacta
+         *     que o `SECURITY.md` §5 descreve e que o `LoginView` e a `AtivacaoView`
+         *     documentam do outro lado. O `as_view()` do DRF embrulha tudo em
+         *     `csrf_exempt`, e o que repõe a verificação é o `SessionAuthentication`:
+         *     **quando encontra utilizador na sessão**, ele verifica o token. O furo da ADR
+         *     0010 era dos endpoints **anónimos** de escrita, que é o que o login e a
+         *     activação são e este não é — com `IsAuthenticated`, não há caminho até aqui
+         *     sem sessão. Fica escrito para ninguém o "corrigir" nos dois sentidos.
+         *
+         *     ## Não há `user_id` no corpo
+         *
+         *     A escrita é sempre sobre o `request.user` (`PreferenciasInSerializer`). Não
+         *     é uma verificação que esta view faz: é um argumento que não existe, logo não
+         *     há objecto para autorizar nem caminho para a preferência de outra pessoa. É
+         *     a razão pela qual não há `has_object_permission` nem `pk` nesta rota, e a
+         *     prova está no `tests/test_preferencias.py`.
+         *
+         *     Qualquer papel, e sem `PertenceAoTenant`: o tema é de quem o pede e não do
+         *     estabelecimento (ADR 0016), e exigir pertença fechava o ecrã a quem ainda
+         *     não escolheu estabelecimento — que é metade do problema que esta ADR resolve.
+         */
+        patch: operations["auth_preferencias"];
         trace?: never;
     };
     "/api/v1/auth/sessao": {
@@ -547,6 +604,26 @@ export interface components {
          */
         PapelEnum: "owner" | "manager" | "staff";
         /**
+         * @description O corpo do `PATCH /auth/preferencias`: o tema que esta pessoa prefere.
+         *
+         *     **Não tem `user_id`, e isso é a decisão.** A escrita é sempre sobre o
+         *     `request.user`, logo não existe objecto para autorizar nem caminho para a
+         *     preferência de outra pessoa — a forma do contrato é o que torna o abuso
+         *     impossível, em vez de uma verificação que alguém pode esquecer. É a mesma
+         *     mecânica com que o `tenant-ativo` recusa ser uma credencial, aplicada ao
+         *     contrário: ali o argumento existe e é verificado pela política, aqui o
+         *     argumento não existe.
+         *
+         *     `ChoiceField` sobre o `Tema`: um valor fora da lista é um 400 do DRF e nunca
+         *     chega à coluna. Isso importa mais do que parece, porque o cliente guarda uma
+         *     **cópia** deste nome em `localStorage` (ADR 0016, decisão 3) e lê-a antes de
+         *     haver rede — o valor ser fechado a três é o que torna essa cópia segura de
+         *     escrever.
+         */
+        PreferenciasInRequest: {
+            tema: components["schemas"]["TemaEnum"];
+        };
+        /**
          * @description Uma rota do **registo**: o que existe para configurar, e os seus defaults.
          *
          *     É a resposta do `GET /menu/rotas`, e o que ela descreve é código e não dados
@@ -598,11 +675,11 @@ export interface components {
          */
         RotaIdEnum: "inicio" | "painel" | "alertas" | "stock" | "contar" | "receber" | "convites";
         /**
-         * @description A resposta dos quatro endpoints de autenticação. Sempre esta forma.
+         * @description A resposta dos cinco endpoints de autenticação. Sempre esta forma.
          *
-         *     Uma forma só para login, logout, leitura da sessão e troca de
-         *     estabelecimento: o cliente guarda-a numa entrada de cache e qualquer das
-         *     quatro respostas a substitui, em vez de quatro formas e quatro ramos de Zod.
+         *     Uma forma só para login, logout, leitura da sessão, troca de estabelecimento
+         *     e preferências: o cliente guarda-a numa entrada de cache e qualquer das
+         *     cinco respostas a substitui, em vez de cinco formas e cinco ramos de Zod.
          *
          *     `utilizador` e `tenant_ativo` são `null` em vez de ausentes, e isso é
          *     deliberado: um campo que às vezes não existe obriga o cliente a distinguir
@@ -623,6 +700,13 @@ export interface components {
          * @enum {string}
          */
         SessaoOutEstadoEnum: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa";
+        /**
+         * @description * `escuro` - Escuro
+         *     * `meio_termo` - Meio termo
+         *     * `claro` - Claro
+         * @enum {string}
+         */
+        TemaEnum: "escuro" | "meio_termo" | "claro";
         /**
          * @description O corpo do `POST /auth/tenant-ativo`: o estabelecimento a activar.
          *
@@ -674,6 +758,7 @@ export interface components {
             email: string;
             /** Format: uuid */
             id: string;
+            tema: components["schemas"]["TemaEnum"];
         };
     };
     responses: never;
@@ -778,6 +863,29 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessaoOut"];
+                };
+            };
+        };
+    };
+    auth_preferencias: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferenciasInRequest"];
+            };
+        };
         responses: {
             200: {
                 headers: {

@@ -18,13 +18,13 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { contrastRatio, formatRatio, resolveColor, type ResolvedColor } from "@/dev/color";
 import {
-  escolherTema,
-  ROTULO_DO_TEMA,
+  aplicarTemaSoNoDocumento,
+  rotuloDoTema,
   subscreverTema,
   temaActual,
   temaDe,
   TEMAS,
-} from "@/dev/tema";
+} from "@/lib/tema";
 import { formatCount, formatDaysAway, formatMoney, formatQuantity } from "@/lib/format";
 import {
   ALL_TOKENS,
@@ -90,11 +90,21 @@ function useTokenSnapshot(): Snapshot {
 }
 
 /**
- * O selector de tema — **um interruptor de desenvolvimento, não a
- * funcionalidade**. Escreve o `data-tema` no `<html>` e não guarda nada: a
- * persistência é a preferência da pessoa no servidor (ADR 0016) e o lugar dela
- * é o pé da sidebar (ADR 0017), com casa decidida e por construir. Até aí isto
- * é a única forma de ver as três paletas a correr, e ver é o que faltava.
+ * O selector de tema desta página — e desde 2026-10-07 **não** é mais o único.
+ *
+ * O interruptor de ensaio que aqui estava virou funcionalidade: a preferência
+ * vive no servidor (ADR 0016) e troca-se no `/preferencias`, com entrada no pé
+ * da sidebar (ADR 0017). Este fica, e por uma razão que o outro não cumpre: esta
+ * página **mede** a paleta activa, logo precisa de trocar de paleta sem gravar
+ * preferência nenhuma — nem na conta, nem no espelho local. Chama o
+ * `aplicarTemaSoNoDocumento` do `lib/tema.ts`, que é a única das quatro funções
+ * de escrita que não toca no espelho: a troca vale para esta visita e uma
+ * recarga volta ao que a conta prefere.
+ *
+ * E **não** é desfeita por uma revalidação da sessão: o atributo é escrito a
+ * partir da sessão uma vez por carregamento de página (ver
+ * `sincronizarTemaDaSessao`), precisamente porque o contrário punha a paleta da
+ * conta de volta a meio de uma medição quando alguém voltava ao separador.
  */
 function SelectorDeTema() {
   const tema = useSyncExternalStore(subscreverAoTema, temaActual, temaActual);
@@ -105,7 +115,7 @@ function SelectorDeTema() {
       <Select
         value={tema}
         onValueChange={(valor) => {
-          escolherTema(temaDe(valor));
+          aplicarTemaSoNoDocumento(temaDe(valor));
         }}
       >
         <SelectTrigger id="selector-de-tema" className="w-full sm:w-80">
@@ -114,14 +124,15 @@ function SelectorDeTema() {
         <SelectContent>
           {TEMAS.map((nome) => (
             <SelectItem key={nome} value={nome}>
-              {ROTULO_DO_TEMA[nome]}
+              {rotuloDoTema(nome).nome}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
       <p className="max-w-2xl text-sm text-muted-foreground">
-        Troca a paleta em vigor e volta a medir tudo o que está abaixo. Não persiste: uma recarga
-        volta ao escuro, que é o default e a identidade aprovada.
+        Troca a paleta em vigor e volta a medir tudo o que está abaixo. Vale para esta visita: uma
+        recarga volta ao que a sua conta prefere. Para mudar a preferência, use o ecrã de
+        preferências.
       </p>
     </div>
   );

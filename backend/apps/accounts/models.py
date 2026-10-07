@@ -257,6 +257,27 @@ class UserManager(BaseUserManager["User"]):
         )
 
 
+class Tema(models.TextChoices):
+    """As três paletas, e a lista é a mesma do `tokens.css` (ADR 0015).
+
+    Vive ao nível do módulo como o `Papel` e o `RotaDeMenu`, e pela mesma razão:
+    é um valor que atravessa a fronteira do contrato. Chega ao `types.ts` como
+    enum fechado do OpenAPI, logo o `Record` do cliente que traduz tema em
+    rótulo é exaustivo contra **esta** lista, nos dois sentidos, sob
+    `pnpm typecheck`.
+
+    O `escuro` é o default porque é a identidade aprovada (DESIGN.md §1) e porque
+    é a paleta que vive na `:root` sem atributo. Um valor fora desta lista no
+    `data-tema` não selecciona bloco nenhum e dá o escuro — a queda é o default e
+    não um ecrã sem cores, o que é o que torna o espelho local da ADR 0016
+    seguro de escrever.
+    """
+
+    ESCURO = "escuro", "Escuro"
+    MEIO_TERMO = "meio_termo", "Meio termo"
+    CLARO = "claro", "Claro"
+
+
 class User(AbstractBaseUser, PermissionsMixin):
     """Credencial e flags, e mais nada (ADR 0007).
 
@@ -369,6 +390,32 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         editable=False,
         verbose_name="âmbitos que pode tentar",
+    )
+    # A preferência de paleta (ADR 0016). **Uma coluna e não uma tabela**, pelo
+    # precedente que a ADR 0007 escreveu para o `tenant_ids`: uma tabela de
+    # índice teria `tenant_id` sem política, que é a forma que o gate nunca pode
+    # deixar passar; uma coluna numa tabela que já não tem política não
+    # introduz forma nova. As duas listas fechadas do `tests/test_db_roles.py`
+    # não mexem, e é esse o sinal de que isto não abriu excepção.
+    #
+    # A ADR 0007 manda **encolher** esta tabela, porque é a que o role da app lê
+    # sem âmbito nenhum — e essa regra é sobre o que um atacante aprende sobre
+    # identidade e sobre o grafo de pertenças. "Esta conta prefere o claro" não
+    # acrescenta nada a nenhum dos dois.
+    #
+    # `db_default` **além** do `default`, e não é redundância: o `default` é do
+    # Django e só vale para escritas que passem pelo ORM desta versão do código.
+    # Num deploy em rolling o código **antigo** continua a inserir linhas sem
+    # esta coluna, e sem um default na base de dados esses inserts falhavam —
+    # é o primeiro erro da checklist da skill de migrações, e o Django 5 tem
+    # `db_default` precisamente para o fechar.
+    tema = models.CharField(
+        max_length=16,
+        choices=Tema.choices,
+        default=Tema.ESCURO,
+        db_default=Tema.ESCURO,
+        verbose_name="tema",
+        help_text="A paleta que esta pessoa prefere. Preferência da pessoa, não da empresa.",
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="criado em")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="atualizado em")

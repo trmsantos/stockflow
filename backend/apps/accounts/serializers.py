@@ -38,7 +38,7 @@ from typing import Any
 
 from rest_framework import serializers
 
-from apps.accounts.models import EstadoDoConvite, Papel, RotaDeMenu
+from apps.accounts.models import EstadoDoConvite, Papel, RotaDeMenu, Tema
 from apps.accounts.services import LIMITE_DO_FRAGMENTO, EstadoDaSessao
 
 __all__ = [
@@ -110,6 +110,27 @@ class TenantAtivoInSerializer(serializers.Serializer):
     """
 
     tenant_id = serializers.UUIDField()
+
+
+class PreferenciasInSerializer(serializers.Serializer):
+    """O corpo do `PATCH /auth/preferencias`: o tema que esta pessoa prefere.
+
+    **Não tem `user_id`, e isso é a decisão.** A escrita é sempre sobre o
+    `request.user`, logo não existe objecto para autorizar nem caminho para a
+    preferência de outra pessoa — a forma do contrato é o que torna o abuso
+    impossível, em vez de uma verificação que alguém pode esquecer. É a mesma
+    mecânica com que o `tenant-ativo` recusa ser uma credencial, aplicada ao
+    contrário: ali o argumento existe e é verificado pela política, aqui o
+    argumento não existe.
+
+    `ChoiceField` sobre o `Tema`: um valor fora da lista é um 400 do DRF e nunca
+    chega à coluna. Isso importa mais do que parece, porque o cliente guarda uma
+    **cópia** deste nome em `localStorage` (ADR 0016, decisão 3) e lê-a antes de
+    haver rede — o valor ser fechado a três é o que torna essa cópia segura de
+    escrever.
+    """
+
+    tema = serializers.ChoiceField(choices=Tema.choices)
 
 
 class ConviteInSerializer(serializers.Serializer):
@@ -281,6 +302,12 @@ class UtilizadorOutSerializer(serializers.Serializer):
 
     id = serializers.UUIDField()
     email = serializers.EmailField()
+    #: A paleta preferida (ADR 0016). `ChoiceField` e não `CharField` para o
+    #: OpenAPI o emitir como **enum fechado**: a união chega ao `types.ts`
+    #: commitado e o `Record<Tema, …>` do cliente passa a ser exaustivo contra a
+    #: lista do backend, nos dois sentidos, sob `pnpm typecheck`. É a mesma
+    #: mecânica do `route_id` e do papel.
+    tema = serializers.ChoiceField(choices=Tema.choices)
 
 
 class TenantOutSerializer(serializers.Serializer):
@@ -382,11 +409,11 @@ class RotaDeMenuOutSerializer(serializers.Serializer):
 
 
 class SessaoOutSerializer(serializers.Serializer):
-    """A resposta dos quatro endpoints de autenticação. Sempre esta forma.
+    """A resposta dos cinco endpoints de autenticação. Sempre esta forma.
 
-    Uma forma só para login, logout, leitura da sessão e troca de
-    estabelecimento: o cliente guarda-a numa entrada de cache e qualquer das
-    quatro respostas a substitui, em vez de quatro formas e quatro ramos de Zod.
+    Uma forma só para login, logout, leitura da sessão, troca de estabelecimento
+    e preferências: o cliente guarda-a numa entrada de cache e qualquer das
+    cinco respostas a substitui, em vez de cinco formas e cinco ramos de Zod.
 
     `utilizador` e `tenant_ativo` são `null` em vez de ausentes, e isso é
     deliberado: um campo que às vezes não existe obriga o cliente a distinguir

@@ -125,6 +125,12 @@ class UserOut:
     email: str
     is_active: bool
     is_staff: bool
+    #: A paleta que esta pessoa prefere (ADR 0016). Entra aqui e não num DTO
+    #: próprio porque o `SessaoOut` já carrega o `UserOut` e o tema tem de chegar
+    #: ao cliente no mesmo pedido que resolve a sessão — a primeira pintura
+    #: depende dele e um round trip extra no caminho crítico era o relâmpago de
+    #: volta. É o mesmo argumento com que a ADR 0011 pôs o menu na sessão.
+    tema: str
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -259,6 +265,7 @@ def utilizador_atual(request: HttpRequest) -> UserOut | None:
         email=user.email,
         is_active=user.is_active,
         is_staff=user.is_staff,
+        tema=user.tema,
     )
 
 

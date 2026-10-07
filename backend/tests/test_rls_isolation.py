@@ -721,16 +721,23 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
     A ADR 0007 lista as dispensas que vão existir — admin, healthcheck, login,
     logout, registo, listagem de tenants e troca de tenant. Hoje existem três
     famílias: o admin, os dois endpoints de saúde (`config/health.py`) e as
-    **cinco** de `/api/v1/auth/` (`apps/accounts/views.py`, ADR 0010). As que
-    faltam são as duas da reposição de password, e é este teste que as obriga a
-    aparecer aqui quando nascerem.
+    **seis** de `/api/v1/auth/` (`apps/accounts/views.py`, ADR 0010 e ADR 0016).
+    As que faltam são as duas da reposição de password, e é este teste que as
+    obriga a aparecer aqui quando nascerem.
 
-    As cinco de `/auth/` estão aqui porque correm **antes** de existir tenant na
+    As seis de `/auth/` estão aqui porque correm **antes** de existir tenant na
     sessão: é a condição do login da ADR 0007, e o `tenant-ativo` é o caso que
     mostra porque é que a dispensa tem de ser declarada e não inferida — sem
     ela, o middleware teria aberto o âmbito **antigo** antes da view e a troca
     levantaria `TenantScopeConflict`. O que cada uma delas toca em dados de
     tenant é aberto por elas, uma transação curta por candidato.
+
+    O `preferencias` é a sexta e a mais recente (ADR 0016), e está aqui por uma
+    razão que as outras cinco não têm: escreve numa tabela **sem política** — o
+    `accounts_user`, que a ADR 0007 deixa sem RLS para o login poder ler antes de
+    existir âmbito — e tem de funcionar em `escolha_pendente`, que é o estado em
+    que ainda não há âmbito para abrir. Trocar de tema não toca em dado de tenant
+    nenhum, e é por isso que esta dispensa não alarga a superfície que importa.
 
     O `ativar` é o caso que vale a pena ler duas vezes, porque é o único em que
     "dispensado de âmbito" **não** significa "sem âmbito": ele abre
@@ -768,6 +775,7 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/auth/ativar",
         "api/v1/auth/login",
         "api/v1/auth/logout",
+        "api/v1/auth/preferencias",
         "api/v1/auth/sessao",
         "api/v1/auth/tenant-ativo",
         "healthz",

@@ -538,11 +538,11 @@ class EstadoDaSessao(models.TextChoices):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class SessaoOut:
-    """O que os quatro endpoints de autenticação devolvem. Sempre o mesmo.
+    """O que os cinco endpoints de autenticação devolvem. Sempre o mesmo.
 
-    Uma forma só para login, logout, leitura e troca de estabelecimento: o
-    cliente guarda-a numa entrada de cache e qualquer das quatro respostas a
-    substitui, em vez de haver quatro formas e quatro ramos de Zod.
+    Uma forma só para login, logout, leitura, troca de estabelecimento e
+    preferências: o cliente guarda-a numa entrada de cache e qualquer das cinco
+    respostas a substitui, em vez de haver cinco formas e cinco ramos de Zod.
 
     Congelado, como os DTOs do `api.py`: isto é o resultado de uma decisão de
     autorização e não um acumulador.
@@ -773,6 +773,46 @@ def escolher_tenant_ativo(request: HttpRequest, *, tenant_id: UUID) -> SessaoOut
 
     request.session[SESSION_TENANT_KEY] = str(escolhido.id)
     return _sessao(request, tenants=_tenants_confirmados(request.user), ativo=escolhido)
+
+
+def guardar_preferencias(request: HttpRequest, *, tema: str) -> SessaoOut:
+    """Guarda o tema desta pessoa e devolve a sessão como ficou (ADR 0016).
+
+    ## Escreve no `request.user` e em mais ninguém
+
+    Não recebe um `user_id` porque o contrato não o tem: não existe objecto para
+    autorizar nem caminho para a preferência de outra pessoa. A forma é o que
+    torna o abuso impossível, em vez de uma verificação que alguém pode
+    esquecer — é a mesma ideia do `tenant-ativo` ao contrário, onde o argumento
+    existe e é a política que o julga.
+
+    ## Fora de âmbito, de propósito
+
+    A `accounts_user` não tem política (ADR 0007: tem de ser lida antes de
+    existir âmbito, senão o login não funciona), logo esta escrita não precisa
+    de `tenant_scope` — e **não pode** precisar dele: tem de funcionar em
+    `escolha_pendente` e em `sem_estabelecimento`, que é precisamente onde o
+    relâmpago de tema se vê. Um tema que só se trocasse depois de escolher o
+    estabelecimento era um tema que não se trocava no ecrã onde ele importa.
+
+    ## `update_fields`, e não é micro-optimização
+
+    Guardar só a coluna do tema evita reescrever o `tenant_ids` com o valor que
+    esta instância trouxe em memória. Numa conta que acabou de receber um
+    convite noutro separador, um `save()` completo apagava a adição — é a classe
+    de defeito que um `update_fields` fecha por construção e que nenhum teste
+    desta suite apanharia, porque exige duas sessões ao mesmo tempo.
+
+    O `updated_at` é `auto_now`, logo entra na lista: sem ele o campo mentia.
+    """
+    user = request.user
+    user.tema = tema
+    user.save(update_fields=["tema", "updated_at"])
+    logger.info(
+        "tema guardado",
+        extra={"event": "preferencias", "outcome": "ok", "tema": tema},
+    )
+    return sessao_atual(request)
 
 
 def _tenants_confirmados(user: User) -> tuple[TenantOption, ...]:

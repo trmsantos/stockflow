@@ -60,6 +60,14 @@ pessoa** e vive no servidor (ADR 0016), não na configuração do sistema de que
 tem dois estados para três paletas. Por isso `prefers-color-scheme` deixou de selecionar o que quer que
 seja e passa a ser proibido em `src/**` inteiro.
 
+**E a paleta é aplicada antes da primeira pintura, não quando a sessão chega.** A preferência está no
+servidor e o servidor só responde depois do primeiro pixel, pelo que o cliente guarda uma **cópia do
+nome da paleta** e é ela que o módulo de entrada lê, antes de montar o React (`src/lib/tema.ts`). Sem
+isso, quem prefere o claro via um relâmpago escuro em cada arranque — o mesmo defeito, na mesma
+superfície, que o `color-scheme` desta secção existe para evitar. Numa máquina nova o primeiro arranque
+pinta o default e troca quando a sessão chega: é um relâmpago **por máquina** e não um por arranque.
+Medido no browser com a sessão bloqueada, que é o único estado em que só a cópia decide.
+
 **As três existem desde 2026-10-07 e estão escritas abaixo**, com os 18 tokens de cor **mais os dois
 de sombra** cada uma — uma paleta não é só `--color-*`. Nenhuma entrou a 17 de 18: o gate falha se
 entrar. O que cada uma é, e a **pior superfície** de cada uma, que o gate *calcula* (a de menor
@@ -516,10 +524,16 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   menu é uma projecção por tenant sobre as rotas que existem, com um nível de agrupamento (ADR
   0009); esconder é apresentação, não autorização.
 - O **seletor de tenant** vive no pé da sidebar (é do shell); o **seletor de loja** fica na barra do
-  ecrã (é do ecrã). Parecem a mesma coisa e não são. É também no pé da sidebar que vivem as
-  **preferências da pessoa** (o tema), ao lado do email e da saída da conta; as **definições da
-  empresa** são um item de menu restrito ao `owner`, e são dois ecrãs e não dois separadores do mesmo
-  (ADR 0017).
+  ecrã (é do ecrã). Parecem a mesma coisa e não são. É também no pé da sidebar que vive a **entrada**
+  para as preferências da pessoa, ao lado do email e da saída da conta — um `<Link>` para
+  `/preferencias` e **não** um segundo controlo de tema: há um sítio onde a paleta se troca, e dois
+  eram duas fontes para o mesmo gesto. As **definições da empresa** são um item de menu restrito ao
+  `owner`, e são dois ecrãs e não dois separadores do mesmo (ADR 0017).
+- **Um selector de opções fixas é uma régua de segmentos, não uma pilha de cartões.** O
+  `/preferencias` escolhe a paleta numa moldura com três segmentos encostados, separados pela régua de
+  1px das colunas da tabela, com o escolhido marcado pelo trilho de 4px. A primeira versão eram três
+  `rounded-lg` com borda e descrição — o cartão repetido em grelha que o §5 proíbe, de volta pela
+  porta do ecrã novo. Em coluna abaixo de `md`, com o trilho a passar de vertical a horizontal.
 
 ---
 

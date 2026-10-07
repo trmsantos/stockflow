@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { TEMAS } from "@/lib/tema";
+
 /**
  * O contrato de autenticação e de activação, em Zod (ADR 0010).
  *
@@ -36,6 +38,32 @@ export const estabelecimentoSchema = z.object({
 });
 
 /**
+ * A paleta que esta pessoa prefere. `TemaEnum` (ADR 0015 e ADR 0016).
+ *
+ * ## `z.enum(TEMAS)` e não uma lista escrita aqui, ao contrário do `route_id`
+ *
+ * A decisão do `itemDeMenuSchema` foi a oposta — lá o id é `z.string()` — e vale
+ * a pena dizer porque, senão isto lê-se como incoerência. Lá, um id que este
+ * bundle não conhecesse derrubava a resposta **inteira** do `GET /auth/sessao`,
+ * isto é, a aplicação não arrancava: o caso é o intervalo de um rolling deploy,
+ * com um backend novo a servir um sétimo id a um bundle antigo, e um menu com um
+ * item a menos é degradação enquanto uma sessão que não parseia é a app fechada.
+ *
+ * Aqui o risco inverte-se, e por uma razão de forma: o `tema` é um campo
+ * **escalar e obrigatório** do `utilizador`, não um elemento de uma lista que se
+ * possa ignorar. Um `z.string()` aqui deixaria passar para o `<html>` um valor
+ * que nenhuma paleta reconhece — e o cliente é quem o escreve no DOM. A queda
+ * para o default existe e está no `temaDe` do `lib/tema.ts`, que é por onde o
+ * valor passa antes de ser aplicado; o que este schema recusa é guardar na cache
+ * uma sessão cujo tema não é um dos três.
+ *
+ * A lista vem do `TEMAS`, que é derivado do `Record<Tema, …>` sobre o
+ * `TemaEnum` **gerado**: não há uma segunda lista de paletas em runtime, que é
+ * exactamente a dívida que a decisão do `route_id` nomeia.
+ */
+export const temaSchema = z.enum(TEMAS);
+
+/**
  * Quem está autenticado. `UtilizadorOut`.
  *
  * O `email` é validado como **string não vazia** e não com `z.email()`, de
@@ -48,6 +76,7 @@ export const estabelecimentoSchema = z.object({
 export const utilizadorSchema = z.object({
   id: z.uuid(),
   email: z.string().min(1),
+  tema: temaSchema,
 });
 
 /**
@@ -124,9 +153,11 @@ export const itemDeMenuSchema = z.object({
 });
 
 /**
- * `SessaoOut` — a resposta dos **quatro** endpoints de autenticação, sempre
- * nesta forma. Uma forma só é o que permite ao cliente guardar as quatro numa
- * entrada de cache em vez de ter quatro ramos de Zod.
+ * `SessaoOut` — a resposta dos **cinco** endpoints de autenticação, sempre
+ * nesta forma. Uma forma só é o que permite ao cliente guardar as cinco numa
+ * entrada de cache em vez de ter cinco ramos de Zod. O quinto é o
+ * `PATCH /auth/preferencias` (ADR 0016), que devolve a sessão inteira em vez de
+ * uma forma própria por este mesmo argumento.
  *
  * `utilizador` e `tenant_ativo` são `null` e não ausentes: o servidor sabe
  * sempre, e um campo que às vezes não existe obrigava o cliente a distinguir
@@ -235,6 +266,24 @@ export const formularioDeAtivacaoSchema = z
     error: "As duas passwords não são iguais.",
     path: ["confirmacao"],
   });
+
+/**
+ * O corpo do `PATCH /auth/preferencias`. `PreferenciasInRequest` (ADR 0016).
+ *
+ * Um campo, e **não** há `user_id` — a escrita é sempre sobre quem faz o pedido.
+ * Não é uma verificação que o cliente faz: é um argumento que não existe, logo
+ * não há caminho para a preferência de outra pessoa. O backend tem o mesmo campo
+ * e os mesmos três valores, e o 400 por campo está medido.
+ *
+ * O `tema` é obrigatório apesar de o método ser `PATCH`, e isso é contrato e não
+ * descuido: as views desta casa não validam com `partial=True`, pelo que um
+ * corpo vazio é 400. O `COMPONENT_SPLIT_PATCH` do drf-spectacular está desligado
+ * para o `types.ts` dizer o mesmo — sem isso, o cliente compilava um `{}` que o
+ * servidor recusa.
+ */
+export const preferenciasSchema = z.object({
+  tema: temaSchema,
+});
 
 /**
  * O corpo do `POST /auth/tenant-ativo`. `TenantAtivoInRequest`.
@@ -379,6 +428,7 @@ export const conviteParaCriarSchema = z.object({
 });
 
 export type Papel = z.output<typeof papelSchema>;
+export type Preferencias = z.output<typeof preferenciasSchema>;
 export type Estabelecimento = z.output<typeof estabelecimentoSchema>;
 export type Utilizador = z.output<typeof utilizadorSchema>;
 export type EstadoDaSessao = z.output<typeof estadoDaSessaoSchema>;

@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/api/http";
 import { paginated, type Paginated } from "@/lib/api/pagination";
 import { queryKeys } from "@/lib/api/query-keys";
 import { setActiveTenantId, tenantDaCache } from "@/lib/api/tenant";
+import { aplicarTema, sincronizarTemaDaSessao, temaActual, type Tema } from "@/lib/tema";
 
 import {
   codigoDaRecusa,
@@ -28,6 +29,7 @@ import {
   credenciaisSchema,
   escolhaDeEstabelecimentoSchema,
   nomeDoPapel,
+  preferenciasSchema,
   podeConvidar,
   sessaoSchema,
   type Ativacao,
@@ -38,6 +40,7 @@ import {
   type EscolhaDeEstabelecimento,
   type Estabelecimento,
   type ItemDeMenu,
+  type Preferencias,
   type Sessao,
 } from "./schemas";
 
@@ -70,13 +73,17 @@ import {
  * deduzido do docstring: o valor de `csrftoken` antes e depois do
  * `POST /auth/login` é diferente, e o pedido seguinte assina com o novo.
  *
- * ## Sem update optimista em nenhuma das quatro
+ * ## Update optimista em uma das cinco, e a fronteira é clara
  *
- * A regra da casa é "optimista só em ações reversíveis", e nenhuma destas o é:
- * entrar, sair, trocar de estabelecimento e activar um convite mudam **quem** e
- * **onde** se está, e o servidor é a única autoridade sobre as duas coisas.
- * Mostrar o resultado antes de ele existir era montar o `AppShell` para uma
- * sessão que pode não ter acontecido.
+ * A regra da casa é "optimista só em ações reversíveis", e quatro destas não o
+ * são: entrar, sair, trocar de estabelecimento e activar um convite mudam
+ * **quem** e **onde** se está, e o servidor é a única autoridade sobre as duas
+ * coisas. Mostrar o resultado antes de ele existir era montar o `AppShell` para
+ * uma sessão que pode não ter acontecido.
+ *
+ * A quinta — guardar o tema — é optimista, e é o caso para o qual a regra foi
+ * escrita: não muda âmbito, não muda autorização, e desfazer-se é escrever o
+ * valor anterior num atributo. A razão inteira está no `useGuardarTema`.
  */
 
 const CAMINHO_SESSAO = "/auth/sessao";
@@ -84,6 +91,7 @@ const CAMINHO_LOGIN = "/auth/login";
 const CAMINHO_LOGOUT = "/auth/logout";
 const CAMINHO_TENANT_ATIVO = "/auth/tenant-ativo";
 const CAMINHO_ATIVAR = "/auth/ativar";
+const CAMINHO_PREFERENCIAS = "/auth/preferencias";
 const CAMINHO_CONVITES = "/convites";
 
 /**
@@ -129,18 +137,45 @@ export function sincronizarEstabelecimentoAtivo(sessao: Sessao): Sessao {
 }
 
 /**
- * Uma resposta de sessão, validada e **já aplicada** ao `X-Tenant-ID`.
+ * O tema que a sessão diz, aplicado e espelhado (ADR 0016).
  *
- * Único ponto de passagem das quatro chamadas, de propósito: com a
- * sincronização em cada `onSuccess` em vez de aqui, a quinta chamada que
+ * Passa pelo `lib/tema.ts`, que decide o que fazer: o espelho é reescrito
+ * **sempre** — é ele que torna correcta a próxima primeira pintura — e o
+ * atributo do `<html>` é escrito uma vez por carregamento de página. A razão
+ * dessa assimetria está escrita lá: depois da primeira resposta, quem muda a
+ * paleta deste separador é quem o está a usar.
+ *
+ * `utilizador === null` é o caso do `anonimo`, e aí **não se faz nada**. Não é
+ * um esquecimento: limpar o espelho ao sair trazia o relâmpago de volta ao ecrã
+ * de entrada, que é precisamente o ecrã onde ele se vê. A consequência fica
+ * nomeada na ADR 0016 — num portátil partilhado, o ecrã de entrada abre com a
+ * paleta de quem saiu.
+ */
+function sincronizarTemaDoUtilizador(sessao: Sessao): Sessao {
+  if (sessao.utilizador !== null) sincronizarTemaDaSessao(sessao.utilizador.tema);
+  return sessao;
+}
+
+/**
+ * Uma resposta de sessão, validada e **já aplicada** ao `X-Tenant-ID` e ao tema.
+ *
+ * Único ponto de passagem das cinco chamadas, de propósito: com a
+ * sincronização em cada `onSuccess` em vez de aqui, a sexta chamada que
  * aparecer esquece-a — e o sintoma (nenhum `X-Tenant-ID`, nenhum 409, dados do
  * estabelecimento errado num separador antigo) não é visível em nenhum ecrã.
+ *
+ * O tema entrou aqui pela mesma razão e não no `onSuccess` do seu `PATCH`: o que
+ * o traz com mais frequência **não** é o `PATCH` — é o `GET /auth/sessao` do
+ * arranque, que é o único momento em que o servidor pode corrigir o espelho de
+ * uma máquina onde ele está errado ou não existe.
  */
 async function pedirSessao(
   caminho: string,
   init?: Parameters<typeof apiRequest>[2],
 ): Promise<Sessao> {
-  return sincronizarEstabelecimentoAtivo(await apiRequest(caminho, sessaoSchema, init));
+  return sincronizarTemaDoUtilizador(
+    sincronizarEstabelecimentoAtivo(await apiRequest(caminho, sessaoSchema, init)),
+  );
 }
 
 /**
@@ -227,7 +262,8 @@ export function useMenuDaSessao(): readonly ItemDeMenu[] {
  *
  * **Qualquer resposta que mude quem ou onde se está apaga os dados de tenant.**
  * É uma regra e não quatro decisões, e é a forma de não ter de responder "o que
- * é que isto invalida?" em cada uma das quatro chamadas:
+ * é que isto invalida?" em cada uma das quatro chamadas que mudam âmbito (a
+ * quinta, o `PATCH` do tema, não muda nenhum e não passa por aqui):
  *
  *  - entrar e activar um convite: a cache podia ter dados de outra conta no
  *    mesmo browser (quem sai e entra com outra conta no balcão), e a chave de
@@ -386,6 +422,60 @@ export function useAtivarConvite(): UseMutationResult<Sessao, Error, Ativacao> {
       }),
     onSuccess: (sessao) => {
       fixarSessao(queryClient, sessao);
+    },
+  });
+}
+
+/**
+ * `PATCH /auth/preferencias` — guardar o tema desta pessoa (ADR 0016).
+ *
+ * ## A única das cinco com update optimista, e é a excepção que confirma a regra
+ *
+ * A regra da casa é "optimista só em ações reversíveis", e as outras quatro não
+ * o são: entrar, sair, trocar de estabelecimento e activar um convite mudam
+ * **quem** e **onde** se está. Trocar de paleta é o contrário disso em todos os
+ * eixos — não muda âmbito nenhum, não muda autorização nenhuma, e desfazer-se é
+ * escrever o valor anterior no mesmo atributo.
+ *
+ * E aqui o optimismo não é uma optimização: é a funcionalidade. Um selector de
+ * tema que só pinta quando o servidor responde é um selector que parece avariado
+ * na primeira rede lenta — a pessoa clica em "claro", não acontece nada, e clica
+ * outra vez. O `onMutate` pinta, o `onError` repinta o anterior.
+ *
+ * ## `setQueryData` e **não** `fixarSessao`
+ *
+ * O `fixarSessao` apaga todos os dados de estabelecimento, e a regra que o manda
+ * fazê-lo é "qualquer resposta que mude quem ou onde se está". Esta não muda
+ * nenhum dos dois: apagar a cache de stock porque alguém preferiu o tema claro
+ * era um refetch de tudo por uma mudança de cor. A entrada da sessão é escrita
+ * porque a resposta **é** a sessão nova, com o `tema` já actualizado — é o que
+ * faz o ecrã de preferências mostrar o valor guardado sem pedir outra vez.
+ */
+export function useGuardarTema(): UseMutationResult<
+  Sessao,
+  Error,
+  Preferencias,
+  { anterior: Tema }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (preferencias: Preferencias) =>
+      pedirSessao(CAMINHO_PREFERENCIAS, {
+        method: "PATCH",
+        body: preferenciasSchema.parse(preferencias),
+      }),
+    onMutate: ({ tema }) => {
+      const anterior = temaActual();
+      aplicarTema(tema);
+      return { anterior };
+    },
+    onError: (_erro, _preferencias, contexto) => {
+      // Sem contexto não houve `onMutate`, logo não houve nada a desfazer.
+      if (contexto !== undefined) aplicarTema(contexto.anterior);
+    },
+    onSuccess: (sessao) => {
+      queryClient.setQueryData(queryKeys.sessao(), sessao);
     },
   });
 }

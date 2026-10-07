@@ -262,7 +262,7 @@ _ROTAS: Final[tuple[RotaDoRegisto, ...]] = (
         rotulo_default="Convites",
         grupo_default=GRUPO_EQUIPA,
         ordem_default=60,
-        # **A única rota restrita, e não foi esta ADR que a restringiu.** Convidar
+        # **A primeira rota restrita, e não foi esta ADR que a restringiu.** Convidar
         # é só do `owner` (ADR 0010), e é o `ConviteViewSet` que o impõe com
         # `TemPapel.exige(Papel.OWNER)`. Mostrar o item a um `staff` era pôr no
         # menu um caminho que acaba em 403 — o caso literal do "esconder um item

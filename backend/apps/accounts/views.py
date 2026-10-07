@@ -33,7 +33,7 @@ serializar o resultado. A ordem obrigatória do login — `authenticate()` →
 `login()` → descoberta — não está aqui de propósito: é uma regra que não pode
 ser escrita de outra maneira e a view não é sítio para a guardar.
 
-**2. As cinco de `/auth/` são dispensadas de âmbito, e a dispensa é declarada
+**2. As seis de `/auth/` são dispensadas de âmbito, e a dispensa é declarada
 na view.** `@tenant_scope_exempt` (ADR 0007): estas correm **antes** de existir
 tenant na sessão, como o login. O default do `TenantMiddleware` é ter âmbito,
 logo sem a declaração respondiam 403 `sem_sessao` — incluindo o login, o que é
@@ -184,6 +184,7 @@ from apps.accounts.serializers import (
     ItemDeMenuInSerializer,
     ItemDeMenuOutSerializer,
     LoginInSerializer,
+    PreferenciasInSerializer,
     RotaDeMenuOutSerializer,
     SessaoOutSerializer,
     TenantAtivoInSerializer,
@@ -203,6 +204,7 @@ from apps.accounts.services import (
     criar_convite,
     escolher_tenant_ativo,
     guardar_menu,
+    guardar_preferencias,
     iniciar_sessao,
     reenviar_convite,
     revogar_convite,
@@ -218,6 +220,7 @@ __all__ = [
     "LoginView",
     "LogoutView",
     "MenuView",
+    "PreferenciasView",
     "RotasDeMenuView",
     "SessaoView",
     "TenantAtivoView",
@@ -257,7 +260,7 @@ def _pedido_django(request: Request | HttpRequest) -> HttpRequest:
 
 
 def _resposta(sessao: SessaoOut) -> Response:
-    """A resposta de sucesso das quatro views: sempre a mesma forma."""
+    """A resposta de sucesso das cinco views: sempre a mesma forma."""
     return Response(SessaoOutSerializer(sessao).data)
 
 
@@ -428,12 +431,74 @@ class TenantAtivoView(APIView):
 
 
 @tenant_scope_exempt
+class PreferenciasView(APIView):
+    """`PATCH /api/v1/auth/preferencias` — as definições desta pessoa (ADR 0016).
+
+    Hoje tem um campo, o `tema`, e é `PATCH` e não `PUT` porque é uma alteração
+    parcial de uma entidade que vai ganhar campos: um `PUT` com um campo obriga
+    o cliente a reenviar tudo no dia em que houver três, e um cliente antigo
+    apagava o que não conhecesse.
+
+    Devolve `SessaoOut` e não uma forma própria, pelo argumento da ADR 0010: o
+    cliente guarda **uma** entrada de cache e qualquer destas respostas a
+    substitui, em vez de uma quinta forma e um quinto ramo de Zod.
+
+    ## Dispensada de âmbito, e porque é que isso aqui não dispensa de CSRF
+
+    Escreve numa tabela sem política (`accounts_user`, ADR 0007) e tem de
+    funcionar em `escolha_pendente` e em `sem_estabelecimento`: um tema que só se
+    possa trocar depois de escolher o estabelecimento é um tema que não se troca
+    no ecrã onde o relâmpago da primeira pintura se vê.
+
+    **Não leva `csrf_protect`, e a ausência é deliberada** — é a diferença exacta
+    que o `SECURITY.md` §5 descreve e que o `LoginView` e a `AtivacaoView`
+    documentam do outro lado. O `as_view()` do DRF embrulha tudo em
+    `csrf_exempt`, e o que repõe a verificação é o `SessionAuthentication`:
+    **quando encontra utilizador na sessão**, ele verifica o token. O furo da ADR
+    0010 era dos endpoints **anónimos** de escrita, que é o que o login e a
+    activação são e este não é — com `IsAuthenticated`, não há caminho até aqui
+    sem sessão. Fica escrito para ninguém o "corrigir" nos dois sentidos.
+
+    ## Não há `user_id` no corpo
+
+    A escrita é sempre sobre o `request.user` (`PreferenciasInSerializer`). Não
+    é uma verificação que esta view faz: é um argumento que não existe, logo não
+    há objecto para autorizar nem caminho para a preferência de outra pessoa. É
+    a razão pela qual não há `has_object_permission` nem `pk` nesta rota, e a
+    prova está no `tests/test_preferencias.py`.
+
+    Qualquer papel, e sem `PertenceAoTenant`: o tema é de quem o pede e não do
+    estabelecimento (ADR 0016), e exigir pertença fechava o ecrã a quem ainda
+    não escolheu estabelecimento — que é metade do problema que esta ADR resolve.
+    """
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    @extend_schema(
+        operation_id="auth_preferencias",
+        summary="Guardar as preferências desta pessoa",
+        request=PreferenciasInSerializer,
+        responses={status.HTTP_200_OK: SessaoOutSerializer},
+    )
+    def patch(self, request: Request) -> Response:
+        corpo = PreferenciasInSerializer(data=request.data)
+        corpo.is_valid(raise_exception=True)
+        return _resposta(
+            guardar_preferencias(
+                _pedido_django(request),
+                tema=corpo.validated_data["tema"],
+            )
+        )
+
+
+@tenant_scope_exempt
 @method_decorator(csrf_protect, name="dispatch")
 class AtivacaoView(APIView):
     """`POST /api/v1/auth/ativar` — aceita um convite e devolve a sessão.
 
-    É a quinta view dispensada de âmbito, e a razão é a do login: corre **antes**
-    de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
+    É uma das seis views dispensadas de âmbito, e a razão é a do login: corre
+    **antes** de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
     esta view **abre** um âmbito, e o valor que o escolhe vem do **link**:
     `/ativar#<uuid-do-tenant>.<token>`. O uuid é argumento e não credencial, e
     quem concede é a política do `accounts_invitation`, que é uma política normal
@@ -752,11 +817,11 @@ class MenuView(APIView):
 
     A consequência fica nomeada em vez de descoberta mais tarde: o `menu` da
     sessão é filtrado pelo papel, pelo que um `owner` só vê no painel as rotas
-    que o **seu** papel pode ver. Hoje são todas: a única rota restrita é a dos
-    `convites`, e é restrita **ao** `owner`. No dia em que uma rota não for
-    visível para quem configura, o painel precisa de um `GET /menu` sem filtro —
-    está no relatório como o que falta, e é a razão de a resposta **deste** `PUT`
-    não ser filtrada.
+    que o **seu** papel pode ver. Hoje são todas: as duas rotas restritas — os
+    `convites` e o `painel` — são restritas **ao** `owner`. No dia em que uma rota
+    não for visível para quem configura, o painel precisa de um `GET /menu` sem
+    filtro — está no relatório como o que falta, e é a razão de a resposta
+    **deste** `PUT` não ser filtrada.
 
     ## Sem `has_object_permission` no caminho, e porquê
 

@@ -262,7 +262,16 @@ devolve zero linhas — falha fechada.
 
 ## 7. Frontend
 
-- Sem tokens em `localStorage`/`sessionStorage`.
+- Sem tokens em `localStorage`/`sessionStorage`. **A regra não mudou e continua literal** — o que
+  mudou é que há um uso de `localStorage` em `src/`, e dizê-lo aqui é mais honesto do que deixar
+  quem fizer `grep` descobri-lo: o `src/lib/tema.ts` guarda uma **cópia do nome da paleta**, que é
+  o que permite aplicar o tema antes da primeira pintura (ADR 0016). O teste que impede a excepção
+  de ser esticada é *vai para o armazenamento local o que um atacante não ganha nada em ler e nada
+  em escrever*: um nome de tema não é credencial, não é dado pessoal e não concede âmbito, e
+  escrever-lhe lixo dá o default — medido no browser, com a sessão bloqueada. A lista de ficheiros
+  com acesso é fechada por âmbito no `eslint.config.js` (um bloco `files: ["src/lib/tema.ts"]`), o
+  `sessionStorage` continua proibido também lá, e alargá-la é um diff visível com uma razão a
+  escrever.
 - `fetch` com `credentials: "include"` e header `X-CSRFToken`.
 - Sem `dangerouslySetInnerHTML`; se inevitável, `DOMPurify.sanitize` e revisão obrigatória.
 - Links externos com `rel="noopener noreferrer"`.
