@@ -387,3 +387,42 @@ papéis, os estados de um convite, os regimes de IVA, os motivos de desperdício
 `Record<Uniao, string>` continua no `schemas.ts`/`vocabulario.ts` e só as palavras vêm do catálogo,
 **nomeadas uma a uma**. São duas garantias diferentes e as duas fazem falta: o `Record` é o que deixa
 de compilar quando o contrato ganha um valor; o catálogo é o que exige a entrada inglesa.
+
+### O inglês ligou no mesmo dia, e o que a segunda língua mostrou
+
+A lista esvaziou e as duas linhas entraram. Três coisas que só se viram com o
+inglês a correr:
+
+**1. O gate das duas pontas passou a existir.** A decisão 9 era uma frase numa
+ADR, e as duas metades vivem em repositórios de linguagens diferentes — a forma
+de divergência que ninguém vê. O `test_o_ingles_so_liga_com_a_lista_vazia` lê o
+`SEM_CATALOGO` do frontend e afirma `("en" in LANGUAGES) == (lista vazia)`,
+falhando nos dois sentidos. O segundo sentido é o que valia escrever: *lista
+vazia sem inglês servido* é trabalho feito que ninguém recebe, e não tem sintoma.
+
+**2. Um grupo de menu renomeado pelo tenant parte-se em duas línguas**, e é mais
+do que "fica numa língua só" (que é o que esta ADR tinha aceitado). O grupo é
+texto livre e a pertença a um grupo é **igualdade de texto**: um tenant com
+`grupo='Painel'` gravado numa rota e as irmãs a cair no default vê, em inglês,
+"PAINEL" com um item e "OVERVIEW" com os outros dois — uma sidebar com cinco
+cabeçalhos onde havia três, metade em cada língua. Em português é invisível,
+porque o texto gravado é igual ao default.
+
+Foi visto no estabelecimento de demonstração, e a causa ali é **resíduo
+pré-0010**: um `PUT /menu` feito quando o `grupo` ainda viajava resolvido
+congelou `"Painel"` e `"Inventário"` na linha do tenant, que é exactamente o que
+a migração 0010 descreve e deliberadamente não migrou. Cura-se gravando as
+Definições → Navegação com os campos de grupo vazios. Não se mudou código por
+isto: o contrato já diz que em branco significa "usa o default", e o resíduo é de
+desenvolvimento. **Mas a consequência estrutural fica escrita**: enquanto o grupo
+for texto livre, uma empresa que renomeie *alguns* grupos tem a sidebar partida
+na segunda língua. Se isso passar a importar, o caminho é o grupo deixar de ser
+texto e passar a ser um id com nome por língua — o que é a ADR 0011 a mudar de
+forma, não um ajuste.
+
+**3. A forma dos números ficou em pt-PT e lê-se estranho ao lado de palavras
+inglesas** ("5919,94 €" debaixo de "Sales, excluding VAT"). É a decisão que já
+estava tomada — o negócio é português, a vírgula decimal e o símbolo depois do
+número são o que um dono reconhece — e continua a ser a certa por uma razão a
+mais: o painel compara-se com faturas e com o extracto do TPA, que estão em
+pt-PT. Reabre no dia em que o leitor inglês for quem **introduz** números.
