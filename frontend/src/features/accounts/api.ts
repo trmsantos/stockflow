@@ -727,6 +727,10 @@ function paraOInvolucro(estabelecimento: Estabelecimento) {
     id: estabelecimento.id,
     nome: estabelecimento.nome,
     papel: nomeDoPapel(estabelecimento.papel),
+    // Passa tal e qual: é um booleano e não um tipo de domínio, logo não há nada
+    // a traduzir. O `papel` é que precisa do `nomeDoPapel` porque o `PapelEnum` é
+    // do contrato e o shell não tem nada que o conhecer.
+    demonstracao: estabelecimento.demonstracao,
   };
 }
 

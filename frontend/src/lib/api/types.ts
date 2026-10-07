@@ -917,8 +917,21 @@ export interface components {
          *     O `papel` é o do par (utilizador, estabelecimento) e vem do `Membership`
          *     confirmado pela política: a mesma pessoa é dona de um e colaboradora noutro.
          *     Sai como enum fechado no OpenAPI, logo a união chega ao `types.ts`.
+         *
+         *     `demonstracao` entrou com a ADR 0018 e é a **única** diferença visível de um
+         *     estabelecimento de demonstração. Viaja aqui — e não num endpoint próprio —
+         *     porque é exactamente o que o cromado precisa e porque chega de graça: esta
+         *     forma já está no `tenant_ativo` e em cada entrada de `tenants`, que são os
+         *     dois sítios onde a faixa e o item marcado o vão ler, sem um pedido novo.
+         *
+         *     O nome é **duplo de propósito**: a coluna chama-se `is_demo` porque segue a
+         *     convenção de booleano da sua tabela (`is_active`, `is_staff`) e o campo
+         *     chama-se `demonstracao` porque segue o vocabulário português dos endpoints
+         *     deste módulo (`papel`, `rotulo`, `visivel`). É o `source` que os casa, num
+         *     sítio só.
          */
         TenantOut: {
+            demonstracao: boolean;
             /** Format: uuid */
             id: string;
             nome: string;

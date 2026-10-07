@@ -228,10 +228,16 @@ def test_login_com_um_estabelecimento_fica_com_ele_ativo(cenario: Cenario) -> No
         "email": "ana@alfa.pt",
         "tema": Tema.ESCURO.value,
     }
+    # O `demonstracao` entra aqui pela mesma razão do `tema` acima: a asserção é
+    # de igualdade, logo um campo novo no contrato cai num teste em vez de
+    # aparecer no `types.ts` sem ninguém olhar. `False` porque este
+    # estabelecimento foi criado pelo `criar_tenant` normal — o de demonstração
+    # tem o seu ficheiro (ADR 0018).
     assert corpo["tenant_ativo"] == {
         "id": str(cenario.alfa.id),
         "nome": "Pastelaria Alfa",
         "papel": Papel.OWNER.value,
+        "demonstracao": False,
     }
     assert corpo["tenants"] == [corpo["tenant_ativo"]]
     # O menu vem **na resposta do login**, já resolvido e filtrado pelo papel

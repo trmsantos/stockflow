@@ -36,7 +36,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from django.http import HttpRequest
@@ -45,6 +45,11 @@ from apps.accounts.models import Papel, UserManager
 from apps.accounts.permissions import PertenceAoTenant, TemPapel
 from apps.accounts.selectors import membership_no_ambito
 from apps.shared.db import TenantScopeConflict, current_tenant
+
+if TYPE_CHECKING:
+    # Só para o verificador: em runtime isto seria o ciclo que o
+    # `semear_demonstracao` (no fim do ficheiro) descreve.
+    from apps.accounts.services import DemonstracaoSemeada
 
 __all__ = [
     "MembershipInfo",
@@ -58,7 +63,8 @@ __all__ = [
     "dispensar_ambito",
     "membership_atual",
     "normalizar_email",
-    "tenant_context",
+    "opcao_de_tenant",
+    "semear_demonstracao",
     "tenant_scope_exempt",
     "utilizador_atual",
 ]
@@ -86,6 +92,20 @@ class TenantContext:
     Três campos, os da ADR 0007. O `role` está aqui porque é o par
     (tenant, papel) que decide o que o pedido pode fazer, e ir buscá-lo outra
     vez em cada view seria uma segunda query por pedido.
+
+    ## E **não** tem `demonstracao`, que é a decisão 1 da ADR 0018 feita tipo
+
+    O estabelecimento de demonstração "é um tenant como qualquer outro, e nenhum
+    endpoint sabe que ele existe: zero ramos, zero parâmetros". Isso é uma regra
+    que se cumpre ou não se cumpre — a menos que a bandeira não esteja ao alcance
+    de quem escreve uma view. Aqui está a diferença: `request.tenant.demonstracao`
+    **não existe**, logo um `if` sobre ele não compila, e o dia em que alguém
+    precisar de o escrever tem de acrescentar o campo a este DTO — que é um diff
+    visível com esta secção ao lado a dizer porque não devia.
+    
+    O critério que decide o que entra aqui é o mesmo de sempre: **os campos que
+    decidem autorização.** Que tipo de estabelecimento isto é não decide nada; é
+    cromado, e vai no `TenantOption`, que é o que o seletor mostra.
     """
 
     id: UUID
@@ -104,11 +124,19 @@ class TenantOption:
     `accounts_tenant` tem política) — e esses endpoints entram na sessão da
     autenticação. A forma fica fixada aqui para o contrato não nascer no
     frontend.
+
+    `demonstracao` entrou com a ADR 0018 e é a **única** diferença visível de um
+    estabelecimento de demonstração. Vive aqui e não no `TenantContext` por uma
+    razão que é a decisão 1 dessa ADR: o que isto alimenta é **cromado** — a
+    faixa permanente da barra de topo e o item marcado no seletor —, e nenhum
+    service ramifica nele. A secção correspondente do `TenantContext` explica o
+    outro lado.
     """
 
     id: UUID
     name: str
     role: str
+    demonstracao: bool
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -269,10 +297,10 @@ def utilizador_atual(request: HttpRequest) -> UserOut | None:
     )
 
 
-def tenant_context(user_id: UUID, tenant_id: UUID) -> TenantContext | None:
-    """Confirma a pertença **dentro do âmbito já aberto** e devolve o contexto.
+def opcao_de_tenant(user_id: UUID, tenant_id: UUID) -> TenantOption | None:
+    """Confirma a pertença **dentro do âmbito já aberto** e devolve a opção.
 
-    É a função que o login e a troca de tenant usam depois de abrirem
+    É a função que o login e a troca de estabelecimento usam depois de abrirem
     `tenant_scope(tenant_id)`: a sessão escolhe o âmbito, a política concede-o.
     `None` significa "a política não devolveu linha nenhuma" — o utilizador não
     tem pertença ativa nesse tenant, ou o tenant não existe.
@@ -281,11 +309,25 @@ def tenant_context(user_id: UUID, tenant_id: UUID) -> TenantContext | None:
     for. Sem essa guarda, chamá-la fora de âmbito devolvia `None` por a
     política filtrar tudo, e o erro aparecia como "não tem acesso" em vez de
     como o bug que é.
+
+    ## Chamava-se `tenant_context` e devolvia `TenantContext`, até 2026-10-07
+
+    O nome era o errado e o tipo também, e só se viu quando a ADR 0018 pediu um
+    campo. Os **dois** chamadores — a troca de estabelecimento e a lista de
+    candidatos — convertiam o resultado num `TenantOption` na linha seguinte;
+    quem constrói o `TenantContext` a sério é o `TenantMiddleware`, a partir da
+    pertença, e nunca passou por aqui.
+
+    Importa porque a alternativa era acrescentar `demonstracao` ao
+    `TenantContext` para o fazer chegar ao seletor — isto é, pôr a bandeira do
+    demo no contexto de autorização de **todos** os pedidos, que é exactamente a
+    afordância que a decisão 1 da ADR 0018 não pode ter. Um campo no sítio errado
+    é uma regra que passa a depender de disciplina.
     """
     ativo = current_tenant()
     if ativo != tenant_id:
         raise TenantScopeConflict(
-            f"tenant_context({tenant_id}) com o âmbito em {ativo}: a pertença "
+            f"opcao_de_tenant({tenant_id}) com o âmbito em {ativo}: a pertença "
             "só é legível dentro de tenant_scope(tenant_id) — as políticas do "
             "accounts_membership e do accounts_tenant filtram por ele "
             "(ADR 0007)."
@@ -293,10 +335,11 @@ def tenant_context(user_id: UUID, tenant_id: UUID) -> TenantContext | None:
     membership = membership_no_ambito(user_id=user_id, tenant_id=tenant_id)
     if membership is None:
         return None
-    return TenantContext(
+    return TenantOption(
         id=membership.tenant_id,
         name=membership.tenant.name,
         role=membership.role,
+        demonstracao=membership.tenant.is_demo,
     )
 
 
@@ -322,3 +365,38 @@ def normalizar_email(valor: str | None) -> str:
     forma. Quem valida a forma é o `EmailField` do modelo ou o serializer.
     """
     return UserManager.normalize_email(valor)
+
+
+# ---------------------------------------------------------------------------
+# A porta do semeador de demonstração (ADR 0018)
+# ---------------------------------------------------------------------------
+def semear_demonstracao(
+    *, email: str, nome: str, display_name: str
+) -> DemonstracaoSemeada:
+    """Cria um estabelecimento de demonstração e dá-o a uma conta que já existe.
+
+    **É o import-linter que obriga a esta função existir, e é esse o ponto.** O
+    `apps/demo/` é um módulo de fora, logo não pode importar
+    `apps.accounts.services` — só esta porta. A ADR 0018 escolheu pôr o semeador
+    num módulo próprio exactamente para isso: de dentro do `accounts` ele podia
+    escrever nos `models.py` à mão, e de fora **tem** de entrar por aqui.
+
+    ## Um invólucro com o import dentro do corpo, e não uma reexportação no topo
+
+    O `services.py` importa deste ficheiro (os DTOs de contexto e as permissões),
+    logo um `from apps.accounts.services import …` no topo seria um ciclo. A
+    primeira versão disto era um import no fim do ficheiro com um `# noqa: E402`
+    ao lado — e o `CLAUDE.md` proíbe `# noqa` no código, sem excepção. A regra
+    está certa: a supressão escondia que havia uma forma sem ela.
+
+    O import vive no corpo, que é o quebra-ciclos idiomático, e o tipo de retorno
+    resolve-se pelo `from __future__ import annotations` (a anotação é uma string
+    até alguém a avaliar) mais o `TYPE_CHECKING` no topo. Zero supressões.
+
+    A regra de negócio inteira — não criar contas, um demo por pessoa, revogar os
+    anteriores sem nunca tocar num estabelecimento a sério — está no service, que
+    é onde vive a lógica (CLAUDE.md). Aqui está a porta e mais nada.
+    """
+    from apps.accounts.services import semear_demonstracao as _semear
+
+    return _semear(email=email, nome=nome, display_name=display_name)

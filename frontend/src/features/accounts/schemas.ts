@@ -35,6 +35,13 @@ export const estabelecimentoSchema = z.object({
   id: z.uuid(),
   nome: z.string().min(1),
   papel: papelSchema,
+  /**
+   * É o estabelecimento de demonstração (ADR 0018). A **única** diferença
+   * visível de um demo, e é por isso que viaja aqui: esta forma serve o
+   * `tenant_ativo` e cada entrada de `tenants`, que são exactamente os dois
+   * sítios onde o cromado a lê — a faixa permanente e o item marcado no seletor.
+   */
+  demonstracao: z.boolean(),
 });
 
 /**

@@ -121,6 +121,10 @@ LOCAL_APPS = [
     "apps.agents.apps.AgentsConfig",
     "apps.billing.apps.BillingConfig",
     "apps.notifications.apps.NotificationsConfig",
+    # Sem models e sem migrações: está instalado só para o `manage.py` encontrar
+    # o `semear_demonstracao`. É um sumidouro de escrita (ADR 0018, decisão 3) e
+    # um contrato do import-linter proíbe que alguém o importe.
+    "apps.demo.apps.DemoConfig",
 ]
 
 INSTALLED_APPS = [*DJANGO_APPS, *THIRD_PARTY_APPS, *LOCAL_APPS]

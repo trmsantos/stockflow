@@ -1,5 +1,6 @@
 import { useIsFetching } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
+import { FlaskConical } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { IndicadorDeCarga } from "@/components/indicador-de-carga";
@@ -40,6 +41,31 @@ import type { SessaoDoShell } from "./sessao-do-shell";
  * responde é "está a acontecer alguma coisa?", que é global por natureza. E
  * porque é uma contagem, não há estado a sincronizar: quando a última consulta
  * assenta, o indicador desaparece sozinho.
+ *
+ * ## Dois sinais de "dados a fingir", e **não** se juntam num badge só
+ *
+ * É a parte fácil de "simplificar" para o lado errado, e a ADR 0018 escreveu-a
+ * antes de alguém a tentar. As duas afirmações são diferentes:
+ *
+ *  - **"o servidor de fixtures respondeu"** é sobre o ambiente de
+ *    desenvolvimento. É o `Badge` de `import.meta.env.DEV`, que em produção não
+ *    existe no bundle;
+ *  - **"estás no estabelecimento de demonstração"** é sobre o **tenant**, e tem
+ *    de funcionar **em produção**, que é onde ela importa.
+ *
+ * Colapsá-las dava um sinal de produção que só é testável num ambiente onde está
+ * sempre ligado — e o modo de falha é ele nunca aparecer onde interessa e
+ * ninguém notar. Em desenvolvimento, num demo, aparecem os dois, e isso é
+ * correcto: são duas coisas verdadeiras ao mesmo tempo.
+ *
+ * A faixa vive **aqui** e não em cada ecrã porque esta barra é `sticky`: está
+ * sempre à vista, em todos os ecrãs, e é isso que a torna o que limita alguém a
+ * registar no demo uma quebra que era a sério (ADR 0018, decisão 8 — o demo é
+ * escrevível de propósito, e o que o protege é a sinalização).
+ *
+ * Usa os papéis de banner que já existem (`warning-surface`, `warning-border`),
+ * porque não se inventam cores (DESIGN.md §2) e porque o amarelo é o registo
+ * certo: é um aviso, não um erro.
  *
  * **O que não está aqui**: o seletor de estabelecimento (é do pé da sidebar,
  * DESIGN.md §4) e o seletor de loja (é da barra do **ecrã** — parecem a mesma
@@ -85,10 +111,27 @@ export function AppHeader({
       )}
 
       {/* `ml-auto` aqui e não no badge: o indicador é o primeiro elemento da
-          direita e tem de o ser com ou sem o badge, que só existe em
-          desenvolvimento. */}
+          direita e tem de o ser com ou sem os badges, que são condicionais. */}
       <span className="ml-auto flex shrink-0 items-center gap-3">
         {aCarregar ? <IndicadorDeCarga /> : null}
+
+        {sessao.ativo?.demonstracao === true ? (
+          // `role="status"` e não um `<Badge>` decorativo: quem navega por áudio
+          // tem de saber que está num estabelecimento de demonstração antes de
+          // registar uma quebra lá. Não é `role="alert"` — não houve um evento, é
+          // uma condição permanente do ecrã.
+          <span
+            role="status"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-warning-border bg-warning-surface px-2 py-0.5 text-xs font-semibold"
+          >
+            <FlaskConical aria-hidden="true" className="size-3.5" />
+            {/* A palavra inteira a partir de `sm`, e "Demo" num telemóvel: a
+                barra tem 56px e o nome do ecrã à esquerda, e um rótulo que
+                empurre o nome para fora é pior do que um rótulo curto. */}
+            <span className="hidden sm:inline">Estabelecimento de demonstração</span>
+            <span className="sm:hidden">Demonstração</span>
+          </span>
+        ) : null}
 
         {import.meta.env.DEV ? (
           // Em desenvolvimento os dados de domínio vêm do servidor de fixtures

@@ -118,7 +118,7 @@ from apps.accounts.api import (
     TenantOption,
     UserOut,
     normalizar_email,
-    tenant_context,
+    opcao_de_tenant,
     utilizador_atual,
 )
 from apps.accounts.menu import ItemDeMenu
@@ -758,14 +758,13 @@ def escolher_tenant_ativo(request: HttpRequest, *, tenant_id: UUID) -> SessaoOut
     acidente de tipos.
     """
     with tenant_scope(tenant_id):
-        contexto = tenant_context(request.user.pk, tenant_id)
-        if contexto is None:
+        escolhido = opcao_de_tenant(request.user.pk, tenant_id)
+        if escolhido is None:
             logger.warning(
                 "troca de estabelecimento recusada",
                 extra={"event": "tenant_ativo", "outcome": CODIGO_DESCONHECIDO},
             )
             raise RecusaDeSessao(CODIGO_DESCONHECIDO, DETALHE_TENANT_DESCONHECIDO)
-        escolhido = TenantOption(id=contexto.id, name=contexto.name, role=contexto.role)
         logger.info(
             "estabelecimento ativo escolhido",
             extra={"event": "tenant_ativo", "outcome": "ok"},
@@ -842,11 +841,9 @@ def _tenants_confirmados(user: User) -> tuple[TenantOption, ...]:
     confirmados = []
     for candidato in dict.fromkeys(user.tenant_ids):
         with tenant_scope(candidato):
-            contexto = tenant_context(user.pk, candidato)
-        if contexto is not None:
-            confirmados.append(
-                TenantOption(id=contexto.id, name=contexto.name, role=contexto.role)
-            )
+            opcao = opcao_de_tenant(user.pk, candidato)
+        if opcao is not None:
+            confirmados.append(opcao)
     return tuple(sorted(confirmados, key=lambda opcao: (opcao.name, str(opcao.id))))
 
 
@@ -1714,3 +1711,115 @@ def guardar_estabelecimento(
         },
     )
     return _estabelecimento_out(tenant)
+
+
+# ---------------------------------------------------------------------------
+# O estabelecimento de demonstração (ADR 0018)
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DemonstracaoSemeada:
+    """O resultado de `semear_demonstracao`, para quem o chama poder relatar.
+
+    `revogados` são os uuids dos estabelecimentos de demonstração **anteriores**
+    desta pessoa, a que a pertença foi retirada nesta corrida. É informação de
+    operador e não de produto: quem corre o comando tem de saber que o demo de
+    ontem deixou de estar alcançável, em vez de o descobrir quando ele
+    desaparecer do seletor.
+    """
+
+    tenant: Tenant
+    user: User
+    revogados: tuple[UUID, ...]
+
+
+def semear_demonstracao(*, email: str, nome: str, display_name: str) -> DemonstracaoSemeada:
+    """Cria um estabelecimento de demonstração e dá-o a uma conta que já existe.
+
+    ## Não cria contas, e é a decisão 6 da ADR 0018
+
+    "Quem o vê: quem tiver um `Membership` nele, e mais ninguém" — e a pertença
+    é concedida pelo caminho de sempre. **Não há demonstração para quem não tem
+    conta**: o registo self-service não existe no v1 (ADR 0010) e esta função não
+    o reabre por uma porta de serviço. Um email desconhecido é um erro do
+    operador, não um convite a criar a conta.
+
+    É a diferença em relação ao `criar_tenant_com_dono`, que **pode** criar a
+    conta porque é o caminho pelo qual o primeiro cliente entra no sistema.
+
+    ## Um demo por pessoa, e reinicializar é criar outro
+
+    A decisão 5 diz que "o caminho normal **nunca apaga nada**", e não é zelo: o
+    `inventory_stockmovement` nasce com `REVOKE UPDATE, DELETE` ao role da app
+    (`SECURITY.md` §3), logo a app não consegue limpar um ledger — e é bom que não
+    consiga. Reinicializar é correr isto outra vez: estabelecimento novo com uuid
+    novo, pertença nova, e a pertença aos demos **anteriores desta pessoa**
+    revogada. A partir daí eles são inalcançáveis por quem quer que seja, porque a
+    query do `TenantMiddleware` devolve zero linhas e a resposta é 403 (ADR 0007).
+
+    Não é um demo partilhado, e a razão está na ADR: um demo partilhado é mutável
+    por todos os que o vêem, logo a primeira pessoa que lá registar uma quebra
+    muda o que a próxima encontra — e reinicializá-lo apanharia alguém a meio. O
+    custo fica nomeado: os estabelecimentos revogados acumulam-se como linhas
+    mortas até um operador os limpar, e o `billing` da fase 3 tem de filtrar pelo
+    `is_demo`.
+
+    ## A revogação só alcança demos, e isso é verificado e não assumido
+
+    O filtro é `is_demo=True` **dentro do âmbito de cada candidato**, o que é a
+    única forma de o ler: o `accounts_tenant` tem política sobre `id`. Um
+    estabelecimento a sério desta pessoa nunca entra na lista — e se o filtro
+    falhasse, o que esta função fazia era retirar a alguém o acesso ao seu próprio
+    negócio. É por isso que a comparação é por igualdade a `True` e não por
+    ausência de nada.
+    """
+    try:
+        user = User.objects.get_by_natural_key(email)
+    except User.DoesNotExist as erro:
+        # `ValidationError` por campo e não `ValueError`: quem chama é um comando
+        # de operador, e o `email` é o campo que ele escreveu mal.
+        raise ValidationError(
+            {"email": [f"Não existe conta com o email {email}. O demo não cria contas."]}
+        ) from erro
+
+    revogados = _revogar_demonstracoes_anteriores(user)
+
+    tenant_id = uuid4()
+    with tenant_scope(tenant_id):
+        tenant = Tenant.objects.create(id=tenant_id, name=nome, is_demo=True)
+        conceder_pertenca(
+            user=user,
+            tenant_id=tenant_id,
+            role=Papel.OWNER,
+            display_name=display_name,
+        )
+        logger.info(
+            "demonstração semeada",
+            extra={
+                "event": "demo_semeado",
+                "outcome": "ok",
+                "count": len(revogados),
+            },
+        )
+
+    return DemonstracaoSemeada(tenant=tenant, user=user, revogados=revogados)
+
+
+def _revogar_demonstracoes_anteriores(user: User) -> tuple[UUID, ...]:
+    """Retira a pertença aos demos anteriores desta pessoa. Nunca aos reais.
+
+    Percorre o `tenant_ids` — o único bit legível fora de âmbito (ADR 0007) — e
+    abre o âmbito de cada candidato para perguntar se ele é de demonstração. Não
+    há forma mais curta: a pergunta "este tenant é demo?" só tem resposta dentro
+    do âmbito dele, porque é a política que a concede.
+
+    O `revogar_pertenca` poda o `tenant_ids` no mesmo passo, logo um demo revogado
+    sai da lista de candidatos e deixa de aparecer no seletor sem mais nada.
+    """
+    revogados: list[UUID] = []
+    for candidato in dict.fromkeys(user.tenant_ids):
+        with tenant_scope(candidato):
+            if not Tenant.objects.filter(pk=candidato, is_demo=True).exists():
+                continue
+            revogar_pertenca(user=user, tenant_id=candidato)
+            revogados.append(candidato)
+    return tuple(revogados)

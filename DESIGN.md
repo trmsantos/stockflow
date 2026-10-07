@@ -532,6 +532,18 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   partir do header em mobile. **Não há tab bar** e não há uma terceira superfície de navegação. O
   menu é uma projecção por tenant sobre as rotas que existem, com um nível de agrupamento (ADR
   0009); esconder é apresentação, não autorização.
+- **Dois sinais de "dados a fingir", e não se juntam num badge só.** "O servidor de fixtures
+  respondeu" é sobre o ambiente de desenvolvimento e não existe no bundle de produção; "estás no
+  estabelecimento de demonstração" é sobre o **tenant** e tem de funcionar em produção, que é onde
+  importa. Colapsá-los dava um sinal de produção testável só onde está sempre ligado — e o modo de
+  falha é nunca aparecer onde interessa. Num demo em desenvolvimento aparecem os dois, e está certo.
+  A faixa do tenant vive na barra de topo porque ela é `sticky`: é o que limita alguém a registar no
+  demo uma quebra que era a sério (ADR 0018, decisão 8 — o demo é escrevível de propósito, e o que o
+  protege é a sinalização). Usa os papéis de banner que já existem (`warning-surface`,
+  `warning-border`): não se inventam cores, e o amarelo é o registo certo — é um aviso, não um erro.
+  O estabelecimento fica marcado nos **dois** estados do seletor, com ícone **mais** texto `sr-only`:
+  o botão em repouso responde "onde estou?" sem abrir a lista, o item responde "qual deles é?" com
+  ela aberta, e a cor nunca comunica sozinha.
 - O **seletor de tenant** vive no pé da sidebar (é do shell); o **seletor de loja** fica na barra do
   ecrã (é do ecrã). Parecem a mesma coisa e não são. É também no pé da sidebar que vive a **entrada**
   para as preferências da pessoa, ao lado do email e da saída da conta — um `<Link>` para

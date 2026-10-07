@@ -56,9 +56,10 @@ from apps.accounts.api import (
     PertenceAoTenant,
     TemPapel,
     TenantContext,
+    TenantOption,
     dispensa_declarada,
     membership_atual,
-    tenant_context,
+    opcao_de_tenant,
     tenant_scope_exempt,
     utilizador_atual,
 )
@@ -992,32 +993,43 @@ def test_o_tenant_ids_nao_concede_nada(cenario: Cenario) -> None:
 
     with tenant_scope(cenario.alfa.id):
         assert membership_no_ambito(user_id=cenario.ana.pk, tenant_id=cenario.alfa.id) is None
-        assert tenant_context(cenario.ana.pk, cenario.alfa.id) is None
+        assert opcao_de_tenant(cenario.ana.pk, cenario.alfa.id) is None
 
 
 # ---------------------------------------------------------------------------
-# 12. `tenant_context` exige o âmbito, e o `MembershipInfo` é congelado
+# 12. `opcao_de_tenant` exige o âmbito, e o `MembershipInfo` é congelado
 # ---------------------------------------------------------------------------
-def test_tenant_context_dentro_do_ambito_devolve_o_contexto(cenario: Cenario) -> None:
+def test_a_opcao_de_tenant_dentro_do_ambito_devolve_a_opcao(cenario: Cenario) -> None:
+    """A forma inteira, e é de igualdade: um campo novo cai aqui.
+
+    Chamava-se `tenant_context` e devolvia `TenantContext` até 2026-10-07. Os
+    dois chamadores reais convertiam-no num `TenantOption` na linha seguinte, e
+    quem constrói o `TenantContext` a sério é o `TenantMiddleware` — nunca passou
+    por aqui. A ADR 0018 tornou isso visível ao pedir um campo: acrescentar
+    `demonstracao` ao `TenantContext` era pôr a bandeira do demo no contexto de
+    autorização de **todos** os pedidos, que é a afordância que a decisão 1 dessa
+    ADR não pode ter.
+    """
     with tenant_scope(cenario.alfa.id):
-        contexto = tenant_context(cenario.ana.pk, cenario.alfa.id)
+        opcao = opcao_de_tenant(cenario.ana.pk, cenario.alfa.id)
 
-    assert contexto == TenantContext(
+    assert opcao == TenantOption(
         id=cenario.alfa.id,
         name="Pastelaria Alfa",
         role=Papel.OWNER.value,
+        demonstracao=False,
     )
 
 
-def test_tenant_context_fora_do_ambito_levanta_em_vez_de_devolver_none(
+def test_a_opcao_de_tenant_fora_do_ambito_levanta_em_vez_de_devolver_none(
     cenario: Cenario,
 ) -> None:
     """Sem a guarda, o bug aparecia como "não tem acesso" em vez de como bug."""
-    with pytest.raises(TenantScopeConflict, match="tenant_context"):
-        tenant_context(cenario.ana.pk, cenario.alfa.id)
+    with pytest.raises(TenantScopeConflict, match="opcao_de_tenant"):
+        opcao_de_tenant(cenario.ana.pk, cenario.alfa.id)
 
     with tenant_scope(cenario.beta.id), pytest.raises(TenantScopeConflict):
-        tenant_context(cenario.ana.pk, cenario.alfa.id)
+        opcao_de_tenant(cenario.ana.pk, cenario.alfa.id)
 
 
 def test_o_contexto_do_pedido_e_imutavel() -> None:
