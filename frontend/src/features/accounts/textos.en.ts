@@ -22,6 +22,13 @@ import type { PT } from "./textos.pt";
  * existe, não a cria.
  */
 export const EN: typeof PT = {
+  accoes: {
+    guardar: "Save",
+    aGuardar: "Saving…",
+    desfazer: "Undo",
+    naoGuardado: "What is on the screen is what you wrote, and it is still unsaved.",
+  },
+
   entrar: {
     titulo: "Sign in",
     subtitulo: "Use the email you were invited with.",
@@ -42,6 +49,81 @@ export const EN: typeof PT = {
     erroAoEntrar: "Could not sign in",
     erroAoAbrirEstabelecimento: "Could not open that establishment",
     terminarSessao: "Sign out",
+  },
+
+  definicoes: {
+    titulo: "Settings",
+    subtitulo:
+      "Appearance is yours and follows your account. The rest belongs to this establishment and applies to the whole team.",
+    regua: "Settings sections",
+  },
+
+  aparencia: {
+    rotulo: "Palette",
+    explicacao: "Choosing applies it straight away. The whole application changes colour.",
+    aCarregar: "Loading your preferences…",
+    erroTitulo: "The palette was not saved",
+    erroCorpo: "The colours went back to the previous palette. Try again.",
+    emUso: "in use",
+  },
+
+  estabelecimento: {
+    aCarregar: "Loading the establishment configuration…",
+    erroDeLeitura: "Could not read the configuration",
+    erroAoGuardar: "The configuration was not saved",
+    demoTitulo: "This is the demonstration establishment",
+    demoCorpo:
+      "The data was seeded so you can experiment and does not belong to a real business. The name cannot be changed here; the rest of the configuration changes as in any establishment.",
+    nome: "Name",
+    nomeExplicacao: "How it appears in the establishment selector and at the top of the screens.",
+    regimeDeIva: "VAT regime",
+    regimes: {
+      normal: {
+        nome: "Standard regime",
+        efeito:
+          "VAT on purchases is deductible, so an item costs the amount before VAT.",
+      },
+      isento_art_53: {
+        nome: "Exempt (art. 53)",
+        efeito: "VAT on purchases is not deductible, so it is a cost: it enters the stock value.",
+      },
+    },
+    diaDeNegocio: "The business day starts at",
+    diaDeNegocioExplicacao: (hora: string) =>
+      `This is the hour that separates one day from the next in the totals and the alerts. With ${hora}, what happens at 01:30 counts towards the previous day, and the month runs from the 1st at ${hora} to the 1st of the next month at the same hour — it is not the fiscal month.`,
+    validadesEnfase: "Expiry dates do not change with this hour",
+    validadesFim: ": they are the date printed on the packaging.",
+    avisoRetroactivoTitulo: "Changing this hour recalculates past days and months",
+    avisoRetroactivoCorpo: (antes: string, depois: string) =>
+      `Only movements recorded between ${antes} and ${depois} change day.`,
+  },
+
+  navegacao: {
+    explicacaoInicio:
+      "The name, the group and the order of each screen in the sidebar. Hiding a screen takes it out of the menu and does",
+    enfaseNao: "not",
+    explicacaoFim:
+      "take away access — anyone who knows the address still gets in. Access is decided by the role, in the «Who sees» column. Leaving a name or a group blank uses what the application ships.",
+    colunas: {
+      rota: "Route",
+      rotulo: "Name in the menu",
+      grupo: "Group",
+      quem: "Who sees",
+      estado: "In the menu",
+      mover: "Order",
+    },
+    todos: "everyone",
+    soO: (papeis: string) => `only the ${papeis}`,
+    nomeNoMenuDe: (rota: string) => `Name of ${rota} in the menu`,
+    grupoDe: (rota: string) => `Group of ${rota}`,
+    subir: (rota: string) => `Move ${rota} up`,
+    descer: (rota: string) => `Move ${rota} down`,
+    visivel: "Visible",
+    escondida: "Hidden",
+    erroAoGuardar: "The menu was not saved",
+    aCarregar: "Loading the menu routes…",
+    erroDeLeitura: "Could not read the routes",
+    tabela: "Navigation for this establishment",
   },
 
   ativar: {

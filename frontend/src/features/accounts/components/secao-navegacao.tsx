@@ -16,6 +16,7 @@ import { mensagemDeErro } from "@/lib/api/errors";
 
 import { useGuardarMenu, useRotasDeMenu, useSessao } from "../api";
 import { nomeDoPapel, type ItemDeMenuParaGuardar, type Papel, type RotaDeMenu } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * A secção **Navegação** das Definições: que ecrãs a equipa vê, com que nomes e
@@ -93,12 +94,12 @@ interface LinhaDeMenu {
 }
 
 const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "rota", rotulo: "Rota", classe: "w-[14rem]" },
-  { chave: "rotulo", rotulo: "Nome no menu" },
-  { chave: "grupo", rotulo: "Grupo", classe: "w-[12rem]" },
-  { chave: "quem", rotulo: "Quem vê", classe: "w-[10rem]" },
-  { chave: "estado", rotulo: "No menu", classe: "w-[7rem]" },
-  { chave: "mover", rotulo: "Ordem", classe: "w-[6rem] text-right" },
+  { chave: "rota", rotulo: textos.navegacao.colunas.rota, classe: "w-[14rem]" },
+  { chave: "rotulo", rotulo: textos.navegacao.colunas.rotulo },
+  { chave: "grupo", rotulo: textos.navegacao.colunas.grupo, classe: "w-[12rem]" },
+  { chave: "quem", rotulo: textos.navegacao.colunas.quem, classe: "w-[10rem]" },
+  { chave: "estado", rotulo: textos.navegacao.colunas.estado, classe: "w-[7rem]" },
+  { chave: "mover", rotulo: textos.navegacao.colunas.mover, classe: "w-[6rem] text-right" },
 ];
 
 /**
@@ -174,11 +175,12 @@ function QuemVe({ papeis }: { readonly papeis: readonly Papel[] }) {
   // Três de três é "todos" e não uma lista de três palavras: o que a coluna
   // responde é "isto é restrito?", e enumerar os três papéis dá a mesma resposta
   // com três vezes o texto.
-  if (papeis.length >= 3) return <span className="text-muted-foreground">todos</span>;
+  if (papeis.length >= 3)
+    return <span className="text-muted-foreground">{textos.navegacao.todos}</span>;
 
   return (
     <span className="font-semibold">
-      só o {papeis.map((papel) => nomeDoPapel(papel)).join(", ")}
+      {textos.navegacao.soO(papeis.map((papel) => nomeDoPapel(papel)).join(", "))}
     </span>
   );
 }
@@ -225,7 +227,7 @@ function LinhaEditavel({
 
       <td className={CLASSE_CELULA}>
         <Input
-          aria-label={`Nome de ${linha.rotuloPorOmissao} no menu`}
+          aria-label={textos.navegacao.nomeNoMenuDe(linha.rotuloPorOmissao)}
           value={linha.rotulo ?? ""}
           placeholder={linha.rotuloPorOmissao}
           maxLength={50}
@@ -238,7 +240,7 @@ function LinhaEditavel({
 
       <td className={CLASSE_CELULA}>
         <Input
-          aria-label={`Grupo de ${linha.rotuloPorOmissao}`}
+          aria-label={textos.navegacao.grupoDe(linha.rotuloPorOmissao)}
           value={linha.grupo ?? ""}
           placeholder={linha.grupoPorOmissao}
           maxLength={50}
@@ -273,7 +275,7 @@ function LinhaEditavel({
             <EyeOff aria-hidden="true" className="text-muted-foreground" />
           )}
           <span className={linha.visivel ? "" : "text-muted-foreground"}>
-            {linha.visivel ? "Visível" : "Escondida"}
+            {linha.visivel ? textos.navegacao.visivel : textos.navegacao.escondida}
           </span>
         </Button>
       </td>
@@ -284,27 +286,27 @@ function LinhaEditavel({
             type="button"
             variant="ghost"
             size="icon-sm"
-            title={`Subir ${linha.rotuloPorOmissao}`}
+            title={textos.navegacao.subir(linha.rotuloPorOmissao)}
             disabled={aGuardar || indice === 0}
             onClick={() => {
               aMover(-1);
             }}
           >
             <ArrowUp aria-hidden="true" />
-            <span className="sr-only">Subir {linha.rotuloPorOmissao}</span>
+            <span className="sr-only">{textos.navegacao.subir(linha.rotuloPorOmissao)}</span>
           </Button>
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            title={`Descer ${linha.rotuloPorOmissao}`}
+            title={textos.navegacao.descer(linha.rotuloPorOmissao)}
             disabled={aGuardar || indice === total - 1}
             onClick={() => {
               aMover(1);
             }}
           >
             <ArrowDown aria-hidden="true" />
-            <span className="sr-only">Descer {linha.rotuloPorOmissao}</span>
+            <span className="sr-only">{textos.navegacao.descer(linha.rotuloPorOmissao)}</span>
           </Button>
         </span>
       </td>
@@ -349,10 +351,8 @@ export function SecaoNavegacao({ defaults }: { readonly defaults: readonly Defau
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-prose text-sm text-muted-foreground">
-          O nome, o grupo e a ordem de cada ecrã na barra lateral. Esconder um ecrã tira-o do menu e{" "}
-          <strong>não</strong> retira o acesso — quem souber o endereço continua a entrar. Quem
-          decide o acesso é o papel, na coluna «Quem vê». Deixar um nome ou um grupo em branco usa o
-          que a aplicação traz.
+          {textos.navegacao.explicacaoInicio} <strong>{textos.navegacao.enfaseNao}</strong>{" "}
+          {textos.navegacao.explicacaoFim}
         </p>
 
         <span className="flex shrink-0 gap-2">
@@ -365,7 +365,7 @@ export function SecaoNavegacao({ defaults }: { readonly defaults: readonly Defau
             }}
           >
             <RotateCcw aria-hidden="true" />
-            Desfazer
+            {textos.accoes.desfazer}
           </Button>
           <Button
             type="button"
@@ -387,7 +387,7 @@ export function SecaoNavegacao({ defaults }: { readonly defaults: readonly Defau
             }}
           >
             <Save aria-hidden="true" />
-            {guardar.isPending ? "A guardar…" : "Guardar"}
+            {guardar.isPending ? textos.accoes.aGuardar : textos.accoes.guardar}
           </Button>
         </span>
       </div>
@@ -395,10 +395,9 @@ export function SecaoNavegacao({ defaults }: { readonly defaults: readonly Defau
       {guardar.isError ? (
         <Alert variant="destructive">
           <CircleAlert aria-hidden="true" />
-          <AlertTitle>O menu não ficou guardado</AlertTitle>
+          <AlertTitle>{textos.navegacao.erroAoGuardar}</AlertTitle>
           <AlertDescription>
-            {mensagemDeErro(guardar.error)} O que está no ecrã é o que escreveu, e continua por
-            guardar.
+            {mensagemDeErro(guardar.error)} {textos.accoes.naoGuardado}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -407,21 +406,21 @@ export function SecaoNavegacao({ defaults }: { readonly defaults: readonly Defau
         <EsqueletoDeTabela
           colunas={COLUNAS}
           larguraMinima="min-w-[60rem]"
-          rotulo="A carregar as rotas do menu…"
+          rotulo={textos.navegacao.aCarregar}
           comTrilho
           linhas={6}
         />
       ) : rotas.isError ? (
         <Alert variant="destructive">
           <CircleAlert aria-hidden="true" />
-          <AlertTitle>Não foi possível ler as rotas</AlertTitle>
+          <AlertTitle>{textos.navegacao.erroDeLeitura}</AlertTitle>
           <AlertDescription>{mensagemDeErro(rotas.error)}</AlertDescription>
         </Alert>
       ) : (
         <MolduraDeTabela
           colunas={COLUNAS}
           larguraMinima="min-w-[60rem]"
-          rotulo="Navegação desta casa"
+          rotulo={textos.navegacao.tabela}
           comTrilho
         >
           <tbody>

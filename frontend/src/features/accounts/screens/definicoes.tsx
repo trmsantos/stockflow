@@ -12,6 +12,7 @@ import {
   PRIMEIRA_SECAO_DA_EMPRESA,
   type SecaoDeDefinicoes,
 } from "../secoes";
+import { textos } from "../textos";
 import { useSessao } from "../api";
 
 /**
@@ -116,14 +117,12 @@ export function EcraDeDefinicoes({
   return (
     <div className="flex flex-col gap-5 p-4">
       <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-balance">Definições</h1>
-        <p className="max-w-prose text-sm text-muted-foreground">
-          A aparência é sua e segue a sua conta. O resto é desta casa e vale para toda a equipa.
-        </p>
+        <h1 className="text-2xl font-semibold text-balance">{textos.definicoes.titulo}</h1>
+        <p className="max-w-prose text-sm text-muted-foreground">{textos.definicoes.subtitulo}</p>
       </header>
 
       {visiveis.length > 1 ? (
-        <nav aria-label="Secções das definições" className="flex min-w-0 overflow-x-auto">
+        <nav aria-label={textos.definicoes.regua} className="flex min-w-0 overflow-x-auto">
           <span className="flex divide-x divide-border border-b border-border">
             {visiveis.map((candidata) => (
               <SegmentoDaRegua

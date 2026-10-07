@@ -17,6 +17,7 @@ import { mensagemDeErro } from "@/lib/api/errors";
 
 import { useConfiguracaoDoEstabelecimento, useGuardarEstabelecimento } from "../api";
 import type { ConfiguracaoDoEstabelecimento, RegimeDeIva } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * A secção **Estabelecimento** das Definições: o nome por que esta casa aparece,
@@ -57,15 +58,26 @@ import type { ConfiguracaoDoEstabelecimento, RegimeDeIva } from "../schemas";
  * base de dados (`SECURITY.md` §3) e tem a questão do NIF duplicado em aberto
  * desde a ADR 0007.
  */
-/** Os dois regimes por extenso, e **o que cada um faz ao custo**. */
+/**
+ * Os dois regimes por extenso, e **o que cada um faz ao custo**.
+ *
+ * As palavras vêm do catálogo; o que fica aqui é o `Record<RegimeDeIva, …>`, que
+ * é a parte que amarra a copy ao contrato: um terceiro regime no `schemas.ts` não
+ * compila até alguém o nomear, e o catálogo sozinho não dava essa garantia.
+ */
 const REGIMES: Record<RegimeDeIva, { readonly nome: string; readonly efeito: string }> = {
+  // As quatro folhas nomeadas uma a uma, e não `normal: textos.….regimes.normal`:
+  // o `check-textos` conta uma chave como usada quando alguém a **nomeia**, e
+  // entregar o objecto inteiro deixava as folhas sem uso visível. Medido: a
+  // alternativa era ensinar o gate a aceitar o pai, e isso cobria estas quatro e
+  // mais nada — ou seja, trocava-se poder de poda por conveniência.
   normal: {
-    nome: "Regime normal",
-    efeito: "O IVA das compras é dedutível, logo o custo de um artigo é o valor sem IVA.",
+    nome: textos.estabelecimento.regimes.normal.nome,
+    efeito: textos.estabelecimento.regimes.normal.efeito,
   },
   isento_art_53: {
-    nome: "Isento (art. 53.º)",
-    efeito: "O IVA das compras não é dedutível, logo é custo: entra no valor do stock.",
+    nome: textos.estabelecimento.regimes.isento_art_53.nome,
+    efeito: textos.estabelecimento.regimes.isento_art_53.efeito,
   },
 };
 
@@ -85,7 +97,7 @@ export function SecaoEstabelecimento() {
   if (configuracao.isPending) {
     return (
       <div aria-busy="true" className="flex max-w-xl flex-col gap-4">
-        <span className="sr-only">A carregar a configuração do estabelecimento…</span>
+        <span className="sr-only">{textos.estabelecimento.aCarregar}</span>
         <Skeleton className="h-9 w-full" />
         <Skeleton className="h-9 w-full" />
         <Skeleton className="h-9 w-40" />
@@ -97,7 +109,7 @@ export function SecaoEstabelecimento() {
     return (
       <Alert variant="destructive">
         <CircleAlert aria-hidden="true" />
-        <AlertTitle>Não foi possível ler a configuração</AlertTitle>
+        <AlertTitle>{textos.estabelecimento.erroDeLeitura}</AlertTitle>
         <AlertDescription>{mensagemDeErro(configuracao.error)}</AlertDescription>
       </Alert>
     );
@@ -117,16 +129,13 @@ export function SecaoEstabelecimento() {
       {actual.demonstracao ? (
         <Alert>
           <FlaskConical aria-hidden="true" />
-          <AlertTitle>Este é o estabelecimento de demonstração</AlertTitle>
-          <AlertDescription>
-            Os dados foram semeados para experimentar e não são de um negócio real. O nome não se
-            altera aqui; o resto da configuração muda como em qualquer casa.
-          </AlertDescription>
+          <AlertTitle>{textos.estabelecimento.demoTitulo}</AlertTitle>
+          <AlertDescription>{textos.estabelecimento.demoCorpo}</AlertDescription>
         </Alert>
       ) : null}
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="nome-do-estabelecimento">Nome</Label>
+        <Label htmlFor="nome-do-estabelecimento">{textos.estabelecimento.nome}</Label>
         <Input
           id="nome-do-estabelecimento"
           value={valores.nome}
@@ -136,15 +145,13 @@ export function SecaoEstabelecimento() {
             mudar({ nome: evento.target.value });
           }}
         />
-        <p className="text-xs text-muted-foreground">
-          Como aparece no seletor de estabelecimento e no topo dos ecrãs.
-        </p>
+        <p className="text-xs text-muted-foreground">{textos.estabelecimento.nomeExplicacao}</p>
       </div>
 
       <div className="flex flex-col gap-1.5">
         {/* "Regime de IVA" e nunca "Regime": o que um dono chama "simplificado"
             é o regime de IRS, e metade das respostas seria sobre outro imposto. */}
-        <Label htmlFor="regime-de-iva">Regime de IVA</Label>
+        <Label htmlFor="regime-de-iva">{textos.estabelecimento.regimeDeIva}</Label>
         <Select
           value={valores.vat_regime}
           disabled={guardar.isPending}
@@ -172,7 +179,7 @@ export function SecaoEstabelecimento() {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="dia-de-negocio">O dia de negócio começa às</Label>
+        <Label htmlFor="dia-de-negocio">{textos.estabelecimento.diaDeNegocio}</Label>
         {/* `type="time"` com `step={60}`: o controlo nativo é o que dá o teclado
             certo no telemóvel e o formato local. O `step` tira os segundos do
             picker, que o contrato não transporta. */}
@@ -187,12 +194,14 @@ export function SecaoEstabelecimento() {
             mudar({ business_day_starts_at: evento.target.value });
           }}
         />
+        {/* A frase longa é uma função do catálogo (interpola a hora em vigor
+            duas vezes) e a ênfase é uma parte nomeada: o `<strong>` do meio é o
+            que o DESIGN.md §2 quer que quem lê em diagonal leve, e juntar tudo
+            numa string perdia-o. */}
         <p className="text-xs text-pretty text-muted-foreground">
-          É a hora que separa um dia do seguinte nos totais e nos alertas. Com{" "}
-          {actual.business_day_starts_at}, o que acontece à 01:30 conta no dia anterior, e o mês vai
-          do dia 1 às {actual.business_day_starts_at} ao dia 1 do mês seguinte à mesma hora — não é
-          o mês fiscal. <strong>As validades não mudam com esta hora</strong>: são a data impressa
-          na embalagem.
+          {textos.estabelecimento.diaDeNegocioExplicacao(actual.business_day_starts_at)}{" "}
+          <strong>{textos.estabelecimento.validadesEnfase}</strong>
+          {textos.estabelecimento.validadesFim}
         </p>
         {horaMudou ? (
           // O aviso aparece **antes** de gravar e só quando a hora mudou. É
@@ -200,10 +209,12 @@ export function SecaoEstabelecimento() {
           // ADR 0013), e dizê-lo é o que separa uma decisão de uma surpresa.
           <Alert>
             <CircleAlert aria-hidden="true" />
-            <AlertTitle>Mudar esta hora recalcula os dias e os meses já passados</AlertTitle>
+            <AlertTitle>{textos.estabelecimento.avisoRetroactivoTitulo}</AlertTitle>
             <AlertDescription>
-              Só mudam de dia os movimentos registados entre as{" "}
-              {actual.business_day_starts_at} e as {valores.business_day_starts_at}.
+              {textos.estabelecimento.avisoRetroactivoCorpo(
+                actual.business_day_starts_at,
+                valores.business_day_starts_at,
+              )}
             </AlertDescription>
           </Alert>
         ) : null}
@@ -212,10 +223,9 @@ export function SecaoEstabelecimento() {
       {guardar.isError ? (
         <Alert variant="destructive">
           <CircleAlert aria-hidden="true" />
-          <AlertTitle>A configuração não ficou guardada</AlertTitle>
+          <AlertTitle>{textos.estabelecimento.erroAoGuardar}</AlertTitle>
           <AlertDescription>
-            {mensagemDeErro(guardar.error)} O que está no ecrã é o que escreveu, e continua por
-            guardar.
+            {mensagemDeErro(guardar.error)} {textos.accoes.naoGuardado}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -237,7 +247,7 @@ export function SecaoEstabelecimento() {
           }}
         >
           <Save aria-hidden="true" />
-          {guardar.isPending ? "A guardar…" : "Guardar"}
+          {guardar.isPending ? textos.accoes.aGuardar : textos.accoes.guardar}
         </Button>
         <Button
           type="button"
@@ -248,7 +258,7 @@ export function SecaoEstabelecimento() {
           }}
         >
           <RotateCcw aria-hidden="true" />
-          Desfazer
+          {textos.accoes.desfazer}
         </Button>
       </span>
     </div>
