@@ -18,22 +18,28 @@
  * em vez de funções. Com um selector, cada string passava a valor reactivo e
  * cada constante a função — e reverter isto não é grátis, o que está dito na ADR.
  *
- * ## A lista é fechada e tem um elemento
+ * ## A lista é fechada e tem **dois** elementos desde 2026-10-07
  *
  * Com o idioma a vir do browser **não se pode "não enviar" inglês**: um browser
- * inglês recebe o que houver. Enquanto esta lista tiver um elemento, um
- * `navigator.language` de `en-US` cai em `pt-PT` e a app é inteiramente
- * portuguesa — que é coerente, porque uma app meio traduzida dá ao leitor inglês
- * uma parede de português exactamente onde a tarefa fica difícil.
+ * inglês recebe o que houver. Enquanto esta lista teve um elemento, um
+ * `navigator.language` de `en-US` caía em `pt-PT` e a app era inteiramente
+ * portuguesa — que era coerente, porque uma app meio traduzida dá ao leitor
+ * inglês uma parede de português exactamente onde a tarefa fica difícil.
  *
- * O inglês liga-se acrescentando `"en"` ao `LINGUAS` **e** a entrada equivalente
- * no `LANGUAGES` do `config/settings/base.py`, no commit em que a última linha da
- * lista fechada do `scripts/check-textos.mjs` sair. São duas linhas, e é a única
- * alteração em que a app muda de estado.
+ * O inglês entrou no commit em que a última linha da lista fechada do
+ * `scripts/check-textos.mjs` saiu, que é a condição que a ADR 0019 (decisão 9)
+ * fixou. **E a condição é verificada, não prometida**: o
+ * `backend/tests/test_i18n.py` lê essa lista e falha nos dois sentidos — inglês
+ * servido com a lista cheia, ou lista vazia sem inglês servido.
+ *
+ * A entrada aqui e a do `LANGUAGES` do `config/settings/base.py` são as duas
+ * metades da mesma decisão: esta serve os catálogos do cliente, aquela serve as
+ * mensagens do servidor. Uma sem a outra dá uma UI numa língua e as recusas
+ * noutra.
  */
 
-/** As línguas que esta app serve. Fechada, e hoje com um elemento. */
-export const LINGUAS = ["pt-PT"] as const;
+/** As línguas que esta app serve. Fechada. */
+export const LINGUAS = ["pt-PT", "en"] as const;
 
 export type Lingua = (typeof LINGUAS)[number];
 

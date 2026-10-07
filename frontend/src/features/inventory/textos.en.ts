@@ -3,9 +3,9 @@ import type { PT } from "./textos.pt";
 /**
  * A copy do módulo `inventory`, em **inglês**, anotada com o tipo do português.
  *
- * Não é servida a ninguém hoje — a lista de línguas do `lib/i18n.ts` tem um
- * elemento — e é verificada pelo compilador mesmo assim: `typeof PT` é o
- * contrato inteiro, e uma função com outra assinatura não compila.
+ * Servida desde 2026-10-07 a um browser que peça inglês, e verificada pelo
+ * compilador desde sempre: o `typeof PT` é o contrato inteiro, e uma função com
+ * outra assinatura não compila.
  *
  * ## Cinco escolhas de vocabulário
  *

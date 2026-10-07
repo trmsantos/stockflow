@@ -1,5 +1,6 @@
 import { escolher } from "@/lib/i18n";
 
+import { EN } from "./textos.en";
 import { PT } from "./textos.pt";
 
 /**
@@ -15,19 +16,17 @@ import { PT } from "./textos.pt";
  * sem união de chaves, sem `detect-object-injection`, e sem o ramo de fallback
  * que toda a biblioteca tem para a chave que não existe — aqui ela não compila.
  *
- * ## O `textos.en.ts` existe e **não** é importado aqui, de propósito
+ * ## O inglês entrou aqui a 2026-10-07, e foi o `tsc` que o obrigou
  *
- * A lista de línguas tem um elemento, logo este `Record` tem uma chave e
+ * Enquanto a lista de línguas teve um elemento, este `Record` tinha uma chave e
  * importar o inglês dava uma variável não usada — que o `eslint` e o `tsc`
- * recusam, e com razão: era código morto.
+ * recusam, e com razão. O inglês era verificado mesmo assim, por estar anotado
+ * com `typeof PT` num `tsconfig` que inclui `src/` inteiro (medido com uma
+ * sonda: tirar-lhe uma chave dava `TS2741` sem ninguém o importar).
  *
- * O inglês continua a ser **verificado** mesmo sem ser importado, porque o
- * `tsconfig` inclui `src/` inteiro e o `textos.en.ts` está anotado com
- * `typeof PT`. Medido com uma sonda: tirar uma chave do inglês dá `TS2741`
- * apesar de nada o importar. A garantia é do compilador e não deste import.
- *
- * E acrescentar `"en"` ao `LINGUAS` faz **esta linha** deixar de compilar, até
- * ela ter a entrada inglesa — que é o gate da ADR 0019: não se serve uma língua
- * em que metade dos ecrãs está traduzida.
+ * Acrescentar `"en"` ao `LINGUAS` fez **esta linha** deixar de compilar até ter
+ * a segunda entrada, nos sete catálogos ao mesmo tempo. Era o gate da ADR 0019 a
+ * funcionar: não se serve uma língua em que metade dos ecrãs está traduzida, e
+ * quem o impõe é o compilador e não a disciplina de quem escreve.
  */
-export const textos = escolher({ "pt-PT": PT });
+export const textos = escolher({ "pt-PT": PT, en: EN });

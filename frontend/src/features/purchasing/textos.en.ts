@@ -3,9 +3,9 @@ import type { PT } from "./textos.pt";
 /**
  * A copy do módulo `purchasing`, em **inglês**, anotada com o tipo do português.
  *
- * Não é servida a ninguém hoje — a lista de línguas tem um elemento — e é
- * verificada pelo compilador mesmo assim: o `tsconfig` inclui `src/` e o
- * `typeof PT` é o contrato.
+ * Servida desde 2026-10-07 a um browser que peça inglês, e verificada pelo
+ * compilador desde sempre: o `typeof PT` é o contrato, e o `escolher` é um
+ * `Record` sobre a união das línguas — faltar uma entrada aqui não compila.
  *
  * ## O vocabulário de compras numa cozinha portuguesa
  *

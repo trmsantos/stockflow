@@ -1,5 +1,6 @@
 import { escolher } from "./i18n";
 
+import { EN } from "./textos.en";
 import { PT } from "./textos.pt";
 
 /**
@@ -8,4 +9,4 @@ import { PT } from "./textos.pt";
  * Importa o `escolher` por caminho relativo e não por `@/lib/i18n`: é o mesmo
  * módulo, e um alias para dentro da própria pasta é ruído.
  */
-export const textos = escolher({ "pt-PT": PT });
+export const textos = escolher({ "pt-PT": PT, en: EN });

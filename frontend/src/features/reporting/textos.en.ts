@@ -3,8 +3,9 @@ import type { PT } from "./textos.pt";
 /**
  * A copy do módulo `reporting`, em **inglês**, anotada com o tipo do português.
  *
- * Não é servida a ninguém hoje — a lista de línguas tem um elemento — e é
- * verificada pelo compilador mesmo assim: o `typeof PT` é o contrato.
+ * Servida desde 2026-10-07 a um browser que peça inglês, e verificada pelo
+ * compilador desde sempre: o `typeof PT` é o contrato inteiro, e uma função com
+ * outra assinatura não compila.
  *
  * ## O vocabulário financeiro, e as escolhas que foram decisões
  *

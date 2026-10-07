@@ -76,31 +76,26 @@ import { join, relative } from "node:path";
 const RAIZ = "src";
 
 /**
- * Os ficheiros cuja copy **ainda não** está em catálogo. Lista fechada.
+ * Os ficheiros cuja copy **ainda não** está em catálogo. Lista fechada, e
+ * **vazia desde 2026-10-07**.
  *
- * Cada linha que sai daqui é um ecrã traduzido. Quando ficar vazia, o inglês
- * liga-se com duas linhas — uma no `LINGUAS` do `src/lib/i18n.ts` e outra no
- * `LANGUAGES` do `backend/config/settings/base.py` — e a partir daí o
- * `escolher` passa a exigir a entrada inglesa em **todos** os catálogos, porque
- * é um `Record` sobre a união das línguas.
+ * Cada linha que saiu daqui foi um ecrã traduzido, e a última a sair ligou o
+ * inglês: duas linhas, uma no `LINGUAS` do `src/lib/i18n.ts` e outra no
+ * `LANGUAGES` do `backend/config/settings/base.py`. A partir daí o `escolher`
+ * exige a entrada inglesa em **todos** os catálogos, porque é um `Record` sobre
+ * a união das línguas — e acrescentar uma língua volta a pô-los todos a não
+ * compilar até terem a entrada nova, que é a propriedade que se quer.
  *
- * A ordem é a de uso dos ecrãs, que é a ordem por que a ADR 0019 manda traduzi-los.
- *
- * A lista subiu de 32 para 60 a 2026-10-07, e **não foi uma regressão**: foi o
+ * No caminho a lista subiu de 32 para 60, e **não foi uma regressão**: foi o
  * gate a passar a ver as strings de código (ver a regra 1 acima). Os 28 que
  * entraram tinham a copy toda fora de JSX, e já estavam por traduzir antes de
  * alguém os contar.
  */
 const SEM_CATALOGO = new Set([
-  // ## accounts — o que falta das Definições e dos convites
-  // ## O que é de toda a aplicação, e por isso se traduz primeiro
-  // ## inventory — os ecrãs de operação, pela ordem de uso
-  // ## purchasing
-  // ## reporting
-  // ## Componentes partilhados. O `barras-ordenadas` tem **uma** palavra visível
-  // ("Proporção") e um catálogo próprio para ela era desproporcionado: sai desta
-  // lista com os ecrãs do `reporting`, que são os que o usam.
-  "src/components/barras-ordenadas.tsx",
+  // Vazia desde 2026-10-07, e é isso que ligou o inglês. Uma linha nova aqui é
+  // uma afirmação forte: diz que a app voltou a estar meio traduzida enquanto
+  // serve duas línguas, e o `test_o_ingles_so_liga_com_a_lista_vazia` do backend
+  // passa a falhar até ela sair ou até o inglês ser desligado.
 ]);
 
 /** O que não entra: o gerado, o do CLI do shadcn, e o que não vai para produção. */
@@ -332,7 +327,8 @@ if (problemas.length > 0) {
   console.error(
     "\nA copy visível vive num `textos.pt.ts`/`textos.en.ts` ao lado do ficheiro " +
       "que a usa (ADR 0019, decisão 3). Um ecrã ainda não traduzido declara-se no " +
-      "`SEM_CATALOGO` deste ficheiro — e é essa lista que, ao ficar vazia, liga o inglês.",
+      "`SEM_CATALOGO` deste ficheiro — que está vazio desde que o inglês ligou, " +
+      "e uma linha nova nele faz o `test_i18n.py` do backend falhar.",
   );
   process.exit(1);
 }
@@ -346,6 +342,6 @@ console.log(
 );
 console.log(
   SEM_CATALOGO.size === 0
-    ? "check-textos: a lista está vazia — o inglês pode ser ligado (duas linhas, ver o cabeçalho)."
+    ? `check-textos: a lista está vazia e o inglês está ligado — ${String(traduzidos)} ficheiro(s) de ecrã/shell com catálogo.`
     : `check-textos: ${traduzidos} ficheiro(s) de ecrã/shell já com catálogo. Sem problemas.`,
 );

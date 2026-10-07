@@ -477,19 +477,27 @@ TIME_ZONE = "Europe/Lisbon"
 USE_I18N = True
 USE_TZ = True
 
-#: As línguas que a app serve, em **lista fechada de um elemento** (ADR 0019,
-#: decisão 9).
+#: As línguas que a app serve. Lista fechada, com **duas** desde 2026-10-07
+#: (ADR 0019, decisão 9).
 #:
 #: Com o idioma a vir do browser não se pode "não enviar" inglês: um browser
-#: inglês recebe o que houver. Enquanto esta lista tiver um elemento, um
-#: `Accept-Language: en` cai no `LANGUAGE_CODE` e a app é inteiramente
-#: portuguesa — que é o estado de hoje e é coerente. O inglês liga-se
-#: acrescentando `("en", _("English"))` aqui **e** a entrada equivalente no
-#: `frontend/src/lib/i18n.ts`, no commit em que a última linha da lista fechada
-#: do `check-textos.mjs` sair. Antes disso, uma app meio traduzida dá ao leitor
-#: inglês uma parede de português exactamente onde a tarefa fica difícil.
+#: inglês recebe o que houver. Enquanto esta lista teve um elemento, um
+#: `Accept-Language: en` caía no `LANGUAGE_CODE` e a app era inteiramente
+#: portuguesa — coerente, porque uma app meio traduzida dá ao leitor inglês uma
+#: parede de português exactamente onde a tarefa fica difícil.
+#:
+#: O inglês entrou no commit em que a última linha da lista fechada do
+#: `frontend/scripts/check-textos.mjs` saiu, com a entrada equivalente no
+#: `LINGUAS` do `frontend/src/lib/i18n.ts`. **A condição é verificada e não
+#: prometida**: o `test_o_ingles_so_liga_com_a_lista_vazia` do
+#: `tests/test_i18n.py` lê essa lista e falha nos dois sentidos.
+#:
+#: Os dois nomes ficam na língua **deles** e não traduzidos: é o que um selector
+#: de idioma mostra, no dia em que houver um — ninguém procura "Inglês" numa
+#: lista que está a ler em inglês.
 LANGUAGES = [
     ("pt-pt", "Português (Portugal)"),
+    ("en", "English"),
 ]
 
 #: As traduções **do projecto**, e é esta linha que torna "pt é pt de Portugal"

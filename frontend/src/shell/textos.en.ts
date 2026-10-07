@@ -8,13 +8,11 @@ import type { PT } from "./textos.pt";
  * compila. É mais forte do que qualquer biblioteca de i18n, cuja garantia é um
  * aviso na consola em runtime (ADR 0019, decisão 3).
  *
- * **Este ficheiro não é servido a ninguém hoje.** A lista de línguas tem um
- * elemento (`lib/i18n.ts`), logo um browser inglês recebe português — que é
- * coerente enquanto a maior parte dos ecrãs não tiver catálogo. O inglês liga-se
- * acrescentando `"en"` ao `LINGUAS` e ao `LANGUAGES` do backend, no commit em que
- * a última linha da lista fechada do `check-textos.mjs` sair; a partir daí **todo
- * o catálogo** passa a precisar da entrada inglesa, porque o `escolher` é um
- * `Record` sobre a união das línguas.
+ * **Este ficheiro é servido desde 2026-10-07**, a um browser que peça inglês. Foi
+ * o commit em que a última linha da lista fechada do `check-textos.mjs` saiu — a
+ * condição que a ADR 0019 (decisão 9) fixou —, e a partir dele **todo** o
+ * catálogo precisa da entrada inglesa, porque o `escolher` é um `Record` sobre a
+ * união das línguas.
  *
  * ## Duas escolhas de vocabulário que não são óbvias
  *

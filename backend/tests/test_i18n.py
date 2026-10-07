@@ -26,13 +26,16 @@ bilhetes.
    o que ela afirma é exactamente isto: estas formas não chegam. Não afirma que
    a frase é de Portugal — gramática não se mede com uma lista de palavras, e as
    duas entradas de concordância do `.po` dizem-no em cada uma.
-3. **O mecanismo responde ao `Accept-Language`.** Hoje a app serve uma língua só
-   (lista fechada de um elemento, ADR 0019 decisão 9), logo um `Accept-Language:
-   en` cai em português — e um teste que afirmasse "duas línguas, duas respostas"
-   não teria nada para medir. A prova faz-se sob `override_settings`, que liga o
-   inglês **no teste** e verifica a cadeia inteira: middleware, ordem, catálogo.
-   É a diferença entre provar o mecanismo e esperar que ele funcione no dia em
-   que a segunda língua entrar.
+3. **O mecanismo responde ao `Accept-Language`**, e desde 2026-10-07 com as duas
+   línguas a sério: um browser inglês recebe `Content-Language: en` e um
+   português (ou brasileiro, de propósito) recebe `pt-pt`. A prova deixou de
+   precisar de `override_settings`.
+
+   E **as duas pontas da decisão 9 estão amarradas**: o inglês só pode estar no
+   `LANGUAGES` com a lista fechada do `frontend/scripts/check-textos.mjs` vazia.
+   O teste lê essa lista e falha nos dois sentidos, porque as duas metades vivem
+   em repositórios de linguagens diferentes e essa é a divergência que ninguém
+   vê.
 4. **O `Vary: Accept-Language` está nas respostas.** Sem ele, uma resposta com
    texto traduzido guardada em cache sai na língua errada ao pedido seguinte. É
    o `LocaleMiddleware` que o põe, e é essa a razão de ele estar no `MIDDLEWARE`
@@ -45,7 +48,7 @@ import pathlib
 import re
 
 from django.conf import settings
-from django.test import Client, override_settings
+from django.test import Client
 from django.utils import translation
 from rest_framework import exceptions, fields, serializers
 
@@ -335,37 +338,89 @@ def test_o_catalogo_nao_tem_entradas_que_ninguem_usa() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_hoje_a_app_serve_uma_lingua_e_um_browser_ingles_le_portugues() -> None:
-    """A lista fechada de um elemento, afirmada (ADR 0019, decisão 9).
+#: A lista fechada do gate de copy do frontend, lida daqui. O caminho é relativo
+#: a este ficheiro para o teste correr onde o `pytest` for lançado.
+GATE_DE_COPY = pathlib.Path(__file__).resolve().parents[2] / "frontend/scripts/check-textos.mjs"
 
-    Com o idioma a vir do browser **não se pode "não enviar" inglês**: um browser
-    inglês recebe o que houver. Enquanto a lista tiver um elemento, ele recebe
-    português — que é coerente, porque uma app meio traduzida dá ao leitor inglês
-    uma parede de português exactamente onde a tarefa fica difícil.
 
-    Este teste é o que torna o meio caminho **declarado** em vez de escondido: o
-    dia em que o inglês entrar no `LANGUAGES`, ele fica vermelho e obriga a
-    olhar para a lista fechada do `check-textos.mjs`.
+def _ficheiros_sem_catalogo() -> list[str]:
+    """Os ficheiros declarados como **ainda não traduzidos** no gate do frontend.
+
+    Lê o `SEM_CATALOGO` por regex e não por import: é JavaScript, e um `node`
+    chamado de dentro de um teste de Python é uma dependência nova na suite para
+    ler cinco linhas de uma lista literal.
     """
-    assert [codigo for codigo, _ in settings.LANGUAGES] == ["pt-pt"], (
-        "a lista de línguas mudou. Antes de acrescentar uma, confirma que a lista "
-        "fechada do `frontend/scripts/check-textos.mjs` está vazia: a app não pode "
-        "servir uma língua em que só metade dos ecrãs está traduzida."
+    fonte = GATE_DE_COPY.read_text(encoding="utf-8")
+    bloco = re.search(r"const SEM_CATALOGO = new Set\(\[(.*?)\]\);", fonte, re.DOTALL)
+    assert bloco is not None, (
+        f"não encontrei o `SEM_CATALOGO` em {GATE_DE_COPY}. Se ele mudou de nome ou de "
+        "forma, este teste deixou de medir o que diz medir — arranja-o em vez de o apagar."
+    )
+    # Sem comentários: a lista vazia tem quatro linhas de prosa lá dentro.
+    sem_comentarios = re.sub(r"//.*$", "", bloco.group(1), flags=re.MULTILINE)
+    return re.findall(r'"([^"]+)"', sem_comentarios)
+
+
+def test_o_ingles_so_liga_com_a_lista_vazia() -> None:
+    """As duas pontas da decisão 9, amarradas — e falha nos **dois** sentidos.
+
+    A ADR 0019 fez a lista fechada do `check-textos.mjs` o gate de quando o
+    inglês liga: "no commit em que a última linha sair". Uma frase numa ADR não
+    impede nada, e as duas metades vivem em repositórios de linguagens
+    diferentes — é precisamente a forma de divergência que ninguém vê.
+
+    Então o teste lê a lista do frontend e compara-a com o `LANGUAGES` daqui:
+
+    - **inglês servido com a lista cheia** é uma app meio traduzida a dar ao
+      leitor inglês uma parede de português onde a tarefa fica difícil;
+    - **lista vazia sem inglês servido** é trabalho feito que ninguém recebe, e é
+      o estado que passa despercebido por não ter sintoma nenhum.
+
+    Note-se o que isto **não** mede: que a tradução está boa. Mede que as duas
+    decisões são a mesma.
+    """
+    linguas = [codigo for codigo, _ in settings.LANGUAGES]
+    por_traduzir = _ficheiros_sem_catalogo()
+
+    assert ("en" in linguas) == (por_traduzir == []), (
+        f"as duas pontas da ADR 0019 (decisão 9) divergiram: `LANGUAGES` = {linguas}, "
+        f"e o `SEM_CATALOGO` do frontend tem {len(por_traduzir)} ficheiro(s) "
+        f"por traduzir ({por_traduzir[:3]}…). Ou a lista esvazia-se, ou o inglês sai "
+        "do `LANGUAGES` — a app não serve uma língua em que só metade dos ecrãs está "
+        "traduzida."
     )
 
+
+def test_um_browser_ingles_recebe_ingles() -> None:
+    """O outro lado do mesmo: com o inglês ligado, o header escolhe-o de facto.
+
+    O `Content-Language` é a afirmação do servidor sobre a língua em que
+    respondeu, e é o que distingue "o inglês está no `LANGUAGES`" de "o inglês
+    chega a quem o pede" — duas coisas que um `LocaleMiddleware` mal posto separa
+    sem dizer nada.
+    """
     resposta = Client().get("/api/v1/auth/sessao", headers={"accept-language": "en-US,en;q=0.9"})
 
     assert resposta.status_code == 200
-    assert resposta.headers.get("Content-Language") == "pt-pt"
+    assert resposta.headers.get("Content-Language") == "en"
 
 
-@override_settings(LANGUAGES=[("pt-pt", "Português"), ("en", "English")])
+def test_um_browser_portugues_continua_a_receber_portugues() -> None:
+    """E um `pt-BR` também: a ADR 0019 serve-o em pt-PT de propósito."""
+    for pedida in ("pt-PT,pt;q=0.9", "pt-BR,pt;q=0.9", "fr-FR,fr;q=0.9"):
+        resposta = Client().get("/api/v1/auth/sessao", headers={"accept-language": pedida})
+
+        assert resposta.status_code == 200
+        assert resposta.headers.get("Content-Language") == "pt-pt", pedida
+
+
 def test_o_accept_language_escolhe_a_lingua_da_resposta(transactional_db: None) -> None:
     """A cadeia inteira — middleware, ordem e catálogo — com duas línguas.
 
-    `override_settings` liga o inglês **neste teste** e mais nada. É a única
-    forma de provar hoje que o mecanismo funciona: com uma língua só, as duas
-    respostas seriam iguais e o teste não mediria nada.
+    Tinha um `override_settings` a ligar o inglês só aqui, que era a única forma
+    de o provar enquanto a app servia uma língua. Desde 2026-10-07 o inglês está
+    no `LANGUAGES` e o teste corre contra a configuração a sério, que é o que se
+    quer: um `override` prova o mecanismo e não a app.
 
     O corpo é o **mesmo** nos dois pedidos e a mensagem é do DRF, não nossa: o
     que se afirma é que o `LocaleMiddleware` activou a língua do header antes de
