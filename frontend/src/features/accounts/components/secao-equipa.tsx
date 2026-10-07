@@ -19,6 +19,7 @@ import { SegredoDoConvite, type SegredoEmitido } from "./segredo-do-convite";
 import { EsqueletoDeConvites, TabelaDeConvites } from "./tabela-de-convites";
 import { CODIGO_CONVITE_NAO_PENDENTE, codigoDaRecusa, mensagemDaRecusa } from "../erros";
 import { nomeDoPapel, type Convite, type Papel } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * A secção **Equipa** das Definições — "quem tem acesso a esta casa, e quem
@@ -166,7 +167,7 @@ export function SecaoEquipa() {
       <Pagina>
         <div className="px-celula-x py-6">
           <ErroAoCarregar
-            titulo="Não foi possível ler a sessão"
+            titulo={textos.equipa.erroDaSessao}
             mensagem={mensagemDaRecusa(sessao.error)}
             aoTentarOutraVez={() => {
               void sessao.refetch();
@@ -245,9 +246,7 @@ export function SecaoEquipa() {
           <Aviso
             tom={estadoMudou ? "warning" : "danger"}
             titulo={
-              estadoMudou
-                ? "O estado deste convite mudou"
-                : "Não foi possível concluir esta operação"
+              estadoMudou ? textos.equipa.estadoMudou : textos.equipa.erroDaOperacao
             }
             mensagem={mensagemDaRecusa(erroDeGestao)}
           />
@@ -257,7 +256,7 @@ export function SecaoEquipa() {
 
         {convites.isError ? (
           <ErroAoCarregar
-            titulo="Não foi possível carregar os convites"
+            titulo={textos.equipa.erroAoCarregar}
             mensagem={mensagemDaRecusa(convites.error)}
             aoTentarOutraVez={() => {
               void convites.refetch();
@@ -289,7 +288,7 @@ export function SecaoEquipa() {
                 revogar.mutate(convite.id, {
                   onSuccess: (revogado) => {
                     setUltimoResultado(
-                      `Convite de ${revogado.email} revogado. O link deixou de funcionar.`,
+                      textos.equipa.revogado(revogado.email),
                     );
                   },
                   onSettled: () => {
@@ -303,9 +302,7 @@ export function SecaoEquipa() {
                 saber porque é que ela não está por ordem alfabética, e quanto
                 tempo dura um link. */}
             <p className="text-xs text-muted-foreground">
-              {linhas.length === 1 ? "1 convite" : `${String(linhas.length)} convites`}
-              {truncada ? ` de ${String(pagina.count)}` : ""} · mais recentes primeiro · um link de
-              convite é válido 7&nbsp;dias
+              {textos.equipa.rodapeDaLista(linhas.length, truncada ? pagina.count : null)}
             </p>
           </div>
         )}
@@ -353,15 +350,13 @@ function BarraDoEcra({ total }: { readonly total: number | null }) {
           ("Quem tem acesso, e quem está por entrar?") e o ecrã mostrava-a duas
           vezes seguidas — visto num screenshot. O que fica é a parte que a
           pergunta não diz e que vale repetir, porque é a regra do produto. */}
-      <p className="text-pretty text-sm text-muted-foreground">
-        O acesso é sempre por convite.
-      </p>
+      <p className="text-pretty text-sm text-muted-foreground">{textos.equipa.acessoPorConvite}</p>
       {total === null ? null : (
         <p className="shrink-0 text-xs text-muted-foreground">
           <span data-numeric className="text-sm text-foreground">
             {total}
           </span>{" "}
-          no total
+          {textos.equipa.noTotal}
         </p>
       )}
     </div>
@@ -382,8 +377,8 @@ function ListaVazia() {
     <div className="rounded-xl border border-border bg-surface">
       <EstadoVazio
         icone={MailPlus}
-        titulo="Ainda não convidou ninguém"
-        descricao="Só quem tem um convite consegue entrar neste estabelecimento. O link aparece aqui uma vez, e é entregue por si — não é enviado nenhum email."
+        titulo={textos.equipa.vazioTitulo}
+        descricao={textos.equipa.vazioCorpo}
       >
         <div className="flex flex-col items-start gap-2">
           <Button
@@ -395,11 +390,9 @@ function ListaVazia() {
             }}
           >
             <MailPlus aria-hidden="true" />
-            Convidar alguém
+            {textos.equipa.convidarAlguem}
           </Button>
-          <p className="text-xs text-muted-foreground">
-            Um convite é válido 7&nbsp;dias e pode ser revogado a qualquer momento.
-          </p>
+          <p className="text-xs text-muted-foreground">{textos.equipa.vazioPrazo}</p>
         </div>
       </EstadoVazio>
     </div>
@@ -428,16 +421,16 @@ function SemPermissao({ papel }: { readonly papel: Papel | null }) {
     <div className="flex flex-col gap-3 px-celula-x py-6">
       <Aviso
         tom="warning"
-        titulo="Só o dono do estabelecimento gere convites"
+        titulo={textos.equipa.semPermissaoTitulo}
         mensagem={
           papel === null
-            ? "Esta sessão não tem um papel neste estabelecimento. Recarregue a página e tente outra vez."
-            : `Neste estabelecimento o seu papel é ${nomeDoPapel(papel)}, e convidar é do dono. Peça a quem o administra para criar o convite.`
+            ? textos.equipa.semPapel
+            : textos.equipa.papelNaoConvida(nomeDoPapel(papel))
         }
       >
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <ShieldAlert aria-hidden="true" className="size-3.5 shrink-0" />
-          Quem decide isto é o servidor, não este ecrã.
+          {textos.equipa.decideOServidor}
         </p>
       </Aviso>
     </div>

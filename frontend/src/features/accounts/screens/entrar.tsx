@@ -195,10 +195,8 @@ function FormularioDeEntrada({ destino }: { readonly destino: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Entrar</h1>
-        <p className="text-sm text-muted-foreground">
-          {textos.entrar.subtitulo}
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{textos.entrar.titulo}</h1>
+        <p className="text-sm text-muted-foreground">{textos.entrar.subtitulo}</p>
       </div>
 
       {entrar.isError && !temErroDeCampo ? (
@@ -211,7 +209,7 @@ function FormularioDeEntrada({ destino }: { readonly destino: string }) {
       <form noValidate onSubmit={submeter} className="flex flex-col gap-4">
         <CampoDeTexto
           id="email"
-          rotulo="Email"
+          rotulo={textos.campos.email}
           tipo="email"
           valor={email}
           aoMudar={setEmail}
@@ -221,7 +219,7 @@ function FormularioDeEntrada({ destino }: { readonly destino: string }) {
         />
         <CampoDeTexto
           id="password"
-          rotulo="Password"
+          rotulo={textos.campos.password}
           tipo="password"
           valor={password}
           aoMudar={setPassword}
@@ -357,7 +355,7 @@ function SessaoJaAtiva({ sessao }: { readonly sessao: Sessao }) {
         <p className="text-sm text-muted-foreground">
           {sessao.tenant_ativo === null
             ? textos.entrar.jaTemSessaoCorpo
-            : `Está a trabalhar em ${sessao.tenant_ativo.nome}.`}
+            : textos.entrar.aTrabalharEm(sessao.tenant_ativo.nome)}
         </p>
       </div>
       <Button asChild className="h-controlo w-fit">

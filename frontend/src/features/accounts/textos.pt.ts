@@ -51,6 +51,7 @@ export const PT = {
       "Esta conta não está associada a nenhum estabelecimento. Peça um convite a quem o administra: o convite chega como um link de uso único, e é esse link que dá o acesso.",
     jaTemSessaoTitulo: "Já tem sessão aberta",
     jaTemSessaoCorpo: "A sua sessão está aberta.",
+    aTrabalharEm: (nome: string) => `Está a trabalhar em ${nome}.`,
     abrirApp: "Abrir o StockFlow",
     sessaoDe: "Sessão de",
     erroDeRede: "Não foi possível falar com o servidor",
@@ -191,7 +192,128 @@ export const PT = {
    * frases todas de uma vez. Reimplementá-la dava duas definições de "password
    * forte", e a de cá ficava desactualizada no dia em que a política mudasse.
    */
+  /**
+   * Os rótulos dos campos. Uma secção própria porque os mesmos aparecem na
+   * entrada e na activação, e porque nenhum deles tem acento — ou seja, nenhum
+   * deles é visto pelo `check-textos.mjs` (regra 1b, cobertura parcial). Estão
+   * aqui porque alguém os leu, não porque um gate os apanhou.
+   */
+  /**
+   * Os nomes e as perguntas das quatro secções das Definições.
+   *
+   * Em chaves planas e não em dois `Record` aninhados, porque é o componente que
+   * guarda os `Record<SecaoDeDefinicoes, string>` — e é ele que não compila se
+   * aparecer uma quinta secção. O catálogo guarda palavras; a exaustividade é do
+   * `secoes.ts`.
+   */
+  secoes: {
+    aparenciaRotulo: "Aparência",
+    aparenciaPergunta: "Como é que a aplicação se vê?",
+    estabelecimentoRotulo: "Estabelecimento",
+    estabelecimentoPergunta: "Como é que esta casa está configurada?",
+    navegacaoRotulo: "Navegação",
+    navegacaoPergunta: "Que ecrãs é que a equipa vê, e com que nomes?",
+    equipaRotulo: "Equipa",
+    equipaPergunta: "Quem tem acesso, e quem está por entrar?",
+  },
+
+  /** As duas recusas que a autenticação escreve por si (ver o `erros.ts`). */
+  recusas: {
+    semToken: "A página perdeu o token de segurança. Recarregue e tente outra vez.",
+    semServidor: "Não foi possível falar com o servidor. Verifique a ligação e tente outra vez.",
+  },
+
+  /**
+   * A validade de um convite, em linguagem de prazo e não de data: o que quem lê
+   * a lista quer saber é se ainda dá tempo.
+   */
+  validade: {
+    expirouHoje: "expirou hoje",
+    expirouQuando: (quando: string) => `expirou ${quando}`,
+    acabaHoje: "acaba hoje",
+    expiraQuando: (quando: string) => `expira ${quando}`,
+    validoAte: (data: string) => `válido até ${data}`,
+    semPrazo: "sem prazo",
+    /** No `title`: a data exacta, para quem quer o dia e não o prazo. */
+    linkExpiraA: (data: string) => `O link expira a ${data}`,
+  },
+
+  /**
+   * O vocabulário do domínio das contas: os papéis e os estados de um convite.
+   *
+   * Em chaves planas, como no `secoes`: os `Record` sobre as uniões geradas ficam
+   * no `schemas.ts`, que é onde um valor novo no contrato tem de deixar de
+   * compilar. O catálogo guarda palavras.
+   */
+  equipa: {
+    erroDaSessao: "Não foi possível ler a sessão",
+    estadoMudou: "O estado deste convite mudou",
+    erroDaOperacao: "Não foi possível concluir esta operação",
+    erroAoCarregar: "Não foi possível carregar os convites",
+    acessoPorConvite: "O acesso é sempre por convite.",
+    noTotal: "no total",
+    revogado: (email: string) => `Convite de ${email} revogado. O link deixou de funcionar.`,
+    /**
+     * O pé da lista: quantos, de quantos, a ordem e o prazo.
+     *
+     * Uma função e não quatro chaves porque a frase **é** uma: muda de forma no
+     * singular, e o "de N" só aparece quando a página está truncada. Os
+     * `\u00a0` são espaços que não quebram — o `7 dias` não se separa no fim de
+     * uma linha —, e escrevem-se assim porque um `&nbsp;` numa string é texto e
+     * não uma entidade: só o JSX o interpreta.
+     */
+    rodapeDaLista: (quantos: number, total: number | null) => {
+      const contagem = quantos === 1 ? "1 convite" : `${String(quantos)} convites`;
+      const de = total === null ? "" : ` de ${String(total)}`;
+      return `${contagem}${de} · mais recentes primeiro · um link de convite é válido 7\u00a0dias`;
+    },
+    vazioTitulo: "Ainda não convidou ninguém",
+    vazioCorpo:
+      "Só quem tem um convite consegue entrar neste estabelecimento. O link aparece aqui uma vez, e é entregue por si — não é enviado nenhum email.",
+    convidarAlguem: "Convidar alguém",
+    vazioPrazo: "Um convite é válido 7\u00a0dias e pode ser revogado a qualquer momento.",
+    semPermissaoTitulo: "Só o dono do estabelecimento gere convites",
+    semPapel:
+      "Esta sessão não tem um papel neste estabelecimento. Recarregue a página e tente outra vez.",
+    papelNaoConvida: (papel: string) =>
+      `Neste estabelecimento o seu papel é ${papel}, e convidar é do dono. Peça a quem o administra para criar o convite.`,
+    decideOServidor: "Quem decide isto é o servidor, não este ecrã.",
+  },
+
+  vocabulario: {
+    papelOwner: "dono",
+    papelManager: "gerente",
+    papelStaff: "colaborador",
+    estadoPendente: "pendente",
+    estadoPendenteExplicacao: "O link está válido e à espera de ser usado.",
+    estadoExpirado: "expirado",
+    estadoExpiradoExplicacao: "Passaram os 7 dias. Reenviar cria um link novo.",
+    estadoAceite: "aceite",
+    estadoAceiteExplicacao:
+      "Esta pessoa já entrou e já é membro. O convite não tem mais nada a fazer.",
+    estadoRevogado: "revogado",
+    estadoRevogadoExplicacao:
+      "Foi cancelado e não volta atrás. Para dar acesso, convide outra vez.",
+    estadoDesconhecido: "estado desconhecido",
+    estadoDesconhecidoExplicacao:
+      "Este estado é mais novo do que esta versão da aplicação. Recarregue a página.",
+  },
+
+  campos: {
+    email: "Email",
+    password: "Password",
+  },
+
   formularios: {
+    horaMalEscrita: "A hora escreve-se como HH:MM, por exemplo 04:00.",
+    escrevaONomeDoEstabelecimento: "Escreva o nome do estabelecimento.",
+    nomeDoEstabelecimentoLongo: "O nome não pode ter mais de 200 caracteres.",
+    nomeDoGrupoLongo: "O nome do grupo não pode ter mais de 50 caracteres.",
+    ordemInteira: "A ordem é um número inteiro.",
+    ordemNegativa: "A ordem não pode ser negativa.",
+    ordemGrande: "A ordem não pode passar de 32767.",
+    rotuloLongo: "O rótulo não pode ter mais de 50 caracteres.",
+    rotaRepetida: "Há uma rota repetida na configuração. Cada rota aparece uma vez.",
     escrevaOEmail: "Escreva o email da sua conta.",
     escrevaAPassword: "Escreva a sua password.",
     escolhaUmaPassword: "Escolha uma password para activar a sua conta.",

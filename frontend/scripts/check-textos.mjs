@@ -85,16 +85,10 @@ const RAIZ = "src";
  */
 const SEM_CATALOGO = new Set([
   // ## accounts — o que falta das Definições e dos convites
-  "src/features/accounts/components/secao-equipa.tsx",
   "src/features/accounts/components/formulario-de-convite.tsx",
   "src/features/accounts/components/segredo-do-convite.tsx",
   "src/features/accounts/components/tabela-de-convites.tsx",
-  "src/features/accounts/components/validade-do-convite.tsx",
-  "src/features/accounts/erros.ts",
-  "src/features/accounts/schemas.ts",
-  "src/features/accounts/secoes.ts",
   // ## O que é de toda a aplicação, e por isso se traduz primeiro
-  "src/features/accounts/screens/entrar.tsx",
   // ## inventory — os ecrãs de operação, pela ordem de uso
   "src/features/inventory/screens/stock.tsx",
   "src/features/inventory/screens/alertas.tsx",
@@ -331,17 +325,24 @@ for (const caminho of catalogos) {
   if (!caminho.endsWith(".pt.ts")) continue;
   const fonte = semComentarios(readFileSync(caminho, "utf8"));
   // As chaves folha do objecto, pelo caminho: `rodape.definicoes`.
+  //
+  // A pilha guarda a **indentação** de cada chave aberta, e um `}` só fecha
+  // quando está à altura dela. Sem isso, o `}` do corpo de uma função do
+  // catálogo — uma que precise de duas instruções, como o `rodapeDaLista` —
+  // fechava a secção inteira, e todas as chaves abaixo dela ficavam com o
+  // caminho errado: seis falsos "não é usada em sítio nenhum" de uma só vez.
   const pilha = [];
   for (const linha of fonte.split("\n")) {
-    const abre = /^\s*(\w+):\s*\{\s*$/.exec(linha);
+    const abre = /^(\s*)(\w+):\s*\{\s*$/.exec(linha);
     const folha = /^\s*(\w+):\s*(?:"|\(|`)/.exec(linha);
-    if (abre) pilha.push(abre[1]);
+    const fecha = /^(\s*)\},?\s*$/.exec(linha);
+    if (abre) pilha.push({ chave: abre[2], indentacao: abre[1].length });
     else if (folha) {
-      const chave = [...pilha, folha[1]].join(".");
+      const chave = [...pilha.map((nivel) => nivel.chave), folha[1]].join(".");
       if (![...chavesUsadas].some((u) => u === chave || u.startsWith(`${chave}.`))) {
         problemas.push(`${caminho}: a chave \`${chave}\` não é usada em sítio nenhum.`);
       }
-    } else if (/^\s*\},?\s*$/.test(linha)) pilha.pop();
+    } else if (fecha && pilha.at(-1)?.indentacao === fecha[1].length) pilha.pop();
   }
 }
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { PAPEL_QUE_CONVIDA, type Papel } from "./schemas";
+import { textos } from "./textos";
 
 /**
  * As quatro secções das Definições — **a união, as palavras, a ordem e quem as
@@ -64,10 +65,10 @@ export const SECOES: readonly SecaoDeDefinicoes[] = [
  * chave dinâmica.
  */
 const ROTULO_DA_SECAO: Record<SecaoDeDefinicoes, string> = {
-  aparencia: "Aparência",
-  estabelecimento: "Estabelecimento",
-  navegacao: "Navegação",
-  equipa: "Equipa",
+  aparencia: textos.secoes.aparenciaRotulo,
+  estabelecimento: textos.secoes.estabelecimentoRotulo,
+  navegacao: textos.secoes.navegacaoRotulo,
+  equipa: textos.secoes.equipaRotulo,
 };
 
 const ROTULOS = new Map<string, string>(Object.entries(ROTULO_DA_SECAO));
@@ -83,10 +84,10 @@ export function rotuloDaSecao(secao: SecaoDeDefinicoes): string {
  * é o título a mudar com ela, mais o `aria-current` do link.
  */
 const PERGUNTA_DA_SECAO: Record<SecaoDeDefinicoes, string> = {
-  aparencia: "Como é que a aplicação se vê?",
-  estabelecimento: "Como é que esta casa está configurada?",
-  navegacao: "Que ecrãs é que a equipa vê, e com que nomes?",
-  equipa: "Quem tem acesso, e quem está por entrar?",
+  aparencia: textos.secoes.aparenciaPergunta,
+  estabelecimento: textos.secoes.estabelecimentoPergunta,
+  navegacao: textos.secoes.navegacaoPergunta,
+  equipa: textos.secoes.equipaPergunta,
 };
 
 const PERGUNTAS = new Map<string, string>(Object.entries(PERGUNTA_DA_SECAO));

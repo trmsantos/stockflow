@@ -43,6 +43,7 @@ export const EN: typeof PT = {
       "This account is not linked to any establishment. Ask whoever administers it for an invitation: the invitation arrives as a single-use link, and it is that link that grants access.",
     jaTemSessaoTitulo: "You are already signed in",
     jaTemSessaoCorpo: "Your session is open.",
+    aTrabalharEm: (nome: string) => `You are working in ${nome}.`,
     abrirApp: "Open StockFlow",
     sessaoDe: "Signed in as",
     erroDeRede: "Could not reach the server",
@@ -149,7 +150,91 @@ export const EN: typeof PT = {
     sessaoDe: "Signed in as",
   },
 
+  secoes: {
+    aparenciaRotulo: "Appearance",
+    aparenciaPergunta: "How does the application look?",
+    estabelecimentoRotulo: "Establishment",
+    estabelecimentoPergunta: "How is this establishment configured?",
+    navegacaoRotulo: "Navigation",
+    navegacaoPergunta: "Which screens does the team see, and under what names?",
+    equipaRotulo: "Team",
+    equipaPergunta: "Who has access, and who is yet to join?",
+  },
+
+  recusas: {
+    semToken: "The page lost its security token. Reload and try again.",
+    semServidor: "Could not reach the server. Check the connection and try again.",
+  },
+
+  validade: {
+    expirouHoje: "expired today",
+    expirouQuando: (quando: string) => `expired ${quando}`,
+    acabaHoje: "ends today",
+    expiraQuando: (quando: string) => `expires ${quando}`,
+    validoAte: (data: string) => `valid until ${data}`,
+    semPrazo: "no deadline",
+    linkExpiraA: (data: string) => `The link expires on ${data}`,
+  },
+
+  equipa: {
+    erroDaSessao: "Could not read the session",
+    estadoMudou: "The state of this invitation has changed",
+    erroDaOperacao: "Could not complete this operation",
+    erroAoCarregar: "Could not load the invitations",
+    acessoPorConvite: "Access is always by invitation.",
+    noTotal: "in total",
+    revogado: (email: string) => `Invitation for ${email} revoked. The link no longer works.`,
+    rodapeDaLista: (quantos: number, total: number | null) => {
+      const contagem = quantos === 1 ? "1 invitation" : `${String(quantos)} invitations`;
+      const de = total === null ? "" : ` of ${String(total)}`;
+      return `${contagem}${de} · most recent first · an invitation link is valid for 7\u00a0days`;
+    },
+    vazioTitulo: "You have not invited anyone yet",
+    vazioCorpo:
+      "Only someone with an invitation can enter this establishment. The link appears here once, and you deliver it yourself — no email is sent.",
+    convidarAlguem: "Invite someone",
+    vazioPrazo: "An invitation is valid for 7\u00a0days and can be revoked at any time.",
+    semPermissaoTitulo: "Only the establishment owner manages invitations",
+    semPapel: "This session has no role in this establishment. Reload the page and try again.",
+    papelNaoConvida: (papel: string) =>
+      `In this establishment your role is ${papel}, and inviting belongs to the owner. Ask whoever administers it to create the invitation.`,
+    decideOServidor: "This is decided by the server, not by this screen.",
+  },
+
+  vocabulario: {
+    papelOwner: "owner",
+    papelManager: "manager",
+    papelStaff: "staff",
+    estadoPendente: "pending",
+    estadoPendenteExplicacao: "The link is valid and waiting to be used.",
+    estadoExpirado: "expired",
+    estadoExpiradoExplicacao: "The 7 days have passed. Resending creates a new link.",
+    estadoAceite: "accepted",
+    estadoAceiteExplicacao:
+      "This person has already signed in and is a member. The invitation has nothing left to do.",
+    estadoRevogado: "revoked",
+    estadoRevogadoExplicacao:
+      "It was cancelled and does not come back. To give access, invite again.",
+    estadoDesconhecido: "unknown state",
+    estadoDesconhecidoExplicacao:
+      "This state is newer than this version of the application. Reload the page.",
+  },
+
+  campos: {
+    email: "Email",
+    password: "Password",
+  },
+
   formularios: {
+    horaMalEscrita: "The time is written as HH:MM, for example 04:00.",
+    escrevaONomeDoEstabelecimento: "Write the name of the establishment.",
+    nomeDoEstabelecimentoLongo: "The name cannot be longer than 200 characters.",
+    nomeDoGrupoLongo: "The group name cannot be longer than 50 characters.",
+    ordemInteira: "The order is a whole number.",
+    ordemNegativa: "The order cannot be negative.",
+    ordemGrande: "The order cannot go above 32767.",
+    rotuloLongo: "The label cannot be longer than 50 characters.",
+    rotaRepetida: "There is a repeated route in the configuration. Each route appears once.",
     escrevaOEmail: "Enter your account email.",
     escrevaAPassword: "Enter your password.",
     escolhaUmaPassword: "Choose a password to activate your account.",
