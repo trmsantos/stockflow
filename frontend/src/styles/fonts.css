@@ -1,0 +1,54 @@
+/* ---------------------------------------------------------------------------
+ * fonts.css — Archivo e IBM Plex Mono (DESIGN.md §2), servidas do próprio
+ * bundle.
+ *
+ * Archivo (grotesca industrial) na UI e IBM Plex Mono nos dados: é o par da
+ * identidade "Cabine". Saíram a IBM Plex Sans e a Source Sans 3 — a primeira
+ * era a família da identidade anterior, a segunda era a da proposta rejeitada;
+ * as duas saíram também do `package.json`, porque uma família que fica no
+ * projeto sem ninguém a declarar volta por distração.
+ *
+ * Porque não Google Fonts: a CSP de produção do backend é `font-src 'self'` e
+ * `style-src 'self'` (SECURITY.md §2, `config/settings/base.py`). Um
+ * `@import url(fonts.googleapis.com)` compila, passa em dev e é bloqueado pelo
+ * browser em produção — a app cairia para `system-ui` sem um erro visível. Os
+ * ficheiros vêm de `@fontsource/*`, entram no bundle com hash e são servidos
+ * da mesma origem.
+ *
+ * Só os pesos que o DESIGN.md usa, e a Archivo **não tem 400**: o corpo é 500
+ * (`base.css` declara-o no `html`), as labels e o cromado são 600 e 700. No
+ * Mono só 400, que é o peso dos algarismos. Só o subconjunto `latin` (cobre o
+ * português) e só `woff2`. Cada peso a mais são ~30 kB que ninguém pediu.
+ * ------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("@fontsource/archivo/files/archivo-latin-500-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("@fontsource/archivo/files/archivo-latin-600-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("@fontsource/archivo/files/archivo-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}

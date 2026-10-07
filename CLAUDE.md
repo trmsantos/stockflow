@@ -8,7 +8,8 @@ compras, com entrada de mercadoria por fatura do fornecedor (foto/PDF → linhas
 
 ## Stack (não negociável)
 Python 3.12 · Django 5 · DRF · **uv** · PostgreSQL 16 (RLS por tenant) · Celery + Redis ·
-React 18 · TypeScript strict · Vite · Tailwind v4 · shadcn/ui · TanStack Query · Zod ·
+React 18 · TypeScript strict · Vite · Tailwind v4 · shadcn/ui · TanStack Query ·
+TanStack **Router** (árvore em código, search params validados por Zod — ADR 0008) · Zod ·
 OpenAPI (drf-spectacular → openapi-typescript) · Docker multi-stage · pnpm.
 
 Comandos: `uv sync` · `uv run manage.py <cmd>` · `uv run pytest` · `uv run ruff check .` ·
@@ -44,7 +45,22 @@ Skills externas esperadas (ver README): frontend-design, web-design-guidelines, 
 
 ## Regras que não se discutem
 - **Stock é um ledger.** Nunca se altera `quantity` de um `StockLevel`; cria-se um `StockMovement`.
-- Toda a tabela com `tenant_id` tem política RLS na migração que a cria.
+- **A sessão escolhe o âmbito, a política concede-o.** Nada que venha da sessão ou de um header é
+  credencial: é argumento, verificado dentro do âmbito (ADR 0007).
+- **Toda a tabela de dados de um tenant tem política RLS na migração que a cria**, e o predicado
+  compara a coluna que identifica o tenant contra `NULLIF(current_setting('app.tenant_id', true), '')::uuid`.
+  Essa coluna é `tenant_id` em toda a parte exceto em `accounts_tenant`, onde é `id` — a tabela *é* o
+  tenant (ADR 0007). Sem o `NULLIF` a política levanta erro em vez de devolver zero linhas, porque
+  fora do âmbito o GUC é a string vazia e não NULL. As únicas famílias sem política são os dados de
+  referência partilhados (ADR 0005) e `accounts_user`, que tem de ser lido antes de existir âmbito
+  para o login funcionar (ADR 0007); as duas vivem numa lista fechada em `tests/test_db_roles.py`,
+  que falha nos dois sentidos.
+- Onde append-only é regra de negócio, a mesma migração revoga a escrita destrutiva ao role da
+  aplicação: `REVOKE UPDATE, DELETE ON <tabela> FROM stockflow_app` (ADR 0006). **Hoje não se aplica a
+  tabela nenhuma**: o `inventory_stockmovement` só nasce no passo do ledger e o `APPEND_ONLY` é um
+  conjunto vazio. (Esta linha afirmava que já se aplicava, e lia-se como inventário do que está
+  feito — dois agentes diferentes apontaram-no.) A lista fechada vive no `APPEND_ONLY` de
+  `tests/test_db_roles.py` e o teste falha nos dois sentidos se ela e a base de dados divergirem.
 - Lógica em `services.py`; módulos só se importam via `apps/<m>/api.py` (import-linter).
 - Serializers de escrita listam `fields`; sem `__all__`. IDs são UUID. Quantidades e dinheiro são `Decimal`.
 - Efeitos secundários (email, extração de faturas, previsões) em Celery via outbox.
@@ -52,7 +68,9 @@ Skills externas esperadas (ver README): frontend-design, web-design-guidelines, 
   Toda a extração de fatura passa por revisão humana antes de gerar movimentos.
 - Frontend: só tokens de `DESIGN.md`; sem `bg-[#…]`; sem Inter/Roboto; sem tokens em localStorage.
 - Docker: multi-stage, `USER app`, `HEALTHCHECK`, imagens fixadas por digest, zero segredos.
-- Nunca: `DEBUG=True` fora de dev, desligar CSRF/CORS, editar migração aplicada, suprimir lint.
+- Nunca: `DEBUG=True` fora de dev, desligar CSRF/CORS, editar migração aplicada, `# noqa` no código.
+- Exceção de lint só em `[tool.ruff.lint.per-file-ignores]`, com comentário e ADR. Hoje são duas:
+  `S101` nos testes e `F403` na camada de settings (ADR 0004). Uma terceira é sinal de que algo está errado.
 
 ## Ficheiros
 `DESIGN.md` · `ARCHITECTURE.md` · `SECURITY.md` · `docs/decisions/` (ADRs) · `.claude/`

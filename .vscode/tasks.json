@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Cmd+Shift+P -> "Tasks: Run Task" -> "frontend: dev".
+      // Fica em background; o problemMatcher deteta quando o Vite está pronto.
+      "label": "frontend: dev",
+      "type": "shell",
+      "command": "pnpm dev",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*VITE.*",
+          "endsPattern": ".*Local:.*"
+        }
+      },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      // Infraestrutura: Postgres 5442 e Redis 6389 (ADR 0002).
+      "label": "infra: up",
+      "type": "shell",
+      "command": "docker compose --env-file backend/.env -f docker/compose.yml up -d",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "backend: runserver",
+      "type": "shell",
+      "command": "uv run manage.py runserver 8010",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      // Corre os dois servidores de uma vez, depois da infraestrutura.
+      "label": "dev: tudo",
+      "dependsOn": ["infra: up", "backend: runserver", "frontend: dev"],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ]
+}

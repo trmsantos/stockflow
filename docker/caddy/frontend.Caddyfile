@@ -1,0 +1,45 @@
+# Serve só os estáticos do Vite. Não é o proxy da aplicação — esse é o
+# `docker/caddy/proxy.Caddyfile`, e é o único que expõe portas ao exterior.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	root * /srv
+	encode zstd gzip
+
+	# Os assets do Vite levam hash no nome, logo são imutáveis: um ano de cache.
+	@hashed path /assets/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+	# O index.html nunca é cacheado, senão um deploy novo continua a servir o
+	# HTML antigo, que referencia assets que já não existem.
+	#
+	# O matcher é **"tudo o que não é um asset com hash"** e não `path /
+	# /index.html`, porque a app é uma SPA com rotas profundas: um pedido a
+	# `/stock` cai no `try_files` abaixo e serve o `index.html`, mas o matcher
+	# é avaliado contra o caminho **pedido**, que não casa. Medido contra a
+	# stack a correr, antes da correcção: `/` e `/index.html` traziam
+	# `no-cache`, e `/stock` e `/alertas/expira` traziam header nenhum a servir
+	# o mesmo HTML — um deploy novo podia servir HTML antigo a quem tivesse o
+	# marcador guardado. A ADR 0008 trouxe o defeito à superfície ao decidir as
+	# rotas; ele já cá estava.
+	#
+	# A inversão é deliberada na direcção segura: se algum dia entrar um
+	# ficheiro em `public/` (um favicon, um robots.txt), ele sai daqui com
+	# `no-cache` em vez de cacheado para sempre. Custa um pedido; o contrário
+	# custa um deploy quebrado. Hoje o `/srv` da imagem tem exactamente
+	# `assets/` com hash e o `index.html`, e mais nada.
+	@html not path /assets/*
+	header @html Cache-Control "no-cache"
+
+	# SPA: qualquer caminho que não seja ficheiro cai no index.html.
+	try_files {path} /index.html
+	file_server
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -1,0 +1,224 @@
+/* ---------------------------------------------------------------------------
+ * base.css — a camada `base`. Nada aqui é um valor novo: só liga os tokens de
+ * `tokens.css` aos elementos.
+ *
+ * Duas regras no fim do ficheiro estão **fora** de `@layer base`, de propósito
+ * e com a razão escrita lá: têm de ganhar a utilities de primitivos gerados, e
+ * nenhuma camada ganha a `utilities`.
+ * ------------------------------------------------------------------------- */
+
+@layer base {
+  /* O `color-scheme` vive no `tokens.css`, com a paleta: com um modo só, ele é
+   * um facto da paleta e não uma ligação de token a elemento. */
+
+  * {
+    /* Um `border-*` sem cor usa o separador decorativo. Fronteiras de
+     * componente (input, controlo) pedem `border-input`/`border-strong`. */
+    border-color: var(--color-border);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    /* A Archivo não tem peso 400 (DESIGN.md §2): o corpo é 500. Sem esta
+     * linha o browser resolvia o 400 por aproximação — chegava ao 500 de
+     * qualquer forma, mas por regra de fallback e não por decisão. */
+    font-weight: 500;
+    /* Remove o atraso de 300ms do duplo-toque: quem está a contar stock com o
+     * telemóvel numa mão toca depressa. */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Quantidades, preços e códigos alinham em coluna: os dígitos têm de ter
+   * todos a mesma largura (DESIGN.md §2). */
+  [data-numeric],
+  th[data-numeric],
+  td[data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
+    text-align: right;
+  }
+
+  /* O foco é sempre visível e nunca é removido sem substituto. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Densidade compacta em desktop, polegar em mobile: os primitivos shadcn
+   * vêm com 32px de altura, e o mínimo do DESIGN.md §4 é 44px em toque. A
+   * regra é por modalidade de input, não por breakpoint — um tablet com rato
+   * mantém a densidade. `min-height` ganha ao `height` das utilities, por isso
+   * isto não obriga a passar classes componente a componente. */
+  @media (pointer: coarse) {
+    button,
+    [role="button"],
+    a[data-slot="button"],
+    input:not([type="checkbox"], [type="radio"], [type="hidden"]),
+    select,
+    textarea,
+    [data-slot="button"],
+    [data-slot="input"] {
+      min-height: 44px;
+    }
+
+    /* Um alvo de 44px de altura e 20px de largura continua a ser um alvo mau. */
+    button,
+    [role="button"],
+    [data-slot="button"] {
+      min-width: 44px;
+    }
+  }
+
+  /* DESIGN.md §2: respeitar `prefers-reduced-motion` — desligar tudo exceto a
+   * opacidade. Não é um `transition: none` global: a opacidade é o que dá o
+   * sinal de "isto mudou" a quem desliga o movimento. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-property: opacity;
+      transition-duration: var(--transition-duration-micro);
+      animation-duration: 0.01ms;
+      animation-iteration-count: 1;
+      scroll-behavior: auto;
+    }
+
+    /* Exceção deliberada: o pulsar do skeleton é opacidade, e é o único sinal
+     * de que há algo a carregar. Especificidade maior que o `*` acima. */
+    [data-slot="skeleton"] {
+      animation-duration: 2s;
+      animation-iteration-count: infinite;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * A fronteira dos controlos, e porque estas quatro linhas estão **fora** de
+ * `@layer base`.
+ *
+ * O DESIGN.md §2 e a checklist do §6 dizem que um controlo delimitado com
+ * `--color-border` (o separador decorativo) é um bug de acessibilidade: a
+ * fronteira de um componente precisa de 3:1 e o separador tem 1.38:1 sobre o
+ * `surface` nesta paleta — invisível. O primitivo `Button` do shadcn delimita
+ * a variante `outline` com `border-border`, e punha a correcção numa utility
+ * `dark:border-input` que esta paleta desligou (ver `tokens.css`).
+ *
+ * Estas regras têm de ganhar a uma utility, e **nenhuma camada ganha a
+ * `utilities`** — por isso não vão em `@layer base`: CSS sem camada vence
+ * qualquer `@layer`. É a mesma mecânica que a página de comparação das
+ * identidades usava, agora que a identidade é uma só. Os selectores são os
+ * `data-slot`/`data-variant` que os primitivos já emitem, e não classes
+ * minhas: `src/components/ui/` não se edita à mão (DESIGN.md §3).
+ * ------------------------------------------------------------------------- */
+
+[data-slot="button"][data-variant="outline"] {
+  border-color: var(--color-border-strong);
+}
+
+/* O `disabled` do input é o único estado em que o preenchimento comunica algo
+ * ("isto não se escreve"), e o primitivo resolve-o com `bg-input/50` — 50% da
+ * fronteira, que nesta paleta fica mais claro que o campo activo e diz o
+ * contrário. Um degrau de superfície diz "inerte" sem iluminar nada. */
+[data-slot="input"]:disabled {
+  background-color: var(--color-surface-2);
+}
+
+/* O popover do `Select` flutuava **sem sombra nenhuma**. O primitivo pede
+ * `shadow-md`, e esta paleta declara `--shadow-*: initial` com apenas `sm` e
+ * `lg` — medido no CSS compilado: a classe `.shadow-md` não existe, logo o
+ * painel ficava a separar-se do fundo só com `ring-1 ring-foreground/10`. Sobre
+ * um fundo preto isso quase não se vê, e um menu aberto que não se distingue do
+ * que está atrás dele é o tipo de defeito que ninguém encontra a ler o JSX.
+ *
+ * `--shadow-lg` é a sombra profunda da identidade, que é precisamente o papel
+ * que um popover tem (`DESIGN.md` §2: duas sombras, e a maior é para o que
+ * flutua). Vai aqui e não no primitivo pela mesma razão das duas regras acima. */
+[data-slot="select-content"] {
+  box-shadow: var(--shadow-lg);
+}
+
+/* O overlay da gaveta de navegação (o `sheet` do shadcn) pede `bg-black/10`, e
+ * **`black` não é um token desta paleta**: o `--color-*: initial` do
+ * `tokens.css` apaga a paleta default do Tailwind, logo a utility não existe e
+ * o overlay ficava completamente transparente. O efeito é o mesmo defeito que
+ * o popover do `Select` tinha — um painel aberto que não se distingue do que
+ * está atrás dele — e com um agravante: por cima de uma lista densa, o menu
+ * aberto lia-se como parte da tabela.
+ *
+ * A tinta é a tela da identidade com transparência, não um cinzento novo: a
+ * tela escurece, o painel (em `surface`, um degrau acima) separa-se dela, e não
+ * há blur nenhum — o `--blur-*: initial` do `tokens.css` tirou-o ao primitivo.
+ * Vai aqui, fora de `@layer`, pela razão escrita nas regras acima: tem de
+ * ganhar a uma utility, e nenhuma camada ganha a `utilities`. */
+[data-slot="sheet-overlay"] {
+  background-color: color-mix(in oklab, var(--color-background) 72%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+ * O indicador de carga: três traços que acendem em sequência.
+ *
+ * As keyframes vivem aqui e não num `@theme` porque são o par da animação que o
+ * `index.html` declara para o ecrã de arranque — e os dois têm de parecer a
+ * mesma coisa, porque **são** a mesma coisa: o produto a dizer que está a
+ * trabalhar. Um anel a rodar seria o elemento mais genérico que existe numa
+ * interface; três traços são o trilho de sinal das tabelas, a piscar.
+ *
+ * `prefers-reduced-motion` troca a sequência por um pulso de opacidade, que é o
+ * que o DESIGN.md §2 deixa passar ("desligar tudo excepto opacidade").
+ * ------------------------------------------------------------------------- */
+@keyframes traco-acende {
+  0%,
+  70%,
+  100% {
+    background-color: var(--color-border-strong);
+  }
+  35% {
+    background-color: var(--color-primary);
+  }
+}
+
+@keyframes traco-pulsa {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.traco-de-carga {
+  background-color: var(--color-border-strong);
+  animation: traco-acende 1.05s ease-in-out infinite;
+}
+
+.traco-de-carga:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.traco-de-carga:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .traco-de-carga,
+  .traco-de-carga:nth-child(2),
+  .traco-de-carga:nth-child(3) {
+    background-color: var(--color-primary);
+    animation: traco-pulsa 1.6s ease-in-out infinite;
+    animation-delay: 0s;
+  }
+}

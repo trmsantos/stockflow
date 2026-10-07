@@ -1,0 +1,530 @@
+# Os gates do SECURITY.md §9. Cada um corre localmente e passa — este ficheiro é
+# a transcrição de coisas verificadas, não uma lista de esperanças.
+#
+# Três princípios:
+#   * **Nada por tag móvel.** As actions estão fixadas por SHA de commit e as
+#     ferramentas por digest de imagem. Uma tag é um alvo móvel, e um gate de
+#     segurança que se atualiza sozinho é um gate que alguém pode mover.
+#   * **Um job por preocupação**, para a falha ser legível: "o SAST falhou" diz
+#     mais do que "o CI falhou", e os jobs correm em paralelo.
+#   * **Falha fechada.** Nenhum `continue-on-error`, nenhum `|| true`. Um gate
+#     que não corre não é um gate que passa — foi a lição do dia em que o
+#     `security_check.sh` dava PASS com quatro gates nunca executados.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Menos privilégios do que o default: nenhum job aqui escreve no repositório.
+permissions:
+  contents: read
+
+# Um push novo cancela a corrida anterior do mesmo ramo.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMG_GITLEAKS: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  IMG_HADOLINT: hadolint/hadolint@sha256:a1d49ae1a4e83c1dbad26b8c1ad7588c8bd1e04f4866b34ad3cac50335198552
+  IMG_TRIVY: aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+
+jobs:
+  # ---------------------------------------------------------------- segredos
+  segredos:
+    name: Segredos (gitleaks)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # O gitleaks analisa a **história**, não a árvore: sem isto varre um
+          # commit só e um segredo introduzido e removido passa.
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo "$IMG_GITLEAKS" \
+            detect --source . --no-banner --redact --verbose
+
+  # ---------------------------------------------------------------- backend
+  backend:
+    name: Backend (ruff, fronteiras, testes, check --deploy)
+    runs-on: ubuntu-24.04
+    services:
+      db:
+        # O mesmo digest do docker/compose.yml: os testes correm contra a versão
+        # de Postgres que vai para produção, não contra a que o runner trouxer.
+        image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_DB: stockflow
+          POSTGRES_USER: stockflow
+          POSTGRES_PASSWORD: ci-bootstrap-sem-valor
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U stockflow -d stockflow"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      PGPASSWORD: ci-bootstrap-sem-valor
+      STOCKFLOW_APP_PASSWORD: ci-app-sem-valor
+      STOCKFLOW_OWNER_PASSWORD: ci-owner-sem-valor
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Provisionar os três roles (ADR 0006)
+        # O mesmo ficheiro que o compose usa. Sem isto a suite corria como
+        # superuser e a RLS não se aplicava — toda a promessa da ADR 0006 ficava
+        # vazia com os testes verdes.
+        run: psql -h localhost -U stockflow -d stockflow -v ON_ERROR_STOP=1 -f docker/db/roles.sql
+
+      - name: Confirmar que o role da app não escapa à RLS
+        # Uma asserção e não uma suposição: se isto falhar, os testes de
+        # isolamento passariam por não estarem a testar nada.
+        run: |
+          psql -h localhost -U stockflow -d stockflow -t -A -c \
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname='stockflow_app'" \
+            | grep -qx f
+
+      - working-directory: backend
+        run: uv sync --frozen
+
+      - name: ruff
+        working-directory: backend
+        run: uv run ruff check .
+
+      - name: import-linter (fronteiras entre módulos)
+        working-directory: backend
+        run: uv run lint-imports
+
+      - name: Migrações sem alterações pendentes
+        working-directory: backend
+        env:
+          DATABASE_URL: postgres://stockflow_owner:ci-owner-sem-valor@localhost:5432/stockflow
+          DJANGO_SECRET_KEY: ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+        run: uv run manage.py makemigrations --check --dry-run
+
+      - name: pytest
+        working-directory: backend
+        env:
+          # Testes como a app, setup da base de dados como o dono (ADR 0006).
+          DATABASE_URL: postgres://stockflow_app:ci-app-sem-valor@localhost:5432/stockflow_test
+          MIGRATION_DATABASE_URL: postgres://stockflow_owner:ci-owner-sem-valor@localhost:5432/stockflow_test
+          DJANGO_SECRET_KEY: ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+          REDIS_URL: redis://127.0.0.1:6379
+        run: uv run pytest -q
+
+      - name: check --deploy (settings de produção, sem warnings)
+        working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          DJANGO_SECRET_KEY: ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+          DATABASE_URL: postgres://ninguem@127.0.0.1:1/vazio
+          ALLOWED_HOSTS: stockflow.example.pt
+          CSRF_TRUSTED_ORIGINS: https://stockflow.example.pt
+          DJANGO_ADMIN_URL: gestao-interna/
+          REDIS_URL: redis://127.0.0.1:6379
+        # O `check --deploy` não abre ligação à base de dados. Zero warnings é a
+        # barra (SECURITY.md §2), e quem a impõe é o `grep -q "no issues"` do
+        # fim, que é o último comando e portanto o que fixa o exit code — o
+        # grep por `security\.W[0-9]+` acima é só para o erro sair nomeado.
+        run: |
+          out=$(uv run manage.py check --deploy 2>&1)
+          echo "$out"
+          echo "$out" | grep -qE "security\.W[0-9]+" && exit 1
+          echo "$out" | grep -q "no issues"
+
+  # ---------------------------------------------------------------- frontend
+  frontend:
+    name: Frontend (typecheck, lint, build, audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      # pnpm pelo corepack e não por uma action: a versão é a do
+      # `packageManager` do package.json, que é a fonte de verdade.
+      - run: corepack enable && corepack install
+        working-directory: frontend
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm typecheck
+        working-directory: frontend
+      # O `lint` inclui o check-design-tokens: proíbe hex, `bg-[...]`, as fontes
+      # proibidas do DESIGN.md §5, e exige que todo o token esteja redefinido no
+      # modo escuro.
+      - run: pnpm lint
+        working-directory: frontend
+      - run: pnpm build
+        working-directory: frontend
+      - name: O artefacto não contém dados falsos nem ecrãs de desenvolvimento
+        # A terceira peça do gate da ADR 0008, decisão 3. As outras duas já
+        # existem: nada em `src/` importa `fixtures/` (o que impede os dados
+        # falsos de entrarem no grafo de módulos) e o `check-fixtures.mjs` do
+        # `pnpm lint` exige que **todo** o ficheiro de fixture carregue a
+        # sentinela. Esta fecha o circuito pelo outro lado: se alguém ligar um
+        # fixture à app, a sentinela viaja com ele até ao `dist/` e isto fica
+        # vermelho.
+        #
+        # A `/dev/tokens` vai ao lado pela mesma razão e com outra história: o
+        # Rollup elimina o chunk dela porque a rota e o `import()` vivem dentro
+        # do ramo `import.meta.env.DEV`, e isso era uma afirmação num comentário
+        # do `router.tsx`. Medido nesta build: 7 chunks, um por ecrã, e nenhum
+        # da página de tokens.
+        #
+        # `grep -rl` sem `-q` para a saída nomear o ficheiro culpado, e a
+        # condição está invertida porque o `grep` devolve 1 quando não encontra,
+        # que aqui é o caso bom.
+        working-directory: frontend
+        run: |
+          falhou=0
+          # As sentinelas `identidades-page` e `data-identidade` viveram aqui
+          # durante uma tarde: cobriam as duas rotas de comparação de identidade
+          # visual, que saíram quando o dono do produto escolheu uma. **Saíram
+          # com elas**, e de propósito — uma sentinela que já não tem fonte
+          # nenhuma que a possa disparar nunca será notada quando quebrar, e faz
+          # esta varredura parecer mais larga do que é. É a mesma razão pela qual
+          # a tabela de cobertura saiu do SECURITY.md §9: um gate vazio é pior
+          # que nenhum, porque parece cobertura.
+          #
+          # Quem voltar a prototipar uma paleta numa rota de dev (o modo claro,
+          # que é dívida nomeada no DESIGN.md) acrescenta a sentinela dela — e
+          # isso aparece no diff, ao contrário de uma pré-posicionada que
+          # silenciosamente nunca disparou.
+          for padrao in "dados-falsos-stockflow" "Pastelaria Aurora" "tokens-page"; do
+            if grep -rl "$padrao" dist/ 2>/dev/null; then
+              echo "::error::'$padrao' chegou ao dist/"
+              falhou=1
+            else
+              echo "  ok: '$padrao' não está no dist/"
+            fi
+          done
+          exit "$falhou"
+      - run: pnpm audit --audit-level=high
+        working-directory: frontend
+
+  # ---------------------------------------------------------------- SAST
+  sast:
+    name: SAST (bandit, semgrep)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: bandit
+        # `working-directory` e caminhos relativos, e não `-r backend` da raiz: a
+        # exclusão `./backend/.venv` não casa quando se corre de fora, e o
+        # bandit varre o ambiente virtual inteiro — 660 mil linhas e 16 issues
+        # de severidade alta, todas de código de terceiros. Esta é a invocação
+        # que o `security_check.sh` usa e que dá 0/0/0.
+        working-directory: backend
+        run: uvx --from bandit==1.9.4 bandit -r . -x './.venv,./tests,./*/migrations' -q
+      - name: semgrep (python, django, owasp)
+        run: |
+          uvx --from semgrep==1.178.0 semgrep \
+            --config p/django --config p/python --config p/owasp-top-ten \
+            --error --quiet --exclude .venv --exclude migrations backend
+      - name: semgrep (react, typescript)
+        run: |
+          uvx --from semgrep==1.178.0 semgrep \
+            --config p/react --config p/typescript \
+            --error --quiet --exclude node_modules --exclude dist frontend
+
+  # ---------------------------------------------------------------- deps
+  deps:
+    name: Dependências Python (pip-audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # `--no-dev`: o que interessa é o que vai para produção. E `--disable-pip`
+      # porque sem ele o pip-audit tenta um `ensurepip` que falha em ambientes
+      # geridos pelo uv.
+      - run: uv export --frozen --no-dev --project backend -o requirements.txt
+      - run: uvx --from pip-audit==2.10.1 pip-audit -r requirements.txt --disable-pip
+
+  # ---------------------------------------------------------------- stack
+  # O contrato HTTP da stack montada. Existe porque três defeitos reais deste
+  # kickoff só se viam com tudo a correr e nenhum gate de ficheiro os apanhava:
+  # o documento sem headers de segurança (a CSP do Django vive nas respostas
+  # JSON, onde é inerte), o `/readyz` a devolver a SPA com 200 pelo proxy, e o
+  # worker permanentemente `unhealthy` por herdar o healthcheck HTTP da imagem
+  # partilhada.
+  stack:
+    name: Stack montada (contrato HTTP)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: .env só para esta corrida
+        # Valores de fachada e anunciados como tal. A base de dados é efémera e
+        # nada disto é alcançável de fora do runner.
+        run: |
+          cat > backend/.env <<'EOF'
+          POSTGRES_DB=stockflow
+          POSTGRES_USER=stockflow
+          POSTGRES_PASSWORD=ci-bootstrap-sem-valor
+          STOCKFLOW_APP_PASSWORD=ci-app-sem-valor
+          STOCKFLOW_OWNER_PASSWORD=ci-owner-sem-valor
+          DJANGO_SECRET_KEY=ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+          DATABASE_URL=postgres://stockflow_app:ci-app-sem-valor@localhost:5442/stockflow
+          MIGRATION_DATABASE_URL=postgres://stockflow_owner:ci-owner-sem-valor@localhost:5442/stockflow
+          EOF
+
+      - name: Subir a infraestrutura e provisionar os roles
+        run: |
+          docker compose --env-file backend/.env -f docker/compose.yml up -d db redis
+          docker compose --env-file backend/.env -f docker/compose.yml \
+            --profile setup run --rm db-roles
+          docker compose --env-file backend/.env -f docker/compose.yml \
+            --profile setup run --rm migrate
+
+      - name: Subir a aplicação
+        # **O `--wait` não alcança o worker, e tem de ser dito pelo nome.** Ele
+        # tem `healthcheck: disable: true` por uma razão escrita no
+        # `compose.yml` (herdava o healthcheck HTTP da imagem partilhada, que um
+        # worker Celery não serve), e o Compose do runner — mais antigo do que o
+        # de uma máquina de hoje — recusa esperar por um serviço sem healthcheck
+        # com `container … has no healthcheck configured`. Localmente o mesmo
+        # comando passa, que é precisamente o tipo de diferença que faz um gate
+        # só falhar no CI.
+        #
+        # A alternativa seria dar healthcheck ao worker, e o `compose.yml` já
+        # argumenta contra o `celery inspect ping`: custa um round-trip ao broker
+        # a cada verificação e responde `ok` com a fila parada, que é o modo de
+        # falha que interessava detectar. A liveness do worker continua a
+        # afirmar-se pelos logs, no passo seguinte.
+        #
+        # O `db-roles` e o `migrate` **não entram na lista**: são jobs de uma vez
+        # atrás do profile `setup` e já correram no passo anterior com
+        # `run --rm`. Pô-los aqui era pedir ao Compose para os levantar como
+        # serviços.
+        run: |
+          docker compose --env-file backend/.env -f docker/compose.yml \
+            up -d --wait --wait-timeout 180 db redis backend frontend proxy
+          docker compose --env-file backend/.env -f docker/compose.yml up -d worker
+
+      - name: Nenhum serviço unhealthy, e o worker vivo
+        # Duas asserções, porque a primeira **não pode** ver o worker: ele tem
+        # `healthcheck: disable: true` (herdava o healthcheck HTTP da imagem
+        # partilhada, que um worker Celery não serve), logo o campo `.Health`
+        # vem vazio e o `awk` nunca casa. O comentário anterior dizia que
+        # apanhava o worker e era falso.
+        #
+        # O `ps -a` é deliberado: sem ele um serviço que morreu no arranque não
+        # aparece na listagem e escapa às duas asserções.
+        run: |
+          docker compose --env-file backend/.env -f docker/compose.yml ps -a \
+            --format '{{.Service}} {{.Status}}'
+          maus=$(docker compose --env-file backend/.env -f docker/compose.yml ps -a \
+                   --format '{{.Service}} {{.Health}}' | awk '$2 == "unhealthy"')
+          [ -z "$maus" ] || { echo "::error::unhealthy: $maus"; exit 1; }
+          saidos=$(docker compose --env-file backend/.env -f docker/compose.yml ps -a \
+                     --format '{{.Service}} {{.State}}' | awk '$2 == "exited"')
+          [ -z "$saidos" ] || { echo "::error::serviço saiu: $saidos"; exit 1; }
+          # O worker não tem healthcheck: a liveness dele afirma-se pelos logs.
+          # Um worker que não liga ao broker repete "Cannot connect" para sempre
+          # e passaria as asserções acima.
+          #
+          # **Com espera, e não um `logs` único.** O worker sobe sem `--wait`
+          # (ver o passo anterior), logo ligar ao broker pode levar uns segundos
+          # depois de o comando voltar. Um `grep` imediato falharia de vez em
+          # quando por o log ainda não ter a linha — uma intermitência que se
+          # aprende a reexecutar, que é o pior estado em que um gate pode ficar.
+          for _ in $(seq 1 30); do
+            logs=$(docker compose --env-file backend/.env -f docker/compose.yml logs worker 2>&1)
+            echo "$logs" | grep -qE "Connected to (redis|amqp)" && break
+            echo "$logs" | grep -q "Cannot connect" && break
+            sleep 2
+          done
+          echo "$logs" | grep -q "Cannot connect" \
+            && { echo "::error::o worker não liga ao broker"; echo "$logs" | tail -5; exit 1; }
+          # `Connected to redis` e **não** `ready|celery@`: o `celery@` aparece
+          # no banner de arranque, impresso antes de qualquer tentativa de
+          # ligação ao broker (`-------------- celery@<host> v5.6.3`). Medido
+          # sobre o log real cortado imediatamente antes do "Connected to":
+          # a alternativa `celery@` casava e o CI declarava "vivo e ligado ao
+          # broker". Qualquer falha depois do banner — base de dados em baixo,
+          # bloqueio no mingle, crash-loop que o `restart: unless-stopped`
+          # mantém em `running` — passava por aqui.
+          # `Connected to (redis|amqp)` e não só `redis`: a asserção deixa de
+          # partir no dia em que o broker mudar de esquema — um `amqp://` não
+          # casaria e o CI falharia por uma razão que não é a que ele testa.
+          echo "$logs" | grep -qE "Connected to (redis|amqp)" \
+            || { echo "::error::o worker não ligou ao broker"; echo "$logs" | tail -20; exit 1; }
+          echo "worker vivo e ligado ao broker"
+
+      - name: Headers de segurança no documento
+        # A CSP do Django vive nas respostas JSON, onde um browser não executa
+        # nada. É o `index.html` que o browser executa, e é servido pelo Caddy.
+        run: |
+          h=$(curl -sI http://localhost:8090/)
+          echo "$h"
+          for cabecalho in "Content-Security-Policy" "X-Frame-Options" \
+                           "X-Content-Type-Options" "Referrer-Policy"; do
+            echo "$h" | grep -qi "^$cabecalho:" \
+              || { echo "::error::falta $cabecalho no documento"; exit 1; }
+          done
+          echo "$h" | grep -qi "unsafe-inline" \
+            && { echo "::error::a CSP do documento tem unsafe-inline"; exit 1; }
+          echo "$h" | grep -qi "^Server:" \
+            && { echo "::error::o proxy anuncia-se no header Server"; exit 1; }
+          echo "os quatro headers presentes, sem unsafe-inline"
+
+      - name: Cache do documento, também nas rotas profundas
+        # O `index.html` não pode ser cacheado: um deploy novo continuaria a
+        # servir HTML antigo, que referencia assets com outro hash. A regra
+        # existia mas o matcher era `path / /index.html`, e numa SPA uma rota
+        # profunda serve o mesmo HTML com um caminho que **não** casa — medido
+        # antes da correcção: `/` trazia `no-cache` e `/stock` trazia header
+        # nenhum. É por isso que esta asserção testa uma rota profunda e não a
+        # raiz: a raiz já passava quando o defeito existia.
+        run: |
+          for caminho in / /stock /alertas/expira; do
+            c=$(curl -sI "http://localhost:8090$caminho" | grep -i '^cache-control:' || true)
+            echo "  $caminho -> ${c:-<nenhum>}"
+            echo "$c" | grep -qi 'no-cache' \
+              || { echo "::error::$caminho serve HTML sem no-cache"; exit 1; }
+          done
+          # E o inverso, para a correcção não ter ido longe demais: um asset com
+          # hash tem de continuar imutável, senão trocámos um deploy quebrado
+          # por um site lento.
+          a=$(curl -s http://localhost:8090/ | grep -oE '/assets/[^"]+\.js' | head -1)
+          [ -n "$a" ] || { echo "::error::não encontrei um asset no index.html"; exit 1; }
+          ca=$(curl -sI "http://localhost:8090$a" | grep -i '^cache-control:' || true)
+          echo "  $a -> $ca"
+          echo "$ca" | grep -qi 'immutable' \
+            || { echo "::error::$a devia ser immutable"; exit 1; }
+
+      - name: O contrato dos caminhos
+        run: |
+          esperado() {
+            real=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:8090$1")
+            [ "$real" = "$2" ] || { echo "::error::$1 deu $real, esperado $2"; exit 1; }
+            echo "  $1 -> $real"
+          }
+          esperado /               200
+          esperado /healthz        200
+          # O /readyz responde pelas dependências: um 503 dele diz a quem
+          # pergunta que a base de dados está em baixo. Morre no proxy.
+          esperado /readyz         404
+          esperado /api/v1/schema/ 403
+
+      - name: Rate limit por IP, nos dois caminhos que importam
+        run: |
+          conta_429() {
+            n=0
+            for i in $(seq 1 "$2"); do
+              c=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:8090$1")
+              [ "$c" = "429" ] && n=$((n+1))
+            done
+            echo "$n"
+          }
+          # A zona `admin` do Caddyfile casa as **duas** formas do path, com e
+          # sem barra final, e é a forma sem barra que lá faltava e foi
+          # acrescentada — logo é essa que se testa primeiro, com o contador
+          # fresco: 5/min, dos 9 pedidos pelo menos 3 têm de ser 429. Se a
+          # forma sem barra saísse da zona, este número era 0.
+          a=$(conta_429 /gestao-interna/login 9)
+          [ "$a" -ge 3 ] || { echo "::error::admin (sem barra) sem rate limit ($a de 9)"; exit 1; }
+          echo "  admin sem barra: $a/9 travados"
+          # A seguir a forma com barra. As duas partilham zona e chave
+          # (`{remote_host}`), logo o contador já está esgotado e o esperado são
+          # 9 de 9 — o que este número prova é que as duas formas caem na
+          # **mesma** zona, e não que a segunda tem limite próprio.
+          b=$(conta_429 /gestao-interna/login/ 9)
+          [ "$b" -ge 3 ] || { echo "::error::admin (com barra) sem rate limit ($b de 9)"; exit 1; }
+          echo "  admin com barra: $b/9 travados (contador partilhado)"
+          # TODO(sessão da autenticação): a zona `login` do Caddyfile cobre
+          # `/api/v1/auth/login` nas duas formas e **não tem asserção nenhuma**
+          # aqui, porque os endpoints ainda não existem. É a regressão que o
+          # comentário da zona documenta; a asserção entra com os endpoints.
+
+      - name: Logs em caso de falha
+        if: failure()
+        run: docker compose --env-file backend/.env -f docker/compose.yml logs --tail 50
+
+      - name: Baixar a stack
+        if: always()
+        run: docker compose --env-file backend/.env -f docker/compose.yml down -v
+
+  # ---------------------------------------------------------------- docker
+  docker:
+    name: Docker (hadolint, trivy)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: hadolint
+        run: |
+          for f in docker/*.Dockerfile; do
+            echo "== $f"
+            docker run --rm -i "$IMG_HADOLINT" hadolint --no-color - < "$f"
+          done
+      - name: .env de fachada, para o gate poder detectar reincidência
+        # Sem isto o gate do artefacto é cego no CI: o `backend/.env` é
+        # gitignored e este job não o cria, logo o `COPY backend/ ./` não tem
+        # nada para copiar — apagar o `.dockerignore` passaria o CI inteiro. O
+        # ficheiro tem de existir no contexto para o gate ter o que apanhar.
+        run: |
+          cat > backend/.env <<'EOF'
+          DJANGO_SECRET_KEY=ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
+          DATABASE_URL=postgres://stockflow_app:ci-app-sem-valor@db:5432/stockflow
+          MIGRATION_DATABASE_URL=postgres://stockflow_owner:ci-owner-sem-valor@db:5432/stockflow
+          EOF
+
+      - name: Construir as imagens
+        # O `worker` e o `migrate` do compose saem do **mesmo**
+        # `docker/backend.Dockerfile`. Os três tags saem de uma build só, com
+        # três `-t`, o que os torna o mesmo id por construção — e isso substitui
+        # a afirmação de igualdade que o SECURITY.md §9 fazia em prosa e que
+        # nada verificava. Localmente ela chegou a ser falsa: eu reconstruí o
+        # `backend` à mão e não o `migrate`, e ficaram camadas diferentes, com o
+        # `migrate` a conter um ficheiro que o `.dockerignore` já excluía.
+        run: |
+          docker build -f docker/backend.Dockerfile \
+            -t stockflow-backend -t stockflow-worker -t stockflow-migrate .
+          docker build -f docker/frontend.Dockerfile -t stockflow-frontend .
+          docker build -f docker/proxy.Dockerfile -t stockflow-proxy .
+      - name: Segredos dentro das imagens construídas
+        # O mesmo script que o `security_check.sh` chama, porque a versão
+        # duplicada já tinha divergido: o CI ficou com um padrão que só via
+        # `.env*` enquanto o local via vinte. Um gate com duas implementações é
+        # um gate com uma implementação e um bug.
+        run: |
+          ./docker/scan-artefactos.sh \
+            stockflow-backend stockflow-worker stockflow-migrate \
+            stockflow-frontend stockflow-proxy
+
+      - name: trivy config
+        # `--ignorefile /dev/null`: o CWD aqui **é** o repositório montado, e o
+        # trivy lê o `.trivyignore` do CWD sem lhe ser pedido. Hoje não existe
+        # nenhum, mas um ficheiro commitado amanhã silenciava este gate e o
+        # local ao mesmo tempo, e nada o detectava. Medido: com um
+        # `.trivyignore` a listar `AVD-DS-0002`, o mesmo comando passa de
+        # `exit 1` a `exit 0`.
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo "$IMG_TRIVY" \
+            config --ignorefile /dev/null --severity HIGH,CRITICAL --exit-code 1 .
+      - name: trivy image
+        # `--ignorefile /dev/null`, e não a **ausência** do flag: omiti-lo não
+        # significa "sem excepções", significa "as excepções que estiverem no
+        # CWD". Este passo estava imune por acidente (o contentor não monta o
+        # repositório, logo o CWD é `/`) e deixava de o estar no dia em que
+        # alguém lhe acrescentasse `-v "$PWD:/repo"` por simetria com o passo
+        # acima. As três imagens estão a zero HIGH/CRITICAL com correcção
+        # disponível (SECURITY.md §9, medido).
+        #
+        # `--ignore-unfixed` é deliberado e está justificado no §9: o `backend`
+        # tem dezenas de HIGH/CRITICAL **sem** correcção, em pacotes do Debian
+        # 12, e falhar por vulnerabilidades que ninguém pode corrigir é um gate
+        # que se desliga na semana seguinte.
+        run: |
+          for img in stockflow-backend stockflow-frontend stockflow-proxy; do
+            echo "== $img"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$IMG_TRIVY" \
+              image --ignorefile /dev/null --severity HIGH,CRITICAL \
+              --ignore-unfixed --exit-code 1 --quiet "$img"
+          done

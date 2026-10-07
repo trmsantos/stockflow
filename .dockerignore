@@ -1,0 +1,56 @@
+# O que nunca entra no contexto de build.
+#
+# Existe por um incidente concreto: sem este ficheiro, o `COPY backend/ ./` do
+# `docker/backend.Dockerfile` levava o `backend/.env` para dentro da imagem —
+# byte a byte, com a `DJANGO_SECRET_KEY`, a password do `stockflow_owner` e a do
+# superuser do cluster. E não ficava inerte: o `config/settings/__init__.py`
+# corre `read_env`, que escreve as chaves do ficheiro em `os.environ` do
+# processo. Toda a cadeia das ADRs 0005-0007 existe para que a credencial do
+# dono **não** esteja no processo que serve pedidos; a imagem desfazia-a.
+#
+# Nenhum dos treze gates o podia ver, e é a lição a reter: o `gitleaks` olha para
+# o git (e o `.env` nunca entrou), o `trivy config` olha para o texto do
+# Dockerfile (que não tem segredo literal), a verificação de `COPY .*\.env` não
+# casa com `COPY backend/`, e o `docker history` mostra comandos e não conteúdo
+# de ficheiros. O gate que faltava olha para dentro do artefacto, e está agora no
+# `security_check.sh` e no job `docker` do CI.
+
+# --- segredos ---------------------------------------------------------------
+**/.env
+**/.env.*
+!**/.env.example
+
+# --- história e CI ----------------------------------------------------------
+.git
+.gitignore
+.github
+.claude
+.agents
+.impeccable
+**/.impeccable
+
+# --- ambientes e dependências (a build reconstrói-os do lockfile) ------------
+**/.venv
+**/node_modules
+
+# --- caches e artefactos -----------------------------------------------------
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.import_linter_cache
+**/.mypy_cache
+.security-reports
+frontend/dist
+backend/staticfiles
+
+# --- documentação e testes não vão para a imagem de produção -----------------
+docs
+*.md
+# Sem `!backend/**/*.md`: era uma re-inclusão larga **depois** das exclusões, e
+# a precedência do `.dockerignore` é a última regra que casa. O `**/.pytest_cache`
+# de cima excluía o directório e esta linha voltava a incluir o que havia lá
+# dentro — medido numa build fresca: `/app/.pytest_cache/README.md` estava na
+# imagem de produção. O único `.md` sob `backend/` era exactamente esse, logo a
+# re-inclusão não protegia nada e só desfazia uma exclusão.
+backend/tests

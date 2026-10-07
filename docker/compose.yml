@@ -1,0 +1,302 @@
+# A stack completa de desenvolvimento (passo 6 do kickoff).
+#
+# Quatro regras que atravessam o ficheiro, e cada uma vem de uma decisão:
+#   * **Só o proxy publica portas.** Os serviços da aplicação falam entre si na
+#     rede interna e não são alcançáveis do host (SECURITY.md §8). O `db` e o
+#     `redis` publicam em `127.0.0.1` porque o `pytest` e o `manage.py` correm
+#     fora dos contentores, em desenvolvimento.
+#   * **A credencial do dono da base de dados existe em UM serviço.** Só o
+#     `migrate` se liga como `stockflow_owner`; o `backend` e o `worker` ligam-se
+#     como `stockflow_app` — `NOSUPERUSER`, `NOBYPASSRLS`, dono de nada
+#     (ADR 0006).
+#   * **As URLs da base de dados são compostas aqui, não lidas do `.env`.** O
+#     `DATABASE_URL` e o `MIGRATION_DATABASE_URL` do `.env` apontam para
+#     `localhost:5442`, que é a forma certa para o `pytest` e o `manage.py`, que
+#     correm no host. Dentro da rede do compose `localhost` é o próprio
+#     contentor: o host é `db` e a porta é a canónica, 5432 (ADR 0002). Por isso
+#     os serviços compõem a URL a partir das mesmas passwords que o
+#     `docker/db/roles.sql` atribui aos roles — uma fonte só para a credencial,
+#     duas formas para os dois sítios de onde se liga.
+#   * **`DJANGO_SETTINGS_MODULE` é sempre explícito.** O `wsgi.py`, o `asgi.py`
+#     e o `celery.py` fazem default para `prod` de propósito, para um processo
+#     sem a variável falhar por falta de segredos em vez de servir com settings
+#     de desenvolvimento. Em dev diz-se `dev`, aqui, à vista.
+#   * **Não-root, sem capabilities, sistema de ficheiros read-only** onde o
+#     processo não precisa de escrever, com `tmpfs` para o que precisa.
+#
+# Portas do host: ADR 0002 — nenhuma é a default do serviço, para não colidir
+# com outros projetos na mesma máquina. Dentro da rede do compose os
+# contentores continuam nas portas canónicas (5432, 6379).
+name: stockflow
+
+services:
+  db:
+    # PostgreSQL 16.15 (postgres:16-alpine), fixado por digest — SECURITY.md §8.
+    # Para atualizar: docker pull postgres:16-alpine && docker inspect \
+    #   --format='{{index .RepoDigests 0}}' postgres:16-alpine
+    image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    command:
+      # `log_statement=ddl` deixa ver as migrações a aplicar-se; sem `all`,
+      # para os parâmetros das queries não irem para o log (SECURITY.md §1).
+      - postgres
+      - -c
+      - log_statement=ddl
+    environment:
+      # Superuser de bootstrap do cluster (initdb). **Não** é o role da
+      # aplicação: nenhuma app se liga com ele, e não aparece em DATABASE_URL
+      # nenhum. Só provisiona (ADR 0006).
+      POSTGRES_DB: ${POSTGRES_DB:-stockflow}
+      POSTGRES_USER: ${POSTGRES_USER:-stockflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD no .env}
+      # Lidas pelo roles.sql quando corre no init dir (volume novo).
+      STOCKFLOW_APP_PASSWORD: ${STOCKFLOW_APP_PASSWORD:?define STOCKFLOW_APP_PASSWORD no .env}
+      STOCKFLOW_OWNER_PASSWORD: ${STOCKFLOW_OWNER_PASSWORD:?define STOCKFLOW_OWNER_PASSWORD no .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5442}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Num volume novo o init dir corre isto sozinho. Num volume que já existe
+      # nunca corre — para esses há o serviço `db-roles` abaixo.
+      - ./db/roles.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro
+      - ./db:/db:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockflow} -d ${POSTGRES_DB:-stockflow}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    # Redis 7.4.11 (redis:7-alpine), fixado por digest.
+    image: redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    # Sem persistência: é broker e cache de desenvolvimento, não fonte de verdade.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6389}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # --- setup, sob `--profile setup`: não arrancam com um `up` normal ---------
+
+  # Provisiona os três roles do ADR 0006. Idempotente: corre quantas vezes for
+  # preciso. É a via para um volume que já existe, e o modelo do que se faz numa
+  # base de dados gerida, onde não há init dir.
+  #   docker compose --env-file backend/.env -f docker/compose.yml \
+  #     --profile setup run --rm db-roles
+  db-roles:
+    profiles: ["setup"]
+    image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      STOCKFLOW_APP_PASSWORD: ${STOCKFLOW_APP_PASSWORD:?}
+      STOCKFLOW_OWNER_PASSWORD: ${STOCKFLOW_OWNER_PASSWORD:?}
+    volumes:
+      - ./db:/db:ro
+    command:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -h
+      - db
+      - -U
+      - ${POSTGRES_USER:-stockflow}
+      - -d
+      - ${POSTGRES_DB:-stockflow}
+      - -f
+      - /db/roles.sql
+    restart: "no"
+
+  # --- aplicação -------------------------------------------------------------
+  # Aplica as migrações com o role **dono** das tabelas. É o único serviço que
+  # vê o `MIGRATION_DATABASE_URL`, e é one-shot: `--profile setup run --rm`.
+  # Em produção é o job que corre antes do rollout, não um contentor de pé.
+  #
+  #   docker compose --env-file backend/.env -f docker/compose.yml \
+  #     --profile setup run --rm migrate
+  #
+  # Com a credencial da aplicação isto falha no primeiro CREATE TABLE, de
+  # propósito — o `stockflow_app` não tem CREATE no esquema (ADR 0006).
+  migrate:
+    profiles: ["setup"]
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?}
+      # A credencial do dono entra aqui como DATABASE_URL do processo: o
+      # `DATABASES` tem uma alias só, e o role é propriedade do processo e não
+      # de um comando (ADR 0006).
+      DATABASE_URL: postgres://stockflow_owner:${STOCKFLOW_OWNER_PASSWORD:?}@db:5432/${POSTGRES_DB:-stockflow}
+      REDIS_URL: redis://redis:6379
+      DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
+      ALLOWED_HOSTS: localhost
+      CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
+    depends_on:
+      db: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    # `W × T ≤ (max_connections − reservadas − celery − beat − migrate − ops) /
+    # overlap`, que com o cluster do compose (97 utilizáveis) dá 43. Aqui são
+    # 2 × 4 = 8 ligações presas em regime, 16 no pico de um rolling deploy.
+    # Muito abaixo do teto de propósito: a 2 vCPU o que limita primeiro é a
+    # memória (2 processos servem 8 pedidos; o "2×CPU+1" pediria 5 para servir
+    # 5) e a espera nos locks do FEFO, não a base de dados. Com a ADR 0005 cada
+    # pedido em voo tem uma transação aberta e uma ligação presa — é isso que o
+    # default de "2×CPU+1" ignora.
+    command:
+      - gunicorn
+      - config.wsgi:application
+      - --worker-class=gthread
+      - --workers=2
+      - --threads=4
+      - --bind=0.0.0.0:8000
+      - --timeout=30
+      - --graceful-timeout=30
+      - --keep-alive=5
+      - --max-requests=1000
+      - --max-requests-jitter=100
+      # O heartbeat do worker vive em /tmp por omissão e o rootfs é read-only:
+      # sem isto o master mata workers saudáveis.
+      - --worker-tmp-dir=/dev/shm
+      - --error-logfile=-
+      # Sem `--access-logfile`: o RequestContextMiddleware já escreve uma linha
+      # JSON por pedido, com request_id. Duas linhas por pedido, uma delas fora
+      # do formato do ARCHITECTURE.md §8, é ruído.
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?}
+      # O role da aplicação, composto para a rede do compose. **Nunca** a
+      # credencial do dono (ADR 0006).
+      DATABASE_URL: postgres://stockflow_app:${STOCKFLOW_APP_PASSWORD:?}@db:5432/${POSTGRES_DB:-stockflow}
+      REDIS_URL: redis://redis:6379
+      DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
+      ALLOWED_HOSTS: localhost,127.0.0.1,backend
+      CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    # `--concurrency=2` e não o default (nº de CPUs): cada tarefa abre uma
+    # transação e o pool do Postgres é partilhado com o `backend`.
+    command:
+      - celery
+      - -A
+      - config
+      - worker
+      - --loglevel=INFO
+      - --concurrency=2
+      - --prefetch-multiplier=1
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?}
+      DATABASE_URL: postgres://stockflow_app:${STOCKFLOW_APP_PASSWORD:?}@db:5432/${POSTGRES_DB:-stockflow}
+      REDIS_URL: redis://redis:6379
+      DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
+      ALLOWED_HOSTS: localhost
+      CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # **Desligado explicitamente, e é obrigatório desligá-lo.** A imagem é a
+    # mesma do `backend` — uma imagem por processo duplicava a superfície a
+    # analisar — logo o worker **herda** o `HEALTHCHECK` do Dockerfile, que faz
+    # um pedido HTTP a `127.0.0.1:8000`. Um worker Celery não serve HTTP: o
+    # healthcheck falha sempre e o contentor fica `unhealthy` para sempre, o que
+    # num orquestrador é um ciclo de reinícios de um processo que está bem.
+    #
+    # Não se substitui por um `celery inspect ping`: custa um round-trip ao
+    # broker a cada verificação e responde `ok` com a fila parada, que é o modo
+    # de falha que interessava detectar. Vigiar um worker faz-se pelo tamanho da
+    # outbox (ARCHITECTURE.md §8), não por um ping.
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /config
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  proxy:
+    build:
+      context: ..
+      dockerfile: docker/proxy.Dockerfile
+    # O **único** serviço com porta publicada para fora (SECURITY.md §8). Ouve
+    # em 8080 dentro do contentor, não em 80: em 80 precisaria de
+    # `cap_net_bind_service`, que o `cap_drop: [ALL]` retira.
+    ports:
+      - "${PROXY_PORT:-8090}:8080"
+    # Sem este bloco o Caddyfile lia os seus dois `{$...}` do ambiente de um
+    # contentor que não tinha nenhum, e ficava sempre nos defaults: o
+    # `ADMIN_ALLOW_CIDRS` que o SECURITY.md §5 diz estar "a uma variável de
+    # distância" estava a uma variável **e a uma alteração ao compose**, e o
+    # path do admin não acompanhava o do Django. Medido: `docker inspect` do
+    # contentor do proxy não devolvia variável `ADMIN_*` nenhuma.
+    environment:
+      ADMIN_PATH: ${ADMIN_PATH:-gestao-interna}
+      ADMIN_ALLOW_CIDRS: ${ADMIN_ALLOW_CIDRS:-0.0.0.0/0 ::/0}
+    depends_on:
+      backend: { condition: service_healthy }
+      frontend: { condition: service_healthy }
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /data
+      - /config
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  pgdata:

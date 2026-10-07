@@ -1,0 +1,23 @@
+{
+  // Para ver a app dentro do editor NÃO é preciso extensão nenhuma: o VS Code
+  // já traz o Simple Browser.
+  //   1. cd frontend && pnpm dev          (ou a tarefa "frontend: dev")
+  //   2. Cmd+Shift+P -> "Simple Browser: Show"
+  //   3. http://localhost:5183
+  //
+  // O "Live Preview" (ms-vscode.live-server) NÃO serve aqui, e por isso não
+  // está recomendado: ele serve os seus próprios ficheiros estáticos, logo
+  // apontá-lo ao frontend/ dava o index.html sem bundle — sem Tailwind, sem
+  // React, sem tokens. É a ferramenta certa para um HTML solto, não para uma
+  // app com servidor de desenvolvimento próprio.
+  //
+  // Ressalva: o Simple Browser é uma webview em iframe e não tem device
+  // toolbar. O DESIGN.md §4 exige testar a 360px e a 1440px — essa
+  // verificação é em browser a sério.
+  "recommendations": [
+    "ms-python.python",
+    "charliermarsh.ruff",
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss"
+  ]
+}

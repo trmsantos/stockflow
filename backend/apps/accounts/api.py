@@ -1,0 +1,317 @@
+"""A porta do módulo `accounts` (ARCHITECTURE.md §3).
+
+É o único ficheiro do `accounts` que outro módulo pode importar. Expõe quatro
+coisas e nada mais:
+
+1. **Os DTOs do contexto do pedido.** `request.tenant` é o `TenantContext`
+   congelado daqui e **não** a instância do modelo (ADR 0007): nenhum módulo
+   deve ser tentado a atravessar relações a partir dele — um `request.tenant`
+   que fosse um `Tenant` dava-lhe acesso a tudo o que aponta para o tenant, a
+   partir de qualquer view.
+2. **As classes de permissão**, reexportadas de `accounts/permissions.py`.
+   Escrever `obj.tenant_id == request.tenant.id` à mão em nove módulos é como
+   um deles a escreve mal — e é precisamente a comparação que o SECURITY.md §5
+   exige antes de qualquer outra regra.
+3. **O mecanismo da dispensa de âmbito.** A dispensa é declarada na *view* e
+   nunca numa lista de paths nas settings, e o default é ter âmbito: uma view
+   que não declare nada é servida com âmbito, uma que não o consiga obter leva
+   403 antes de o `get_response()` correr. Quem lê a declaração é o
+   `TenantMiddleware`; quem a escreve usa `tenant_scope_exempt` daqui.
+4. **A forma canónica de um email.** `normalizar_email` é a definição de "a
+   mesma conta" (a unicidade é insensível à caixa — ver `models.py`), e é
+   pública porque há um consumidor fora do módulo: o `AXES_USERNAME_CALLABLE`
+   em `config/lockout.py`, que tem de contar as tentativas de login na mesma
+   chave em que a conta existe. Uma segunda definição em qualquer outro sítio é
+   um bug à espera de acontecer.
+
+O que este ficheiro **não** expõe, de propósito: pesquisa de utilizadores. O
+`accounts_user` é a tabela sem política (ADR 0007) e um endpoint que aceite um
+email e diga se existe é um oráculo de enumeração de contas. As únicas leituras
+suportadas são por `pk` do próprio (`utilizador_atual`) e, no login, por email —
+que vive na view do login e não aqui.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+from functools import wraps
+from typing import Any
+from uuid import UUID
+
+from django.http import HttpRequest
+
+from apps.accounts.models import Papel, UserManager
+from apps.accounts.permissions import PertenceAoTenant, TemPapel
+from apps.accounts.selectors import membership_no_ambito
+from apps.shared.db import TenantScopeConflict, current_tenant
+
+__all__ = [
+    "MembershipInfo",
+    "Papel",
+    "PertenceAoTenant",
+    "TemPapel",
+    "TenantContext",
+    "TenantOption",
+    "UserOut",
+    "dispensa_declarada",
+    "dispensar_ambito",
+    "membership_atual",
+    "normalizar_email",
+    "tenant_context",
+    "tenant_scope_exempt",
+    "utilizador_atual",
+]
+
+#: Nome do atributo que declara a dispensa, igual ao do `TenantTask` da ADR
+#: 0005 de propósito: é o mesmo conceito nos dois lados (pedido e tarefa) e
+#: procura-se com um `grep` só.
+ATRIBUTO_DE_DISPENSA = "tenant_scope_exempt"
+
+#: Onde o `TenantMiddleware` publica o contexto. Constantes e não literais
+#: espalhados: quem lê deve usar `membership_atual(request)`.
+ATRIBUTO_TENANT = "tenant"
+ATRIBUTO_MEMBERSHIP = "membership"
+
+
+# ---------------------------------------------------------------------------
+# DTOs. Congelados e com `slots`: um contexto de pedido que se pudesse mutar a
+# meio do pedido é uma decisão de autorização a mudar debaixo dos pés de quem
+# já a tomou.
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TenantContext:
+    """O âmbito **ativo** do pedido: é isto que `request.tenant` é.
+
+    Três campos, os da ADR 0007. O `role` está aqui porque é o par
+    (tenant, papel) que decide o que o pedido pode fazer, e ir buscá-lo outra
+    vez em cada view seria uma segunda query por pedido.
+    """
+
+    id: UUID
+    name: str
+    role: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TenantOption:
+    """Um âmbito que o utilizador **pode tentar**, já confirmado pela política.
+
+    Distinto do `TenantContext` por não ser o âmbito ativo: é uma das opções do
+    seletor de estabelecimento. Quem o produz é o caminho do login e o da troca
+    de tenant, que confirmam cada candidato do `User.tenant_ids` no **seu**
+    `tenant_scope` (é lá que o nome do tenant é legível, porque o
+    `accounts_tenant` tem política) — e esses endpoints entram na sessão da
+    autenticação. A forma fica fixada aqui para o contrato não nascer no
+    frontend.
+    """
+
+    id: UUID
+    name: str
+    role: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class UserOut:
+    """O utilizador como os outros módulos o veem: credencial e flags.
+
+    Sem nome e sem telefone — esses vivem no `Membership` e saem no
+    `MembershipInfo`. Não há aqui nada que uma ligação sem âmbito não pudesse
+    já ler, o que é a consequência assumida de o `accounts_user` não ter
+    política.
+    """
+
+    id: UUID
+    email: str
+    is_active: bool
+    is_staff: bool
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class MembershipInfo:
+    """A pertença do pedido em curso: quem, onde, com que papel e que nome.
+
+    É o que um módulo usa para carimbar um registo com o autor ("contado por
+    Ana Silva") sem ir ao `accounts_user` e sem guardar o nome na sua própria
+    tabela.
+    """
+
+    user_id: UUID
+    tenant_id: UUID
+    role: str
+    display_name: str
+
+
+# ---------------------------------------------------------------------------
+# Dispensa de âmbito
+# ---------------------------------------------------------------------------
+def tenant_scope_exempt(vista: Any) -> Any:
+    """Declara que esta view é servida **sem** âmbito de tenant.
+
+    Aplica-se a uma função de view, a uma classe (Django ou DRF) ou, em último
+    recurso, escreve-se `tenant_scope_exempt = True` no corpo da classe — o
+    middleware lê os três. Devolve o que recebeu, para poder ser usado como
+    decorador::
+
+        @tenant_scope_exempt
+        class LoginView(APIView):
+            ...
+
+    O que uma view dispensada **não** ganha é um âmbito por acidente: se toca
+    em dados de um tenant, abre o `tenant_scope` ela mesma — é o que o login e
+    a troca de tenant fazem, uma transação curta por candidato.
+    """
+    setattr(vista, ATRIBUTO_DE_DISPENSA, True)
+    return vista
+
+
+def dispensa_declarada(vista: Any) -> bool:
+    """A view (ou a sua classe) declara dispensa de âmbito?
+
+    Três sítios porque há três formas de uma view chegar ao resolver: a função
+    decorada, o `view_class` que o `as_view()` do Django lá põe, e o `cls` que o
+    `as_view()` do DRF lá põe. O default é `False` — o esquecimento falha
+    fechado.
+    """
+    candidatos = (
+        vista,
+        getattr(vista, "view_class", None),
+        getattr(vista, "cls", None),
+    )
+    return any(getattr(c, ATRIBUTO_DE_DISPENSA, False) for c in candidatos if c is not None)
+
+
+def dispensar_ambito(urls: Any) -> Any:
+    """Declara a dispensa numa árvore de URLs **já construída**, e devolve-a.
+
+    Existe por uma razão só: o admin do Django. As suas views não são nossas
+    para lhes pôr um atributo no sítio onde são escritas, e a alternativa —
+    reconhecer o path do admin dentro do middleware — era a lista de paths nas
+    settings que a ADR 0007 rejeita, agora escondida num `startswith`. Isto
+    marca as views, que é onde a declaração tem de viver::
+
+        path(settings.ADMIN_URL, dispensar_ambito(admin.site.urls))
+
+    Aceita o trio `(patterns, app_namespace, instance_namespace)` que o
+    `AdminSite.urls` devolve ou uma lista de patterns, e desce pelos
+    `include()` aninhados (cada `ModelAdmin` é um deles). Marca os objetos que o
+    resolver vai usar — o mesmo `get_urls()` não é chamado outra vez.
+    """
+    patterns = urls[0] if isinstance(urls, tuple) else urls
+    _marcar(patterns)
+    return urls
+
+
+def _marcar(patterns: Iterable[Any]) -> None:
+    for pattern in patterns:
+        aninhados = getattr(pattern, "url_patterns", None)
+        if aninhados is not None:
+            _marcar(aninhados)
+            continue
+        try:
+            tenant_scope_exempt(pattern.callback)
+        except (AttributeError, TypeError):
+            # Um método ligado não aceita atributos, e o `AdminSite.get_urls`
+            # registra dois deles sem invólucro (`self.login`,
+            # `self.autocomplete_view`). Aqui envolve-se o método num
+            # invólucro marcado e é ele que passa a ser o callback do pattern:
+            # marcar `Metodo.__func__` funcionaria mas escrevia numa classe do
+            # Django, para todas as instâncias de `AdminSite` do processo.
+            pattern.callback = tenant_scope_exempt(_involucro(pattern.callback))
+
+
+def _involucro(callback: Any) -> Any:
+    """Uma função que chama `callback` e a que se pode pôr um atributo."""
+
+    @wraps(callback)
+    def vista(*args: Any, **kwargs: Any) -> Any:
+        return callback(*args, **kwargs)
+
+    return vista
+
+
+# ---------------------------------------------------------------------------
+# O contexto do pedido
+# ---------------------------------------------------------------------------
+def membership_atual(request: HttpRequest) -> MembershipInfo | None:
+    """A pertença que o `TenantMiddleware` confirmou para este pedido.
+
+    Não faz query: o middleware já pagou a única que há, e é por isso que os
+    módulos devem chamar esta função em vez de ir buscar o `Membership` outra
+    vez. `None` só numa view dispensada de âmbito — nas outras, o middleware
+    respondeu 403 antes de a view correr.
+    """
+    valor = getattr(request, ATRIBUTO_MEMBERSHIP, None)
+    return valor if isinstance(valor, MembershipInfo) else None
+
+
+def utilizador_atual(request: HttpRequest) -> UserOut | None:
+    """O utilizador autenticado do pedido, sem query e sem PII do tenant.
+
+    `None` para um pedido anónimo. Quem quer o nome da pessoa usa o
+    `display_name` do `membership_atual`: é o nome dela **naquele** tenant.
+    """
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return None
+    return UserOut(
+        id=user.pk,
+        email=user.email,
+        is_active=user.is_active,
+        is_staff=user.is_staff,
+    )
+
+
+def tenant_context(user_id: UUID, tenant_id: UUID) -> TenantContext | None:
+    """Confirma a pertença **dentro do âmbito já aberto** e devolve o contexto.
+
+    É a função que o login e a troca de tenant usam depois de abrirem
+    `tenant_scope(tenant_id)`: a sessão escolhe o âmbito, a política concede-o.
+    `None` significa "a política não devolveu linha nenhuma" — o utilizador não
+    tem pertença ativa nesse tenant, ou o tenant não existe.
+
+    Exige que o âmbito aberto seja **o mesmo** `tenant_id`, e levanta se não
+    for. Sem essa guarda, chamá-la fora de âmbito devolvia `None` por a
+    política filtrar tudo, e o erro aparecia como "não tem acesso" em vez de
+    como o bug que é.
+    """
+    ativo = current_tenant()
+    if ativo != tenant_id:
+        raise TenantScopeConflict(
+            f"tenant_context({tenant_id}) com o âmbito em {ativo}: a pertença "
+            "só é legível dentro de tenant_scope(tenant_id) — as políticas do "
+            "accounts_membership e do accounts_tenant filtram por ele "
+            "(ADR 0007)."
+        )
+    membership = membership_no_ambito(user_id=user_id, tenant_id=tenant_id)
+    if membership is None:
+        return None
+    return TenantContext(
+        id=membership.tenant_id,
+        name=membership.tenant.name,
+        role=membership.role,
+    )
+
+
+
+# ---------------------------------------------------------------------------
+# A forma canónica de um email
+# ---------------------------------------------------------------------------
+def normalizar_email(valor: str | None) -> str:
+    """A forma canónica de um email: é a definição de "a mesma conta".
+
+    A unicidade do email é insensível à caixa (`models.py`), pelo que `Ana@x.pt`
+    e `ana@x.pt` normalizam para o mesmo valor. A implementação é o
+    `UserManager.normalize_email` e este é só a porta — a implementação fica
+    onde o Django a chama, para não haver duas definições a divergir.
+
+    É um `classmethod` por baixo: não toca na base de dados nem precisa do
+    âmbito de tenant. Isso é requisito de quem a chama de fora, não detalhe —
+    o `AXES_USERNAME_CALLABLE` corre no caminho crítico do login, de dentro da
+    construção da query das tentativas, onde uma query a mais é uma recursão
+    (ver o docstring de `config/lockout.py`).
+
+    Não é um validador: um valor que não seja um email sai normalizado da mesma
+    forma. Quem valida a forma é o `EmailField` do modelo ou o serializer.
+    """
+    return UserManager.normalize_email(valor)

@@ -1,0 +1,184 @@
+# O único serviço que expõe portas ao exterior (SECURITY.md §8).
+#
+# Faz quatro coisas que a aplicação não pode fazer sozinha:
+#   1. identifica o cliente real (X-Forwarded-For) para o rate limit por IP;
+#   2. diz ao Django que o TLS terminou aqui (X-Forwarded-Proto), sem o qual o
+#      SECURE_SSL_REDIRECT entra em ciclo de redirects;
+#   3. impõe o teto de tamanho do corpo, que o Django **não** impõe para
+#      ficheiros — o DATA_UPLOAD_MAX_MEMORY_SIZE só conta campos de formulário;
+#   4. limita a taxa por IP, que é a metade do SECURITY.md §5 que o django-axes
+#      não faz — ele cobre a conta e o par IP+conta, não o IP puro. Vem do
+#      plugin `caddy-ratelimit`, que é a segunda razão pela qual o binário é
+#      construído em `docker/proxy.Dockerfile` em vez de vir da imagem oficial.
+#
+# `ADMIN_PATH` é a **única** fonte de verdade do path do admin, e o compose
+# alimenta com ela os dois lados: este ficheiro e o `DJANGO_ADMIN_URL` do
+# Django. Esteve fixo aqui em três sítios enquanto o Django o lia do ambiente,
+# e mudar a variável largava os três em silêncio — o rate limit de 5/min
+# deixava de casar, o `ADMIN_ALLOW_CIDRS` deixava de casar, e o path real caía
+# no `handle` do frontend, ou seja na SPA. Um "path não óbvio" que só é óbvio
+# para quem lê três ficheiros commitados não é um controlo.
+#
+# **Sem barras**: o `admin_path()` do Django normaliza `gestao-interna/` e
+# `/gestao-interna/`, mas aqui uma barra a mais dá `/gestao-interna//*` e o
+# matcher deixa de casar. O `.env.example` di-lo, e a divergência entre os dois
+# lados é apanhada pela asserção de 429 no login do admin do job `stack` do CI.
+{
+	admin off
+	# Em dev não há TLS: o HSTS do Django ficaria colado ao browser para todo o
+	# localhost. Em produção isto sai e o Caddy pede certificado sozinho.
+	auto_https off
+	order rate_limit before basicauth
+}
+
+:8080 {
+	# ---- taxa por IP ------------------------------------------------------
+	# Dois limites, porque servem coisas diferentes. O do login é o que impede
+	# alguém de varrer contas: o axes tranca uma conta às 5 falhas, mas um
+	# atacante com uma password e mil emails nunca tranca conta nenhuma — é o
+	# buraco que o SECURITY.md §5 delega ao proxy. O geral existe para não haver
+	# um IP a consumir o pool de ligações (uma transação por pedido, ADR 0005).
+	#
+	# `{remote_host}` e não um header: é o IP da ligação TCP, que o cliente não
+	# escolhe. Chavear por `X-Forwarded-For` era deixar o atacante escolher o
+	# seu próprio balde — o mesmo defeito que o `NUM_PROXIES` do DRF tinha.
+	rate_limit {
+		zone login {
+			match {
+				# As duas formas de cada caminho: o matcher `path` do Caddy é exacto
+				# sem `*`, e o Django/DRF serve com barra final. Medido: sem a
+				# forma com barra, 14 POSTs a `/api/v1/auth/login/` davam zero 429.
+				path /api/v1/auth/login /api/v1/auth/login/ \
+				     /api/v1/auth/registo /api/v1/auth/registo/ \
+				     /api/v1/auth/recuperar /api/v1/auth/recuperar/
+			}
+			key {remote_host}
+			events 10
+			window 1m
+		}
+		# O login do admin, que ficava de fora e é o endpoint de maior valor: quem
+		# entra lê o `accounts_user` inteiro, de todos os tenants. O axes trava
+		# brute-force de **uma** conta (5 falhas/30 min); não trava varrer
+		# contas, e é essa metade que o SECURITY.md §5 delega aqui. Cinco por
+		# minuto — o admin é para operadores, não para tráfego.
+		zone admin {
+			match {
+				path /{$ADMIN_PATH:gestao-interna}/login/ /{$ADMIN_PATH:gestao-interna}/login
+			}
+			key {remote_host}
+			events 5
+			window 1m
+		}
+		zone geral {
+			key {remote_host}
+			events 600
+			window 1m
+		}
+	}
+
+	# ---- restrição de origem do admin -------------------------------------
+	# O SECURITY.md §5 exige o admin "só acessível por IP/VPN". Em produção isso
+	# é uma lista real; em desenvolvimento não pode ser, porque o Docker Desktop
+	# faz NAT e o IP do host é imprevisível (medido: um endereço público
+	# diferente a cada arranque) — uma lista fixa trancava o próprio dono fora.
+	#
+	# O default `0.0.0.0/0 ::/0` não restringe nada, e é deliberado e nomeado: o
+	# que isto acrescenta é o **sítio** onde a restrição se liga, a uma variável
+	# de distância, em vez de uma alteração ao ficheiro no dia do incidente.
+	# **Produção tem de definir `ADMIN_ALLOW_CIDRS`** — está escrito no §5.
+	@admin_de_fora {
+		path /{$ADMIN_PATH:gestao-interna}/*
+		not remote_ip {$ADMIN_ALLOW_CIDRS:0.0.0.0/0 ::/0}
+	}
+	handle @admin_de_fora {
+		error 403
+	}
+
+	# ---- limites de corpo -------------------------------------------------
+	# 12 MiB é o teto de uma foto de fatura vinda de um telemóvel. O
+	# SECURITY.md §2 põe 5 MiB nos campos de formulário do Django; este é o
+	# limite do pedido inteiro, e é o único que existe para ficheiros.
+	request_body {
+		max_size 12MB
+	}
+
+	# ---- o que nunca chega à aplicação ------------------------------------
+	# O X-Tenant-ID é do cliente e só pode causar 409 (ADR 0007). Passa, mas o
+	# proxy nunca o injeta nem o reescreve: um proxy que o escrevesse provocava
+	# 409 em massa. Já o X-Forwarded-* é o oposto — tem de ser reescrito aqui,
+	# senão o cliente forja o seu próprio IP e contorna o rate limit.
+	request_header -X-Forwarded-For
+	request_header -X-Forwarded-Proto
+	request_header -X-Real-IP
+
+	# ---- o que morre aqui -------------------------------------------------
+	# O `/readyz` responde pelas **dependências** e um 503 dele diz a quem
+	# pergunta que a base de dados está em baixo. É para o orquestrador, na
+	# rede interna, não para a Internet.
+	#
+	# Um 404 explícito e não "deixar cair no frontend": sem esta regra o
+	# caminho cai no `handle` de baixo e devolve a SPA com **200** — medido. Um
+	# monitor apontado a este URL ficava com um 200 permanente, indiferente ao
+	# estado da base de dados, que é um modo de falha pior do que não ter
+	# endpoint nenhum. Dentro da rede continua a responder em
+	# `http://backend:8000/readyz`.
+	@readyz path /readyz /readyz/*
+	handle @readyz {
+		error 404
+	}
+
+	# ---- API e admin: para o Django ---------------------------------------
+	@backend path /api/* /healthz /{$ADMIN_PATH:gestao-interna}/* /static/*
+	handle @backend {
+		reverse_proxy backend:8000 {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-For {remote_host}
+			header_up Host {host}
+			# Uma extração de fatura não corre aqui (é Celery), mas a
+			# confirmação de 60 linhas corre — e é uma transação por pedido.
+			transport http {
+				read_timeout 60s
+				write_timeout 60s
+			}
+		}
+	}
+
+	# ---- tudo o resto: os estáticos do frontend ---------------------------
+	handle {
+		# Os headers de segurança do **documento**, e é aqui que têm de estar.
+		#
+		# O Django escreve a CSP nas respostas dele, que são JSON — onde é
+		# inerte, porque um browser não executa nada num `application/json`. O
+		# `index.html` nunca passa pelo Django, logo a página que o browser
+		# executa de facto não levava CSP, nem `X-Frame-Options`, nem
+		# `nosniff`, nem `Referrer-Policy`. Medido antes: `curl -I /` devolvia
+		# zero headers de segurança. O SECURITY.md §1 põe a CSP como *o*
+		# controlo contra XSS.
+		#
+		# Ficam neste `handle` e não num bloco global para não colidirem com os
+		# do Django: cada upstream escreve os seus, e não há dois sítios a
+		# escrever o mesmo header e a divergir.
+		#
+		# Sem `unsafe-inline` no `style-src`, e isso foi verificado e não
+		# presumido: o `index.html` construído não tem `<style>` nem atributos
+		# `style=`, e as duas chamadas a `setProperty()` do bundle são CSSOM em
+		# JavaScript, que a CSP não governa.
+		header {
+			Content-Security-Policy "default-src 'self'; base-uri 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; worker-src 'self'; manifest-src 'self'"
+			X-Frame-Options "DENY"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			Cross-Origin-Opener-Policy "same-origin"
+			# O Caddy anuncia-se por omissão; um atacante não precisa de saber.
+			-Server
+			# Em produção, com TLS terminado aqui, acrescenta-se o HSTS. Em dev
+			# não: ficaria colado ao browser para todo o `localhost`.
+		}
+		reverse_proxy frontend:8080
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -1,0 +1,299 @@
+[project]
+name = "stockflow-backend"
+version = "0.1.0"
+description = "StockFlow backend — Django 5 + DRF, monólito modular multi-tenant"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "argon2-cffi>=25.1.0",
+    "celery>=5.6.3",
+    "django>=5.0,<6",
+    "django-axes[ipware]>=8.3.1",
+    "django-csp>=4.0",
+    "django-environ>=0.14.0",
+    "djangorestframework>=3.18.1",
+    "drf-spectacular>=0.30.0",
+    # O servidor de produção: WSGI, e não ASGI. A pilha é síncrona de ponta a
+    # ponta (DRF, ORM, psycopg, `TenantMiddleware`) e as chamadas a LLM da
+    # extração de faturas correm em Celery, nunca no ciclo do pedido — logo o
+    # ASGI não traz concorrência que aqui falte. O que traria é um problema:
+    # sob ASGI, cada pedido síncrono corre no seu próprio executor de uma
+    # thread (`ThreadSensitiveContext` por pedido, django/core/handlers/asgi.py;
+    # asgiref/sync.py escolhe um executor de `max_workers=1` por contexto), o
+    # que não tem teto de concorrência — e uma ligação por thread com
+    # `CONN_MAX_AGE = 60` (ADR 0005) é uma ligação que fica aberta depois de a
+    # thread desaparecer. Com `gunicorn --workers W --threads T` o teto é
+    # exatamente `W × T`, que é o número que tem de caber no `max_connections`
+    # do Postgres, porque a ADR 0005 abre uma transação por pedido.
+    # Teto no major: um `gunicorn 24` muda defaults de worker sem aviso.
+    "gunicorn>=23.0,<24",
+    "psycopg[binary]>=3.3.6",
+    "redis>=8.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pytest-django>=4.14.0",
+    "ruff>=0.16.9",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff — lint. Nunca se suprime uma regra com `# noqa` (CLAUDE.md).
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle: erros de estilo
+    "F",  # pyflakes: imports por usar, nomes indefinidos
+    "I",  # isort: ordem e agrupamento de imports
+    "UP", # pyupgrade: sintaxe moderna de Python 3.12
+    "B",  # flake8-bugbear: armadilhas (mutable defaults, raise sem `from`, ...)
+    "DJ", # flake8-django: anti-padrões Django (null=True em CharField, __all__, ...)
+    "S",  # flake8-bandit: segurança (SECURITY.md §9 — SAST em cada PR)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `assert` é a forma idiomática de verificar em pytest; S101 só se ignora aqui.
+"tests/**" = ["S101"]
+# A camada de settings herda do `base.py` com `from ... import *`: é o mecanismo
+# de composição do Django e não há alternativa que mantenha *todos* os nomes no
+# módulo final (Django lê os atributos do módulo apontado por
+# DJANGO_SETTINGS_MODULE). Só se dispensa o F403 da linha do `import *`; cada
+# módulo volta a importar explicitamente os nomes que usa, para o F405
+# continuar a apanhar referências a nomes que não existem no base.
+# Não há `# noqa` em ficheiro nenhum — a exceção é aqui, visível e com âmbito.
+"config/settings/dev.py" = ["F403"]
+"config/settings/prod.py" = ["F403"]
+"config/settings/test.py" = ["F403"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["apps", "config"]
+
+# ---------------------------------------------------------------------------
+# pytest + pytest-django. `config.settings.test` nasce no passo 2 do kickoff.
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py", "*_test.py"]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers --strict-config"
+# Registado porque `--strict-markers` recusa marcadores desconhecidos: um
+# marcador mal escrito passa a ser um erro de recolha e não uma dispensa
+# silenciosa do guarda. Ver a secção (c) de `tests/conftest.py` — a marca só é
+# legítima nos testes que fazem a leitura fora de âmbito **de propósito**, para
+# provar que a política devolve zero linhas em vez de levantar. Correr sob
+# `system_scope()` não é motivo: o guarda reconhece o âmbito de sistema como
+# âmbito legítimo (`apps.shared.db.in_system_scope`).
+markers = [
+    "sem_ambito_de_rls: dispensa o guarda que proíbe ler tabelas com política fora de âmbito",
+]
+
+# ---------------------------------------------------------------------------
+# import-linter — fronteiras entre módulos (ARCHITECTURE.md §3 e §6b).
+#
+# Grafo permitido, e nada mais:
+#   agents      -> purchasing.api, catalog.api
+#   purchasing  -> inventory.api, catalog.api
+#   recipes     -> inventory.api, catalog.api
+#   inventory   -> catalog.api
+#   todos       -> accounts.api, apps.shared
+#   shared      -> nada. É a camada de base: não importa nenhum outro módulo,
+#                  nem sequer accounts.api. O TenantModel referencia o tenant
+#                  por string — ForeignKey("accounts.Tenant") — que não gera
+#                  import. O TenantMiddleware vive em apps/accounts/.
+#
+# Exceção transversal: `apps.<m>.events` é importável por qualquer módulo. Uma
+# classe de evento é um DTO (ARCHITECTURE.md §3) e os handlers precisam do tipo
+# para subscrever. Isto não alarga o grafo de `api.py`: notifications continua
+# sem poder importar apps.inventory.api; só pode importar apps.inventory.events.
+# Por isso todos os contratos abaixo levam `ignore_imports` para `.events` —
+# menos o do `shared`, que não importa mesmo nada (ver ADR 0003).
+#
+# Todos os contratos `forbidden` usam allow_indirect_imports = true: só as
+# arestas *diretas* são proibidas. Cadeias legítimas existem (agents ->
+# purchasing.api -> inventory.api) e qualquer aresta ilegal dentro de uma
+# cadeia é apanhada pelo contrato do módulo que a faz.
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_packages = ["apps"]
+
+# Garante: um módulo só vê a interface pública dos outros. Proíbe qualquer
+# submódulo de outro módulo (models, services, selectors, serializers, views,
+# urls, tasks, handlers, permissions, migrations, ...) e abre exceção apenas
+# para `api.py`, `events.py` e para `apps.shared` (biblioteca interna comum).
+[[tool.importlinter.contracts]]
+name = "Entre módulos só se importa api.py, events.py e apps.shared"
+type = "forbidden"
+source_modules = ["apps.*"]
+forbidden_modules = ["apps.*.*"]
+ignore_imports = [
+    "apps.** -> apps.*.api",
+    "apps.** -> apps.*.events",
+    "apps.** -> apps.shared",
+    "apps.** -> apps.shared.**",
+]
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
+
+# Garante: accounts é a base de identidade/tenant e não conhece o domínio.
+[[tool.importlinter.contracts]]
+name = "accounts não depende de nenhum módulo de domínio"
+type = "forbidden"
+source_modules = ["apps.accounts"]
+forbidden_modules = [
+    "apps.catalog",
+    "apps.inventory",
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
+
+# Garante: shared é a camada de base (TenantModel, events, outbox, utils).
+# Não importa nenhum outro módulo — nem sequer apps.accounts.api: o
+# TenantMiddleware passou para apps/accounts/ e o TenantModel referencia o
+# tenant por string, ForeignKey("accounts.Tenant"), que não gera import.
+[[tool.importlinter.contracts]]
+name = "shared não depende de nenhum outro módulo"
+type = "forbidden"
+source_modules = ["apps.shared"]
+forbidden_modules = [
+    "apps.accounts",
+    "apps.catalog",
+    "apps.inventory",
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+]
+# Único contrato sem a exceção `.events`: "nenhum outro módulo" é mesmo
+# nenhum. `apps/shared/events.py` define a classe base dos eventos; não tem
+# razão para importar os eventos de quem está acima (ADR 0003).
+allow_indirect_imports = true
+
+# Garante: catalog é a camada mais baixa do domínio (produtos, unidades,
+# fornecedores). Não sabe que stock, compras ou receitas existem.
+[[tool.importlinter.contracts]]
+name = "catalog não depende de nenhum outro módulo de domínio"
+type = "forbidden"
+source_modules = ["apps.catalog"]
+forbidden_modules = [
+    "apps.inventory",
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
+
+# Garante: inventory -> catalog.api e mais nada (ARCHITECTURE.md §6b).
+[[tool.importlinter.contracts]]
+name = "inventory só depende de catalog"
+type = "forbidden"
+source_modules = ["apps.inventory"]
+forbidden_modules = [
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
+
+# Garante: purchasing -> inventory.api, catalog.api e mais nada.
+[[tool.importlinter.contracts]]
+name = "purchasing só depende de inventory e catalog"
+type = "forbidden"
+source_modules = ["apps.purchasing"]
+forbidden_modules = [
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
+
+# Garante: recipes -> inventory.api, catalog.api e mais nada (nunca purchasing).
+[[tool.importlinter.contracts]]
+name = "recipes só depende de inventory e catalog"
+type = "forbidden"
+source_modules = ["apps.recipes"]
+forbidden_modules = [
+    "apps.purchasing",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
+
+# Garante: agents -> purchasing.api, catalog.api e mais nada. Em especial não
+# toca no ledger: movimentos de stock nascem sempre de purchasing.confirm_receipt
+# depois de revisão humana (ARCHITECTURE.md §6 e §6b).
+[[tool.importlinter.contracts]]
+name = "agents só depende de purchasing e catalog, nunca de inventory"
+type = "forbidden"
+source_modules = ["apps.agents"]
+forbidden_modules = [
+    "apps.inventory",
+    "apps.recipes",
+    "apps.billing",
+    "apps.notifications",
+]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
+
+# Garante: billing é folha — planos e assinaturas só conhecem accounts.api.
+[[tool.importlinter.contracts]]
+name = "billing não depende de nenhum módulo de domínio"
+type = "forbidden"
+source_modules = ["apps.billing"]
+forbidden_modules = [
+    "apps.catalog",
+    "apps.inventory",
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.notifications",
+]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
+
+# Garante: notifications é folha — reage a eventos (events.py), não chama o
+# domínio a partir de dentro.
+[[tool.importlinter.contracts]]
+name = "notifications não depende de nenhum módulo de domínio"
+type = "forbidden"
+source_modules = ["apps.notifications"]
+forbidden_modules = [
+    "apps.catalog",
+    "apps.inventory",
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true

@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "types": ["vite/client", "node"],
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    /* Permite — não obriga — a extensão `.ts` no especificador. É usada apenas
+     * no `vite.config.ts` e em `fixtures/`, porque o carregador nativo de
+     * configuração do Vite 8 (`configLoader: "native"`, que vai passar a
+     * default) não resolve imports sem extensão e avisa a cada `pnpm build`.
+     * Dentro de `src/` o estilo continua a ser sem extensão: lá quem resolve é
+     * o bundler da app, não o carregador do config. */
+    "allowImportingTsExtensions": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedSideEffectImports": true,
+
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
+  },
+  /* `fixtures` está aqui por duas razões (ADR 0008, consequências): sem ela o
+   * ESLint com `projectService` **crasha** nesses ficheiros (exit 2) e os
+   * fixtures deixam de ser tipados — e é a tipagem que os torna úteis como
+   * rascunho do contrato que a sessão do backend recebe. A pasta vive fora de
+   * `src/` de propósito: nada em `src/` a importa, logo a mentira não entra no
+   * grafo de módulos da app. */
+  "include": ["src", "fixtures", "vite.config.ts"]
+}

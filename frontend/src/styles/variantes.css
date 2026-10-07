@@ -1,0 +1,62 @@
+/* ---------------------------------------------------------------------------
+ * As variantes `data-*` que os primitivos do shadcn usam, e **só as que usamos**.
+ *
+ * ## Porque estão aqui e não vêm do pacote
+ *
+ * Vinham de `@import "shadcn/tailwind.css"`, e isso fazia do `shadcn` uma
+ * dependência de build — não apenas o CLI que acrescenta componentes. O preço
+ * eram 629 linhas de CSS de terceiros para usar vinte, mais uma árvore
+ * transitiva (`ts-morph`, `fast-glob`, `micromatch`, `braces`) que o
+ * `pnpm audit` do CI lia a cada corrida.
+ *
+ * O `braces` tem um aviso `high` de negação de serviço com
+ * `patched_versions: None` — **não há versão corrigida a montante**. As saídas
+ * eram três: suprimir o aviso, viver com o CI vermelho, ou não ter o caminho.
+ * Suprimir um aviso que não se pode corrigir ensina a ignorar a auditoria, e uma
+ * auditoria que se ignora deixa de ser um gate; viver com vermelho é a mesma
+ * coisa, mais devagar. Fica a terceira.
+ *
+ * ## Medido antes de copiar
+ *
+ * Das nove variantes que o pacote declara, o código usa três: `data-open` (11
+ * utilizações), `data-closed` (11) e `data-disabled` (2). As outras seis e todas
+ * as utilities (`scroll-fade`, `shimmer`, `no-scrollbar`, os keyframes do
+ * acordeão) têm **zero** — e os `@property` do `scroll-fade` e do `shimmer`
+ * chegavam ao CSS compilado, porque uma at-rule não é podada por não ter quem a
+ * use. Copiar as três é menos código nosso e menos código enviado.
+ *
+ * ## O risco, e o que o torna visível
+ *
+ * Se um primitivo novo instalado por `pnpm dlx shadcn@latest add …` usar uma
+ * variante que não está aqui, o Tailwind **não a gera e não se queixa** — a
+ * classe fica no HTML e não faz nada, que é o tipo de falha que este
+ * repositório paga caro. Daí o `scripts/check-variantes.mjs`, que corre no
+ * `pnpm lint`: toda a variante `data-<palavra>:` usada em `src/` tem de estar
+ * declarada neste ficheiro, e o gate falha nos dois sentidos — também avisa
+ * quando uma declarada deixa de ter utilizações.
+ *
+ * A forma com dois selectores é a do pacote, e não é redundância: o Radix
+ * escreve `data-state="open"` nos primitivos antigos e `data-open` nos novos, e a
+ * variante tem de casar os dois enquanto conviverem.
+ * ------------------------------------------------------------------------- */
+
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-disabled {
+  &:where([data-disabled="true"]),
+  &:where([data-disabled]:not([data-disabled="false"])) {
+    @slot;
+  }
+}

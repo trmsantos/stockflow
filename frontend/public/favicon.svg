@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="StockFlow">
+  <!--
+    A marca do StockFlow: **o trilho aceso ao lado de uma linha**.
+
+    Não é um símbolo inventado para o produto — é o elemento de que o produto é
+    feito. O trilho de 4px na aresta esquerda de uma linha de tabela é o que
+    sinaliza um artigo em falta ou fora de prazo (DESIGN.md §3), e é onde a
+    identidade "Cabine" gasta a única ousadia que tem. Um cubo, uma seta ou uma
+    folha ao lado do nome seriam o movimento genérico: dizem "software" e não
+    dizem nada sobre este software.
+
+    As duas barras à direita são a linha que o trilho marca: a de cima em
+    `foreground` (a que importa) e a de baixo em `border` (as outras). A
+    16px lê-se como um pequeno painel com uma linha assinalada; a 512px continua a
+    ser a mesma coisa.
+
+    ## Porque tem azulejo próprio, e porque as cores estão aqui em `oklch`
+
+    O azulejo escuro não é decoração: um favicon é desenhado sobre o fundo do
+    separador, que é claro ou escuro conforme o tema de quem olha, e um trilho
+    ciano sobre branco perde-se. O azulejo garante o contraste em qualquer
+    browser.
+
+    As cores são **literais** porque um ficheiro `.svg` servido como ícone não
+    tem acesso às variáveis CSS da aplicação. São os valores exactos de quatro
+    tokens do `tokens.css` — `--color-background`, `--color-primary`,
+    `--color-foreground` e `--color-border` — e, para esta cópia não poder divergir em silêncio, o
+    `scripts/check-marca.mjs` compara-as token a token a cada `pnpm lint`.
+    O ecrã de arranque no `index.html` **não** precisa desta cópia: lá o SVG é
+    inline e usa `var(--color-*)` a sério.
+  -->
+  <rect width="32" height="32" rx="7" fill="oklch(0.145 0.008 240)" />
+  <rect x="7" y="7" width="3.5" height="18" rx="1.2" fill="oklch(0.76 0.13 225)" />
+  <rect x="14.5" y="8.5" width="10.5" height="3.2" rx="1.2" fill="oklch(0.97 0.003 240)" />
+  <rect x="14.5" y="20.3" width="7" height="3.2" rx="1.2" fill="oklch(0.305 0.011 240)" />
+</svg>
