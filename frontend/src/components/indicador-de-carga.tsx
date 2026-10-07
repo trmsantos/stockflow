@@ -25,8 +25,10 @@
  *    arranque. É a parte que faltava — uma revalidação em segundo plano não tem
  *    esqueleto nenhum e, até aqui, não tinha sinal nenhum.
  */
+
+import { textos } from "./textos";
 export function IndicadorDeCarga({
-  rotulo = "A carregar",
+  rotulo = textos.aCarregar,
   className = "",
 }: {
   /** O que se está a carregar, para quem ouve o ecrã. */

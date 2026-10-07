@@ -26,6 +26,7 @@ export const EN: typeof PT = {
     guardar: "Save",
     aGuardar: "Saving…",
     desfazer: "Undo",
+    aSair: "Signing out…",
     naoGuardado: "What is on the screen is what you wrote, and it is still unsaved.",
   },
 

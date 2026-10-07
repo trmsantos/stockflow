@@ -56,9 +56,11 @@ export const EN: typeof PT = {
   rodape: {
     estabelecimento: "Establishment",
     sufixoDeDemonstracao: " (demo)",
+    estabelecimentoRecolhido: (nome: string) => `Establishment: ${nome}`,
     trocar: "Switch establishment",
     definicoes: "Settings",
     terminarSessao: "Sign out",
+    terminarSessaoDe: (email: string) => `Sign out (${email})`,
     aSair: "Signing out…",
   },
 

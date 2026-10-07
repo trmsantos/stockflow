@@ -20,11 +20,18 @@
  * strings reais ("Tentar outra vez", "A carregar…", "A filtrar por", …), todas
  * copy que o critério do acento não via, mais o nome do produto.
  *
- * **1b. Numa string de código, só prosa acentuada.** Aqui a regra de 1a não serve
- * — o código é feito de strings — e o acento é o que separa uma frase de um
- * identificador: apanha "Não foi possível" e **não** apanha "Save" nem "Total".
- * É cobertura parcial, e **diz-se em vez de se prometer**. Os atributos não têm
- * regra própria porque um `title="…"` **é** uma string de código.
+ * **1b. Numa string de código, prosa acentuada ou uma frase com maiúscula.**
+ * Aqui a regra de 1a não serve — o código é feito de strings — e o que separa uma
+ * frase de um identificador são dois sinais: o acento, e **começar por maiúscula
+ * e ter uma segunda palavra**. O segundo entrou a 2026-10-07 porque o primeiro
+ * deixava passar copy sem acentos: o `Estabelecimento: ${nome}` do pé da sidebar,
+ * o "A carregar" do indicador e o "A sair…" do botão de sair. Medido: dá cinco
+ * achados em todo o `src/`, os cinco reais, e zero falsos.
+ *
+ * Fica de fora uma **palavra só** sem acento — um `rotulo="Email"` — e isso
+ * **diz-se em vez de se prometer**: distinguir "Email" de "icon-sm" sem um
+ * dicionário era um gate em que ninguém confia. Os atributos não têm regra
+ * própria porque um `title="…"` **é** uma string de código.
  *
  * A segunda forma entrou a 2026-10-07 e **a medição que a trouxe importa**: com a
  * regra só em JSX, a lista fechada dizia 32 ficheiros por traduzir e havia 60 com
@@ -88,10 +95,6 @@ const SEM_CATALOGO = new Set([
   "src/features/accounts/secoes.ts",
   // ## O que é de toda a aplicação, e por isso se traduz primeiro
   "src/features/accounts/screens/entrar.tsx",
-  "src/lib/api/errors.ts",
-  "src/lib/api/http.ts",
-  "src/lib/tema.ts",
-  "src/shell/rodape-da-sidebar.tsx",
   // ## inventory — os ecrãs de operação, pela ordem de uso
   "src/features/inventory/screens/stock.tsx",
   "src/features/inventory/screens/alertas.tsx",
@@ -175,7 +178,6 @@ const NAO_E_COPY = new Set([
   "hora inválida",
   "NIF inválido",
   "mês inválido (YYYY-MM)",
-  "A resposta de ${path} não tem a forma esperada.",
   "A sessão diz-se ativa sem estabelecimento, ou o contrário: o invariante da ADR 0010 não se verifica nesta resposta.",
   // Recusas de search param: a ADR 0008 cai para o default em silêncio.
   "o destino tem de ser um caminho desta aplicação",
@@ -183,6 +185,11 @@ const NAO_E_COPY = new Set([
   // O nome do produto. Entra por causa da regra 1a, que conta palavras: é a
   // única palavra que aparece num nó de texto de JSX e **não** se traduz.
   "StockFlow",
+  // Diagnóstico que não chega a um ecrã: o `message` de um `ApiError` que tem
+  // `detail` (o `mensagemDeErro` prefere o `detail`), e o `throw` do arranque,
+  // que só dispara se o `index.html` não tiver o `<div id="root">`.
+  "Cookie csrftoken ausente.",
+  'Falta o <div id=\\"root\\"> no index.html.',
 ]);
 
 function ficheiros(dir) {
@@ -205,6 +212,11 @@ function semComentarios(fonte) {
 
 const ACENTUADA = /[À-ÿ]/;
 const PALAVRA = /[A-Za-zÀ-ÿ]{2,}/;
+/**
+ * Uma frase: começa por maiúscula e tem uma segunda palavra (ou uma
+ * interpolação). É o segundo sinal da regra 1b, para a copy que não tem acentos.
+ */
+const FRASE = /^[A-ZÀ-Þ][a-zà-ÿ]*[ :,]\s*[A-Za-zÀ-ÿ$]/;
 
 /**
  * Um nó de texto de JSX: o que fica entre um `>` que fecha uma tag e o `<` que
@@ -296,7 +308,7 @@ for (const caminho of todos) {
   }
   for (const bruta of literais(fonte)) {
     const t = bruta.trim();
-    if (ACENTUADA.test(t)) achados.add(t);
+    if (ACENTUADA.test(t) || FRASE.test(t)) achados.add(t);
   }
   for (const t of achados) {
     if (NAO_E_COPY.has(t)) continue;

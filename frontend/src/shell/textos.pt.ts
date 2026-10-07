@@ -60,9 +60,16 @@ export const PT = {
      * (DESIGN.md §2).
      */
     sufixoDeDemonstracao: " (demonstração)",
+    /**
+     * O nome acessível do seletor quando a sidebar está recolhida: aí o rótulo
+     * é `sr-only` e o botão é um ícone, logo quem ouve não tem como saber qual.
+     */
+    estabelecimentoRecolhido: (nome: string) => `Estabelecimento: ${nome}`,
     trocar: "Trocar de estabelecimento",
     definicoes: "Definições",
     terminarSessao: "Terminar sessão",
+    /** Com o email, quando ele é sabido: num `title`, diz de que conta se sai. */
+    terminarSessaoDe: (email: string) => `Terminar sessão (${email})`,
     aSair: "A sair…",
   },
 

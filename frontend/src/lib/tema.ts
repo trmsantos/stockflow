@@ -1,5 +1,7 @@
 import type { components } from "@/lib/api/types";
 
+import { textos } from "./textos";
+
 /**
  * A paleta activa: aplicá-la ao `<html>`, lê-la, e guardar a cópia local que
  * torna a primeira pintura possível (ADR 0016).
@@ -82,16 +84,16 @@ export interface RotuloDeTema {
 
 const ROTULOS: Record<Tema, RotuloDeTema> = {
   escuro: {
-    nome: "Escuro",
-    descricao: "Superfícies quase negras. É o default, e é a paleta desenhada para a copa.",
+    nome: textos.temas.escuroNome,
+    descricao: textos.temas.escuroDescricao,
   },
   meio_termo: {
-    nome: "Meio termo",
-    descricao: "Grafite com texto claro. Sobe as superfícies para um monitor com sol ao lado.",
+    nome: textos.temas.meioTermoNome,
+    descricao: textos.temas.meioTermoDescricao,
   },
   claro: {
-    nome: "Claro",
-    descricao: "Cinzento frio com tela em cima. Para o escritório e para imprimir um ecrã.",
+    nome: textos.temas.claroNome,
+    descricao: textos.temas.claroDescricao,
   },
 };
 
@@ -104,8 +106,8 @@ const ROTULOS: Record<Tema, RotuloDeTema> = {
 const ROTULOS_POR_NOME = new Map<string, RotuloDeTema>(Object.entries(ROTULOS));
 
 const ROTULO_DESCONHECIDO: RotuloDeTema = {
-  nome: "Tema desconhecido",
-  descricao: "Esta paleta é mais nova do que esta versão da aplicação. Recarregue a página.",
+  nome: textos.temas.desconhecidoNome,
+  descricao: textos.temas.desconhecidoDescricao,
 };
 
 export function rotuloDoTema(tema: Tema): RotuloDeTema {

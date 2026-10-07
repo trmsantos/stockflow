@@ -33,6 +33,7 @@ export const PT = {
     guardar: "Guardar",
     aGuardar: "A guardar…",
     desfazer: "Desfazer",
+    aSair: "A sair…",
     naoGuardado: "O que está no ecrã é o que escreveu, e continua por guardar.",
   },
 

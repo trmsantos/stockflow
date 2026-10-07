@@ -144,9 +144,8 @@ export function RodapeDaSidebar({
               // ao texto do botão, que já dizem "Estabelecimento" e o nome.
               aria-label={
                 recolhida
-                  ? `Estabelecimento: ${nomeDoAtivo}${
-                      ativo.demonstracao ? textos.rodape.sufixoDeDemonstracao : ""
-                    }`
+                  ? textos.rodape.estabelecimentoRecolhido(nomeDoAtivo) +
+                    (ativo.demonstracao ? textos.rodape.sufixoDeDemonstracao : "")
                   : undefined
               }
               aria-busy={aTrocar}
@@ -248,7 +247,11 @@ export function RodapeDaSidebar({
           variant="ghost"
           size="icon"
           className="shrink-0"
-          title={sessao.email === null ? textos.rodape.terminarSessao : `Terminar sessão (${sessao.email})`}
+          title={
+            sessao.email === null
+              ? textos.rodape.terminarSessao
+              : textos.rodape.terminarSessaoDe(sessao.email)
+          }
           disabled={aSair}
           aria-busy={aSair}
           onClick={sair}
