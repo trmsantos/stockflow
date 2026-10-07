@@ -107,6 +107,21 @@ jobs:
           DJANGO_SECRET_KEY: ci-sem-valor-nao-e-segredo-0123456789-abcdefghijklmnopqrstuvwxyz
         run: uv run manage.py makemigrations --check --dry-run
 
+      - name: Compilar os catálogos de tradução (ADR 0019)
+        working-directory: backend
+        # Os `.po` são commitados e os `.mo` não. Sem este passo o
+        # `tests/test_i18n.py` fica vermelho — de propósito: um `.mo` em falta
+        # dá uma UI em inglês a um utilizador português **sem erro nenhum**, e
+        # esse é o modo de falha que o teste existe para tornar ruidoso.
+        #
+        # `msgfmt` e não `manage.py compilemessages`, como no Dockerfile: o
+        # segundo precisava de `django.setup()` e das variáveis que o `pytest`
+        # abaixo já tem, só para correr um compilador.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext
+          find locale -name '*.po' -exec sh -c 'msgfmt --check "$1" -o "${1%.po}.mo"' _ {} \;
+
       - name: pytest
         working-directory: backend
         env:

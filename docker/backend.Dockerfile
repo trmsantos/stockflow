@@ -31,6 +31,26 @@ COPY backend/ ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
+# Os catálogos de tradução, compilados aqui (ADR 0019).
+#
+# **Neste stage e não no runtime**, por duas razões: o `gettext` nunca entra na
+# imagem que vai para produção (é uma dependência de build, como o `uv`), e o
+# `COPY --from=builder /app /app` do runtime traz os `.mo` já feitos.
+#
+# `msgfmt` directo e não `manage.py compilemessages`: o segundo é um invólucro
+# do primeiro que precisa de `django.setup()`, e isso neste stage obrigava às
+# variáveis de fachada que o `collectstatic` do runtime usa — um bootstrap de
+# Django para correr um compilador. O `--check` recusa um `.po` mal formado, e o
+# `-o` escreve ao lado do `.po`, que é onde o Django os procura.
+#
+# **Um `.mo` esquecido é uma UI em inglês sem erro nenhum**, e é por isso que o
+# `tests/test_i18n.py` afirma que cada msgid resolve para o seu msgstr: a rede
+# está no teste e não aqui, porque aqui só se apanha o `.po` inválido.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gettext=0.21-12 \
+ && rm -rf /var/lib/apt/lists/* \
+ && find locale -name '*.po' -exec sh -c 'msgfmt --check "$1" -o "${1%.po}.mo"' _ {} \;
+
 # ---------------------------------------------------------------- runtime
 FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS runtime
 

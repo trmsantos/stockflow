@@ -10,3 +10,7 @@ dist/
 .claude/settings.local.json
 .security-reports/
 staticfiles/
+# Os catálogos de tradução compilados (ADR 0019). Os `.po` são commitados e
+# revistos; os `.mo` são binários cujo diff ninguém lê, e geram-se do `.po` com
+# `msgfmt`. Quem apanha um `.mo` esquecido é o `backend/tests/test_i18n.py`.
+*.mo

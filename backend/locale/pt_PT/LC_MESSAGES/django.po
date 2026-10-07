@@ -1,0 +1,137 @@
+# Tradução pt-PT **do projecto**, que sobrepõe a dos pacotes (ADR 0019, decisão 4).
+#
+# Porque é que este ficheiro existe
+# ---------------------------------
+# Com `LANGUAGE_CODE = "pt-pt"`, o Django e o DRF serviam a um utilizador
+# português: oito mensagens **em inglês** ("Must be a valid UUID."), seis com
+# vocabulário pt-BR ("Use um dos formatos a seguir", "mídia", "Você"), um erro
+# ortográfico do próprio catálogo ("Certifque-se") e uma frase de 429 partida ao
+# meio ("Pedido foi limitado. Expected available in 42 seconds."). Mudar o código
+# de língua não corrige nada: `pt` dá as mesmas frases.
+#
+# O `LOCALE_PATHS` é fundido **depois** dos catálogos das apps e a fusão
+# sobrepõe, logo o que está aqui ganha ao `pt_PT` do DRF.
+#
+# Como é que esta lista foi escolhida
+# -----------------------------------
+# **Derivada de uma medição e não adivinhada**, que é o método do gate de cor
+# ("calcula a pior superfície em vez de a nomear"): um varredor percorre os
+# `default_error_messages` dos campos que esta API usa e as `APIException` que
+# ela emite, traduz cada msgid sob `activate("pt-pt")` e separa em três — por
+# traduzir, com marcador pt-BR, e aceitável. Deu **14 de 34**, e os msgid deste
+# ficheiro foram **gerados** a partir dessa varredura: um erro de dedo num msgid
+# faz a sobreposição falhar em silêncio.
+#
+# As duas últimas entradas não vieram do varredor e isso está dito em cada uma:
+# o gate apanha marcadores de vocabulário, **não** apanha gramática. É regra de
+# revisão e não mecanismo, e diz-se em vez de se prometer.
+#
+# O que **não** está aqui: as centenas de msgid do catálogo do DRF que esta API
+# nunca emite. Traduzi-las era trabalho a fingir, e um fork do catálogo derivava
+# a cada actualização do DRF sem nada que o dissesse.
+#
+# O `.po` é commitado e o `.mo` não: o `compilemessages` corre no stage `builder`
+# do `docker/backend.Dockerfile` e no CI, e quem apanha um compile esquecido é o
+# `tests/test_i18n.py` — um msgid que se traduz para si mesmo é vermelho.
+msgid ""
+msgstr ""
+"Project-Id-Version: StockFlow\n"
+"Report-Msgid-Bugs-To: \n"
+"PO-Revision-Date: 2026-10-07\n"
+"Last-Translator: StockFlow\n"
+"Language-Team: pt-PT\n"
+"Language: pt_PT\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#. por traduzir no pt_PT do DRF
+msgid "Datetime value out of range."
+msgstr "Data e hora fora dos limites."
+
+#. por traduzir no pt_PT do DRF
+msgid "Ensure this field has at least {min_length} elements."
+msgstr "Esta lista tem de ter pelo menos {min_length} elementos."
+
+#. por traduzir no pt_PT do DRF
+msgid "Ensure this field has no more than {max_length} elements."
+msgstr "Esta lista não pode ter mais de {max_length} elementos."
+
+#. por traduzir no pt_PT do DRF
+msgid "Invalid datetime for the timezone \"{timezone}\"."
+msgstr "Data e hora inválidas para o fuso horário «{timezone}»."
+
+#. por traduzir no pt_PT do DRF
+msgid "Invalid input."
+msgstr "Dados inválidos."
+
+#. por traduzir no pt_PT do DRF
+msgid "Must be a valid UUID."
+msgstr "Tem de ser um UUID válido."
+
+#. por traduzir no pt_PT do DRF
+msgid "Must be a valid boolean."
+msgstr "Tem de ser verdadeiro ou falso."
+
+#. por traduzir no pt_PT do DRF
+msgid "Not a valid string."
+msgstr "Não é texto válido."
+
+#. marcador pt-BR: «requisição»
+msgid "Could not satisfy the request Accept header."
+msgstr "Não foi possível satisfazer o cabeçalho Accept do pedido."
+
+#. marcador pt-BR: «a seguir»
+msgid "Datetime has wrong format. Use one of these formats instead: {format}."
+msgstr "Data e hora em formato inválido. Use um destes formatos: {format}."
+
+#. erro ortográfico no pt_PT do DRF: «Certifque-se»
+msgid "Ensure this value is greater than or equal to {min_value}."
+msgstr "Certifique-se de que este valor é maior ou igual a {min_value}."
+
+#. marcador pt-BR: «a seguir», e «Tempo» por «Hora»
+msgid "Time has wrong format. Use one of these formats instead: {format}."
+msgstr "Hora em formato inválido. Use um destes formatos: {format}."
+
+#. marcador pt-BR: «mídia»
+msgid "Unsupported media type \"{media_type}\" in request."
+msgstr "O tipo de conteúdo «{media_type}» do pedido não é suportado."
+
+#. marcador pt-BR: «Você», «essa ação»
+msgid "You do not have permission to perform this action."
+msgstr "Não tem permissão para executar esta ação."
+
+#. concordância: «um escolha válido»; o gate de marcadores não apanha gramática
+msgid "\"{input}\" is not a valid choice."
+msgstr "«{input}» não é uma opção válida."
+
+#. a frase inteira, porque a segunda metade saía em inglês
+msgid "Request was throttled."
+msgstr "O pedido foi recusado por exceder o limite."
+
+#. A segunda metade do 429 saía em inglês, e **as duas entradas são singulares
+#. de propósito** — um par `msgid_plural` aqui não funciona, e a razão é fina.
+#.
+#. O `Throttled.__init__` do DRF chama
+#. `ngettext(self.extra_detail_singular, self.extra_detail_plural, wait)` com os
+#. dois atributos, que são objectos **lazy**. Um lazy avalia-se na língua activa,
+#. logo a chave com que o `ngettext` procura o plural já vem traduzida — e uma
+#. chave portuguesa não acerta num catálogo indexado pelo msgid inglês. O
+#. `gettext` cai então no `msgid2`, que é o segundo lazy, e esse resolve-se por
+#. `gettext` simples.
+#.
+#. Medido, e o sintoma era enganador: com o par de plural, `wait=1` saía em
+#. português (por acidente — o fallback devolve o `msgid1`, que já é o lazy
+#. traduzido) e `wait=42` saía em inglês. Meia frase certa é pior do que a frase
+#. errada, porque não se nota.
+#.
+#. Duas entradas singulares resolvem os dois caminhos: cada lazy resolve-se por
+#. `gettext` e o fallback do `ngettext` devolve a forma certa para qualquer `n`.
+#. E continuam a resolver se o DRF algum dia passar strings em vez de lazies: aí
+#. a procura do plural falha, cai no `msgid2`, e o `msgid2` está aqui.
+msgid "Expected available in {wait} second."
+msgstr "Tente outra vez dentro de {wait} segundo."
+
+msgid "Expected available in {wait} seconds."
+msgstr "Tente outra vez dentro de {wait} segundos."
