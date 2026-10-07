@@ -420,9 +420,15 @@ SPECTACULAR_SETTINGS = {
 #   * FILE_UPLOAD_MAX_MEMORY_SIZE só decide a partir de que tamanho o ficheiro
 #     passa de memória para um temporário em disco. Acima do limite o Django
 #     continua a aceitar o upload, só o escreve no disco.
-# O teto real de uma foto de fatura são duas coisas que não estão aqui:
-# `client_max_body_size` no proxy (passo 6 do kickoff) e um validador de
-# tamanho/MIME no serializer do upload (passo 3 em diante).
+# O teto real de uma foto de fatura são duas coisas que não estão aqui, e as duas
+# **já existem** desde 2026-10-07 (esta nota dizia "passo 6 do kickoff" e "passo 3
+# em diante", e um marcador de futuro obsoleto faz o leitor seguinte concluir que
+# o controlo falta):
+#   * `request_body { max_size 12MB }` no `docker/caddy/proxy.Caddyfile`;
+#   * o `TAMANHO_MAXIMO_DO_FICHEIRO` do `apps/purchasing/ficheiros.py`, a 11 MiB
+#     e **estritamente abaixo** do do proxy, com um teste que lê o Caddyfile e
+#     afirma essa ordem — quem recusa primeiro tem de ser quem tem uma frase.
+#     Esse módulo valida também o tipo, pelos bytes e não pelo `content_type`.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000

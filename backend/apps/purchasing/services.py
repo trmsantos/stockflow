@@ -33,16 +33,18 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
-from pathlib import Path
 from uuid import UUID
 
-from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from apps.purchasing.extracao import fronteira_da_extracao
-from apps.purchasing.ficheiros import caminho_da_imagem, caminho_do_ficheiro
+from apps.purchasing.ficheiros import (
+    caminho_da_imagem,
+    caminho_dentro_do_media,
+    caminho_do_ficheiro,
+)
 from apps.purchasing.models import (
     JANELA_DO_SLOT,
     PAGINAS_POR_DOCUMENTO,
@@ -547,25 +549,9 @@ def _digest(ficheiro) -> str:
     return soma.hexdigest()
 
 
-def _caminho_absoluto(relativo: str) -> Path:
-    """Resolve um caminho relativo dentro do `MEDIA_ROOT`, e confirma que fica lá.
-
-    A confirmação é cinto e suspensórios: todos os caminhos que chegam aqui são
-    **gerados** pelo `ficheiros.py` a partir de uuid, e nenhum vem do cliente.
-    Mas é a última linha antes de um `open()`, e uma travessia de caminho descobre
-    -se quando já aconteceu — o custo de uma comparação é zero e a ausência dela
-    seria a primeira coisa que um revisor de segurança procuraria.
-    """
-    raiz = Path(settings.MEDIA_ROOT).resolve()
-    destino = (raiz / relativo).resolve()
-    if not destino.is_relative_to(raiz):
-        raise ValueError(f"caminho fora do MEDIA_ROOT: {relativo!r}")
-    return destino
-
-
 def _escrever_ficheiro(relativo: str, ficheiro) -> None:
     """Escreve o upload no `MEDIA_ROOT`, por blocos."""
-    destino = _caminho_absoluto(relativo)
+    destino = caminho_dentro_do_media(relativo)
     destino.parent.mkdir(parents=True, exist_ok=True)
     ficheiro.seek(0)
     with destino.open("wb") as saida:
@@ -575,7 +561,7 @@ def _escrever_ficheiro(relativo: str, ficheiro) -> None:
 
 def _escrever_bytes(relativo: str, dados: bytes) -> None:
     """Escreve bytes já em memória (a imagem normalizada) no `MEDIA_ROOT`."""
-    destino = _caminho_absoluto(relativo)
+    destino = caminho_dentro_do_media(relativo)
     destino.parent.mkdir(parents=True, exist_ok=True)
     destino.write_bytes(dados)
 
@@ -586,4 +572,4 @@ def _apagar_bytes(relativo: str) -> None:
     `missing_ok`: um ficheiro que já não existe não é erro — é o estado que se
     quer. Um `FileNotFoundError` aqui transformava uma limpeza numa falha.
     """
-    _caminho_absoluto(relativo).unlink(missing_ok=True)
+    caminho_dentro_do_media(relativo).unlink(missing_ok=True)

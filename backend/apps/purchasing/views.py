@@ -51,9 +51,6 @@ polling comer o orçamento dos uploads.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from django.conf import settings
 from django.db.models import QuerySet
 from django.http import FileResponse, Http404
 from drf_spectacular.types import OpenApiTypes
@@ -67,6 +64,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import PertenceAoTenant, membership_atual, utilizador_atual
+from apps.purchasing.ficheiros import caminho_dentro_do_media
 from apps.purchasing.models import InvoiceDocument
 from apps.purchasing.selectors import (
     com_paginas,
@@ -349,7 +347,10 @@ class DocumentoViewSet(
     @action(
         detail=True,
         methods=["get"],
-        url_path=r"pages/(?P<posicao>[0-9]+)/image",
+        # `{1,4}` e não `+`: um inteiro de mais de 4300 dígitos levanta
+        # `ValueError` no `int()` desde o Python 3.12 e sai 500. O documento tem
+        # dez páginas, logo quatro dígitos é folga de três ordens de grandeza.
+        url_path=r"pages/(?P<posicao>[0-9]{1,4})/image",
         url_name="imagem",
     )
     def imagem(
@@ -375,7 +376,17 @@ class DocumentoViewSet(
         )
         if pagina is None or not pagina.image_path:
             raise Http404
-        caminho = Path(settings.MEDIA_ROOT) / pagina.image_path
+        # `caminho_dentro_do_media` e não `Path(MEDIA_ROOT) / x`: é a função que o
+        # `services.py` escreveu para ser "a última linha antes de um `open()`", e
+        # esta era a única das quatro aberturas do módulo que não a usava. Hoje o
+        # `image_path` é gerado a partir de uuid e não vem do cliente — mas um
+        # `Path(raiz) / x` com `x` absoluto devolve `x`, e o que protegia era uma
+        # invariante a três ficheiros de distância em vez da verificação que já
+        # existe aqui ao lado.
+        try:
+            caminho = caminho_dentro_do_media(pagina.image_path)
+        except ValueError:
+            raise Http404 from None
         if not caminho.is_file():
             raise Http404
         resposta = FileResponse(caminho.open("rb"), content_type="image/webp")

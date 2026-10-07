@@ -28,9 +28,13 @@ autoridade). As duas direcções são testes.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from uuid import UUID, uuid4
 
+from django.conf import settings
+
 __all__ = [
+    "caminho_dentro_do_media",
     "BYTES_PARA_DECIDIR",
     "EXTENSAO_POR_TIPO",
     "TAMANHO_MAXIMO_DO_FICHEIRO",
@@ -161,3 +165,27 @@ def caminho_da_imagem(*, tenant_id: UUID, documento_id: UUID, pagina_id: UUID) -
     órfã, e é também o que torna o `Cache-Control` da view da imagem defensável.
     """
     return f"documentos/{tenant_id}/{documento_id}/paginas/{pagina_id}.webp"
+
+
+def caminho_dentro_do_media(relativo: str) -> Path:
+    """Resolve um caminho relativo dentro do `MEDIA_ROOT`, e confirma que fica lá.
+
+    A confirmação é cinto e suspensórios: todos os caminhos que chegam aqui são
+    **gerados** pelas duas funções acima a partir de uuid, e nenhum vem do
+    cliente. Mas é a última linha antes de um `open()`, e uma travessia de
+    caminho descobre-se quando já aconteceu — o custo de uma comparação é zero e
+    a ausência dela seria a primeira coisa que um revisor de segurança
+    procuraria. (Foi, e é por isso que esta função vive aqui e não no
+    `services.py`: era privada lá, e a view que serve os bytes da imagem — a
+    única das quatro aberturas do módulo que não a usava — não lhe podia chamar
+    sem importar um nome com underscore.)
+
+    Levanta `ValueError` quando o destino cai fora. Quem serve bytes traduz isso
+    para 404, porque um caminho fora do `MEDIA_ROOT` e um ficheiro que não existe
+    têm de ser indistinguíveis de fora.
+    """
+    raiz = Path(settings.MEDIA_ROOT).resolve()
+    destino = (raiz / relativo).resolve()
+    if not destino.is_relative_to(raiz):
+        raise ValueError(f"caminho fora do MEDIA_ROOT: {relativo!r}")
+    return destino

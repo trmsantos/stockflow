@@ -958,3 +958,55 @@ def test_a_listagem_custa_o_mesmo_com_um_ou_com_quatro_documentos(
         "ficheiros vêm por `Prefetch` e as extrações por **uma** chamada ao "
         "porto — ver o `list` do views.py e o `compor_muitos` do selectors.py."
     )
+
+
+# ---------------------------------------------------------------------------
+# 9. O throttle, que é o teto de custo nomeado
+# ---------------------------------------------------------------------------
+def test_o_throttle_vive_nas_escritas_e_nao_nas_leituras() -> None:
+    """As duas metades da decisão, e sem elas não havia gate nenhum.
+
+    O `ScopedRateThrottle` é o controlo que a ADR 0021 (decisão 9) e as
+    consequências da ADR 0020 nomeiam como teto de custo — e **a única menção
+    dele nos testes era a fixture que limpa a cache entre eles**, o que significa
+    que tirar o `get_throttles` não punha nada vermelho. Isto fecha-o.
+
+    Afirma duas coisas e as duas são decisão:
+
+    1. **as escritas são travadas.** O balde é por âmbito e o limite está no
+       `DEFAULT_THROTTLE_RATES`, logo o que se mede aqui é que o throttle está
+       montado e que o âmbito existe na configuração — um âmbito sem taxa é um
+       throttle que não trava nada e o DRF não se queixa;
+    2. **as leituras não entram no mesmo balde.** O `GET` é o alvo do polling de
+       2 s da ADR 0020: se ele contasse, vinte segundos de espera por uma
+       rasterização gastavam o orçamento de uploads do minuto.
+
+    Não gasta 21 pedidos a provocar um 429: o que se mede é a montagem, porque é
+    ela que alguém apaga sem querer. O comportamento do `ScopedRateThrottle` é do
+    DRF e tem os testes dele.
+    """
+    from rest_framework.settings import api_settings
+    from rest_framework.throttling import ScopedRateThrottle
+
+    from apps.purchasing.views import AMBITO_DO_THROTTLE, DocumentoViewSet
+
+    assert AMBITO_DO_THROTTLE in api_settings.DEFAULT_THROTTLE_RATES, (
+        f"o âmbito {AMBITO_DO_THROTTLE!r} não tem taxa no `DEFAULT_THROTTLE_RATES`: "
+        "o `ScopedRateThrottle` deixa passar tudo e o DRF não se queixa."
+    )
+    assert DocumentoViewSet.throttle_scope == AMBITO_DO_THROTTLE
+
+    def montados(metodo: str) -> list[type]:
+        vista = DocumentoViewSet()
+        vista.request = type("Pedido", (), {"method": metodo})()  # type: ignore[assignment]
+        return [type(t) for t in vista.get_throttles()]
+
+    assert ScopedRateThrottle in montados("POST"), (
+        "as escritas de `/documents` deixaram de ter o `ScopedRateThrottle`: um "
+        "membro autenticado passa a poder escrever sem teto, a 11 MiB por ficheiro."
+    )
+    assert ScopedRateThrottle not in montados("GET"), (
+        "o `GET` passou a contar no balde das escritas, e ele é o alvo do polling "
+        "de 2 s da ADR 0020: a espera por uma rasterização passa a gastar o "
+        "orçamento de uploads."
+    )

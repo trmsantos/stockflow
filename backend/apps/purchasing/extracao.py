@@ -175,11 +175,21 @@ _fronteira: FronteiraDaExtracao | None = None
 def ligar_fronteira_da_extracao(fronteira: FronteiraDaExtracao) -> None:
     """Liga o adaptador da extração. Chamado uma vez, no `ready()` do `agents`.
 
-    Idempotente por substituição: ligar duas vezes deixa o último, que é o que um
-    `ready()` chamado mais de uma vez (acontece em caminhos de teste do Django)
-    tem de fazer sem levantar.
+    Idempotente **para o mesmo adaptador**: ligar duas vezes o mesmo objecto não
+    faz nada, que é o que um `ready()` chamado mais de uma vez (acontece em
+    caminhos de teste do Django) tem de fazer sem levantar.
+
+    Ligar um adaptador **diferente** levanta, e isso é deliberado: esta função é
+    pública no `api.py`, logo qualquer módulo com aresta para `purchasing.api`
+    lhe pode chamar, e uma substituição silenciosa trocava quem lê as faturas sem
+    deixar rasto. Para um caso só — o `agents` — o custo de recusar é uma linha.
     """
     global _fronteira
+    if _fronteira is not None and _fronteira is not fronteira:
+        raise RuntimeError(
+            "já há uma fronteira de extração ligada, e esta é outra. Substituir "
+            "em silêncio trocaria quem lê as faturas sem deixar rasto."
+        )
     _fronteira = fronteira
 
 
