@@ -136,6 +136,32 @@
   background-color: var(--color-surface-2);
 }
 
+/* As duas utilities de sombra passam a **seguir o token**, e sem isto as
+ * sombras das paletas novas eram letra morta.
+ *
+ * Medido no CSS compilado: o Tailwind v4 **não** emite
+ * `box-shadow: var(--shadow-sm)` — ele interpreta o valor do token em tempo de
+ * compilação, parte-o por camadas e inlina-o para poder suportar
+ * `shadow-<cor>`, o que dá `--tw-shadow: inset 0 1px 0 0 var(--tw-shadow-color,
+ * oklch(100% 0 0/.05)), …`. Consequência: redefinir `--shadow-sm` num
+ * `:root[data-tema=…]` não muda nada, e o fio de luz da paleta escura — que
+ * sobre papel **não existe** — aparecia nas três. O `tokens.css` tinha dois
+ * tokens por paleta que ninguém via, que é a forma mais calada de uma paleta
+ * estar errada (ADR 0015, decisão 4: as sombras são parte da paleta).
+ *
+ * Perde-se a composição com `ring-*` e com `shadow-<cor>`. A primeira não está
+ * em uso nestas duas classes (auditado nos nove primitivos: só o `sheet` usa
+ * `shadow-lg`, e sem anel; o foco desta casa é um `outline`, não um anel) e a
+ * segunda é proibida pelo DESIGN.md §2 — "sem sombras coloridas". Vai fora de
+ * `@layer` pela razão das regras acima. */
+.shadow-sm {
+  box-shadow: var(--shadow-sm);
+}
+
+.shadow-lg {
+  box-shadow: var(--shadow-lg);
+}
+
 /* O popover do `Select` flutuava **sem sombra nenhuma**. O primitivo pede
  * `shadow-md`, e esta paleta declara `--shadow-*: initial` com apenas `sm` e
  * `lg` — medido no CSS compilado: a classe `.shadow-md` não existe, logo o

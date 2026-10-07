@@ -38,6 +38,16 @@ export interface EstabelecimentoDoShell {
   readonly nome: string;
   /** O papel por extenso ("dono", "gerente", "colaborador"). */
   readonly papel: string;
+  /**
+   * É o estabelecimento de demonstração (ADR 0018).
+   *
+   * Entra aqui — e não fica só no contrato — porque é **informação de shell**,
+   * como o `papel` já é: o que ela alimenta é a faixa permanente da barra de topo
+   * e o item marcado no seletor, que são as duas peças de cromado que o shell
+   * desenha. Chega como `boolean` e não como tipo de domínio, pela regra deste
+   * ficheiro: nenhum tipo do contrato atravessa a fronteira.
+   */
+  readonly demonstracao: boolean;
 }
 
 export interface SessaoDoShell {

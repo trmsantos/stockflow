@@ -55,6 +55,9 @@ backend/
 │   ├── agents/         # extract_invoice, forecasting, chat sobre stock — output sempre draft
 │   ├── billing/        # planos por nº de utilizadores/localizações (fase 3)
 │   ├── notifications/  # email de alertas (validade, mínimo), webhooks
+│   ├── demo/           # semeia o estabelecimento de demonstração (ADR 0018) — só um comando:
+│   │                   # sem models, sem migrações, sem api.py, sem endpoints. Sumidouro de
+│   │                   # escrita: só arestas de saída, e um contrato proíbe que alguém o importe
 │   └── shared/         # TenantModel, events.py, outbox.py — infraestrutura pura, não importa módulos
 ├── tests/
 ├── pyproject.toml      # gerido por uv

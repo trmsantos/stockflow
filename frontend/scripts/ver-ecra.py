@@ -45,6 +45,19 @@ fotografou o ecrã ou o esqueleto dele.
 `ESPERA=6` aumenta a espera antes do disparo. **É o engano mais fácil de cometer
 aqui**: sem espera fotografa-se o estado de carregamento e conclui-se que o ecrã
 está vazio.
+
+`TEMA=claro` (ou `meio_termo`, ou `escuro`) escreve o `data-tema` no `<html>`
+antes do disparo. Existe desde as três paletas (ADR 0015) e é a forma de
+fotografar uma que não é o default: a selecção é um atributo, não uma media
+query, logo não há `--force-prefers-color-scheme` nem nada no Chrome que a mude.
+
+Desde a ADR 0016 a preferência **existe** e vive no servidor, pelo que sem
+`TEMA=` o que esta captura mostra é a paleta da conta a que os cookies pertencem
+— o que, para fotografar um ecrã, é o que se quer. O `TEMA=` continua a servir
+para a pergunta inversa ("como é que este ecrã fica no claro?") e escreve só o
+atributo, como a página `/dev/tokens`: não toca no espelho em `localStorage` nem
+na conta. O JSON traz os dois lados (`tema` e `espelho`) para a diferença ser
+legível em vez de deduzida.
 """
 import base64, http.client, json, os, socket, struct, subprocess, sys, time, urllib.request
 
@@ -196,6 +209,21 @@ def main():
         # O ecrã busca dados depois de montar; sem esta espera fotografa-se o
         # esqueleto, que é o engano mais fácil de cometer aqui.
         time.sleep(float(os.environ.get("ESPERA", "4")))
+
+        # A paleta, se não for a default. Escreve-se **depois** da espera e com
+        # uma pausa curta a seguir: o atributo muda os tokens no CSSOM e há um
+        # frame de pintura pelo meio, logo disparar no mesmo instante fotografa
+        # a paleta anterior. A lista fechada é de propósito — um `data-tema` com
+        # um nome que nenhum bloco do `tokens.css` tem dá a paleta escura sem
+        # erro nenhum, e lia-se como "o claro está igual ao escuro".
+        tema = os.environ.get("TEMA")
+        if tema:
+            if tema not in {"escuro", "claro", "meio_termo"}:
+                raise SystemExit(f"TEMA={tema!r} não é uma paleta (escuro, claro, meio_termo)")
+            ws.chamar("Runtime.evaluate",
+                      expression=f"document.documentElement.setAttribute('data-tema', '{tema}')")
+            time.sleep(0.6)
+
         tiro = ws.chamar("Page.captureScreenshot", format="png", captureBeyondViewport=True)
         with open(saida, "wb") as f:
             f.write(base64.b64decode(tiro["data"]))
@@ -203,6 +231,19 @@ def main():
           JSON.stringify({
             titulo: document.title,
             url: location.pathname,
+            /* A paleta que **de facto** está no `<html>` e o fundo que ela
+               resolve: sem isto o JSON ao lado de uma fotografia de tema não
+               diz de que tema é, e é o mesmo tipo de engano que o campo
+               `arranque` abaixo cobre — medir uma coisa e fotografar outra. */
+            tema: document.documentElement.getAttribute('data-tema') ?? 'escuro',
+            /* A cópia local do nome da paleta (ADR 0016, decisão 3) — é ela que
+               torna a primeira pintura correcta, antes de haver rede. Está aqui
+               porque é a diferença entre "o tema certo porque o servidor
+               respondeu" e "o tema certo porque o espelho já o sabia", e as duas
+               fotografias são idênticas. `null` num perfil novo é o caso normal:
+               é o relâmpago por máquina que a ADR diz ser inevitável. */
+            espelho: (() => { try { return localStorage.getItem('stockflow.tema'); } catch { return null; } })(),
+            fundo: getComputedStyle(document.documentElement).getPropertyValue('--color-background').trim(),
             h1: document.querySelector('h1')?.textContent ?? null,
             scrollHorizontal: document.documentElement.scrollWidth > document.documentElement.clientWidth,
             altura: document.documentElement.scrollHeight,

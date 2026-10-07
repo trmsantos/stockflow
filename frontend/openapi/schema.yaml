@@ -11,8 +11,8 @@ paths:
       description: |-
         `POST /api/v1/auth/ativar` — aceita um convite e devolve a sessão.
 
-        É a quinta view dispensada de âmbito, e a razão é a do login: corre **antes**
-        de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
+        É uma das seis views dispensadas de âmbito, e a razão é a do login: corre
+        **antes** de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
         esta view **abre** um âmbito, e o valor que o escolhe vem do **link**:
         `/ativar#<uuid-do-tenant>.<token>`. O uuid é argumento e não credencial, e
         quem concede é a política do `accounts_invitation`, que é uma política normal
@@ -145,6 +145,66 @@ paths:
       summary: Terminar sessão
       tags:
       - auth
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessaoOut'
+          description: ''
+  /api/v1/auth/preferencias:
+    patch:
+      operationId: auth_preferencias
+      description: |-
+        `PATCH /api/v1/auth/preferencias` — as definições desta pessoa (ADR 0016).
+
+        Hoje tem um campo, o `tema`, e é `PATCH` e não `PUT` porque é uma alteração
+        parcial de uma entidade que vai ganhar campos: um `PUT` com um campo obriga
+        o cliente a reenviar tudo no dia em que houver três, e um cliente antigo
+        apagava o que não conhecesse.
+
+        Devolve `SessaoOut` e não uma forma própria, pelo argumento da ADR 0010: o
+        cliente guarda **uma** entrada de cache e qualquer destas respostas a
+        substitui, em vez de uma quinta forma e um quinto ramo de Zod.
+
+        ## Dispensada de âmbito, e porque é que isso aqui não dispensa de CSRF
+
+        Escreve numa tabela sem política (`accounts_user`, ADR 0007) e tem de
+        funcionar em `escolha_pendente` e em `sem_estabelecimento`: um tema que só se
+        possa trocar depois de escolher o estabelecimento é um tema que não se troca
+        no ecrã onde o relâmpago da primeira pintura se vê.
+
+        **Não leva `csrf_protect`, e a ausência é deliberada** — é a diferença exacta
+        que o `SECURITY.md` §5 descreve e que o `LoginView` e a `AtivacaoView`
+        documentam do outro lado. O `as_view()` do DRF embrulha tudo em
+        `csrf_exempt`, e o que repõe a verificação é o `SessionAuthentication`:
+        **quando encontra utilizador na sessão**, ele verifica o token. O furo da ADR
+        0010 era dos endpoints **anónimos** de escrita, que é o que o login e a
+        activação são e este não é — com `IsAuthenticated`, não há caminho até aqui
+        sem sessão. Fica escrito para ninguém o "corrigir" nos dois sentidos.
+
+        ## Não há `user_id` no corpo
+
+        A escrita é sempre sobre o `request.user` (`PreferenciasInSerializer`). Não
+        é uma verificação que esta view faz: é um argumento que não existe, logo não
+        há objecto para autorizar nem caminho para a preferência de outra pessoa. É
+        a razão pela qual não há `has_object_permission` nem `pk` nesta rota, e a
+        prova está no `tests/test_preferencias.py`.
+
+        Qualquer papel, e sem `PertenceAoTenant`: o tema é de quem o pede e não do
+        estabelecimento (ADR 0016), e exigir pertença fechava o ecrã a quem ainda
+        não escolheu estabelecimento — que é metade do problema que esta ADR resolve.
+      summary: Guardar as preferências desta pessoa
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreferenciasInRequest'
+        required: true
       security:
       - cookieAuth: []
       responses:
@@ -326,6 +386,157 @@ paths:
                 $ref: '#/components/schemas/ConviteOut'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErroOut'
+          description: ''
+  /api/v1/estabelecimento:
+    get:
+      operationId: estabelecimento_ler
+      description: |-
+        `GET`/`PATCH /api/v1/estabelecimento` — a configuração da empresa (ADR 0017).
+
+        ## Com âmbito, e é o default que o diz
+
+        Não leva `@tenant_scope_exempt` e é essa ausência que a torna normal: lê e
+        escreve o `accounts_tenant`, que **tem** política (a única cuja política
+        compara `id` em vez de `tenant_id`, porque a tabela *é* o tenant). Dentro do
+        âmbito a tabela tem no máximo uma linha visível, que é a razão de o service
+        fazer `Tenant.objects.get()` sem filtro.
+
+        ## Sem `has_object_permission`, porque não há objecto endereçável
+
+        O `SECURITY.md` §5 exige `obj.tenant_id == request.tenant.id` em toda a view
+        que receba um `pk` — esta não recebe nenhum, nem no path nem no corpo. Qual é
+        o estabelecimento decide-se no âmbito que o middleware abriu a partir da
+        sessão, logo não existe id de outro tenant para rejeitar. O `PertenceAoTenant`
+        continua na lista pelo seu `has_permission`, que nega quando não há
+        `request.tenant`.
+
+        ## `owner` em leitura **e** em escrita, e o 403 é a rede e não o controlo
+
+        A ADR 0011 escolheu `owner` para editar; a ADR 0017 estende-o à leitura com o
+        argumento da ADR 0013 — *o default é o mais fechado, e um conjunto de um
+        elemento alarga-se sem se desfazer* — e porque nada fora deste ecrã precisa
+        destas leituras por HTTP.
+
+        **403 e não 200 com blocos ausentes**, com a forma exacta do DRF (`detail`,
+        **sem `code` novo**): num ecrã de configurações, um 200 parcial torna "não
+        podes ver isto" indistinguível de "esta empresa ainda não configurou nada", e
+        os dois precisam de ecrãs opostos — o vazio ensina a configurar, o restrito
+        não pode. O cliente já sabe o papel antes de pedir (vem na sessão), logo não
+        monta o ecrã e não dispara o pedido; o 403 é a rede do deep link e da pertença
+        revogada a meio da sessão.
+
+        ## `csrf_protect` **está** aqui, ao contrário do `/auth/preferencias`
+
+        Os dois são autenticados, logo o `SessionAuthentication` verifica o token nos
+        dois e a linha é, hoje, redundante. Fica porque esta view tem uma diferença
+        que a outra não tem: **escreve configuração de uma empresa inteira**, e o
+        `as_view()` do DRF embrulha tudo em `csrf_exempt` — a protecção depende de o
+        `SessionAuthentication` correr e **encontrar** utilizador. No dia em que
+        alguém acrescentar aqui uma autenticação por token (que não verifica CSRF), a
+        diferença entre as duas views é esta linha. A redundância é barata; descobrir
+        que não havia nenhuma não é.
+
+        ## 400 por campo, e um deles é uma regra de negócio
+
+        A hora fora da janela 00:00–06:00 e um regime fora dos dois valores saem como
+        400 no campo (`EstabelecimentoInSerializer`). O terceiro 400 vem do service e
+        é do `nome`: no estabelecimento de demonstração o nome não se altera (ADR
+        0018) — e essa é a única recusa desta família que não é sobre a forma.
+      summary: A configuração deste estabelecimento
+      tags:
+      - estabelecimento
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstabelecimentoOut'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErroOut'
+          description: ''
+    patch:
+      operationId: estabelecimento_guardar
+      description: |-
+        `GET`/`PATCH /api/v1/estabelecimento` — a configuração da empresa (ADR 0017).
+
+        ## Com âmbito, e é o default que o diz
+
+        Não leva `@tenant_scope_exempt` e é essa ausência que a torna normal: lê e
+        escreve o `accounts_tenant`, que **tem** política (a única cuja política
+        compara `id` em vez de `tenant_id`, porque a tabela *é* o tenant). Dentro do
+        âmbito a tabela tem no máximo uma linha visível, que é a razão de o service
+        fazer `Tenant.objects.get()` sem filtro.
+
+        ## Sem `has_object_permission`, porque não há objecto endereçável
+
+        O `SECURITY.md` §5 exige `obj.tenant_id == request.tenant.id` em toda a view
+        que receba um `pk` — esta não recebe nenhum, nem no path nem no corpo. Qual é
+        o estabelecimento decide-se no âmbito que o middleware abriu a partir da
+        sessão, logo não existe id de outro tenant para rejeitar. O `PertenceAoTenant`
+        continua na lista pelo seu `has_permission`, que nega quando não há
+        `request.tenant`.
+
+        ## `owner` em leitura **e** em escrita, e o 403 é a rede e não o controlo
+
+        A ADR 0011 escolheu `owner` para editar; a ADR 0017 estende-o à leitura com o
+        argumento da ADR 0013 — *o default é o mais fechado, e um conjunto de um
+        elemento alarga-se sem se desfazer* — e porque nada fora deste ecrã precisa
+        destas leituras por HTTP.
+
+        **403 e não 200 com blocos ausentes**, com a forma exacta do DRF (`detail`,
+        **sem `code` novo**): num ecrã de configurações, um 200 parcial torna "não
+        podes ver isto" indistinguível de "esta empresa ainda não configurou nada", e
+        os dois precisam de ecrãs opostos — o vazio ensina a configurar, o restrito
+        não pode. O cliente já sabe o papel antes de pedir (vem na sessão), logo não
+        monta o ecrã e não dispara o pedido; o 403 é a rede do deep link e da pertença
+        revogada a meio da sessão.
+
+        ## `csrf_protect` **está** aqui, ao contrário do `/auth/preferencias`
+
+        Os dois são autenticados, logo o `SessionAuthentication` verifica o token nos
+        dois e a linha é, hoje, redundante. Fica porque esta view tem uma diferença
+        que a outra não tem: **escreve configuração de uma empresa inteira**, e o
+        `as_view()` do DRF embrulha tudo em `csrf_exempt` — a protecção depende de o
+        `SessionAuthentication` correr e **encontrar** utilizador. No dia em que
+        alguém acrescentar aqui uma autenticação por token (que não verifica CSRF), a
+        diferença entre as duas views é esta linha. A redundância é barata; descobrir
+        que não havia nenhuma não é.
+
+        ## 400 por campo, e um deles é uma regra de negócio
+
+        A hora fora da janela 00:00–06:00 e um regime fora dos dois valores saem como
+        400 no campo (`EstabelecimentoInSerializer`). O terceiro 400 vem do service e
+        é do `nome`: no estabelecimento de demonstração o nome não se altera (ADR
+        0018) — e essa é a única recusa desta família que não é sobre a forma.
+      summary: Guardar a configuração deste estabelecimento
+      tags:
+      - estabelecimento
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EstabelecimentoInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstabelecimentoOut'
+          description: ''
+        '403':
           content:
             application/json:
               schema:
@@ -584,6 +795,86 @@ components:
       required:
       - code
       - detail
+    EstabelecimentoInRequest:
+      type: object
+      description: |-
+        O corpo do `PATCH /estabelecimento`: os três campos configuráveis.
+
+        **Não há `demonstracao` e não há `id`.** O primeiro é só de leitura (a razão
+        está no modelo: marcar um estabelecimento real como demonstração era esconder
+        dados reais atrás de um aviso de "isto é de brincar"); o segundo não existe
+        porque qual é o estabelecimento decide-se no âmbito e não no corpo — é a
+        mesma forma com que o `PreferenciasInSerializer` não tem `user_id`. Não é uma
+        verificação que a view faz: é um argumento que não existe.
+
+        ## `PATCH` com os três campos obrigatórios, e é coerente e não contraditório
+
+        Hoje o corpo tem de os trazer todos, logo isto comporta-se como um `PUT`. O
+        método é `PATCH` pelo que acontece **depois**: um quarto campo entra como
+        `required=False` e nenhum cliente antigo tem de ser alterado, enquanto com
+        `PUT` a semântica obrigava-o a reenviar tudo e um cliente que não conhecesse
+        o campo novo apagava-o. É a mesma escolha do `/auth/preferencias`, e é
+        compatível com o `COMPONENT_SPLIT_PATCH = False` das settings — nenhuma view
+        desta casa valida com `partial=True`, pelo que o `types.ts` gerado diz que os
+        três são obrigatórios, que é a verdade.
+
+        ## A janela do dia de negócio é validada aqui **e** na base de dados
+
+        O `TimeField` recusa `"25:00"` por forma, e o `validate_business_day_starts_at`
+        recusa `"16:00"` por domínio — com a frase que aparece debaixo do campo. A
+        `CheckConstraint` da migração 0009 é a **rede**: um dia de negócio às 16:00
+        parte todos os dias em dois em silêncio, e a linha não deve conseguir existir
+        venha de onde vier. É a mesma relação que o menu tem com a sua unicidade.
+      properties:
+        nome:
+          type: string
+          minLength: 1
+          maxLength: 200
+        vat_regime:
+          $ref: '#/components/schemas/VatRegimeEnum'
+        business_day_starts_at:
+          type: string
+          format: time
+      required:
+      - business_day_starts_at
+      - nome
+      - vat_regime
+    EstabelecimentoOut:
+      type: object
+      description: |-
+        A resposta do `GET` e do `PATCH /estabelecimento` (ADR 0017).
+
+        **Não é o `TenantOutSerializer`**, e a diferença é a razão de existirem os
+        dois: aquele descreve o estabelecimento como o **seletor** o mostra — id,
+        nome e o papel de quem está a ver — e viaja em cada resposta de sessão. Este
+        descreve a **entidade**: o que ela é e como está configurada, sem papel
+        nenhum, porque a configuração não muda com quem olha. Juntá-los punha o
+        regime de IVA em cada `GET /auth/sessao` de cada colaborador.
+
+        `business_day_starts_at` sai como `"04:00"` e não `"04:00:00"`: o `format`
+        está explícito porque o default do DRF é `"%H:%M:%S"`, e o que o contrato da
+        ADR 0017 fixa — e o que um `<input type="time">` consome — são horas e
+        minutos. Os segundos seriam três caracteres que nunca são outra coisa que
+        `00`.
+      properties:
+        id:
+          type: string
+          format: uuid
+        nome:
+          type: string
+        vat_regime:
+          $ref: '#/components/schemas/VatRegimeEnum'
+        business_day_starts_at:
+          type: string
+          format: time
+        demonstracao:
+          type: boolean
+      required:
+      - business_day_starts_at
+      - demonstracao
+      - id
+      - nome
+      - vat_regime
     ItemDeMenuInRequest:
       type: object
       description: |-
@@ -744,6 +1035,29 @@ components:
         * `owner` - dono
         * `manager` - gerente
         * `staff` - colaborador
+    PreferenciasInRequest:
+      type: object
+      description: |-
+        O corpo do `PATCH /auth/preferencias`: o tema que esta pessoa prefere.
+
+        **Não tem `user_id`, e isso é a decisão.** A escrita é sempre sobre o
+        `request.user`, logo não existe objecto para autorizar nem caminho para a
+        preferência de outra pessoa — a forma do contrato é o que torna o abuso
+        impossível, em vez de uma verificação que alguém pode esquecer. É a mesma
+        mecânica com que o `tenant-ativo` recusa ser uma credencial, aplicada ao
+        contrário: ali o argumento existe e é verificado pela política, aqui o
+        argumento não existe.
+
+        `ChoiceField` sobre o `Tema`: um valor fora da lista é um 400 do DRF e nunca
+        chega à coluna. Isso importa mais do que parece, porque o cliente guarda uma
+        **cópia** deste nome em `localStorage` (ADR 0016, decisão 3) e lê-a antes de
+        haver rede — o valor ser fechado a três é o que torna essa cópia segura de
+        escrever.
+      properties:
+        tema:
+          $ref: '#/components/schemas/TemaEnum'
+      required:
+      - tema
     RotaDeMenuOut:
       type: object
       description: |-
@@ -808,6 +1122,7 @@ components:
       - contar
       - receber
       - convites
+      - configuracao
       type: string
       description: |-
         * `inicio` - Início
@@ -817,14 +1132,15 @@ components:
         * `contar` - Contar
         * `receber` - Receber
         * `convites` - Convites
+        * `configuracao` - Configuração
     SessaoOut:
       type: object
       description: |-
-        A resposta dos quatro endpoints de autenticação. Sempre esta forma.
+        A resposta dos cinco endpoints de autenticação. Sempre esta forma.
 
-        Uma forma só para login, logout, leitura da sessão e troca de
-        estabelecimento: o cliente guarda-a numa entrada de cache e qualquer das
-        quatro respostas a substitui, em vez de quatro formas e quatro ramos de Zod.
+        Uma forma só para login, logout, leitura da sessão, troca de estabelecimento
+        e preferências: o cliente guarda-a numa entrada de cache e qualquer das
+        cinco respostas a substitui, em vez de cinco formas e cinco ramos de Zod.
 
         `utilizador` e `tenant_ativo` são `null` em vez de ausentes, e isso é
         deliberado: um campo que às vezes não existe obriga o cliente a distinguir
@@ -866,6 +1182,16 @@ components:
         * `sem_estabelecimento` - sem estabelecimento associado
         * `escolha_pendente` - à espera da escolha do estabelecimento
         * `ativa` - sessão com estabelecimento ativo
+    TemaEnum:
+      enum:
+      - escuro
+      - meio_termo
+      - claro
+      type: string
+      description: |-
+        * `escuro` - Escuro
+        * `meio_termo` - Meio termo
+        * `claro` - Claro
     TenantAtivoInRequest:
       type: object
       description: |-
@@ -896,6 +1222,18 @@ components:
         O `papel` é o do par (utilizador, estabelecimento) e vem do `Membership`
         confirmado pela política: a mesma pessoa é dona de um e colaboradora noutro.
         Sai como enum fechado no OpenAPI, logo a união chega ao `types.ts`.
+
+        `demonstracao` entrou com a ADR 0018 e é a **única** diferença visível de um
+        estabelecimento de demonstração. Viaja aqui — e não num endpoint próprio —
+        porque é exactamente o que o cromado precisa e porque chega de graça: esta
+        forma já está no `tenant_ativo` e em cada entrada de `tenants`, que são os
+        dois sítios onde a faixa e o item marcado o vão ler, sem um pedido novo.
+
+        O nome é **duplo de propósito**: a coluna chama-se `is_demo` porque segue a
+        convenção de booleano da sua tabela (`is_active`, `is_staff`) e o campo
+        chama-se `demonstracao` porque segue o vocabulário português dos endpoints
+        deste módulo (`papel`, `rotulo`, `visivel`). É o `source` que os casa, num
+        sítio só.
       properties:
         id:
           type: string
@@ -905,7 +1243,10 @@ components:
           maxLength: 200
         papel:
           $ref: '#/components/schemas/PapelEnum'
+        demonstracao:
+          type: boolean
       required:
+      - demonstracao
       - id
       - nome
       - papel
@@ -931,9 +1272,20 @@ components:
         email:
           type: string
           format: email
+        tema:
+          $ref: '#/components/schemas/TemaEnum'
       required:
       - email
       - id
+      - tema
+    VatRegimeEnum:
+      enum:
+      - normal
+      - isento_art_53
+      type: string
+      description: |-
+        * `normal` - Regime normal
+        * `isento_art_53` - Isento (art. 53.º)
   securitySchemes:
     cookieAuth:
       type: apiKey

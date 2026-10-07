@@ -100,7 +100,7 @@ import hashlib
 import logging
 import secrets
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import time, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -118,7 +118,7 @@ from apps.accounts.api import (
     TenantOption,
     UserOut,
     normalizar_email,
-    tenant_context,
+    opcao_de_tenant,
     utilizador_atual,
 )
 from apps.accounts.menu import ItemDeMenu
@@ -538,11 +538,11 @@ class EstadoDaSessao(models.TextChoices):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class SessaoOut:
-    """O que os quatro endpoints de autenticação devolvem. Sempre o mesmo.
+    """O que os cinco endpoints de autenticação devolvem. Sempre o mesmo.
 
-    Uma forma só para login, logout, leitura e troca de estabelecimento: o
-    cliente guarda-a numa entrada de cache e qualquer das quatro respostas a
-    substitui, em vez de haver quatro formas e quatro ramos de Zod.
+    Uma forma só para login, logout, leitura, troca de estabelecimento e
+    preferências: o cliente guarda-a numa entrada de cache e qualquer das cinco
+    respostas a substitui, em vez de haver cinco formas e cinco ramos de Zod.
 
     Congelado, como os DTOs do `api.py`: isto é o resultado de uma decisão de
     autorização e não um acumulador.
@@ -758,14 +758,13 @@ def escolher_tenant_ativo(request: HttpRequest, *, tenant_id: UUID) -> SessaoOut
     acidente de tipos.
     """
     with tenant_scope(tenant_id):
-        contexto = tenant_context(request.user.pk, tenant_id)
-        if contexto is None:
+        escolhido = opcao_de_tenant(request.user.pk, tenant_id)
+        if escolhido is None:
             logger.warning(
                 "troca de estabelecimento recusada",
                 extra={"event": "tenant_ativo", "outcome": CODIGO_DESCONHECIDO},
             )
             raise RecusaDeSessao(CODIGO_DESCONHECIDO, DETALHE_TENANT_DESCONHECIDO)
-        escolhido = TenantOption(id=contexto.id, name=contexto.name, role=contexto.role)
         logger.info(
             "estabelecimento ativo escolhido",
             extra={"event": "tenant_ativo", "outcome": "ok"},
@@ -773,6 +772,46 @@ def escolher_tenant_ativo(request: HttpRequest, *, tenant_id: UUID) -> SessaoOut
 
     request.session[SESSION_TENANT_KEY] = str(escolhido.id)
     return _sessao(request, tenants=_tenants_confirmados(request.user), ativo=escolhido)
+
+
+def guardar_preferencias(request: HttpRequest, *, tema: str) -> SessaoOut:
+    """Guarda o tema desta pessoa e devolve a sessão como ficou (ADR 0016).
+
+    ## Escreve no `request.user` e em mais ninguém
+
+    Não recebe um `user_id` porque o contrato não o tem: não existe objecto para
+    autorizar nem caminho para a preferência de outra pessoa. A forma é o que
+    torna o abuso impossível, em vez de uma verificação que alguém pode
+    esquecer — é a mesma ideia do `tenant-ativo` ao contrário, onde o argumento
+    existe e é a política que o julga.
+
+    ## Fora de âmbito, de propósito
+
+    A `accounts_user` não tem política (ADR 0007: tem de ser lida antes de
+    existir âmbito, senão o login não funciona), logo esta escrita não precisa
+    de `tenant_scope` — e **não pode** precisar dele: tem de funcionar em
+    `escolha_pendente` e em `sem_estabelecimento`, que é precisamente onde o
+    relâmpago de tema se vê. Um tema que só se trocasse depois de escolher o
+    estabelecimento era um tema que não se trocava no ecrã onde ele importa.
+
+    ## `update_fields`, e não é micro-optimização
+
+    Guardar só a coluna do tema evita reescrever o `tenant_ids` com o valor que
+    esta instância trouxe em memória. Numa conta que acabou de receber um
+    convite noutro separador, um `save()` completo apagava a adição — é a classe
+    de defeito que um `update_fields` fecha por construção e que nenhum teste
+    desta suite apanharia, porque exige duas sessões ao mesmo tempo.
+
+    O `updated_at` é `auto_now`, logo entra na lista: sem ele o campo mentia.
+    """
+    user = request.user
+    user.tema = tema
+    user.save(update_fields=["tema", "updated_at"])
+    logger.info(
+        "tema guardado",
+        extra={"event": "preferencias", "outcome": "ok", "tema": tema},
+    )
+    return sessao_atual(request)
 
 
 def _tenants_confirmados(user: User) -> tuple[TenantOption, ...]:
@@ -802,11 +841,9 @@ def _tenants_confirmados(user: User) -> tuple[TenantOption, ...]:
     confirmados = []
     for candidato in dict.fromkeys(user.tenant_ids):
         with tenant_scope(candidato):
-            contexto = tenant_context(user.pk, candidato)
-        if contexto is not None:
-            confirmados.append(
-                TenantOption(id=contexto.id, name=contexto.name, role=contexto.role)
-            )
+            opcao = opcao_de_tenant(user.pk, candidato)
+        if opcao is not None:
+            confirmados.append(opcao)
     return tuple(sorted(confirmados, key=lambda opcao: (opcao.name, str(opcao.id))))
 
 
@@ -1512,3 +1549,277 @@ def guardar_menu(*, tenant_id: UUID, itens: list[dict[str, Any]]) -> tuple[ItemD
         extra={"event": "menu", "outcome": "ok", "count": len(itens)},
     )
     return projeccao_de_menu(tenant_id=tenant_id)
+
+
+# ---------------------------------------------------------------------------
+# O estabelecimento: a configuração da **empresa** (ADR 0017)
+# ---------------------------------------------------------------------------
+#: A janela em que o dia de negócio pode começar.
+#:
+#: Afirmada pelo `domain-expert` a 2026-10-07 e **imposta pela base de dados**
+#: (`tenant_dia_de_negocio_entre_0_e_6`, migração 0009). Vive aqui como constante
+#: porque o serializer precisa dela para recusar com um 400 por campo em vez de
+#: deixar a `IntegrityError` subir — que é a mesma relação que o menu tem com a
+#: sua unicidade: o serializer é a mensagem, a base de dados é a rede.
+DIA_DE_NEGOCIO_MINIMO = time(0, 0)
+DIA_DE_NEGOCIO_MAXIMO = time(6, 0)
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EstabelecimentoOut:
+    """O que o `GET` e o `PATCH /estabelecimento` devolvem (ADR 0017).
+
+    **Não vive no `api.py`**, e é a regra deste repositório e não arrumação:
+    nenhum módulo precisa disto hoje. A ADR 0017 escreveu que "o `vat_regime` é
+    consumido pelo `reporting` do lado do servidor, através do `accounts.api`", e
+    a consulta ao domínio corrigiu-o — para **valorizar** o passado o `reporting`
+    não pode ler esta coluna, porque reavaliaria janeiro com a regra de março. Um
+    DTO público sem consumidor é um contrato público escrito ao contrário, e o dia
+    em que houver um consumidor real a subida para o `api.py` é uma linha.
+
+    `business_day_starts_at` é uma **string** `"HH:MM"` no contrato e um
+    `TimeField` na coluna: a hora é um valor com ordem e a base de dados tem de a
+    poder comparar e recusar (`"25:00"`), e o cliente tem de a poder pôr num
+    `<input type="time">`, que fala `"04:00"`. A tradução acontece num sítio só,
+    no serializer.
+
+    `demonstracao` é só de leitura e o nome é em português como o resto do
+    contrato (`is_demo` é a coluna). Marcar um estabelecimento real como
+    demonstração era esconder dados reais atrás de um aviso de "isto é de
+    brincar"; desmarcar o de demonstração era promover dados semeados a dados de
+    negócio sem ninguém os ter introduzido.
+    """
+
+    id: UUID
+    nome: str
+    vat_regime: str
+    business_day_starts_at: str
+    demonstracao: bool
+
+
+def _estabelecimento_out(tenant: Tenant) -> EstabelecimentoOut:
+    """A linha, como o contrato a descreve. O único tradutor dos dois lados."""
+    return EstabelecimentoOut(
+        id=tenant.id,
+        nome=tenant.name,
+        vat_regime=tenant.vat_regime,
+        business_day_starts_at=tenant.business_day_starts_at.strftime("%H:%M"),
+        demonstracao=tenant.is_demo,
+    )
+
+
+def estabelecimento_atual(request: HttpRequest) -> EstabelecimentoOut:
+    """`GET /estabelecimento` — a configuração do estabelecimento ativo.
+
+    **Não recebe `pk` nem `tenant_id`, e é isso que fecha o IDOR por construção.**
+    Qual é o estabelecimento decide-se no âmbito que o middleware abriu a partir
+    da sessão, e o `SECURITY.md` §5 exige a comparação `obj.tenant_id ==
+    request.tenant.id` em toda a view que receba um id — esta não recebe nenhum,
+    logo não há id de outro tenant para rejeitar.
+
+    O `get()` sem filtro é deliberado e não um descuido: a política do
+    `accounts_tenant` compara `id` com o GUC (ADR 0007), logo **dentro de um
+    âmbito esta tabela tem no máximo uma linha visível**. Um `filter(pk=…)` daria
+    o mesmo resultado com uma segunda verificação ao lado da política — e duas
+    verificações acabam com uma a ser a única que importa. Fora de âmbito isto
+    levanta `Tenant.DoesNotExist`, que é o modo de falha certo: falha fechada e
+    alta, em vez de devolver a configuração de outra pessoa.
+    """
+    return _estabelecimento_out(Tenant.objects.get())
+
+
+def guardar_estabelecimento(
+    request: HttpRequest,
+    *,
+    nome: str,
+    vat_regime: str,
+    business_day_starts_at: time,
+) -> EstabelecimentoOut:
+    """`PATCH /estabelecimento` — grava a configuração da empresa.
+
+    ## O nome do estabelecimento de demonstração não se altera
+
+    É a única recusa desta função, e vem da ADR 0018 pela mão da sessão 0: um
+    `nome` editável no estabelecimento de demonstração deixa o dono escrever lá o
+    nome da pastelaria **dele**, e aí os dados semeados passam a parecer os dele —
+    é a proibição nº 12 do guião a ser quebrada pelo próprio utilizador, com a app
+    a ajudar.
+
+    Recusa com **400 no campo `nome`** e não com um código de recusa próprio, e a
+    escolha é sobre o contrato e não sobre a semântica. Um código novo obrigava a
+    uma **terceira** família de códigos no `views.py` — o docstring de lá explica
+    porque é que há duas e não uma: juntá-las dava ao cliente gerado a união de
+    todos os códigos em cada resposta, a sugerir ramos que aquele endpoint nunca
+    devolve. Uma família inteira para uma situação é o mecanismo a custar mais do
+    que a propriedade que compra.
+
+    O 400 por campo é o precedente que já existe nesta camada ("esta pessoa já é
+    membro deste estabelecimento", nos convites) e aterra exactamente onde a
+    frase é mostrada: debaixo do input do nome.
+
+    O resto do `PATCH` continua a funcionar no demo — o regime e a hora mudam-se
+    lá, que é precisamente a propriedade que a ADR 0018 quer (o demo comporta-se
+    como o real). E enviar o nome **igual** ao que está é aceite: o ecrã submete
+    os três campos de cada vez, logo recusar um nome inalterado tornava o demo
+    inconfigurável por um campo que ninguém tocou.
+
+    ## O que esta função não valida
+
+    A janela do dia de negócio e os valores do regime: quem os recusa é o
+    serializer, contra a mesma constante e o mesmo enum, com a frase pronta para
+    aparecer debaixo do campo. Repeti-los aqui dava duas verificações e uma delas
+    acabaria por ser a única.
+
+    E **não** valida o regime contra o volume de negócios: o limiar do art. 53.º
+    muda com cada Orçamento do Estado e as condições são mais do que o número
+    (`domain-expert`, 2026-10-07). Registamos o que o dono diz; não decidimos se
+    ele tem direito.
+
+    ## Mudar a hora é retroactivo, e isso é a escolha certa
+
+    Os dias e os meses já passados passam a ser calculados com a hora nova. A
+    alternativa — histórico da hora — parte o invariante `Σ(dias) == mês` da ADR
+    0013 na data da mudança. O efeito real é limitado aos movimentos registados
+    **entre as duas horas**, e o ecrã di-lo antes de gravar em vez de o deixar
+    descobrir.
+    """
+    tenant: Tenant = Tenant.objects.get()
+
+    if tenant.is_demo and nome != tenant.name:
+        raise ValidationError(
+            {
+                "nome": [
+                    "Este é o estabelecimento de demonstração: o nome não se altera. "
+                    "O resto da configuração muda normalmente."
+                ]
+            }
+        )
+
+    tenant.name = nome
+    tenant.vat_regime = vat_regime
+    tenant.business_day_starts_at = business_day_starts_at
+    tenant.save(update_fields=["name", "vat_regime", "business_day_starts_at", "updated_at"])
+
+    logger.info(
+        "estabelecimento guardado",
+        extra={
+            "event": "estabelecimento",
+            "outcome": "ok",
+            # O nome **não** vai para o log: é dado de um cliente e o log não é
+            # sítio para ele (SECURITY.md). O que vai é o que decide cálculos.
+            "vat_regime": vat_regime,
+            "business_day_starts_at": business_day_starts_at.strftime("%H:%M"),
+        },
+    )
+    return _estabelecimento_out(tenant)
+
+
+# ---------------------------------------------------------------------------
+# O estabelecimento de demonstração (ADR 0018)
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DemonstracaoSemeada:
+    """O resultado de `semear_demonstracao`, para quem o chama poder relatar.
+
+    `revogados` são os uuids dos estabelecimentos de demonstração **anteriores**
+    desta pessoa, a que a pertença foi retirada nesta corrida. É informação de
+    operador e não de produto: quem corre o comando tem de saber que o demo de
+    ontem deixou de estar alcançável, em vez de o descobrir quando ele
+    desaparecer do seletor.
+    """
+
+    tenant: Tenant
+    user: User
+    revogados: tuple[UUID, ...]
+
+
+def semear_demonstracao(*, email: str, nome: str, display_name: str) -> DemonstracaoSemeada:
+    """Cria um estabelecimento de demonstração e dá-o a uma conta que já existe.
+
+    ## Não cria contas, e é a decisão 6 da ADR 0018
+
+    "Quem o vê: quem tiver um `Membership` nele, e mais ninguém" — e a pertença
+    é concedida pelo caminho de sempre. **Não há demonstração para quem não tem
+    conta**: o registo self-service não existe no v1 (ADR 0010) e esta função não
+    o reabre por uma porta de serviço. Um email desconhecido é um erro do
+    operador, não um convite a criar a conta.
+
+    É a diferença em relação ao `criar_tenant_com_dono`, que **pode** criar a
+    conta porque é o caminho pelo qual o primeiro cliente entra no sistema.
+
+    ## Um demo por pessoa, e reinicializar é criar outro
+
+    A decisão 5 diz que "o caminho normal **nunca apaga nada**", e não é zelo: o
+    `inventory_stockmovement` nasce com `REVOKE UPDATE, DELETE` ao role da app
+    (`SECURITY.md` §3), logo a app não consegue limpar um ledger — e é bom que não
+    consiga. Reinicializar é correr isto outra vez: estabelecimento novo com uuid
+    novo, pertença nova, e a pertença aos demos **anteriores desta pessoa**
+    revogada. A partir daí eles são inalcançáveis por quem quer que seja, porque a
+    query do `TenantMiddleware` devolve zero linhas e a resposta é 403 (ADR 0007).
+
+    Não é um demo partilhado, e a razão está na ADR: um demo partilhado é mutável
+    por todos os que o vêem, logo a primeira pessoa que lá registar uma quebra
+    muda o que a próxima encontra — e reinicializá-lo apanharia alguém a meio. O
+    custo fica nomeado: os estabelecimentos revogados acumulam-se como linhas
+    mortas até um operador os limpar, e o `billing` da fase 3 tem de filtrar pelo
+    `is_demo`.
+
+    ## A revogação só alcança demos, e isso é verificado e não assumido
+
+    O filtro é `is_demo=True` **dentro do âmbito de cada candidato**, o que é a
+    única forma de o ler: o `accounts_tenant` tem política sobre `id`. Um
+    estabelecimento a sério desta pessoa nunca entra na lista — e se o filtro
+    falhasse, o que esta função fazia era retirar a alguém o acesso ao seu próprio
+    negócio. É por isso que a comparação é por igualdade a `True` e não por
+    ausência de nada.
+    """
+    try:
+        user = User.objects.get_by_natural_key(email)
+    except User.DoesNotExist as erro:
+        # `ValidationError` por campo e não `ValueError`: quem chama é um comando
+        # de operador, e o `email` é o campo que ele escreveu mal.
+        raise ValidationError(
+            {"email": [f"Não existe conta com o email {email}. O demo não cria contas."]}
+        ) from erro
+
+    revogados = _revogar_demonstracoes_anteriores(user)
+
+    tenant_id = uuid4()
+    with tenant_scope(tenant_id):
+        tenant = Tenant.objects.create(id=tenant_id, name=nome, is_demo=True)
+        conceder_pertenca(
+            user=user,
+            tenant_id=tenant_id,
+            role=Papel.OWNER,
+            display_name=display_name,
+        )
+        logger.info(
+            "demonstração semeada",
+            extra={
+                "event": "demo_semeado",
+                "outcome": "ok",
+                "count": len(revogados),
+            },
+        )
+
+    return DemonstracaoSemeada(tenant=tenant, user=user, revogados=revogados)
+
+
+def _revogar_demonstracoes_anteriores(user: User) -> tuple[UUID, ...]:
+    """Retira a pertença aos demos anteriores desta pessoa. Nunca aos reais.
+
+    Percorre o `tenant_ids` — o único bit legível fora de âmbito (ADR 0007) — e
+    abre o âmbito de cada candidato para perguntar se ele é de demonstração. Não
+    há forma mais curta: a pergunta "este tenant é demo?" só tem resposta dentro
+    do âmbito dele, porque é a política que a concede.
+
+    O `revogar_pertenca` poda o `tenant_ids` no mesmo passo, logo um demo revogado
+    sai da lista de candidatos e deixa de aparecer no seletor sem mais nada.
+    """
+    revogados: list[UUID] = []
+    for candidato in dict.fromkeys(user.tenant_ids):
+        with tenant_scope(candidato):
+            if not Tenant.objects.filter(pk=candidato, is_demo=True).exists():
+                continue
+            revogar_pertenca(user=user, tenant_id=candidato)
+            revogados.append(candidato)
+    return tuple(revogados)

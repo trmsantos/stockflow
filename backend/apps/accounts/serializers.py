@@ -34,12 +34,18 @@ divergir com o tempo — e a que menos se vê.
 from __future__ import annotations
 
 from collections import Counter
+from datetime import time
 from typing import Any
 
 from rest_framework import serializers
 
-from apps.accounts.models import EstadoDoConvite, Papel, RotaDeMenu
-from apps.accounts.services import LIMITE_DO_FRAGMENTO, EstadoDaSessao
+from apps.accounts.models import EstadoDoConvite, Papel, RegimeDeIva, RotaDeMenu, Tema
+from apps.accounts.services import (
+    DIA_DE_NEGOCIO_MAXIMO,
+    DIA_DE_NEGOCIO_MINIMO,
+    LIMITE_DO_FRAGMENTO,
+    EstadoDaSessao,
+)
 
 __all__ = [
     "AtivacaoInSerializer",
@@ -110,6 +116,27 @@ class TenantAtivoInSerializer(serializers.Serializer):
     """
 
     tenant_id = serializers.UUIDField()
+
+
+class PreferenciasInSerializer(serializers.Serializer):
+    """O corpo do `PATCH /auth/preferencias`: o tema que esta pessoa prefere.
+
+    **Não tem `user_id`, e isso é a decisão.** A escrita é sempre sobre o
+    `request.user`, logo não existe objecto para autorizar nem caminho para a
+    preferência de outra pessoa — a forma do contrato é o que torna o abuso
+    impossível, em vez de uma verificação que alguém pode esquecer. É a mesma
+    mecânica com que o `tenant-ativo` recusa ser uma credencial, aplicada ao
+    contrário: ali o argumento existe e é verificado pela política, aqui o
+    argumento não existe.
+
+    `ChoiceField` sobre o `Tema`: um valor fora da lista é um 400 do DRF e nunca
+    chega à coluna. Isso importa mais do que parece, porque o cliente guarda uma
+    **cópia** deste nome em `localStorage` (ADR 0016, decisão 3) e lê-a antes de
+    haver rede — o valor ser fechado a três é o que torna essa cópia segura de
+    escrever.
+    """
+
+    tema = serializers.ChoiceField(choices=Tema.choices)
 
 
 class ConviteInSerializer(serializers.Serializer):
@@ -281,6 +308,12 @@ class UtilizadorOutSerializer(serializers.Serializer):
 
     id = serializers.UUIDField()
     email = serializers.EmailField()
+    #: A paleta preferida (ADR 0016). `ChoiceField` e não `CharField` para o
+    #: OpenAPI o emitir como **enum fechado**: a união chega ao `types.ts`
+    #: commitado e o `Record<Tema, …>` do cliente passa a ser exaustivo contra a
+    #: lista do backend, nos dois sentidos, sob `pnpm typecheck`. É a mesma
+    #: mecânica do `route_id` e do papel.
+    tema = serializers.ChoiceField(choices=Tema.choices)
 
 
 class TenantOutSerializer(serializers.Serializer):
@@ -293,11 +326,24 @@ class TenantOutSerializer(serializers.Serializer):
     O `papel` é o do par (utilizador, estabelecimento) e vem do `Membership`
     confirmado pela política: a mesma pessoa é dona de um e colaboradora noutro.
     Sai como enum fechado no OpenAPI, logo a união chega ao `types.ts`.
+
+    `demonstracao` entrou com a ADR 0018 e é a **única** diferença visível de um
+    estabelecimento de demonstração. Viaja aqui — e não num endpoint próprio —
+    porque é exactamente o que o cromado precisa e porque chega de graça: esta
+    forma já está no `tenant_ativo` e em cada entrada de `tenants`, que são os
+    dois sítios onde a faixa e o item marcado o vão ler, sem um pedido novo.
+
+    O nome é **duplo de propósito**: a coluna chama-se `is_demo` porque segue a
+    convenção de booleano da sua tabela (`is_active`, `is_staff`) e o campo
+    chama-se `demonstracao` porque segue o vocabulário português dos endpoints
+    deste módulo (`papel`, `rotulo`, `visivel`). É o `source` que os casa, num
+    sítio só.
     """
 
     id = serializers.UUIDField()
     nome = serializers.CharField(source="name", max_length=200)
     papel = serializers.ChoiceField(source="role", choices=Papel.choices)
+    demonstracao = serializers.BooleanField()
 
 
 class ItemDeMenuOutSerializer(serializers.Serializer):
@@ -381,12 +427,86 @@ class RotaDeMenuOutSerializer(serializers.Serializer):
     campo = serializers.BooleanField()
 
 
-class SessaoOutSerializer(serializers.Serializer):
-    """A resposta dos quatro endpoints de autenticação. Sempre esta forma.
+class EstabelecimentoOutSerializer(serializers.Serializer):
+    """A resposta do `GET` e do `PATCH /estabelecimento` (ADR 0017).
 
-    Uma forma só para login, logout, leitura da sessão e troca de
-    estabelecimento: o cliente guarda-a numa entrada de cache e qualquer das
-    quatro respostas a substitui, em vez de quatro formas e quatro ramos de Zod.
+    **Não é o `TenantOutSerializer`**, e a diferença é a razão de existirem os
+    dois: aquele descreve o estabelecimento como o **seletor** o mostra — id,
+    nome e o papel de quem está a ver — e viaja em cada resposta de sessão. Este
+    descreve a **entidade**: o que ela é e como está configurada, sem papel
+    nenhum, porque a configuração não muda com quem olha. Juntá-los punha o
+    regime de IVA em cada `GET /auth/sessao` de cada colaborador.
+
+    `business_day_starts_at` sai como `"04:00"` e não `"04:00:00"`: o `format`
+    está explícito porque o default do DRF é `"%H:%M:%S"`, e o que o contrato da
+    ADR 0017 fixa — e o que um `<input type="time">` consome — são horas e
+    minutos. Os segundos seriam três caracteres que nunca são outra coisa que
+    `00`.
+    """
+
+    id = serializers.UUIDField()
+    nome = serializers.CharField()
+    vat_regime = serializers.ChoiceField(choices=RegimeDeIva.choices)
+    business_day_starts_at = serializers.TimeField(format="%H:%M")
+    demonstracao = serializers.BooleanField()
+
+
+class EstabelecimentoInSerializer(serializers.Serializer):
+    """O corpo do `PATCH /estabelecimento`: os três campos configuráveis.
+
+    **Não há `demonstracao` e não há `id`.** O primeiro é só de leitura (a razão
+    está no modelo: marcar um estabelecimento real como demonstração era esconder
+    dados reais atrás de um aviso de "isto é de brincar"); o segundo não existe
+    porque qual é o estabelecimento decide-se no âmbito e não no corpo — é a
+    mesma forma com que o `PreferenciasInSerializer` não tem `user_id`. Não é uma
+    verificação que a view faz: é um argumento que não existe.
+
+    ## `PATCH` com os três campos obrigatórios, e é coerente e não contraditório
+
+    Hoje o corpo tem de os trazer todos, logo isto comporta-se como um `PUT`. O
+    método é `PATCH` pelo que acontece **depois**: um quarto campo entra como
+    `required=False` e nenhum cliente antigo tem de ser alterado, enquanto com
+    `PUT` a semântica obrigava-o a reenviar tudo e um cliente que não conhecesse
+    o campo novo apagava-o. É a mesma escolha do `/auth/preferencias`, e é
+    compatível com o `COMPONENT_SPLIT_PATCH = False` das settings — nenhuma view
+    desta casa valida com `partial=True`, pelo que o `types.ts` gerado diz que os
+    três são obrigatórios, que é a verdade.
+
+    ## A janela do dia de negócio é validada aqui **e** na base de dados
+
+    O `TimeField` recusa `"25:00"` por forma, e o `validate_business_day_starts_at`
+    recusa `"16:00"` por domínio — com a frase que aparece debaixo do campo. A
+    `CheckConstraint` da migração 0009 é a **rede**: um dia de negócio às 16:00
+    parte todos os dias em dois em silêncio, e a linha não deve conseguir existir
+    venha de onde vier. É a mesma relação que o menu tem com a sua unicidade.
+    """
+
+    nome = serializers.CharField(max_length=200)
+    vat_regime = serializers.ChoiceField(choices=RegimeDeIva.choices)
+    business_day_starts_at = serializers.TimeField(
+        # As duas formas que o contrato aceita à entrada, e **só** estas: a de
+        # saída (`"04:00"`), que é a que o cliente devolve sem pensar, e a
+        # completa, porque é o que um `curl` escrito à mão costuma mandar.
+        input_formats=["%H:%M", "%H:%M:%S"],
+    )
+
+    def validate_business_day_starts_at(self, valor: time) -> time:
+        if not DIA_DE_NEGOCIO_MINIMO <= valor <= DIA_DE_NEGOCIO_MAXIMO:
+            raise serializers.ValidationError(
+                "O dia de negócio começa entre as "
+                f"{DIA_DE_NEGOCIO_MINIMO:%H:%M} e as {DIA_DE_NEGOCIO_MAXIMO:%H:%M}. "
+                "Esta hora separa um dia do seguinte nos totais: fora desta janela, "
+                "um serviço de noite ficaria partido em dois dias."
+            )
+        return valor
+
+
+class SessaoOutSerializer(serializers.Serializer):
+    """A resposta dos cinco endpoints de autenticação. Sempre esta forma.
+
+    Uma forma só para login, logout, leitura da sessão, troca de estabelecimento
+    e preferências: o cliente guarda-a numa entrada de cache e qualquer das
+    cinco respostas a substitui, em vez de cinco formas e cinco ramos de Zod.
 
     `utilizador` e `tenant_ativo` são `null` em vez de ausentes, e isso é
     deliberado: um campo que às vezes não existe obriga o cliente a distinguir

@@ -18,11 +18,15 @@ uma escrita para outro tenant de dentro do âmbito é recusada pela própria
 política (`test_a_politica_recusa_escrever_o_menu_de_outro_tenant`).
 
 **3. O filtro por papel é autorização e não preferência** (ADR 0011). Medido com
-a única restrição real que existe — `convites` é do `owner` porque a ADR 0010 o
-decidiu e porque é o que o `ConviteViewSet` impõe —, em
-`test_os_convites_desaparecem_do_menu_de_quem_nao_pode_convidar`. Nenhuma outra
-rota é restrita, e o `apps/accounts/menu.py` diz porquê: inventar restrições era
-responder à Q7 sem ninguém ter perguntado.
+as duas restrições reais que existem — os `convites` são do `owner` porque a ADR
+0010 o decidiu e porque é o que o `ConviteViewSet` impõe, e o `painel` é do
+`owner` porque a ADR 0013 o decidiu e porque é o que as permissões do
+`reporting` impõem —, em
+`test_as_rotas_do_owner_desaparecem_do_menu_de_quem_nao_e_owner`. As outras cinco
+não são restritas, e o `apps/accounts/menu.py` diz porquê: inventar restrições
+era responder à Q7 sem ninguém ter perguntado. Que sejam exactamente estas duas
+está fechado nos dois sentidos em
+`test_as_rotas_restritas_sao_duas_e_as_duas_sao_do_owner`.
 
 **4. O `PUT` é uma substituição total.** O que não vem no corpo volta ao default,
 e a resposta é a configuração **inteira e sem filtro de papel** — o contrário
@@ -201,17 +205,21 @@ def _linhas_no_ambito(tenant_id: UUID) -> list[TenantMenuItem]:
 def test_o_enum_tem_exatamente_os_ids_do_registo_do_shell() -> None:
     """A lista fechada do backend é a união que o `types.ts` carrega (ADR 0009).
 
-    Os sete valores são os ids que o `frontend/src/shell/registo-de-rotas.ts`
-    escreveu primeiro — os cinco ecrãs do shell, o `convites`, e o `painel`, que
-    entrou a 2026-10-06 quando o painel de gestão saiu do Início para rota
-    própria. Um id a mais aqui **faz o
-    `pnpm typecheck` do frontend falhar** até o `Record<RotaId,
-    EntradaDoRegisto>` dele o ter: é essa a propriedade que se compra, e é por
-    isso que acrescentar um id é uma mudança que atravessa as duas pontas e não
-    uma linha num enum.
+    Os oito valores: os cinco ecrãs que o `frontend/src/shell/registo-de-rotas.ts`
+    escreveu primeiro, o `convites`, o `painel` (2026-10-06, quando o painel de
+    gestão saiu do Início para rota própria) e o `configuracao` (2026-10-07, ADR
+    0017). Um id a mais aqui **faz o `pnpm typecheck` do frontend falhar** até o
+    `Record<RotaId, EntradaDoRegisto>` dele o ter: é essa a propriedade que se
+    compra, e é por isso que acrescentar um id é uma mudança que atravessa as duas
+    pontas e não uma linha num enum.
 
     Um id a menos é o mesmo problema ao contrário: o `Record` do shell fica com
     uma propriedade em excesso e também não compila.
+
+    **O `configuracao` foi a prova disto a correr, e não uma sonda.** O docstring
+    do `registo-de-rotas.ts` usava exactamente este id como exemplo hipotético do
+    `TS2741` ("a simular o enum do backend a crescer"); quando ele entrou a
+    sério, o erro que apareceu foi aquele, com esta palavra.
     """
     assert list(RotaDeMenu.values) == [
         "inicio",
@@ -221,6 +229,7 @@ def test_o_enum_tem_exatamente_os_ids_do_registo_do_shell() -> None:
         "contar",
         "receber",
         "convites",
+        "configuracao",
     ]
 
 
@@ -235,24 +244,27 @@ def test_o_registo_cobre_o_enum_nos_dois_sentidos() -> None:
     assert [rota.route_id for rota in rotas_do_registo()] == list(RotaDeMenu.values)
 
 
-def test_as_rotas_restritas_sao_duas_e_as_duas_sao_do_owner() -> None:
+def test_as_rotas_restritas_sao_tres_e_as_tres_sao_do_owner() -> None:
     """Uma lista fechada de restrições, e cada uma com a permissão que a justifica.
 
     `convites` é do `owner` porque a ADR 0010 o decidiu e porque é o que o
     `ConviteViewSet` impõe. `painel` é do `owner` porque o dono do produto o
     decidiu a 2026-10-06 — o painel de gestão mostra o resultado do mês, a folha
     salarial e o custo por cargo — e porque é o que o `reporting` impõe nos três
-    endpoints. Nos dois casos, mostrar o item a quem não o pode usar era pôr no
-    menu um caminho que acaba em 403.
+    endpoints. `configuracao` é do `owner` porque a ADR 0017 o decidiu e porque é
+    o que o `EstabelecimentoView` impõe em leitura **e** em escrita. Nos três
+    casos, mostrar o item a quem não o pode usar era pôr no menu um caminho que
+    acaba em 403.
 
-    As outras estão abertas aos três papéis: dizer que um `staff` não pode ver o
-    Stock é uma decisão de produto que ninguém tomou (Q7).
+    As outras cinco estão abertas aos três papéis: dizer que um `staff` não pode
+    ver o Stock é uma decisão de produto que ninguém tomou (Q7).
 
-    **Este teste chamava-se "a única rota restrita" e passou a nomear duas.** Ele
-    existe exactamente para isso: tornar visível no diff cada restrição nova, com
-    a mesma pergunta a fazer nesse dia — que `permission_classes` a justifica? Não
-    é um teste que se relaxa quando uma entra; é um teste que se **reescreve**, e a
-    diferença é que reescrevê-lo obriga a responder à pergunta.
+    **Este teste chamava-se "a única rota restrita", passou a nomear duas, e
+    agora três.** Ele existe exactamente para isso: tornar visível no diff cada
+    restrição nova, com a mesma pergunta a fazer nesse dia — que
+    `permission_classes` a justifica? Não é um teste que se relaxa quando uma
+    entra; é um teste que se **reescreve**, e a diferença é que reescrevê-lo
+    obriga a responder à pergunta. Três vezes, três respostas.
     """
     restritas = {
         rota.route_id: sorted(rota.papeis)
@@ -262,6 +274,7 @@ def test_as_rotas_restritas_sao_duas_e_as_duas_sao_do_owner() -> None:
     assert restritas == {
         RotaDeMenu.PAINEL: [Papel.OWNER],
         RotaDeMenu.CONVITES: [Papel.OWNER],
+        RotaDeMenu.CONFIGURACAO: [Papel.OWNER],
     }, (
         "a lista de rotas restritas a um subconjunto de papéis mudou. Esconder "
         "um item que um papel não pode usar é autorização (ADR 0011), logo cada "
@@ -338,8 +351,9 @@ def test_sem_linhas_o_menu_e_o_dos_defaults(cenario: Cenario) -> None:
         "Inventário",
         "Compras",
         "Equipa",
+        "Equipa",
     ]
-    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 40, 50, 60]
+    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 40, 50, 60, 70]
 
 
 def test_sem_estabelecimento_ativo_o_menu_vem_vazio(cenario: Cenario) -> None:
@@ -373,6 +387,7 @@ def test_o_owner_guarda_o_menu_e_a_sessao_passa_a_devolve_lo(cenario: Cenario) -
         _item(RotaDeMenu.ALERTAS, grupo="Gestão", ordem=40),
         _item(RotaDeMenu.STOCK, grupo="Gestão", ordem=50, visivel=False),
         _item(RotaDeMenu.CONVITES, grupo="Equipa", ordem=60),
+        _item(RotaDeMenu.CONFIGURACAO, grupo="Equipa", ordem=70),
     ]
 
     resposta = _put(_cliente(cenario.ana, cenario.alfa.id), corpo)
@@ -491,8 +506,16 @@ def test_o_menu_da_sessao_custa_uma_query(cenario: Cenario) -> None:
 # 4. Validação: o que o serializer recusa, e com que forma
 # ---------------------------------------------------------------------------
 def test_um_route_id_inventado_e_400_no_campo(cenario: Cenario) -> None:
-    """A lista fechada é o que impede a tabela de ser um armazém chave/valor."""
-    resposta = _put(_cliente(cenario.ana, cenario.alfa.id), [_item("configuracao")])
+    """A lista fechada é o que impede a tabela de ser um armazém chave/valor.
+
+    O id usado era `configuracao` — e a 2026-10-07 este teste começou a devolver
+    200, porque a ADR 0017 o tornou uma rota a sério. É o modo de falha mais
+    benigno que um teste destes tem (um id inventado que passa a existir) e ainda
+    assim vale a nota: **um teste cujo valor de controlo é plausível acaba por
+    deixar de ser um controlo.** O `fornecedores` é o próximo candidato óbvio a
+    existir, pelo que o que entrou aqui é um id que nenhuma ADR pode querer.
+    """
+    resposta = _put(_cliente(cenario.ana, cenario.alfa.id), [_item("nao-e-uma-rota")])
 
     assert resposta.status_code == 400
     assert "route_id" in resposta.json()["0"]
@@ -653,21 +676,22 @@ def test_as_rotas_do_owner_desaparecem_do_menu_de_quem_nao_e_owner(
     A configuração é por tenant e a resposta é por **(tenant, papel)**: o mesmo
     estabelecimento, a mesma tabela (aqui sem linha nenhuma), três respostas. Os
     itens escondidos são os que levam a caminhos que o servidor recusa a quem não
-    é `owner` — o `/convites`, que o `ConviteViewSet` recusa, e o `/painel`, que o
-    `reporting` recusa nos três endpoints. Um menu que os mostrasse apontava para
-    um 403.
+    é `owner` — o `/convites`, que o `ConviteViewSet` recusa; o `/painel`, que o
+    `reporting` recusa nos três endpoints; e a `/configuracao`, que o
+    `EstabelecimentoView` recusa em leitura e em escrita. Um menu que os mostrasse
+    apontava para um 403.
 
-    **Eram um e passaram a dois a 2026-10-06**, e o teste é nomeado pelo critério
-    (as rotas do `owner`) e não pela lista, para a segunda entrada não obrigar a
-    inventar um nome novo — mas a asserção continua a ser pela lista exacta, que é
-    o que faz cada entrada nova aparecer no diff.
+    **Eram um, passaram a dois a 2026-10-06 e a três a 2026-10-07**, e o teste é
+    nomeado pelo critério (as rotas do `owner`) e não pela lista, para cada
+    entrada nova não obrigar a inventar um nome — mas a asserção continua a ser
+    pela lista exacta, que é o que faz cada entrada nova aparecer no diff.
     """
     user = cenario.bento if papel == Papel.MANAGER else cenario.clara
 
     do_owner = _menu_da_sessao(_cliente(cenario.ana, cenario.alfa.id))
     do_outro = _menu_da_sessao(_cliente(user, cenario.alfa.id))
 
-    so_do_owner = {RotaDeMenu.CONVITES, RotaDeMenu.PAINEL}
+    so_do_owner = {RotaDeMenu.CONVITES, RotaDeMenu.PAINEL, RotaDeMenu.CONFIGURACAO}
     assert so_do_owner <= {item["route_id"] for item in do_owner}
     assert so_do_owner.isdisjoint({item["route_id"] for item in do_outro})
     assert len(do_outro) == len(do_owner) - len(so_do_owner)

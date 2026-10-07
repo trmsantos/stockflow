@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   House,
   MailPlus,
+  SlidersHorizontal,
   TriangleAlert,
   Truck,
   type LucideIcon,
@@ -207,6 +208,21 @@ export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
     // campos e uma tabela de sete colunas, e é feito ao computador. A 360px
     // funciona (nenhuma rota é bloqueada em mobile) com a tabela a deslizar na
     // horizontal, que é o que o §4 declara em vez de tratar como defeito.
+    campo: false,
+  },
+  configuracao: {
+    caminho: "/configuracao",
+    rotulo: "Configuração",
+    icone: SlidersHorizontal,
+    pergunta: "Como é que esta casa está configurada?",
+    // Escritório, como os convites e pela mesma razão: é um ecrã de formulários
+    // e de uma tabela de configuração, feito sentado. A hora a que o dia de
+    // negócio começa não se muda no telemóvel entre duas mesas.
+    //
+    // O papel **não** está aqui, e é a regra deste ficheiro: quem filtra o menu
+    // pelo papel é o servidor (ADR 0011). Esta rota é restrita ao `owner`, e
+    // quem o diz é o `papeis` do registo do backend e o `permission_classes` do
+    // endpoint — não esta linha, que é só o que a rota é.
     campo: false,
   },
 };

@@ -17,8 +17,8 @@ export interface paths {
          * Activar um convite
          * @description `POST /api/v1/auth/ativar` — aceita um convite e devolve a sessão.
          *
-         *     É a quinta view dispensada de âmbito, e a razão é a do login: corre **antes**
-         *     de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
+         *     É uma das seis views dispensadas de âmbito, e a razão é a do login: corre
+         *     **antes** de existir tenant na sessão. A diferença — e é a decisão da ADR 0010 — é que
          *     esta view **abre** um âmbito, e o valor que o escolhe vem do **link**:
          *     `/ativar#<uuid-do-tenant>.<token>`. O uuid é argumento e não credencial, e
          *     quem concede é a política do `accounts_invitation`, que é uma política normal
@@ -116,6 +116,63 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/preferencias": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Guardar as preferências desta pessoa
+         * @description `PATCH /api/v1/auth/preferencias` — as definições desta pessoa (ADR 0016).
+         *
+         *     Hoje tem um campo, o `tema`, e é `PATCH` e não `PUT` porque é uma alteração
+         *     parcial de uma entidade que vai ganhar campos: um `PUT` com um campo obriga
+         *     o cliente a reenviar tudo no dia em que houver três, e um cliente antigo
+         *     apagava o que não conhecesse.
+         *
+         *     Devolve `SessaoOut` e não uma forma própria, pelo argumento da ADR 0010: o
+         *     cliente guarda **uma** entrada de cache e qualquer destas respostas a
+         *     substitui, em vez de uma quinta forma e um quinto ramo de Zod.
+         *
+         *     ## Dispensada de âmbito, e porque é que isso aqui não dispensa de CSRF
+         *
+         *     Escreve numa tabela sem política (`accounts_user`, ADR 0007) e tem de
+         *     funcionar em `escolha_pendente` e em `sem_estabelecimento`: um tema que só se
+         *     possa trocar depois de escolher o estabelecimento é um tema que não se troca
+         *     no ecrã onde o relâmpago da primeira pintura se vê.
+         *
+         *     **Não leva `csrf_protect`, e a ausência é deliberada** — é a diferença exacta
+         *     que o `SECURITY.md` §5 descreve e que o `LoginView` e a `AtivacaoView`
+         *     documentam do outro lado. O `as_view()` do DRF embrulha tudo em
+         *     `csrf_exempt`, e o que repõe a verificação é o `SessionAuthentication`:
+         *     **quando encontra utilizador na sessão**, ele verifica o token. O furo da ADR
+         *     0010 era dos endpoints **anónimos** de escrita, que é o que o login e a
+         *     activação são e este não é — com `IsAuthenticated`, não há caminho até aqui
+         *     sem sessão. Fica escrito para ninguém o "corrigir" nos dois sentidos.
+         *
+         *     ## Não há `user_id` no corpo
+         *
+         *     A escrita é sempre sobre o `request.user` (`PreferenciasInSerializer`). Não
+         *     é uma verificação que esta view faz: é um argumento que não existe, logo não
+         *     há objecto para autorizar nem caminho para a preferência de outra pessoa. É
+         *     a razão pela qual não há `has_object_permission` nem `pk` nesta rota, e a
+         *     prova está no `tests/test_preferencias.py`.
+         *
+         *     Qualquer papel, e sem `PertenceAoTenant`: o tema é de quem o pede e não do
+         *     estabelecimento (ADR 0016), e exigir pertença fechava o ecrã a quem ainda
+         *     não escolheu estabelecimento — que é metade do problema que esta ADR resolve.
+         */
+        patch: operations["auth_preferencias"];
         trace?: never;
     };
     "/api/v1/auth/sessao": {
@@ -237,6 +294,130 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/estabelecimento": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A configuração deste estabelecimento
+         * @description `GET`/`PATCH /api/v1/estabelecimento` — a configuração da empresa (ADR 0017).
+         *
+         *     ## Com âmbito, e é o default que o diz
+         *
+         *     Não leva `@tenant_scope_exempt` e é essa ausência que a torna normal: lê e
+         *     escreve o `accounts_tenant`, que **tem** política (a única cuja política
+         *     compara `id` em vez de `tenant_id`, porque a tabela *é* o tenant). Dentro do
+         *     âmbito a tabela tem no máximo uma linha visível, que é a razão de o service
+         *     fazer `Tenant.objects.get()` sem filtro.
+         *
+         *     ## Sem `has_object_permission`, porque não há objecto endereçável
+         *
+         *     O `SECURITY.md` §5 exige `obj.tenant_id == request.tenant.id` em toda a view
+         *     que receba um `pk` — esta não recebe nenhum, nem no path nem no corpo. Qual é
+         *     o estabelecimento decide-se no âmbito que o middleware abriu a partir da
+         *     sessão, logo não existe id de outro tenant para rejeitar. O `PertenceAoTenant`
+         *     continua na lista pelo seu `has_permission`, que nega quando não há
+         *     `request.tenant`.
+         *
+         *     ## `owner` em leitura **e** em escrita, e o 403 é a rede e não o controlo
+         *
+         *     A ADR 0011 escolheu `owner` para editar; a ADR 0017 estende-o à leitura com o
+         *     argumento da ADR 0013 — *o default é o mais fechado, e um conjunto de um
+         *     elemento alarga-se sem se desfazer* — e porque nada fora deste ecrã precisa
+         *     destas leituras por HTTP.
+         *
+         *     **403 e não 200 com blocos ausentes**, com a forma exacta do DRF (`detail`,
+         *     **sem `code` novo**): num ecrã de configurações, um 200 parcial torna "não
+         *     podes ver isto" indistinguível de "esta empresa ainda não configurou nada", e
+         *     os dois precisam de ecrãs opostos — o vazio ensina a configurar, o restrito
+         *     não pode. O cliente já sabe o papel antes de pedir (vem na sessão), logo não
+         *     monta o ecrã e não dispara o pedido; o 403 é a rede do deep link e da pertença
+         *     revogada a meio da sessão.
+         *
+         *     ## `csrf_protect` **está** aqui, ao contrário do `/auth/preferencias`
+         *
+         *     Os dois são autenticados, logo o `SessionAuthentication` verifica o token nos
+         *     dois e a linha é, hoje, redundante. Fica porque esta view tem uma diferença
+         *     que a outra não tem: **escreve configuração de uma empresa inteira**, e o
+         *     `as_view()` do DRF embrulha tudo em `csrf_exempt` — a protecção depende de o
+         *     `SessionAuthentication` correr e **encontrar** utilizador. No dia em que
+         *     alguém acrescentar aqui uma autenticação por token (que não verifica CSRF), a
+         *     diferença entre as duas views é esta linha. A redundância é barata; descobrir
+         *     que não havia nenhuma não é.
+         *
+         *     ## 400 por campo, e um deles é uma regra de negócio
+         *
+         *     A hora fora da janela 00:00–06:00 e um regime fora dos dois valores saem como
+         *     400 no campo (`EstabelecimentoInSerializer`). O terceiro 400 vem do service e
+         *     é do `nome`: no estabelecimento de demonstração o nome não se altera (ADR
+         *     0018) — e essa é a única recusa desta família que não é sobre a forma.
+         */
+        get: operations["estabelecimento_ler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Guardar a configuração deste estabelecimento
+         * @description `GET`/`PATCH /api/v1/estabelecimento` — a configuração da empresa (ADR 0017).
+         *
+         *     ## Com âmbito, e é o default que o diz
+         *
+         *     Não leva `@tenant_scope_exempt` e é essa ausência que a torna normal: lê e
+         *     escreve o `accounts_tenant`, que **tem** política (a única cuja política
+         *     compara `id` em vez de `tenant_id`, porque a tabela *é* o tenant). Dentro do
+         *     âmbito a tabela tem no máximo uma linha visível, que é a razão de o service
+         *     fazer `Tenant.objects.get()` sem filtro.
+         *
+         *     ## Sem `has_object_permission`, porque não há objecto endereçável
+         *
+         *     O `SECURITY.md` §5 exige `obj.tenant_id == request.tenant.id` em toda a view
+         *     que receba um `pk` — esta não recebe nenhum, nem no path nem no corpo. Qual é
+         *     o estabelecimento decide-se no âmbito que o middleware abriu a partir da
+         *     sessão, logo não existe id de outro tenant para rejeitar. O `PertenceAoTenant`
+         *     continua na lista pelo seu `has_permission`, que nega quando não há
+         *     `request.tenant`.
+         *
+         *     ## `owner` em leitura **e** em escrita, e o 403 é a rede e não o controlo
+         *
+         *     A ADR 0011 escolheu `owner` para editar; a ADR 0017 estende-o à leitura com o
+         *     argumento da ADR 0013 — *o default é o mais fechado, e um conjunto de um
+         *     elemento alarga-se sem se desfazer* — e porque nada fora deste ecrã precisa
+         *     destas leituras por HTTP.
+         *
+         *     **403 e não 200 com blocos ausentes**, com a forma exacta do DRF (`detail`,
+         *     **sem `code` novo**): num ecrã de configurações, um 200 parcial torna "não
+         *     podes ver isto" indistinguível de "esta empresa ainda não configurou nada", e
+         *     os dois precisam de ecrãs opostos — o vazio ensina a configurar, o restrito
+         *     não pode. O cliente já sabe o papel antes de pedir (vem na sessão), logo não
+         *     monta o ecrã e não dispara o pedido; o 403 é a rede do deep link e da pertença
+         *     revogada a meio da sessão.
+         *
+         *     ## `csrf_protect` **está** aqui, ao contrário do `/auth/preferencias`
+         *
+         *     Os dois são autenticados, logo o `SessionAuthentication` verifica o token nos
+         *     dois e a linha é, hoje, redundante. Fica porque esta view tem uma diferença
+         *     que a outra não tem: **escreve configuração de uma empresa inteira**, e o
+         *     `as_view()` do DRF embrulha tudo em `csrf_exempt` — a protecção depende de o
+         *     `SessionAuthentication` correr e **encontrar** utilizador. No dia em que
+         *     alguém acrescentar aqui uma autenticação por token (que não verifica CSRF), a
+         *     diferença entre as duas views é esta linha. A redundância é barata; descobrir
+         *     que não havia nenhuma não é.
+         *
+         *     ## 400 por campo, e um deles é uma regra de negócio
+         *
+         *     A hora fora da janela 00:00–06:00 e um regime fora dos dois valores saem como
+         *     400 no campo (`EstabelecimentoInSerializer`). O terceiro 400 vem do service e
+         *     é do `nome`: no estabelecimento de demonstração o nome não se altera (ADR
+         *     0018) — e essa é a única recusa desta família que não é sobre a forma.
+         */
+        patch: operations["estabelecimento_guardar"];
         trace?: never;
     };
     "/api/v1/menu": {
@@ -438,6 +619,66 @@ export interface components {
             detail: string;
         };
         /**
+         * @description O corpo do `PATCH /estabelecimento`: os três campos configuráveis.
+         *
+         *     **Não há `demonstracao` e não há `id`.** O primeiro é só de leitura (a razão
+         *     está no modelo: marcar um estabelecimento real como demonstração era esconder
+         *     dados reais atrás de um aviso de "isto é de brincar"); o segundo não existe
+         *     porque qual é o estabelecimento decide-se no âmbito e não no corpo — é a
+         *     mesma forma com que o `PreferenciasInSerializer` não tem `user_id`. Não é uma
+         *     verificação que a view faz: é um argumento que não existe.
+         *
+         *     ## `PATCH` com os três campos obrigatórios, e é coerente e não contraditório
+         *
+         *     Hoje o corpo tem de os trazer todos, logo isto comporta-se como um `PUT`. O
+         *     método é `PATCH` pelo que acontece **depois**: um quarto campo entra como
+         *     `required=False` e nenhum cliente antigo tem de ser alterado, enquanto com
+         *     `PUT` a semântica obrigava-o a reenviar tudo e um cliente que não conhecesse
+         *     o campo novo apagava-o. É a mesma escolha do `/auth/preferencias`, e é
+         *     compatível com o `COMPONENT_SPLIT_PATCH = False` das settings — nenhuma view
+         *     desta casa valida com `partial=True`, pelo que o `types.ts` gerado diz que os
+         *     três são obrigatórios, que é a verdade.
+         *
+         *     ## A janela do dia de negócio é validada aqui **e** na base de dados
+         *
+         *     O `TimeField` recusa `"25:00"` por forma, e o `validate_business_day_starts_at`
+         *     recusa `"16:00"` por domínio — com a frase que aparece debaixo do campo. A
+         *     `CheckConstraint` da migração 0009 é a **rede**: um dia de negócio às 16:00
+         *     parte todos os dias em dois em silêncio, e a linha não deve conseguir existir
+         *     venha de onde vier. É a mesma relação que o menu tem com a sua unicidade.
+         */
+        EstabelecimentoInRequest: {
+            /** Format: time */
+            business_day_starts_at: string;
+            nome: string;
+            vat_regime: components["schemas"]["VatRegimeEnum"];
+        };
+        /**
+         * @description A resposta do `GET` e do `PATCH /estabelecimento` (ADR 0017).
+         *
+         *     **Não é o `TenantOutSerializer`**, e a diferença é a razão de existirem os
+         *     dois: aquele descreve o estabelecimento como o **seletor** o mostra — id,
+         *     nome e o papel de quem está a ver — e viaja em cada resposta de sessão. Este
+         *     descreve a **entidade**: o que ela é e como está configurada, sem papel
+         *     nenhum, porque a configuração não muda com quem olha. Juntá-los punha o
+         *     regime de IVA em cada `GET /auth/sessao` de cada colaborador.
+         *
+         *     `business_day_starts_at` sai como `"04:00"` e não `"04:00:00"`: o `format`
+         *     está explícito porque o default do DRF é `"%H:%M:%S"`, e o que o contrato da
+         *     ADR 0017 fixa — e o que um `<input type="time">` consome — são horas e
+         *     minutos. Os segundos seriam três caracteres que nunca são outra coisa que
+         *     `00`.
+         */
+        EstabelecimentoOut: {
+            /** Format: time */
+            business_day_starts_at: string;
+            demonstracao: boolean;
+            /** Format: uuid */
+            id: string;
+            nome: string;
+            vat_regime: components["schemas"]["VatRegimeEnum"];
+        };
+        /**
          * @description Uma linha do corpo do `PUT /menu`: o que o tenant decidiu sobre uma rota.
          *
          *     Os quatro campos configuráveis, e nada mais. **Não** há `campo`, e isso é
@@ -547,6 +788,26 @@ export interface components {
          */
         PapelEnum: "owner" | "manager" | "staff";
         /**
+         * @description O corpo do `PATCH /auth/preferencias`: o tema que esta pessoa prefere.
+         *
+         *     **Não tem `user_id`, e isso é a decisão.** A escrita é sempre sobre o
+         *     `request.user`, logo não existe objecto para autorizar nem caminho para a
+         *     preferência de outra pessoa — a forma do contrato é o que torna o abuso
+         *     impossível, em vez de uma verificação que alguém pode esquecer. É a mesma
+         *     mecânica com que o `tenant-ativo` recusa ser uma credencial, aplicada ao
+         *     contrário: ali o argumento existe e é verificado pela política, aqui o
+         *     argumento não existe.
+         *
+         *     `ChoiceField` sobre o `Tema`: um valor fora da lista é um 400 do DRF e nunca
+         *     chega à coluna. Isso importa mais do que parece, porque o cliente guarda uma
+         *     **cópia** deste nome em `localStorage` (ADR 0016, decisão 3) e lê-a antes de
+         *     haver rede — o valor ser fechado a três é o que torna essa cópia segura de
+         *     escrever.
+         */
+        PreferenciasInRequest: {
+            tema: components["schemas"]["TemaEnum"];
+        };
+        /**
          * @description Uma rota do **registo**: o que existe para configurar, e os seus defaults.
          *
          *     É a resposta do `GET /menu/rotas`, e o que ela descreve é código e não dados
@@ -594,15 +855,16 @@ export interface components {
          *     * `contar` - Contar
          *     * `receber` - Receber
          *     * `convites` - Convites
+         *     * `configuracao` - Configuração
          * @enum {string}
          */
-        RotaIdEnum: "inicio" | "painel" | "alertas" | "stock" | "contar" | "receber" | "convites";
+        RotaIdEnum: "inicio" | "painel" | "alertas" | "stock" | "contar" | "receber" | "convites" | "configuracao";
         /**
-         * @description A resposta dos quatro endpoints de autenticação. Sempre esta forma.
+         * @description A resposta dos cinco endpoints de autenticação. Sempre esta forma.
          *
-         *     Uma forma só para login, logout, leitura da sessão e troca de
-         *     estabelecimento: o cliente guarda-a numa entrada de cache e qualquer das
-         *     quatro respostas a substitui, em vez de quatro formas e quatro ramos de Zod.
+         *     Uma forma só para login, logout, leitura da sessão, troca de estabelecimento
+         *     e preferências: o cliente guarda-a numa entrada de cache e qualquer das
+         *     cinco respostas a substitui, em vez de cinco formas e cinco ramos de Zod.
          *
          *     `utilizador` e `tenant_ativo` são `null` em vez de ausentes, e isso é
          *     deliberado: um campo que às vezes não existe obriga o cliente a distinguir
@@ -623,6 +885,13 @@ export interface components {
          * @enum {string}
          */
         SessaoOutEstadoEnum: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa";
+        /**
+         * @description * `escuro` - Escuro
+         *     * `meio_termo` - Meio termo
+         *     * `claro` - Claro
+         * @enum {string}
+         */
+        TemaEnum: "escuro" | "meio_termo" | "claro";
         /**
          * @description O corpo do `POST /auth/tenant-ativo`: o estabelecimento a activar.
          *
@@ -648,8 +917,21 @@ export interface components {
          *     O `papel` é o do par (utilizador, estabelecimento) e vem do `Membership`
          *     confirmado pela política: a mesma pessoa é dona de um e colaboradora noutro.
          *     Sai como enum fechado no OpenAPI, logo a união chega ao `types.ts`.
+         *
+         *     `demonstracao` entrou com a ADR 0018 e é a **única** diferença visível de um
+         *     estabelecimento de demonstração. Viaja aqui — e não num endpoint próprio —
+         *     porque é exactamente o que o cromado precisa e porque chega de graça: esta
+         *     forma já está no `tenant_ativo` e em cada entrada de `tenants`, que são os
+         *     dois sítios onde a faixa e o item marcado o vão ler, sem um pedido novo.
+         *
+         *     O nome é **duplo de propósito**: a coluna chama-se `is_demo` porque segue a
+         *     convenção de booleano da sua tabela (`is_active`, `is_staff`) e o campo
+         *     chama-se `demonstracao` porque segue o vocabulário português dos endpoints
+         *     deste módulo (`papel`, `rotulo`, `visivel`). É o `source` que os casa, num
+         *     sítio só.
          */
         TenantOut: {
+            demonstracao: boolean;
             /** Format: uuid */
             id: string;
             nome: string;
@@ -674,7 +956,14 @@ export interface components {
             email: string;
             /** Format: uuid */
             id: string;
+            tema: components["schemas"]["TemaEnum"];
         };
+        /**
+         * @description * `normal` - Regime normal
+         *     * `isento_art_53` - Isento (art. 53.º)
+         * @enum {string}
+         */
+        VatRegimeEnum: "normal" | "isento_art_53";
     };
     responses: never;
     parameters: never;
@@ -778,6 +1067,29 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessaoOut"];
+                };
+            };
+        };
+    };
+    auth_preferencias: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferenciasInRequest"];
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -943,6 +1255,64 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+    estabelecimento_ler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EstabelecimentoOut"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErroOut"];
+                };
+            };
+        };
+    };
+    estabelecimento_guardar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EstabelecimentoInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EstabelecimentoOut"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

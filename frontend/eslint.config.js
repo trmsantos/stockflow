@@ -38,13 +38,71 @@ const REGRAS_DE_DESIGN = [
     selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
     message: "Proibido sem sanitização e revisão (SECURITY.md §7).",
   },
+];
+
+/**
+ * O armazenamento local, **separado do resto das regras de design desde a ADR
+ * 0016** — e separado precisamente para poder ser estreitado num ficheiro em vez
+ * de ser suprimido num sítio qualquer.
+ *
+ * A proibição continua a valer em `src/**` inteiro. O que mudou é que existe
+ * **um** consumidor legítimo: o `src/lib/tema.ts` guarda uma cópia do nome da
+ * paleta, e é essa cópia que torna possível aplicar o tema antes da primeira
+ * pintura (o cookie de sessão é `httpOnly` e um pedido à API é, por definição,
+ * depois da primeira pintura).
+ *
+ * O teste que impede a excepção de ser esticada está escrito na ADR 0016: *vai
+ * para o armazenamento local o que um atacante não ganha nada em ler e nada em
+ * escrever.* Um nome de tema não é credencial, não é dado pessoal e não concede
+ * âmbito; escrever-lhe lixo dá um tema errado, e o valor é fechado a três com
+ * queda para o default. O `SECURITY.md` §7 continua literalmente verdadeiro.
+ *
+ * `localStorage` e `sessionStorage` em selectors **separados** porque só o
+ * primeiro tem excepção: o `sessionStorage` continua proibido no `tema.ts`
+ * também, e usá-lo lá seria um espelho que morre com o separador — isto é, a
+ * pré-pintura a funcionar uma vez por sessão e não sempre.
+ *
+ * ## Duas formas por regra, e a segunda fechou um buraco que estava aberto
+ *
+ * A formulação anterior era um selector só, sobre `object.name`: apanhava
+ * `localStorage.getItem(…)` e **não** apanhava `window.localStorage.getItem(…)`,
+ * porque aí o objecto do `MemberExpression` é o `window` e não o
+ * `localStorage`. O `no-restricted-globals` também não o apanha, porque com o
+ * prefixo já não há referência a um global. Medido com uma sonda, ao escrever
+ * esta ADR: as duas linhas com `window.` davam **exit 0** no ficheiro mais
+ * restrito do projecto.
+ *
+ * Era uma regra que dizia "proibido" e proibia a forma menos provável de alguém
+ * escrever. O selector de `property.name` fecha-a para `window.`, `globalThis.`
+ * e `self.`, e as duas sondas estão descritas no fim deste bloco.
+ */
+const REGRA_DE_LOCAL_STORAGE = [
   {
-    selector:
-      ":matches(MemberExpression, OptionalMemberExpression)[object.name=/^(localStorage|sessionStorage)$/]",
+    selector: ":matches(MemberExpression, OptionalMemberExpression)[object.name='localStorage']",
     message:
-      "Sem tokens nem estado de sessão em localStorage/sessionStorage (SECURITY.md §7). A autenticação é o cookie de sessão.",
+      "Sem tokens nem estado de sessão em localStorage (SECURITY.md §7). A autenticação é o cookie de sessão. A única excepção é a cópia do nome do tema no `src/lib/tema.ts` (ADR 0016).",
+  },
+  {
+    selector: ":matches(MemberExpression, OptionalMemberExpression)[property.name='localStorage']",
+    message:
+      "Sem tokens nem estado de sessão em localStorage, nem por `window.`/`globalThis.` (SECURITY.md §7). A única excepção é a cópia do nome do tema no `src/lib/tema.ts` (ADR 0016).",
   },
 ];
+
+const REGRA_DE_SESSION_STORAGE = [
+  {
+    selector: ":matches(MemberExpression, OptionalMemberExpression)[object.name='sessionStorage']",
+    message: "Sem estado em sessionStorage (SECURITY.md §7). A autenticação é o cookie de sessão.",
+  },
+  {
+    selector:
+      ":matches(MemberExpression, OptionalMemberExpression)[property.name='sessionStorage']",
+    message:
+      "Sem estado em sessionStorage, nem por `window.`/`globalThis.` (SECURITY.md §7). A autenticação é o cookie de sessão.",
+  },
+];
+
+const REGRAS_DE_ARMAZENAMENTO = [...REGRA_DE_LOCAL_STORAGE, ...REGRA_DE_SESSION_STORAGE];
 
 /**
  * O segundo caminho de dados do TanStack Router — `loader`, `loaderDeps`,
@@ -124,6 +182,7 @@ const FRONTEIRAS = [
       "no-restricted-syntax": [
         "error",
         ...REGRAS_DE_DESIGN,
+        ...REGRAS_DE_ARMAZENAMENTO,
         ...REGRAS_DE_ROTEAMENTO,
         IMPORT_DINAMICO_DE_ROTA,
       ],
@@ -347,7 +406,12 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["error", { allowConstantExport: true }],
-      "no-restricted-syntax": ["error", ...REGRAS_DE_DESIGN, ...REGRAS_DE_ROTEAMENTO],
+      "no-restricted-syntax": [
+        "error",
+        ...REGRAS_DE_DESIGN,
+        ...REGRAS_DE_ARMAZENAMENTO,
+        ...REGRAS_DE_ROTEAMENTO,
+      ],
       "no-restricted-globals": [
         "error",
         { name: "localStorage", message: "SECURITY.md §7: nada de estado de sessão em storage." },
@@ -381,6 +445,7 @@ export default tseslint.config(
       "no-restricted-syntax": [
         "error",
         ...REGRAS_DE_DESIGN.filter((r) => !r.selector.includes("-\\[")),
+        ...REGRAS_DE_ARMAZENAMENTO,
         ...REGRAS_DE_ROTEAMENTO,
       ],
     },
@@ -388,6 +453,38 @@ export default tseslint.config(
   // As quatro fronteiras. Ficam depois dos blocos de linguagem para nenhum
   // `rules` posterior as apagar por omissão.
   ...FRONTEIRAS,
+  {
+    // **O único ficheiro onde o `localStorage` é alcançável** (ADR 0016).
+    //
+    // Guarda uma cópia do nome da paleta e é ela que torna possível aplicar o
+    // tema antes da primeira pintura. A regra não é suprimida: é **estreitada**,
+    // com âmbito a este ficheiro — o `sessionStorage` continua proibido aqui, e
+    // o `localStorage` continua proibido em todo o resto do `src/`.
+    //
+    // Em flat config um `rules` posterior **substitui** a entrada da regra em vez
+    // de a somar, e é isso que torna este bloco possível e ao mesmo tempo
+    // perigoso: re-espalhar os dois arrays que restam não é zelo, é o que impede
+    // as regras de cor literal e as de routing de deixarem de valer neste
+    // ficheiro em silêncio. Vale o mesmo para o `no-restricted-globals`, que
+    // volta a declarar o `sessionStorage`.
+    //
+    // Alargar esta lista é um diff visível com uma razão a escrever, que é
+    // exactamente o que se quer: é a mesma mecânica do `per-file-ignores` do
+    // ruff no backend (CLAUDE.md).
+    files: ["src/lib/tema.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...REGRAS_DE_DESIGN,
+        ...REGRA_DE_SESSION_STORAGE,
+        ...REGRAS_DE_ROTEAMENTO,
+      ],
+      "no-restricted-globals": [
+        "error",
+        { name: "sessionStorage", message: "SECURITY.md §7: nada de estado de sessão em storage." },
+      ],
+    },
+  },
   {
     files: ["vite.config.ts"],
     languageOptions: { globals: globals.node },

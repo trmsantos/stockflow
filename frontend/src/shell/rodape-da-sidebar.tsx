@@ -1,4 +1,5 @@
-import { Building2, CircleAlert, LogOut } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Building2, CircleAlert, FlaskConical, LogOut, SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,32 @@ import type { SessaoDoShell } from "./sessao-do-shell";
  * O primitivo do shadcn dá o que um popover feito à mão não dá de graça:
  * fecho com Escape, clique fora, navegação por teclado, foco devolvido ao
  * botão e `aria-expanded` correcto.
+ *
+ * ## A entrada das preferências, desde 2026-10-07
+ *
+ * O `/preferencias` é o único ecrã da app **sem** entrada no menu, e a razão é
+ * da ADR 0017: o menu é uma projecção **por tenant**, e uma rota pessoal lá
+ * dentro deixava uma empresa esconder um ecrã pessoal aos seus colaboradores. O
+ * sítio dela é aqui — ao lado do email e da saída da conta é onde "a tua conta"
+ * vive, e é o shell que é o lado certo porque o tema é da pessoa e não do
+ * estabelecimento.
+ *
+ * É um `<Link>` e não um controlo de tema: há **um** sítio onde a paleta se
+ * troca, e um segundo controlo aqui era uma segunda fonte para o mesmo gesto. O
+ * gatilho para o acrescentar, escrito na ADR 0017, é alguém à procura dele.
+ *
+ * ## O estabelecimento de demonstração, marcado nos dois estados do seletor
+ *
+ * No **botão em repouso** e em **cada item da lista** (ADR 0018, decisão 7). Os
+ * dois, porque respondem a perguntas diferentes: o botão responde "onde estou?"
+ * sem abrir a lista, e o item responde "qual deles é o demo?" quando ela está
+ * aberta. Marcar só a lista obrigava a abri-la para saber onde se está, que é
+ * precisamente o que o botão em repouso existe para evitar.
+ *
+ * É um ícone **mais** o texto `sr-only`, e não uma cor: o `FlaskConical` é
+ * decorativo (`aria-hidden`) e quem ouve a página recebe a palavra. A cor nunca
+ * comunica sozinha (DESIGN.md §2), e aqui havia a tentação de pintar a linha de
+ * amarelo e ficar por aí.
  *
  * ## O estado recolhido
  *
@@ -110,7 +137,13 @@ export function RodapeDaSidebar({
               // ícone, logo quem ouve não tem como saber **qual**. Aberta, o
               // `aria-label` seria pior do que nada — sobrepõe-se ao `<Label>` e
               // ao texto do botão, que já dizem "Estabelecimento" e o nome.
-              aria-label={recolhida ? `Estabelecimento: ${nomeDoAtivo}` : undefined}
+              aria-label={
+                recolhida
+                  ? `Estabelecimento: ${nomeDoAtivo}${
+                      ativo.demonstracao ? " (demonstração)" : ""
+                    }`
+                  : undefined
+              }
               aria-busy={aTrocar}
               title={soUm ? nomeDoAtivo : "Trocar de estabelecimento"}
               className={recolhida ? "w-full justify-center px-1.5" : "w-full"}
@@ -123,9 +156,20 @@ export function RodapeDaSidebar({
                   estabelecimento com outro; no botão o que interessa é onde
                   se está. O valor é controlado, logo o nome é sabido aqui. */}
               {recolhida ? (
-                <Building2 aria-hidden="true" />
+                // Recolhida, o ícone **é** o botão: num demo troca para o frasco,
+                // porque é a única coisa que ali cabe a dizer onde se está.
+                ativo.demonstracao ? (
+                  <FlaskConical aria-hidden="true" />
+                ) : (
+                  <Building2 aria-hidden="true" />
+                )
               ) : (
-                <span className="truncate text-left">{nomeDoAtivo}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {ativo.demonstracao ? (
+                    <FlaskConical aria-hidden="true" className="size-3.5 shrink-0" />
+                  ) : null}
+                  <span className="truncate text-left">{nomeDoAtivo}</span>
+                </span>
               )}
             </SelectTrigger>
             {/* `position="popper"` e `side="top"`, e não o default do Radix.
@@ -156,7 +200,18 @@ export function RodapeDaSidebar({
             >
               {estabelecimentos.map((estabelecimento) => (
                 <SelectItem key={estabelecimento.id} value={estabelecimento.id}>
-                  <span className="truncate">{estabelecimento.nome}</span>
+                  {estabelecimento.demonstracao ? (
+                    <FlaskConical aria-hidden="true" className="size-3.5 shrink-0" />
+                  ) : null}
+                  <span className="truncate">
+                    {estabelecimento.nome}
+                    {estabelecimento.demonstracao ? (
+                      // Para quem ouve: o ícone é decorativo e o papel sozinho
+                      // não distingue um demo de uma casa a sério com o mesmo
+                      // nome. A cor nunca comunica sozinha (DESIGN.md §2).
+                      <span className="sr-only"> (demonstração)</span>
+                    ) : null}
+                  </span>
                   {/* O papel distingue dois nomes parecidos, e é o que diz o que
                       a pessoa pode fazer lá dentro. */}
                   <span className="shrink-0 text-xs text-muted-foreground">
@@ -177,6 +232,12 @@ export function RodapeDaSidebar({
             {sessao.email}
           </span>
         )}
+        <Button asChild variant="ghost" size="icon" className="shrink-0" title="Preferências">
+          <Link to="/preferencias">
+            <SlidersHorizontal aria-hidden="true" />
+            <span className="sr-only">Preferências</span>
+          </Link>
+        </Button>
         <Button
           type="button"
           variant="ghost"

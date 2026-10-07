@@ -8,11 +8,12 @@ detalhe de arrumação interna a aparecer no contrato.
 
 ## `/auth/` é a família dispensada de âmbito, e o prefixo é a regra
 
-As cinco rotas sob `auth/` são as que correm **antes** de existir tenant na
-sessão (ADR 0007 e ADR 0010): login, logout, sessão, troca de estabelecimento e
-activação de convite. Os `convites` e o `menu` ficam **fora** do `auth/` de
-propósito — são endpoints normais, com âmbito e só para o `owner`, e um
-`/auth/convites` sugeria o contrário a quem lesse o path. A dispensa continua a
+As seis rotas sob `auth/` são as que correm **antes** de existir tenant na
+sessão (ADR 0007 e ADR 0010): login, logout, sessão, troca de estabelecimento,
+activação de convite e as preferências da pessoa. Os `convites`, o `menu` e o
+`estabelecimento` ficam **fora** do `auth/` de propósito — são endpoints normais,
+com âmbito e só para o `owner`, e um `/auth/convites` sugeria o contrário a quem
+lesse o path. A dispensa continua a
 ser declarada na **view** e nunca inferida do prefixo
 (`tenant_scope_exempt`); o prefixo é o que torna a regra legível, não o que a
 impõe.
@@ -36,8 +37,8 @@ navegável, que é um endpoint a mais a enumerar o que existe e que o
 forma.
 
 Nomes em português porque são o contrato público (`sessao`, `tenant-ativo`,
-`ativar`, `convites`), e `tenant-ativo` com hífen porque é um path e não um
-identificador. `ativar` casa com a rota `/ativar` da SPA, que é onde o link do
+`ativar`, `preferencias`, `convites`), e `tenant-ativo` com hífen porque é um
+path e não um identificador. `ativar` casa com a rota `/ativar` da SPA, que é onde o link do
 convite aterra.
 """
 
@@ -47,9 +48,11 @@ from rest_framework.routers import SimpleRouter
 from apps.accounts.views import (
     AtivacaoView,
     ConviteViewSet,
+    EstabelecimentoView,
     LoginView,
     LogoutView,
     MenuView,
+    PreferenciasView,
     RotasDeMenuView,
     SessaoView,
     TenantAtivoView,
@@ -64,6 +67,12 @@ urlpatterns = [
     path("auth/sessao", SessaoView.as_view(), name="sessao"),
     path("auth/tenant-ativo", TenantAtivoView.as_view(), name="tenant-ativo"),
     path("auth/ativar", AtivacaoView.as_view(), name="ativar"),
+    # As preferências da pessoa (ADR 0016). Sob `auth/` e não num `preferencias`
+    # de topo porque pertence à família que corre sem âmbito: escreve no
+    # `accounts_user`, que é a tabela sem política, e tem de funcionar antes de
+    # haver estabelecimento escolhido. Fora do `auth/` o path sugeria um endpoint
+    # normal, que é precisamente o que este não é.
+    path("auth/preferencias", PreferenciasView.as_view(), name="preferencias"),
     # O menu (ADR 0009 e ADR 0011). `menu/rotas` antes de `menu` por leitura e
     # não por necessidade — são paths distintos e o resolver não os confunde.
     #
@@ -77,5 +86,12 @@ urlpatterns = [
     # configuração "guardava" com um 405 e nada no log a explicá-lo.
     path("menu/rotas", RotasDeMenuView.as_view(), name="menu-rotas"),
     path("menu", MenuView.as_view(), name="menu"),
+    # O estabelecimento (ADR 0017). **Fora do `auth/`** e sem barra final, como o
+    # resto: é um endpoint normal, com âmbito e só para o `owner` — a mesma
+    # família dos convites e do menu. No singular porque é **um**: qual é
+    # decide-se no âmbito da sessão e não por um id no path, e um
+    # `/estabelecimentos/<id>` sugeria uma colecção endereçável que esta API não
+    # tem (quem lista os estabelecimentos de alguém é o `GET /auth/sessao`).
+    path("estabelecimento", EstabelecimentoView.as_view(), name="estabelecimento"),
     *router.urls,
 ]

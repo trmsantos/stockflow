@@ -52,7 +52,7 @@ campo, que são desenhadas para 360px.
 Todos os tokens são variáveis CSS mapeadas para Tailwind v4 via `@theme`. O agente usa
 **apenas** classes derivadas destes tokens. Cores hardcoded são proibidas.
 
-### Cor — três paletas, e a que existe é a escura
+### Cor — três paletas, cada uma completa e cada uma medida
 
 **Três paletas: `escuro` (o default, e a identidade aprovada), `claro` e `meio_termo`; e a selecção é
 o atributo `data-tema` no `<html>`, nunca `prefers-color-scheme` (ADR 0015).** A preferência é **da
@@ -60,20 +60,44 @@ pessoa** e vive no servidor (ADR 0016), não na configuração do sistema de que
 tem dois estados para três paletas. Por isso `prefers-color-scheme` deixou de selecionar o que quer que
 seja e passa a ser proibido em `src/**` inteiro.
 
-**Das três, hoje existe uma: a escura, que está escrita abaixo.** A `claro` e a `meio_termo` entram,
-com os seus blocos neste §2 e no `tokens.css`, na mesma alteração que muda o gate — e entram
-**completas e medidas**, ou não entram: os 18 tokens de cor redefinidos **mais os dois de sombra**,
-gamut a 1e-6, e contraste contra a **pior superfície de cada paleta**, que é *calculada* e não nomeada
-(no escuro dá o `surface-2`, o mais claro dos três pretos; no claro dá a **mais escura** das três). Um
-tema que entre com 17 dos 18 falha. Um modo a meio é pior do que não ter modo nenhum: dá uma app com
-metade das cores erradas a quem o escolheu. E **o meio termo é um terceiro conjunto de superfícies —
-grafite, com texto claro —, não um `opacity` por cima do escuro**: um factor multiplicativo não
-redefine token nenhum, e um token que caia a 4.4:1 não aparece em medição alguma porque não existe como
-valor.
+**E a paleta é aplicada antes da primeira pintura, não quando a sessão chega.** A preferência está no
+servidor e o servidor só responde depois do primeiro pixel, pelo que o cliente guarda uma **cópia do
+nome da paleta** e é ela que o módulo de entrada lê, antes de montar o React (`src/lib/tema.ts`). Sem
+isso, quem prefere o claro via um relâmpago escuro em cada arranque — o mesmo defeito, na mesma
+superfície, que o `color-scheme` desta secção existe para evitar. Numa máquina nova o primeiro arranque
+pinta o default e troca quando a sessão chega: é um relâmpago **por máquina** e não um por arranque.
+Medido no browser com a sessão bloqueada, que é o único estado em que só a cópia decide.
+
+**As três existem desde 2026-10-07 e estão escritas abaixo**, com os 18 tokens de cor **mais os dois
+de sombra** cada uma — uma paleta não é só `--color-*`. Nenhuma entrou a 17 de 18: o gate falha se
+entrar. O que cada uma é, e a **pior superfície** de cada uma, que o gate *calcula* (a de menor
+contraste contra o `foreground` dessa paleta) e imprime a cada corrida em vez de a nomear em código:
+
+| Paleta | O que é | Pior superfície | Pior texto | Pior fronteira |
+|---|---|---|---|---|
+| `escuro` | A identidade "Cabine" aprovada: três degraus de preto frio, cromado contado, sinal que se lê de dois metros. É o default e vive na `:root` sem atributo. | `surface-2` (o **mais claro** dos três pretos) | 5.535:1 | 3.349:1 |
+| `claro` | A mesma cabine com as luzes acesas: cinzento **frio** no mesmo hue 240, a tela em cima e o cromado a descer. Não é papel morno — o morno era a identidade rejeitada a 2026-10-01. | `surface-2` (o **mais escuro** dos três cinzentos) | 4.774:1 | 3.331:1 |
+| `meio_termo` | Grafite com texto claro: a direcção do escuro com as superfícies, o separador e as tintas **+0.105 em L** e o texto a descer de 0.97 para 0.94, para matar a halation do texto claro sobre quase-preto num monitor barato. | `surface-2` | 5.082:1 | 3.298:1 |
+
+Nos três casos a pior superfície dá o `surface-2`, e **pela mesma razão estrutural e não por
+coincidência**: é o degrau mais afastado da tela em qualquer das três. No escuro por ser o mais claro,
+no claro por ser o mais escuro — que é exactamente porque o gate a calcula. Nomeá-la numa paleta clara
+seria medir contra o melhor fundo e chamar-lhe o pior.
+
+**O meio termo é um terceiro conjunto de superfícies, não um `opacity` por cima do escuro**: um factor
+multiplicativo não redefine token nenhum, e um token que caia a 4.4:1 não aparece em medição alguma
+porque não existe como valor. E não é um claro esbatido — isso seria uma paleta clara com menos
+contraste, pior do que o claro precisamente naquilo para que o claro serve.
 
 Os **acentos e as cores de estado redefinem-se em cada paleta**, e isso não é uma proibição de
 partilhar um valor: é o que a medição obriga. O mesmo `oklch` que dá 5.5:1 sobre quase-preto dá muito
-menos sobre papel, logo um valor copiado falha na paleta onde não passa.
+menos sobre papel, logo um valor copiado falha na paleta onde não passa — e um que passe fica. No
+`meio_termo` o acento e dois dos três sinais são **o mesmo valor** do escuro, sem uma linha de
+diferença, porque medidos passam. O que mudou lá mudou por medição, e a contabilidade está no
+`tokens.css`: quatro tokens do escuro **falham** sobre o grafite (`muted-foreground` 3.854:1,
+`border-strong` 2.332:1, `danger` 3.888:1, `danger-border` 2.395:1), dois passam por uma margem que
+esta casa recusa e sobem com ela (`success-border` a 0.048 da barra, `warning-border`), e só o
+`foreground` desce por decisão e não por medição — é metade do remédio para a halation.
 
 Três papéis por cor de estado, porque um valor só não serve os três. Uma cor de estado usada
 como **texto** sobre o fundo precisa de 4.5:1; a mesma cor como **preenchimento** de um banner
@@ -83,6 +107,7 @@ por isso — uma versão anterior deste ficheiro tinha `warning` a **2.17:1**, a
 que esta própria secção exige.
 
 ```css
+/* `escuro` — o default e a identidade aprovada. Vive na `:root` sem atributo. */
 @theme static {
   /* Superfícies — três degraus de preto frio. O `surface-2` é o mais claro dos
    * três, logo o pior fundo para texto claro: é contra ele que tudo se mede. */
@@ -114,12 +139,109 @@ que esta própria secção exige.
   --color-danger:          oklch(0.7 0.185 25);
   --color-danger-surface:  oklch(0.3 0.06 25);
   --color-danger-border:   oklch(0.58 0.19 25);
+
+  /* Sombras — parte da paleta. Num fundo preto a sombra não separa; o que
+   * separa é o fio de luz de 1px na aresta de cima, a primeira camada do `sm`. */
+  --shadow-sm: inset 0 1px 0 0 oklch(1 0 0 / 0.05), 0 10px 28px -16px oklch(0 0 0 / 0.75);
+  --shadow-lg: 0 16px 40px -12px oklch(0 0 0 / 0.8);
+}
+```
+
+```css
+/* `claro` — a mesma cabine com as luzes acesas. Cinzento frio, hue 240, tela em
+ * cima: o `surface-2` é a mais escura das três e a pior superfície. */
+:root[data-tema="claro"] {
+  color-scheme: light;
+
+  --color-background:  oklch(0.985 0.004 240);
+  --color-surface:     oklch(0.952 0.006 240);
+  --color-surface-2:   oklch(0.92 0.008 240);
+
+  --color-border:        oklch(0.855 0.01 240);   /* separador decorativo; isento dos 3:1 */
+  --color-border-strong: oklch(0.58 0.014 240);   /* fronteira de componente: 3.375:1 */
+
+  --color-foreground:       oklch(0.235 0.014 240);
+  --color-muted-foreground: oklch(0.485 0.016 240);
+
+  /* O mesmo matiz 225 do acento aprovado, à luminosidade e croma que o papel
+   * deixa — ciano de painel profundo em vez de ciano de lâmpada. */
+  --color-primary:            oklch(0.49 0.082 225);
+  --color-primary-foreground: oklch(0.99 0.004 240);
+
+  --color-success:         oklch(0.485 0.125 148);
+  --color-success-surface: oklch(0.9 0.085 148);
+  --color-success-border:  oklch(0.565 0.145 148);
+
+  --color-warning:         oklch(0.5 0.09 85);
+  --color-warning-surface: oklch(0.9 0.08 85);
+  --color-warning-border:  oklch(0.585 0.105 85);
+
+  --color-danger:          oklch(0.52 0.19 25);
+  --color-danger-surface:  oklch(0.9 0.045 25);
+  --color-danger-border:   oklch(0.61 0.215 25);
+
+  /* Sem fio de luz: sobre papel um fio branco não existe, e a sombra volta a
+   * ser o que separa. Continuam dois níveis e nenhuma é colorida. */
+  --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 0.07), 0 8px 20px -14px oklch(0 0 0 / 0.22);
+  --shadow-lg: 0 14px 36px -10px oklch(0 0 0 / 0.28);
+}
+```
+
+```css
+/* `meio_termo` — grafite com texto claro: o escuro com as superfícies, o
+ * separador e as tintas +0.105 em L, e cinco tokens re-derivados porque a
+ * medição recusou os do escuro (os valores recusados estão no `tokens.css`). */
+:root[data-tema="meio_termo"] {
+  color-scheme: dark;
+
+  --color-background:  oklch(0.25 0.008 240);
+  --color-surface:     oklch(0.295 0.009 240);
+  --color-surface-2:   oklch(0.35 0.01 240);
+
+  --color-border:        oklch(0.41 0.011 240);   /* separador decorativo; isento dos 3:1 */
+  --color-border-strong: oklch(0.635 0.014 240);  /* fronteira de componente: 3.298:1 */
+
+  --color-foreground:       oklch(0.94 0.005 240);
+  --color-muted-foreground: oklch(0.755 0.016 240);
+
+  /* O acento aprovado, sem uma alteração */
+  --color-primary:            oklch(0.76 0.13 225);
+  --color-primary-foreground: oklch(0.19 0.02 240);
+
+  --color-success:         oklch(0.76 0.17 148);
+  --color-success-surface: oklch(0.405 0.05 148);
+  --color-success-border:  oklch(0.66 0.15 148);
+
+  --color-warning:         oklch(0.82 0.15 85);
+  --color-warning-surface: oklch(0.425 0.05 85);
+  --color-warning-border:  oklch(0.7 0.125 85);
+
+  /* Clareia para salmão por aritmética: o vermelho saturado do sRGB tem
+   * luminância máxima de 0.213 e aqui são precisos 0.358 para 4.5:1. */
+  --color-danger:          oklch(0.765 0.125 25);
+  --color-danger-surface:  oklch(0.405 0.06 25);
+  --color-danger-border:   oklch(0.67 0.18 25);
+
+  /* O fio de luz fica, mais fraco: sobre grafite a sombra já funciona outra vez
+   * e ganha o peso que o fio perde. */
+  --shadow-sm: inset 0 1px 0 0 oklch(1 0 0 / 0.04), 0 10px 26px -16px oklch(0 0 0 / 0.6);
+  --shadow-lg: 0 16px 40px -12px oklch(0 0 0 / 0.7);
 }
 ```
 
 O acento é ciano e não verde por eliminação, não por gosto: a gama de estado já gasta o verde, o
 âmbar e o vermelho, e o §5 proíbe o roxo. Um acento que repita uma cor de estado faz o item activo
 do menu parecer um alerta.
+
+**E esse argumento é o que fixa o acento claro.** O ciano do escuro (L 0.76) mede **1.644:1** sobre o
+`surface-2` da paleta clara — como texto não existe —, logo tinha de ser re-derivado; mas o que se
+re-derivou foi a **luminosidade e a croma**, não o matiz: 225 nas três paletas. Mudar o matiz era
+resolver um problema de contraste criando o problema que a frase acima descreve. O valor claro não é
+uma preferência: a 4.5:1 sobre o `surface-2` o tecto é L 0.50, e a croma que o sRGB tem neste matiz é
+0.095 a esse L — o acento é o que cabe nessas duas paredes, e dá **4.830:1** como texto. O custo, dito
+por inteiro: sobre papel o acento é um ciano de painel **profundo**, não a lâmpada de painel do escuro.
+Reconhece-se como a mesma cor; não tem o mesmo brilho, e não há como ter: o brilho vinha do fundo
+preto.
 
 **`color-scheme` é por paleta, e nunca `light dark`**: `dark` no escuro e no meio termo, `light` no
 claro. Sem isso as barras de scroll, o caret, o autofill e os controlos nativos vêm do modo errado por
@@ -141,12 +263,21 @@ Regras:
 - Cinzentos com um ligeiro tom (o `0.003–0.016` de chroma acima, em hue 240), nunca `#888` puro.
 - **Contraste mínimo WCAG AA: 4.5:1 texto, 3:1 UI, verificado contra a pior das três superfícies de
   cada paleta** — que o gate calcula (a de menor contraste contra o `foreground` dessa paleta) em vez
-  de a nomear; na escura é o `surface-2`, não o `background`. **Medido na paleta escura** (`pnpm lint`,
-  não a olho): texto de **5.535:1** (`muted-foreground`) a **14.864:1** (`foreground`); fronteiras de
-  componente de **3.349:1** (`border-strong`) a **4.960:1** (`warning-border`); `foreground` sobre as
-  três tintas de estado de **11.670:1** a **12.814:1**; `primary-foreground` sobre `primary` a
-  **8.863:1**. Os três valores mais apertados são os que se quer ver num diff: se um deles descer,
-  desceu por uma razão que alguém tem de escrever.
+  de a nomear; nas três dá o `surface-2`, e não o `background`. **Medido** (`pnpm lint`, não a olho),
+  por paleta, contra o `surface-2` de cada uma:
+
+  | | texto | fronteira de componente | `foreground` sobre as tintas | `primary-fg` sobre `primary` |
+  |---|---|---|---|---|
+  | `escuro` | 5.535 (`muted-foreground`) – 14.864 (`foreground`) | 3.349 (`border-strong`) – 4.960 (`warning-border`) | 11.670 – 12.814 | 8.863 |
+  | `claro` | 4.774 (`warning`) – 13.152 (`foreground`) | 3.331 (`danger-border`) – 3.375 (`border-strong`) | 12.156 – 12.716 | 5.942 |
+  | `meio_termo` | 5.082 (`danger`) – 9.470 (`foreground`) | 3.298 (`border-strong`) – 4.188 (`warning-border`) | 6.969 – 7.792 | 8.863 |
+
+  Os valores mais apertados de cada linha são os que se quer ver num diff: se um deles descer, desceu
+  por uma razão que alguém tem de escrever. **A paleta clara é a mais apertada das três no texto**, e é
+  uma propriedade do papel e não um descuido: uma cor que seja ao mesmo tempo legível como texto e
+  reconhecível como sinal tem menos espaço acima de uma tela clara do que acima de uma preta. Todas as
+  cores de estado e o acento do `claro` ficam entre 4.77 e 4.83 — 0.3 acima da barra, que é margem para
+  um arredondamento e não para uma mudança de valor à mão.
 - **Isto é um gate, não uma promessa.** O `frontend/scripts/check-design-tokens.mjs` recalcula o
   gamut e o contraste a cada `pnpm lint`, deriva os papéis do **nome** do token (um
   `--color-info-border` novo entra sozinho na regra dos 3:1) e compara esta secção com o
@@ -168,8 +299,13 @@ Regras:
   e uma tolerância de `0.002` deixava-o passar como se estivesse dentro. Um `oklch()` fora do gamut
   é distorcido pelo browser em silêncio, e o contraste que se mede deixa de ser o contraste que se
   vê. É também por isso que as tintas de estado (`-surface`) têm croma baixa à luminosidade a que
-  estão: é um limite do sRGB, não uma escolha estética.
-- O `--color-border` a **1.21:1** contra o `surface-2` **não** é uma falha: um separador
+  estão: é um limite do sRGB, não uma escolha estética. Os dois casos onde esse limite **decide** o
+  valor estão nomeados: o acento do `claro` (a croma disponível a L 0.49 no matiz 225 é 0.093) e o
+  `danger` do `meio_termo` (o vermelho saturado do sRGB tem luminância máxima de 0.213 e sobre o
+  grafite são precisos 0.358, logo o alarme clareia para salmão por aritmética). Cada token dos três
+  blocos tem **pelo menos 10% de folga** até à parede do gamut no seu matiz e luminosidade.
+- O `--color-border` a **1.21:1** (escuro), **1.23:1** (claro) e **1.28:1** (meio termo) contra o
+  `surface-2` **não** é uma falha: um separador
   decorativo entre superfícies está fora da regra dos 3:1, que se aplica a fronteiras que
   identificam componentes. Para essas há o `--color-border-strong`. Um `input` delimitado com
   `--color-border` é um bug de acessibilidade. A isenção está no gate pelo nome do token, e é a
@@ -211,7 +347,12 @@ Números tabulares em tabelas e métricas (`font-variant-numeric: tabular-nums`)
   coloridas. Num fundo preto a sombra não separa — o que separa é o fio de luz de 1px na aresta de
   cima, que é a primeira camada do `shadow-sm`. **Os dois tokens de sombra são parte da paleta e
   redefinem-se com ela** (ADR 0015): num fundo claro um fio de luz branco não existe e é a sombra que
-  volta a separar.
+  volta a separar. **E as duas utilities têm de ser apontadas ao token à mão**, em quatro linhas do
+  `base.css`: medido no CSS compilado, o Tailwind v4 **interpreta** o valor do token em tempo de
+  compilação e inlina-o (para suportar `shadow-<cor>`), logo redefinir `--shadow-sm` num bloco de tema
+  não mudava nada e o fio de luz da paleta escura aparecia nas três. Perde-se a composição com
+  `ring-*` — auditada, não está em uso nestas duas classes — e com `shadow-<cor>`, que esta secção
+  proíbe.
 - Bordas de 1px com `--color-border` são preferíveis a sombras para separar superfícies. O cromado
   desta identidade é **visível e contado**: cromado (sidebar e cabeçalho) no `surface` e a tela de
   conteúdo no `background` — **ao contrário do que esta linha dizia**, e a razão é medida: os quatro
@@ -302,6 +443,15 @@ Regras de composição:
   campo usa o mesmo tratamento do `<th>` da tabela que vem abaixo. É essa rima que faz o topo e a
   tabela lerem-se como um instrumento só. Os campos empacotam à esquerda e **não esticam**: três
   células a dividir 1024px dariam 340px cada para um número de dois dígitos.
+- **"A tabela desliza a 360px" é sobre a tabela, nunca sobre o ecrã — e até 2026-10-07 era o ecrã
+  que deslizava.** A moldura tem `overflow-x-auto` desde que nasceu e não continha nada: um item de
+  flex tem `min-width: auto`, logo crescia para caber as colunas, e o bloco da `<table>` contribuía
+  para a área de scroll da **raiz** mesmo clipado. Medido a 360px com o `scripts/ver-ecra.py`, e foi
+  a fotografia que o mostrou: 360px de aplicação e 587px de preto deslizável, num telemóvel, em
+  quatro ecrãs. São duas classes na moldura (`min-w-0` para conter, `relative` para a sobreposição
+  ficar local) e a razão está escrita no `components/tabela.tsx`, com os cinco candidatos medidos.
+  O que se declara aqui é a **tabela** a deslizar por dentro da sua moldura; um ecrã que desliza para
+  o lado leva a sidebar e a barra de topo com ele, e isso nunca foi aceite.
 - **O "cabeçalho sticky" saiu desta linha, e a razão é de CSS e não de preguiça.** Uma tabela de ERP
   a 360px desliza na horizontal (`overflow-x-auto`, que o §4 aceita e manda declarar), e esse
   invólucro torna-se o *scrollport* do `position: sticky`. Como ele não rola na **vertical**, um
@@ -382,11 +532,29 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   partir do header em mobile. **Não há tab bar** e não há uma terceira superfície de navegação. O
   menu é uma projecção por tenant sobre as rotas que existem, com um nível de agrupamento (ADR
   0009); esconder é apresentação, não autorização.
+- **Dois sinais de "dados a fingir", e não se juntam num badge só.** "O servidor de fixtures
+  respondeu" é sobre o ambiente de desenvolvimento e não existe no bundle de produção; "estás no
+  estabelecimento de demonstração" é sobre o **tenant** e tem de funcionar em produção, que é onde
+  importa. Colapsá-los dava um sinal de produção testável só onde está sempre ligado — e o modo de
+  falha é nunca aparecer onde interessa. Num demo em desenvolvimento aparecem os dois, e está certo.
+  A faixa do tenant vive na barra de topo porque ela é `sticky`: é o que limita alguém a registar no
+  demo uma quebra que era a sério (ADR 0018, decisão 8 — o demo é escrevível de propósito, e o que o
+  protege é a sinalização). Usa os papéis de banner que já existem (`warning-surface`,
+  `warning-border`): não se inventam cores, e o amarelo é o registo certo — é um aviso, não um erro.
+  O estabelecimento fica marcado nos **dois** estados do seletor, com ícone **mais** texto `sr-only`:
+  o botão em repouso responde "onde estou?" sem abrir a lista, o item responde "qual deles é?" com
+  ela aberta, e a cor nunca comunica sozinha.
 - O **seletor de tenant** vive no pé da sidebar (é do shell); o **seletor de loja** fica na barra do
-  ecrã (é do ecrã). Parecem a mesma coisa e não são. É também no pé da sidebar que vivem as
-  **preferências da pessoa** (o tema), ao lado do email e da saída da conta; as **definições da
-  empresa** são um item de menu restrito ao `owner`, e são dois ecrãs e não dois separadores do mesmo
-  (ADR 0017).
+  ecrã (é do ecrã). Parecem a mesma coisa e não são. É também no pé da sidebar que vive a **entrada**
+  para as preferências da pessoa, ao lado do email e da saída da conta — um `<Link>` para
+  `/preferencias` e **não** um segundo controlo de tema: há um sítio onde a paleta se troca, e dois
+  eram duas fontes para o mesmo gesto. As **definições da empresa** são um item de menu restrito ao
+  `owner`, e são dois ecrãs e não dois separadores do mesmo (ADR 0017).
+- **Um selector de opções fixas é uma régua de segmentos, não uma pilha de cartões.** O
+  `/preferencias` escolhe a paleta numa moldura com três segmentos encostados, separados pela régua de
+  1px das colunas da tabela, com o escolhido marcado pelo trilho de 4px. A primeira versão eram três
+  `rounded-lg` com borda e descrição — o cartão repetido em grelha que o §5 proíbe, de volta pela
+  porta do ecrã novo. Em coluna abaixo de `md`, com o trilho a passar de vertical a horizontal.
 
 ---
 

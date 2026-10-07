@@ -8,11 +8,13 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { useNavigate, useRouter } from "@tanstack/react-router";
+import { z } from "zod";
 
 import { apiRequest } from "@/lib/api/http";
 import { paginated, type Paginated } from "@/lib/api/pagination";
 import { queryKeys } from "@/lib/api/query-keys";
 import { setActiveTenantId, tenantDaCache } from "@/lib/api/tenant";
+import { aplicarTema, sincronizarTemaDaSessao, temaActual, type Tema } from "@/lib/tema";
 
 import {
   codigoDaRecusa,
@@ -26,8 +28,14 @@ import {
   conviteParaCriarSchema,
   conviteSchema,
   credenciaisSchema,
+  configuracaoDoEstabelecimentoSchema,
   escolhaDeEstabelecimentoSchema,
+  estabelecimentoParaGuardarSchema,
+  itemDeMenuSchema,
+  menuParaGuardarSchema,
   nomeDoPapel,
+  preferenciasSchema,
+  rotaDeMenuSchema,
   podeConvidar,
   sessaoSchema,
   type Ativacao,
@@ -36,8 +44,13 @@ import {
   type ConviteParaCriar,
   type Credenciais,
   type EscolhaDeEstabelecimento,
+  type ConfiguracaoDoEstabelecimento,
   type Estabelecimento,
+  type EstabelecimentoParaGuardar,
   type ItemDeMenu,
+  type MenuParaGuardar,
+  type Preferencias,
+  type RotaDeMenu,
   type Sessao,
 } from "./schemas";
 
@@ -70,13 +83,17 @@ import {
  * deduzido do docstring: o valor de `csrftoken` antes e depois do
  * `POST /auth/login` é diferente, e o pedido seguinte assina com o novo.
  *
- * ## Sem update optimista em nenhuma das quatro
+ * ## Update optimista em uma das cinco, e a fronteira é clara
  *
- * A regra da casa é "optimista só em ações reversíveis", e nenhuma destas o é:
- * entrar, sair, trocar de estabelecimento e activar um convite mudam **quem** e
- * **onde** se está, e o servidor é a única autoridade sobre as duas coisas.
- * Mostrar o resultado antes de ele existir era montar o `AppShell` para uma
- * sessão que pode não ter acontecido.
+ * A regra da casa é "optimista só em ações reversíveis", e quatro destas não o
+ * são: entrar, sair, trocar de estabelecimento e activar um convite mudam
+ * **quem** e **onde** se está, e o servidor é a única autoridade sobre as duas
+ * coisas. Mostrar o resultado antes de ele existir era montar o `AppShell` para
+ * uma sessão que pode não ter acontecido.
+ *
+ * A quinta — guardar o tema — é optimista, e é o caso para o qual a regra foi
+ * escrita: não muda âmbito, não muda autorização, e desfazer-se é escrever o
+ * valor anterior num atributo. A razão inteira está no `useGuardarTema`.
  */
 
 const CAMINHO_SESSAO = "/auth/sessao";
@@ -84,7 +101,11 @@ const CAMINHO_LOGIN = "/auth/login";
 const CAMINHO_LOGOUT = "/auth/logout";
 const CAMINHO_TENANT_ATIVO = "/auth/tenant-ativo";
 const CAMINHO_ATIVAR = "/auth/ativar";
+const CAMINHO_PREFERENCIAS = "/auth/preferencias";
 const CAMINHO_CONVITES = "/convites";
+const CAMINHO_MENU = "/menu";
+const CAMINHO_ROTAS_DE_MENU = "/menu/rotas";
+const CAMINHO_ESTABELECIMENTO = "/estabelecimento";
 
 /**
  * O recurso dos convites na cache.
@@ -129,18 +150,45 @@ export function sincronizarEstabelecimentoAtivo(sessao: Sessao): Sessao {
 }
 
 /**
- * Uma resposta de sessão, validada e **já aplicada** ao `X-Tenant-ID`.
+ * O tema que a sessão diz, aplicado e espelhado (ADR 0016).
  *
- * Único ponto de passagem das quatro chamadas, de propósito: com a
- * sincronização em cada `onSuccess` em vez de aqui, a quinta chamada que
+ * Passa pelo `lib/tema.ts`, que decide o que fazer: o espelho é reescrito
+ * **sempre** — é ele que torna correcta a próxima primeira pintura — e o
+ * atributo do `<html>` é escrito uma vez por carregamento de página. A razão
+ * dessa assimetria está escrita lá: depois da primeira resposta, quem muda a
+ * paleta deste separador é quem o está a usar.
+ *
+ * `utilizador === null` é o caso do `anonimo`, e aí **não se faz nada**. Não é
+ * um esquecimento: limpar o espelho ao sair trazia o relâmpago de volta ao ecrã
+ * de entrada, que é precisamente o ecrã onde ele se vê. A consequência fica
+ * nomeada na ADR 0016 — num portátil partilhado, o ecrã de entrada abre com a
+ * paleta de quem saiu.
+ */
+function sincronizarTemaDoUtilizador(sessao: Sessao): Sessao {
+  if (sessao.utilizador !== null) sincronizarTemaDaSessao(sessao.utilizador.tema);
+  return sessao;
+}
+
+/**
+ * Uma resposta de sessão, validada e **já aplicada** ao `X-Tenant-ID` e ao tema.
+ *
+ * Único ponto de passagem das cinco chamadas, de propósito: com a
+ * sincronização em cada `onSuccess` em vez de aqui, a sexta chamada que
  * aparecer esquece-a — e o sintoma (nenhum `X-Tenant-ID`, nenhum 409, dados do
  * estabelecimento errado num separador antigo) não é visível em nenhum ecrã.
+ *
+ * O tema entrou aqui pela mesma razão e não no `onSuccess` do seu `PATCH`: o que
+ * o traz com mais frequência **não** é o `PATCH` — é o `GET /auth/sessao` do
+ * arranque, que é o único momento em que o servidor pode corrigir o espelho de
+ * uma máquina onde ele está errado ou não existe.
  */
 async function pedirSessao(
   caminho: string,
   init?: Parameters<typeof apiRequest>[2],
 ): Promise<Sessao> {
-  return sincronizarEstabelecimentoAtivo(await apiRequest(caminho, sessaoSchema, init));
+  return sincronizarTemaDoUtilizador(
+    sincronizarEstabelecimentoAtivo(await apiRequest(caminho, sessaoSchema, init)),
+  );
 }
 
 /**
@@ -227,7 +275,8 @@ export function useMenuDaSessao(): readonly ItemDeMenu[] {
  *
  * **Qualquer resposta que mude quem ou onde se está apaga os dados de tenant.**
  * É uma regra e não quatro decisões, e é a forma de não ter de responder "o que
- * é que isto invalida?" em cada uma das quatro chamadas:
+ * é que isto invalida?" em cada uma das quatro chamadas que mudam âmbito (a
+ * quinta, o `PATCH` do tema, não muda nenhum e não passa por aqui):
  *
  *  - entrar e activar um convite: a cache podia ter dados de outra conta no
  *    mesmo browser (quem sai e entra com outra conta no balcão), e a chave de
@@ -386,6 +435,60 @@ export function useAtivarConvite(): UseMutationResult<Sessao, Error, Ativacao> {
       }),
     onSuccess: (sessao) => {
       fixarSessao(queryClient, sessao);
+    },
+  });
+}
+
+/**
+ * `PATCH /auth/preferencias` — guardar o tema desta pessoa (ADR 0016).
+ *
+ * ## A única das cinco com update optimista, e é a excepção que confirma a regra
+ *
+ * A regra da casa é "optimista só em ações reversíveis", e as outras quatro não
+ * o são: entrar, sair, trocar de estabelecimento e activar um convite mudam
+ * **quem** e **onde** se está. Trocar de paleta é o contrário disso em todos os
+ * eixos — não muda âmbito nenhum, não muda autorização nenhuma, e desfazer-se é
+ * escrever o valor anterior no mesmo atributo.
+ *
+ * E aqui o optimismo não é uma optimização: é a funcionalidade. Um selector de
+ * tema que só pinta quando o servidor responde é um selector que parece avariado
+ * na primeira rede lenta — a pessoa clica em "claro", não acontece nada, e clica
+ * outra vez. O `onMutate` pinta, o `onError` repinta o anterior.
+ *
+ * ## `setQueryData` e **não** `fixarSessao`
+ *
+ * O `fixarSessao` apaga todos os dados de estabelecimento, e a regra que o manda
+ * fazê-lo é "qualquer resposta que mude quem ou onde se está". Esta não muda
+ * nenhum dos dois: apagar a cache de stock porque alguém preferiu o tema claro
+ * era um refetch de tudo por uma mudança de cor. A entrada da sessão é escrita
+ * porque a resposta **é** a sessão nova, com o `tema` já actualizado — é o que
+ * faz o ecrã de preferências mostrar o valor guardado sem pedir outra vez.
+ */
+export function useGuardarTema(): UseMutationResult<
+  Sessao,
+  Error,
+  Preferencias,
+  { anterior: Tema }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (preferencias: Preferencias) =>
+      pedirSessao(CAMINHO_PREFERENCIAS, {
+        method: "PATCH",
+        body: preferenciasSchema.parse(preferencias),
+      }),
+    onMutate: ({ tema }) => {
+      const anterior = temaActual();
+      aplicarTema(tema);
+      return { anterior };
+    },
+    onError: (_erro, _preferencias, contexto) => {
+      // Sem contexto não houve `onMutate`, logo não houve nada a desfazer.
+      if (contexto !== undefined) aplicarTema(contexto.anterior);
+    },
+    onSuccess: (sessao) => {
+      queryClient.setQueryData(queryKeys.sessao(), sessao);
     },
   });
 }
@@ -624,6 +727,10 @@ function paraOInvolucro(estabelecimento: Estabelecimento) {
     id: estabelecimento.id,
     nome: estabelecimento.nome,
     papel: nomeDoPapel(estabelecimento.papel),
+    // Passa tal e qual: é um booleano e não um tipo de domínio, logo não há nada
+    // a traduzir. O `papel` é que precisa do `nomeDoPapel` porque o `PapelEnum` é
+    // do contrato e o shell não tem nada que o conhecer.
+    demonstracao: estabelecimento.demonstracao,
   };
 }
 
@@ -698,4 +805,174 @@ export function useSessaoDoShell() {
       });
     },
   };
+}
+
+/* ---------------------------------------------------------------------------
+ * O menu como dados — os dois endpoints que existem desde a ADR 0011 e que até
+ * hoje não tinham consumidor nenhum.
+ *
+ * Eram o caso mais honesto de dívida deste repositório: implementados, testados,
+ * no `schema.yaml`, e sem uma linha de cliente a chamá-los. O `MenuView` do
+ * backend escreveu-o por antecipação — *"quem fizer o painel tem de invalidar
+ * `queryKeys.sessao()` no `onSuccess` do `PUT`"* — e é exactamente o que o
+ * `useGuardarMenu` abaixo faz.
+ *
+ * As duas são **com âmbito** e só do `owner`, como os convites, e por isso levam
+ * o estabelecimento na chave. O `GET /menu/rotas` é o caso curioso: não lê linha
+ * nenhuma de tenant (o registo é código) e **ainda assim** é um endpoint com
+ * âmbito, porque a dispensa pede-se quando é necessária. Na chave leva o
+ * estabelecimento de qualquer forma — a resposta é igual nos dois, mas uma chave
+ * sem tenant num recurso com âmbito é a forma de que a próxima, que já dependa
+ * do tenant, nasce errada.
+ * ------------------------------------------------------------------------ */
+
+const RECURSO_ROTAS_DE_MENU = "menu-rotas";
+
+/**
+ * `GET /menu/rotas` — o registo: o que existe para configurar.
+ *
+ * `staleTime: Infinity` e é a única query do repositório com ele, por uma razão
+ * que não é de desempenho: **a resposta é código**. Muda quando o backend muda,
+ * isto é, num deploy — e num deploy o bundle também muda. Revalidá-la ao voltar
+ * ao separador seria pedir ao servidor uma lista que não pode ter mudado desde
+ * que esta página carregou.
+ *
+ * O `ativo` existe porque um hook não se chama condicionalmente: quem não é
+ * `owner` não entra neste ecrã, e sem isto o deep link de um `staff` disparava o
+ * pedido só para mostrar a recusa que a sessão já tinha dito. Não é controlo de
+ * acesso — é não bater numa porta fechada.
+ */
+export function useRotasDeMenu(ativo: boolean): UseQueryResult<readonly RotaDeMenu[]> {
+  const tenant = tenantDaCache();
+
+  return useQuery({
+    queryKey: queryKeys.resource(tenant, RECURSO_ROTAS_DE_MENU),
+    queryFn: ({ signal }) =>
+      apiRequest(CAMINHO_ROTAS_DE_MENU, z.array(rotaDeMenuSchema), { signal }),
+    enabled: ativo,
+    staleTime: Infinity,
+  });
+}
+
+/**
+ * `PUT /menu` — substituir **toda** a configuração do menu.
+ *
+ * ## `invalidateQueries(sessao)` e não `setQueryData`, e a diferença importa
+ *
+ * A resposta do `PUT` é a configuração como ficou e **sem filtro de papel**
+ * (ADR 0011), enquanto o `menu` que viaja na sessão é filtrado. Escrever a
+ * resposta na entrada da sessão metia lá uma lista com outra semântica — e num
+ * estabelecimento onde quem configura não veja todas as rotas, isso punha no
+ * menu da sidebar itens que o papel não pode usar. Invalidar faz o servidor
+ * reenviar a versão filtrada, que é a única que a sidebar pode mostrar.
+ *
+ * **`invalidateQueries` e não `removeQueries`**: a sessão está montada debaixo do
+ * invólucro que está no ecrã. Removê-la tirava-lhe o `data` debaixo dos pés — o
+ * shell a desmontar-se no instante em que alguém guardou o menu.
+ *
+ * ## Sem optimismo, e aqui a regra aponta para o lado menos óbvio
+ *
+ * Reordenar um menu é reversível, logo a regra da casa deixava ser optimista. Não
+ * é, por uma razão de forma e não de risco: o que a resposta traz é a
+ * configuração **inteira**, com os defaults repostos nas rotas que o corpo não
+ * nomeou — e isso não se consegue prever no cliente sem duplicar a projecção que
+ * o servidor faz. Um optimismo que adivinhe mal mostra um menu que nunca
+ * existiu, e corrige-se um segundo depois com um salto.
+ */
+export function useGuardarMenu(): UseMutationResult<readonly ItemDeMenu[], Error, MenuParaGuardar> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (menu: MenuParaGuardar) =>
+      apiRequest(CAMINHO_MENU, z.array(itemDeMenuSchema), {
+        method: "PUT",
+        body: menuParaGuardarSchema.parse(menu),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessao() });
+    },
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ * A configuração do estabelecimento (ADR 0017).
+ *
+ * Com âmbito e só do `owner`, como o menu. A diferença em relação a tudo o que
+ * está acima é que o recurso **é** o estabelecimento ativo: não há id no path
+ * nem no corpo, logo não há lista, não há detalhe e não há paginação — uma chave
+ * de recurso e nada mais.
+ * ------------------------------------------------------------------------ */
+
+const RECURSO_ESTABELECIMENTO = "estabelecimento";
+
+/**
+ * `GET /estabelecimento` — a configuração desta casa.
+ *
+ * A chave leva o estabelecimento à cabeça como qualquer recurso com âmbito, e
+ * aqui isso não é convenção: **a resposta muda quando se troca de
+ * estabelecimento**, e com uma chave sem tenant o ecrã mostrava a configuração
+ * do anterior até a revalidação chegar. É o mesmo erro que os convites tinham
+ * nomeado, numa resposta em que ele é ainda mais visível: o nome da casa está
+ * no primeiro campo do formulário.
+ *
+ * O `ativo` existe porque um hook não se chama condicionalmente: quem não é
+ * `owner` leva 403 (medido), e sem isto o deep link de um `staff` disparava o
+ * pedido só para mostrar a recusa que a sessão já tinha dito.
+ */
+export function useConfiguracaoDoEstabelecimento(
+  ativo: boolean,
+): UseQueryResult<ConfiguracaoDoEstabelecimento> {
+  const tenant = tenantDaCache();
+
+  return useQuery({
+    queryKey: queryKeys.resource(tenant, RECURSO_ESTABELECIMENTO),
+    queryFn: ({ signal }) =>
+      apiRequest(CAMINHO_ESTABELECIMENTO, configuracaoDoEstabelecimentoSchema, { signal }),
+    enabled: ativo,
+  });
+}
+
+/**
+ * `PATCH /estabelecimento` — guardar a configuração desta casa.
+ *
+ * ## O que isto invalida, e porque é mais do que parece
+ *
+ * Escreve a resposta na sua própria entrada (é a configuração como ficou) **e**
+ * invalida a sessão, porque o `nome` viaja no `tenant_ativo` e no `tenants` do
+ * `SessaoOut` — sem isso, mudar o nome da casa deixava o nome antigo no pé da
+ * sidebar e no seletor até a sessão revalidar sozinha. É o mesmo tipo de
+ * acoplamento que o `PUT /menu` tem, por outra via.
+ *
+ * `invalidateQueries` e **não** `removeQueries` na sessão, pela razão do
+ * `useGuardarMenu`: ela está montada debaixo do invólucro que está no ecrã, e
+ * removê-la tirava-lhe o `data` debaixo dos pés.
+ *
+ * ## Sem optimismo
+ *
+ * A regra da casa deixava (mudar um nome é reversível), e não é — por uma razão
+ * que o `/preferencias` não tem: há uma recusa de **negócio** neste caminho. No
+ * estabelecimento de demonstração o nome não se altera (400 no campo `nome`), e
+ * um update optimista mostrava o nome novo na sidebar antes de o servidor o
+ * recusar. O que a pessoa veria era o nome a mudar e a voltar atrás, que é a
+ * forma de um ecrã parecer avariado quando está a funcionar.
+ */
+export function useGuardarEstabelecimento(): UseMutationResult<
+  ConfiguracaoDoEstabelecimento,
+  Error,
+  EstabelecimentoParaGuardar
+> {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: (configuracao: EstabelecimentoParaGuardar) =>
+      apiRequest(CAMINHO_ESTABELECIMENTO, configuracaoDoEstabelecimentoSchema, {
+        method: "PATCH",
+        body: estabelecimentoParaGuardarSchema.parse(configuracao),
+      }),
+    onSuccess: (configuracao) => {
+      queryClient.setQueryData(queryKeys.resource(tenant, RECURSO_ESTABELECIMENTO), configuracao);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessao() });
+    },
+  });
 }

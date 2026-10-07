@@ -52,7 +52,7 @@ from django.core.cache import cache
 from django.test import Client, override_settings
 
 from apps.accounts.middleware import CODIGO_DESCONHECIDO, SESSION_TENANT_KEY
-from apps.accounts.models import Membership, Papel, RotaDeMenu, Tenant, User
+from apps.accounts.models import Membership, Papel, RotaDeMenu, Tema, Tenant, User
 from apps.accounts.serializers import ErroOutSerializer
 from apps.accounts.services import (
     CODIGO_CREDENCIAIS_INVALIDAS,
@@ -209,7 +209,8 @@ def test_login_com_um_estabelecimento_fica_com_ele_ativo(cenario: Cenario) -> No
     """Um candidato confirmado escreve-se na sessão (ADR 0007).
 
     E o `SessaoOut` sai inteiro: é o contrato que o `types.ts` do frontend
-    carrega, por isso o teste afirma os cinco campos e não só o estado.
+    carrega, por isso o teste afirma os cinco campos e não só o estado, e cada
+    um deles por igualdade — um campo novo no `utilizador` cai aqui.
     """
     cliente = Client()
 
@@ -218,11 +219,25 @@ def test_login_com_um_estabelecimento_fica_com_ele_ativo(cenario: Cenario) -> No
     assert resposta.status_code == 200
     corpo = _corpo(resposta)
     assert corpo["estado"] == EstadoDaSessao.ATIVA
-    assert corpo["utilizador"] == {"id": str(cenario.ana.pk), "email": "ana@alfa.pt"}
+    # O `tema` entra aqui porque esta asserção é de igualdade e não de inclusão:
+    # é o que faz um campo novo no contrato cair num teste em vez de aparecer no
+    # `types.ts` sem ninguém olhar. O valor é o default (ADR 0016) — a Ana nunca
+    # trocou de tema, e o que se troca mede-se no `tests/test_preferencias.py`.
+    assert corpo["utilizador"] == {
+        "id": str(cenario.ana.pk),
+        "email": "ana@alfa.pt",
+        "tema": Tema.ESCURO.value,
+    }
+    # O `demonstracao` entra aqui pela mesma razão do `tema` acima: a asserção é
+    # de igualdade, logo um campo novo no contrato cai num teste em vez de
+    # aparecer no `types.ts` sem ninguém olhar. `False` porque este
+    # estabelecimento foi criado pelo `criar_tenant` normal — o de demonstração
+    # tem o seu ficheiro (ADR 0018).
     assert corpo["tenant_ativo"] == {
         "id": str(cenario.alfa.id),
         "nome": "Pastelaria Alfa",
         "papel": Papel.OWNER.value,
+        "demonstracao": False,
     }
     assert corpo["tenants"] == [corpo["tenant_ativo"]]
     # O menu vem **na resposta do login**, já resolvido e filtrado pelo papel

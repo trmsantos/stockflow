@@ -297,3 +297,41 @@ forbidden_modules = [
 ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
+
+# Garante: **ninguém importa o `demo`.** É a decisão 3 da ADR 0018, e é a razão
+# pela qual o semeador do estabelecimento de demonstração vive num módulo próprio
+# em vez de dentro de um módulo de domínio que o pudesse hospedar sem nenhuma
+# aresta nova.
+#
+# O `apps.demo` é um **sumidouro de escrita**: as únicas arestas são de saída.
+# Chama os `api.py` dos outros módulos (o que o primeiro contrato já permite) e
+# nada o chama a ele. É o espelho do `reporting` da ADR 0013, do outro lado.
+#
+# O que isto compra não é arrumação: de dentro de `purchasing`, um semeador podia
+# escrever directamente nos `models.py` daquele módulo e produzir um
+# estabelecimento que **ensina um produto que não existe** — stock sem ledger,
+# lotes sem FEFO, custo sem CMP. De fora, o import-linter não o deixa fazer outra
+# coisa que não seja entrar pela porta da frente de cada módulo, logo os dados do
+# demo são produzidos pelos **mesmos services** que os dados reais. É isso que
+# sustenta a decisão 1 ("tudo lá se comporta exactamente como em produção").
+#
+# `apps.demo` não aparece nos `forbidden_modules` dos outros contratos: este
+# contrato é mais forte do que isso — proíbe a importação a **todos**, e não só
+# aos módulos de domínio nomeados um a um.
+[[tool.importlinter.contracts]]
+name = "ninguém importa o demo: as arestas dele são todas de saída"
+type = "forbidden"
+source_modules = [
+    "apps.accounts",
+    "apps.shared",
+    "apps.catalog",
+    "apps.inventory",
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+]
+forbidden_modules = ["apps.demo"]
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true

@@ -8,8 +8,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { contrastRatio, formatRatio, resolveColor, type ResolvedColor } from "@/dev/color";
+import {
+  aplicarTemaSoNoDocumento,
+  rotuloDoTema,
+  subscreverTema,
+  temaActual,
+  temaDe,
+  TEMAS,
+} from "@/lib/tema";
 import { formatCount, formatDaysAway, formatMoney, formatQuantity } from "@/lib/format";
 import {
   ALL_TOKENS,
@@ -48,11 +63,13 @@ function readSnapshot(): Snapshot {
  * efeito — e o snapshot é memorizado, para o React o poder comparar por
  * identidade em vez de voltar a ler o CSSOM a cada render.
  *
- * A subscrição não tem nada a que se subscrever, e isso é a decisão de
- * 2026-10-01: há **uma paleta**, escura, e ela não muda em runtime. Antes a
- * subscrição era a media query `prefers-color-scheme` e o cache era por modo.
- * O modo claro, quando entrar (DESIGN.md §2), traz consigo o mecanismo que o
- * seleciona — e é aí que esta subscrição volta, com algo real para ouvir.
+ * **A subscrição voltou a 2026-10-07, e agora tem algo real para ouvir.** Entre
+ * 2026-10-01 e aqui não tinha: havia uma paleta só, escura, e ela não mudava em
+ * runtime. Com três paletas (ADR 0015) o que muda os valores é a troca do
+ * `data-tema` no `<html>` — não o `prefers-color-scheme`, que foi o listener
+ * que de lá saiu e que deixou de selecionar o que quer que seja. O cache é
+ * invalidado na troca, senão a tabela media a paleta anterior e dizia que
+ * estava medida.
  */
 let cacheDeSnapshot: Snapshot | null = null;
 
@@ -61,14 +78,64 @@ function snapshotMemorizado(): Snapshot {
   return cacheDeSnapshot;
 }
 
-function semSubscricao(): () => void {
-  return () => {
-    // Uma paleta só: não há evento nenhum que mude estes valores.
-  };
+function subscreverAoTema(aoMudar: () => void): () => void {
+  return subscreverTema(() => {
+    cacheDeSnapshot = null;
+    aoMudar();
+  });
 }
 
 function useTokenSnapshot(): Snapshot {
-  return useSyncExternalStore(semSubscricao, snapshotMemorizado, snapshotMemorizado);
+  return useSyncExternalStore(subscreverAoTema, snapshotMemorizado, snapshotMemorizado);
+}
+
+/**
+ * O selector de tema desta página — e desde 2026-10-07 **não** é mais o único.
+ *
+ * O interruptor de ensaio que aqui estava virou funcionalidade: a preferência
+ * vive no servidor (ADR 0016) e troca-se no `/preferencias`, com entrada no pé
+ * da sidebar (ADR 0017). Este fica, e por uma razão que o outro não cumpre: esta
+ * página **mede** a paleta activa, logo precisa de trocar de paleta sem gravar
+ * preferência nenhuma — nem na conta, nem no espelho local. Chama o
+ * `aplicarTemaSoNoDocumento` do `lib/tema.ts`, que é a única das quatro funções
+ * de escrita que não toca no espelho: a troca vale para esta visita e uma
+ * recarga volta ao que a conta prefere.
+ *
+ * E **não** é desfeita por uma revalidação da sessão: o atributo é escrito a
+ * partir da sessão uma vez por carregamento de página (ver
+ * `sincronizarTemaDaSessao`), precisamente porque o contrário punha a paleta da
+ * conta de volta a meio de uma medição quando alguém voltava ao separador.
+ */
+function SelectorDeTema() {
+  const tema = useSyncExternalStore(subscreverAoTema, temaActual, temaActual);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor="selector-de-tema">Paleta</Label>
+      <Select
+        value={tema}
+        onValueChange={(valor) => {
+          aplicarTemaSoNoDocumento(temaDe(valor));
+        }}
+      >
+        <SelectTrigger id="selector-de-tema" className="w-full sm:w-80">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {TEMAS.map((nome) => (
+            <SelectItem key={nome} value={nome}>
+              {rotuloDoTema(nome).nome}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        Troca a paleta em vigor e volta a medir tudo o que está abaixo. Vale para esta visita: uma
+        recarga volta ao que a sua conta prefere. Para mudar a preferência, use o ecrã de
+        preferências.
+      </p>
+    </div>
+  );
 }
 
 function Section({
@@ -788,10 +855,16 @@ export default function TokensPage() {
           produção.
         </p>
         <p className="max-w-2xl text-sm">
-          Paleta em vigor: <strong className="font-medium">identidade «Cabine»</strong>,
-          escura e única. Não há modo claro para trocar — é dívida nomeada no DESIGN.md §2, e entra
-          completa e medida ou não entra.
+          Identidade <strong className="font-medium">«Cabine»</strong>, em{" "}
+          <strong className="font-medium">três paletas</strong> (ADR 0015):{" "}
+          <span className="font-mono">escuro</span> — o default e a identidade aprovada —,{" "}
+          <span className="font-mono">claro</span> e <span className="font-mono">meio_termo</span>.
+          Cada uma tem os 18 tokens de cor e as duas sombras, e cada uma passa a sua própria medição
+          contra a sua pior superfície. Nas três, essa superfície é o{" "}
+          <span className="font-mono">surface-2</span>: é o degrau mais afastado da tela, no escuro
+          por ser o mais claro dos três pretos e no claro por ser o mais escuro dos três cinzentos.
         </p>
+        <SelectorDeTema />
       </header>
 
       <Section id="cor" title="Cor — 18 tokens">

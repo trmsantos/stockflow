@@ -121,6 +121,10 @@ LOCAL_APPS = [
     "apps.agents.apps.AgentsConfig",
     "apps.billing.apps.BillingConfig",
     "apps.notifications.apps.NotificationsConfig",
+    # Sem models e sem migrações: está instalado só para o `manage.py` encontrar
+    # o `semear_demonstracao`. É um sumidouro de escrita (ADR 0018, decisão 3) e
+    # um contrato do import-linter proíbe que alguém o importe.
+    "apps.demo.apps.DemoConfig",
 ]
 
 INSTALLED_APPS = [*DJANGO_APPS, *THIRD_PARTY_APPS, *LOCAL_APPS]
@@ -320,6 +324,26 @@ SPECTACULAR_SETTINGS = {
     # tipos distintos para o que se envia e o que se recebe.
     "COMPONENT_SPLIT_REQUEST": True,
     "COMPONENT_NO_READ_ONLY_REQUIRED": True,
+    # **`False` porque as nossas views de `PATCH` não validam com `partial=True`.**
+    #
+    # Por omissão o drf-spectacular gera, para cada `PATCH`, um componente
+    # `Patched<X>Request` com **todos** os campos opcionais — assume o
+    # comportamento das views genéricas do DRF, onde um `PATCH` chama o
+    # serializer com `partial=True`. As nossas não são genéricas: o
+    # `PreferenciasInSerializer(data=request.data)` do `PATCH
+    # /auth/preferencias` corre sem `partial`, logo o `tema` é obrigatório e um
+    # corpo vazio é 400 (medido em `tests/test_preferencias.py`).
+    #
+    # Medido antes de pôr esta linha: o `types.ts` dizia `tema?: TemaEnum`, isto
+    # é, o cliente compilava um corpo `{}` que o servidor recusa. Um `types.ts`
+    # que descreve um pedido inválido como válido é a classe de mentira que este
+    # gate existe para apanhar, e aqui mentia na direcção pior — a de deixar
+    # passar.
+    #
+    # É global, e a condição para ela continuar verdadeira é uma frase: **nenhuma
+    # view usa `partial=True`**. No dia em que uma usar, é esta linha que tem de
+    # sair e o endpoint que tem de declarar o seu próprio `request`.
+    "COMPONENT_SPLIT_PATCH": False,
     "SCHEMA_PATH_PREFIX": "/api/v1",
     # O schema descreve endpoints privados: não fica aberto a anónimos. O
     # `pnpm gen:api` usa o comando `manage.py spectacular`, não este endpoint.

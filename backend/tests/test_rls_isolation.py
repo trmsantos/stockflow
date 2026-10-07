@@ -56,9 +56,10 @@ from apps.accounts.api import (
     PertenceAoTenant,
     TemPapel,
     TenantContext,
+    TenantOption,
     dispensa_declarada,
     membership_atual,
-    tenant_context,
+    opcao_de_tenant,
     tenant_scope_exempt,
     utilizador_atual,
 )
@@ -721,16 +722,23 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
     A ADR 0007 lista as dispensas que vão existir — admin, healthcheck, login,
     logout, registo, listagem de tenants e troca de tenant. Hoje existem três
     famílias: o admin, os dois endpoints de saúde (`config/health.py`) e as
-    **cinco** de `/api/v1/auth/` (`apps/accounts/views.py`, ADR 0010). As que
-    faltam são as duas da reposição de password, e é este teste que as obriga a
-    aparecer aqui quando nascerem.
+    **seis** de `/api/v1/auth/` (`apps/accounts/views.py`, ADR 0010 e ADR 0016).
+    As que faltam são as duas da reposição de password, e é este teste que as
+    obriga a aparecer aqui quando nascerem.
 
-    As cinco de `/auth/` estão aqui porque correm **antes** de existir tenant na
+    As seis de `/auth/` estão aqui porque correm **antes** de existir tenant na
     sessão: é a condição do login da ADR 0007, e o `tenant-ativo` é o caso que
     mostra porque é que a dispensa tem de ser declarada e não inferida — sem
     ela, o middleware teria aberto o âmbito **antigo** antes da view e a troca
     levantaria `TenantScopeConflict`. O que cada uma delas toca em dados de
     tenant é aberto por elas, uma transação curta por candidato.
+
+    O `preferencias` é a sexta e a mais recente (ADR 0016), e está aqui por uma
+    razão que as outras cinco não têm: escreve numa tabela **sem política** — o
+    `accounts_user`, que a ADR 0007 deixa sem RLS para o login poder ler antes de
+    existir âmbito — e tem de funcionar em `escolha_pendente`, que é o estado em
+    que ainda não há âmbito para abrir. Trocar de tema não toca em dado de tenant
+    nenhum, e é por isso que esta dispensa não alarga a superfície que importa.
 
     O `ativar` é o caso que vale a pena ler duas vezes, porque é o único em que
     "dispensado de âmbito" **não** significa "sem âmbito": ele abre
@@ -748,6 +756,15 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
     assim** tem âmbito: a dispensa pede-se quando é necessária, e poupar uma
     transação é a razão mais fraca que existe para alargar a superfície sem
     âmbito.
+
+    O `estabelecimento` (ADR 0017) é o caso mais limpo deste lado, e vale lê-lo
+    ao lado do `preferencias`: os dois são ecrãs de configurações e estão em
+    lados opostos desta asserção, porque as **tabelas** são diferentes. O das
+    preferências escreve no `accounts_user`, que não tem política e tem de
+    funcionar antes de haver âmbito; este lê e escreve o `accounts_tenant`, cuja
+    política compara `id` com o GUC — dentro do âmbito a tabela tem no máximo uma
+    linha visível, que é o que permite ao service fazer `get()` sem filtro e o que
+    torna o IDOR impossível por construção em vez de por verificação.
 
     As duas da saúde estão aqui pelo mesmo critério das outras, e não por serem
     inofensivas: não abrem âmbito porque não leem dados de tenant nenhum, e não
@@ -768,6 +785,7 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/auth/ativar",
         "api/v1/auth/login",
         "api/v1/auth/logout",
+        "api/v1/auth/preferencias",
         "api/v1/auth/sessao",
         "api/v1/auth/tenant-ativo",
         "healthz",
@@ -784,6 +802,7 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^convites$",
         "api/v1/^convites/(?P<pk>[^/.]+)/reenviar$",
         "api/v1/^convites/(?P<pk>[^/.]+)/revogar$",
+        "api/v1/estabelecimento",
         "api/v1/menu",
         "api/v1/menu/rotas",
         "api/v1/schema/",
@@ -974,32 +993,43 @@ def test_o_tenant_ids_nao_concede_nada(cenario: Cenario) -> None:
 
     with tenant_scope(cenario.alfa.id):
         assert membership_no_ambito(user_id=cenario.ana.pk, tenant_id=cenario.alfa.id) is None
-        assert tenant_context(cenario.ana.pk, cenario.alfa.id) is None
+        assert opcao_de_tenant(cenario.ana.pk, cenario.alfa.id) is None
 
 
 # ---------------------------------------------------------------------------
-# 12. `tenant_context` exige o âmbito, e o `MembershipInfo` é congelado
+# 12. `opcao_de_tenant` exige o âmbito, e o `MembershipInfo` é congelado
 # ---------------------------------------------------------------------------
-def test_tenant_context_dentro_do_ambito_devolve_o_contexto(cenario: Cenario) -> None:
+def test_a_opcao_de_tenant_dentro_do_ambito_devolve_a_opcao(cenario: Cenario) -> None:
+    """A forma inteira, e é de igualdade: um campo novo cai aqui.
+
+    Chamava-se `tenant_context` e devolvia `TenantContext` até 2026-10-07. Os
+    dois chamadores reais convertiam-no num `TenantOption` na linha seguinte, e
+    quem constrói o `TenantContext` a sério é o `TenantMiddleware` — nunca passou
+    por aqui. A ADR 0018 tornou isso visível ao pedir um campo: acrescentar
+    `demonstracao` ao `TenantContext` era pôr a bandeira do demo no contexto de
+    autorização de **todos** os pedidos, que é a afordância que a decisão 1 dessa
+    ADR não pode ter.
+    """
     with tenant_scope(cenario.alfa.id):
-        contexto = tenant_context(cenario.ana.pk, cenario.alfa.id)
+        opcao = opcao_de_tenant(cenario.ana.pk, cenario.alfa.id)
 
-    assert contexto == TenantContext(
+    assert opcao == TenantOption(
         id=cenario.alfa.id,
         name="Pastelaria Alfa",
         role=Papel.OWNER.value,
+        demonstracao=False,
     )
 
 
-def test_tenant_context_fora_do_ambito_levanta_em_vez_de_devolver_none(
+def test_a_opcao_de_tenant_fora_do_ambito_levanta_em_vez_de_devolver_none(
     cenario: Cenario,
 ) -> None:
     """Sem a guarda, o bug aparecia como "não tem acesso" em vez de como bug."""
-    with pytest.raises(TenantScopeConflict, match="tenant_context"):
-        tenant_context(cenario.ana.pk, cenario.alfa.id)
+    with pytest.raises(TenantScopeConflict, match="opcao_de_tenant"):
+        opcao_de_tenant(cenario.ana.pk, cenario.alfa.id)
 
     with tenant_scope(cenario.beta.id), pytest.raises(TenantScopeConflict):
-        tenant_context(cenario.ana.pk, cenario.alfa.id)
+        opcao_de_tenant(cenario.ana.pk, cenario.alfa.id)
 
 
 def test_o_contexto_do_pedido_e_imutavel() -> None:
