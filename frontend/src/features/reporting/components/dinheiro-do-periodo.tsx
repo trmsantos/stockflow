@@ -3,6 +3,7 @@ import { formatMoney, formatMoneyChange } from "@/lib/format";
 
 import { COLUNAS_DE_RUBRICA, LARGURA_MINIMA_DE_RUBRICA } from "../colunas";
 import type { ResumoDoPeriodo } from "../schemas";
+import { textos } from "../textos";
 import { notaDaVariacaoDeStock, notaDeCusto, rotuloDoPeriodo } from "../vocabulario";
 import { LinhaDeRubrica } from "./linha-de-rubrica";
 
@@ -56,8 +57,6 @@ import { LinhaDeRubrica } from "./linha-de-rubrica";
  * exactamente a leitura errada: que comprar muito é um ganho.
  */
 
-const ROTULO = "O dinheiro e a mercadoria do período, com a variação de stock";
-
 export function DinheiroDoPeriodo({
   resumo,
   explicar,
@@ -72,17 +71,17 @@ export function DinheiroDoPeriodo({
       <MolduraDeTabela
         colunas={COLUNAS_DE_RUBRICA}
         larguraMinima={LARGURA_MINIMA_DE_RUBRICA}
-        rotulo={ROTULO}
+        rotulo={textos.dinheiro.tabela}
       >
         <tbody>
           <LinhaDeRubrica
-            rubrica="Vendas, sem IVA"
+            rubrica={textos.rubricas.vendasSemIva}
             valor={formatMoney(resumo.revenue_net_eur)}
-            nota={`a base dos rácios; com IVA são ${formatMoney(resumo.revenue_gross_eur)}`}
+            nota={textos.rubricas.comIva(formatMoney(resumo.revenue_gross_eur))}
             explicar={explicar}
           />
           <LinhaDeRubrica
-            rubrica="Compras a fornecedores"
+            rubrica={textos.custos.comprasRotulo}
             valor={formatMoney(resumo.purchases_eur)}
             nota={notaDeCusto("purchases")}
             explicar={explicar}
@@ -94,18 +93,14 @@ export function DinheiroDoPeriodo({
               sempre, e é por isso que a ausência aqui não fica sem explicação
               quando o interruptor está desligado. */}
           <LinhaDeRubrica
-            rubrica="Mercadoria consumida"
+            rubrica={textos.custos.consumoRotulo}
             valor={semConsumo ? "—" : formatMoney(resumo.goods_consumed_eur)}
-            nota={
-              semConsumo
-                ? "sem consumo registado neste período — ver o que falta, em «O que este painel não sabe»"
-                : notaDeCusto("goods_consumed")
-            }
+            nota={semConsumo ? textos.dinheiro.semConsumo : notaDeCusto("goods_consumed")}
             tintaDaNota={semConsumo ? "text-warning" : ""}
             explicar={explicar}
           />
           <LinhaDeRubrica
-            rubrica="Variação de stock"
+            rubrica={textos.rubricas.variacaoDeStock}
             valor={formatMoneyChange(resumo.stock_change_eur)}
             nota={notaDaVariacaoDeStock(resumo.stock_change_eur)}
             explicar={explicar}
@@ -122,10 +117,7 @@ export function DinheiroDoPeriodo({
           prova que este painel dá, e é por isso que não entrou na camada de
           explicação com as outras frases. */}
       <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-celula-x py-3 text-xs text-muted-foreground">
-        <span>
-          A conta fecha: variação de stock = compras − mercadoria consumida − quebra desconhecida
-          {` ${rotuloDoPeriodo(resumo.period.key)}`}.
-        </span>
+        <span>{textos.dinheiro.aContaFecha(rotuloDoPeriodo(resumo.period.key))}</span>
         <span data-numeric className="text-xs text-foreground">
           {formatMoneyChange(resumo.stock_change_eur)} = {formatMoney(resumo.purchases_eur)} −{" "}
           {formatMoney(resumo.goods_consumed_eur)} − {formatMoney(resumo.unknown_shrinkage_eur)}
@@ -140,7 +132,7 @@ export function EsqueletoDoDinheiro() {
     <EsqueletoDeTabela
       colunas={COLUNAS_DE_RUBRICA}
       larguraMinima={LARGURA_MINIMA_DE_RUBRICA}
-      rotulo="A carregar o dinheiro do período…"
+      rotulo={textos.dinheiro.aCarregar}
       linhas={4}
     />
   );

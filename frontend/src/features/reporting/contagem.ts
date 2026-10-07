@@ -1,6 +1,7 @@
 import { formatDate } from "@/lib/format";
 
 import { eZero, type ResumoDoPeriodo } from "./schemas";
+import { textos } from "./textos";
 
 /**
  * A contagem aconteceu **dentro** desta janela?
@@ -40,16 +41,13 @@ export function notaDaContagem(resumo: ResumoDoPeriodo): {
   const zero = eZero(resumo.unknown_shrinkage_eur);
 
   if (ultima === null) {
-    return {
-      texto: "nunca se contou: o zero da quebra é ausência de contagem, não ausência de quebra",
-      tinta: "text-warning",
-    };
+    return { texto: textos.contagem.nuncaSeContou, tinta: "text-warning" };
   }
   if (zero && !contou) {
     return {
-      texto: `sem contagem neste período — a última foi a ${formatDate(ultima)}, e o desvio aparece todo na próxima`,
+      texto: textos.contagem.semContagemNoPeriodo(formatDate(ultima)),
       tinta: "text-warning",
     };
   }
-  return { texto: `última contagem a ${formatDate(ultima)}`, tinta: "" };
+  return { texto: textos.contagem.ultima(formatDate(ultima)), tinta: "" };
 }

@@ -13,9 +13,16 @@ import type {
   Periodo,
 } from "./schemas";
 import { eNegativo, eZero } from "./schemas";
+import { textos } from "./textos";
 
 /**
- * O vocabulário do painel — **as palavras vivem aqui, e só aqui**.
+ * O vocabulário do painel — **os ids vivem aqui, as palavras no catálogo**.
+ *
+ * As palavras passaram para o `textos.pt.ts` a 2026-10-07 (ADR 0019, decisão 3)
+ * e os `Record` ficaram, porque são coisas diferentes: o catálogo guarda a
+ * palavra em cada língua, e é o `Record` que amarra a palavra ao contrato. Cada
+ * folha é **nomeada individualmente** aqui, e não entregue em bloco — é o que
+ * mantém o `check-textos.mjs` a poder podar uma chave que ninguém lê.
  *
  * É a decisão 5 da ADR 0013 a ser cumprida: nenhum rótulo viaja no arame. O
  * servidor manda ids de uniões fechadas e cada um tem a sua palavra num
@@ -47,11 +54,11 @@ import { eNegativo, eZero } from "./schemas";
  * ------------------------------------------------------------------------- */
 
 const ROTULO_CURTO_DO_PERIODO: Record<Periodo, string> = {
-  today: "Hoje",
-  "7d": "7 dias",
-  "30d": "30 dias",
-  month: "Este mês",
-  prev_month: "Mês anterior",
+  today: textos.periodos.hojeCurto,
+  "7d": textos.periodos.seteDiasCurto,
+  "30d": textos.periodos.trintaDiasCurto,
+  month: textos.periodos.esteMesCurto,
+  prev_month: textos.periodos.mesAnteriorCurto,
 };
 
 const ROTULOS_CURTOS = new Map<string, string>(Object.entries(ROTULO_CURTO_DO_PERIODO));
@@ -61,11 +68,11 @@ export function rotuloCurtoDoPeriodo(periodo: Periodo): string {
 }
 
 const ROTULO_DO_PERIODO: Record<Periodo, string> = {
-  today: "hoje",
-  "7d": "nos últimos 7 dias",
-  "30d": "nos últimos 30 dias",
-  month: "neste mês",
-  prev_month: "no mês anterior",
+  today: textos.periodos.hoje,
+  "7d": textos.periodos.seteDias,
+  "30d": textos.periodos.trintaDias,
+  month: textos.periodos.esteMes,
+  prev_month: textos.periodos.mesAnterior,
 };
 
 const ROTULOS = new Map<string, string>(Object.entries(ROTULO_DO_PERIODO));
@@ -82,12 +89,12 @@ export const PERIODOS: readonly Periodo[] = ["today", "7d", "30d", "month", "pre
  * ------------------------------------------------------------------------- */
 
 const ROTULO_DE_CUSTO: Record<IdDeCusto, string> = {
-  purchases: "Compras a fornecedores",
-  goods_consumed: "Mercadoria consumida",
-  waste: "Desperdício",
-  unknown_shrinkage: "Quebra desconhecida",
-  payroll: "Pessoal",
-  other: "Custos fixos",
+  purchases: textos.custos.comprasRotulo,
+  goods_consumed: textos.custos.consumoRotulo,
+  waste: textos.custos.desperdicioRotulo,
+  unknown_shrinkage: textos.custos.quebraRotulo,
+  payroll: textos.custos.pessoalRotulo,
+  other: textos.custos.fixosRotulo,
 };
 
 const ROTULOS_DE_CUSTO = new Map<string, string>(Object.entries(ROTULO_DE_CUSTO));
@@ -109,12 +116,12 @@ export function rotuloDeCusto(id: IdDeCusto): string {
  * cresce a linha e desfaz o ritmo da tabela (DESIGN.md §4, lição 3).
  */
 const NOTA_DE_CUSTO: Record<IdDeCusto, string> = {
-  purchases: "dinheiro que saiu para fornecedores",
-  goods_consumed: "o que saiu do stock, ao custo gravado no movimento",
-  waste: "já está dentro da mercadoria consumida",
-  unknown_shrinkage: "o líquido das contagens",
-  payroll: "custo-empresa do mês, nunca rateado por dias",
-  other: "renda, energia, água, gás, TPA, licenças, contabilista",
+  purchases: textos.custos.comprasNota,
+  goods_consumed: textos.custos.consumoNota,
+  waste: textos.custos.desperdicioNota,
+  unknown_shrinkage: textos.custos.quebraNota,
+  payroll: textos.custos.pessoalNota,
+  other: textos.custos.fixosNota,
 };
 
 const NOTAS_DE_CUSTO = new Map<string, string>(Object.entries(NOTA_DE_CUSTO));
@@ -124,8 +131,8 @@ export function notaDeCusto(id: IdDeCusto): string {
 }
 
 const ROTULO_DE_SERIE: Record<IdDeSerie, string> = {
-  revenue: "Vendas",
-  purchases: "Compras",
+  revenue: textos.grafico.serieVendas,
+  purchases: textos.grafico.serieCompras,
 };
 
 const ROTULOS_DE_SERIE = new Map<string, string>(Object.entries(ROTULO_DE_SERIE));
@@ -135,8 +142,8 @@ export function rotuloDeSerie(id: IdDeSerie): string {
 }
 
 const ROTULO_DA_GRANULARIDADE: Record<Granularidade, string> = {
-  day: "dia a dia",
-  week: "semana a semana",
+  day: textos.grafico.diaADia,
+  week: textos.grafico.semanaASemana,
 };
 
 const ROTULOS_DA_GRANULARIDADE = new Map<string, string>(
@@ -162,11 +169,11 @@ export function rotuloDaGranularidade(granularidade: Granularidade): string {
  * desperdício mostram a mesma quebra.
  */
 const ROTULO_DE_MOTIVO: Record<MotivoDeQuebra, string> = {
-  expired: "expirado",
-  spoiled: "estragado",
-  breakage: "quebra",
-  prep_loss: "perda de preparação",
-  other: "outro",
+  expired: textos.motivos.expirado,
+  spoiled: textos.motivos.estragado,
+  breakage: textos.motivos.quebra,
+  prep_loss: textos.motivos.perdaDePreparacao,
+  other: textos.motivos.outro,
 };
 
 const ROTULOS_DE_MOTIVO = new Map<string, string>(Object.entries(ROTULO_DE_MOTIVO));
@@ -185,7 +192,7 @@ export function rotuloDeMotivo(motivo: MotivoDeQuebra): string {
  * para `number`: ler um sinal não é fazer uma conta.
  */
 export function rotuloDaQuebraDesconhecida(valor: string): string {
-  return eNegativo(valor) ? "Excedente de contagem" : "Quebra desconhecida";
+  return eNegativo(valor) ? textos.perdas.excedenteDeContagem : textos.custos.quebraRotulo;
 }
 
 /* ---------------------------------------------------------------------------
@@ -203,10 +210,8 @@ export function rotuloDaQuebraDesconhecida(valor: string): string {
  * cheia, e a palavra é que o diz. A cor nesta identidade é sinal, não ênfase.
  */
 export function notaDaVariacaoDeStock(valor: string): string {
-  if (eZero(valor)) return "entrou tanto quanto saiu";
-  return eNegativo(valor)
-    ? "gastou-se a despensa: saiu mais stock do que entrou"
-    : "encheu-se a despensa: entrou mais stock do que saiu";
+  if (eZero(valor)) return textos.dinheiro.variacaoIgual;
+  return eNegativo(valor) ? textos.dinheiro.variacaoGastou : textos.dinheiro.variacaoEncheu;
 }
 
 /* ---------------------------------------------------------------------------
@@ -214,8 +219,8 @@ export function notaDaVariacaoDeStock(valor: string): string {
  * ------------------------------------------------------------------------- */
 
 const NOTA_DA_BASE_DA_RECEITA: Record<BaseDaReceita, string> = {
-  gross: "registado com IVA, como no fecho de caixa",
-  net: "registado sem IVA",
+  gross: textos.receita.brutoNota,
+  net: textos.receita.liquidoNota,
 };
 
 const NOTAS_DA_BASE = new Map<string, string>(Object.entries(NOTA_DA_BASE_DA_RECEITA));
@@ -225,9 +230,9 @@ export function notaDaBaseDaReceita(base: BaseDaReceita): string {
 }
 
 const ROTULO_DA_ORIGEM_DA_RECEITA: Record<OrigemDaReceita, string> = {
-  none: "as vendas ainda não estão registadas",
-  manual: "vendas registadas à mão",
-  pos: "vendas vindas do POS",
+  none: textos.receita.origemNenhuma,
+  manual: textos.receita.origemManual,
+  pos: textos.receita.origemPos,
 };
 
 const ROTULOS_DA_ORIGEM = new Map<string, string>(Object.entries(ROTULO_DA_ORIGEM_DA_RECEITA));
@@ -241,11 +246,11 @@ export function rotuloDaOrigemDaReceita(origem: OrigemDaReceita): string {
  * ------------------------------------------------------------------------- */
 
 const ROTULO_DE_PARTE_DE_SALARIOS: Record<IdDeParteDeSalarios, string> = {
-  base: "Bruto base",
-  social_security: "Segurança Social (TSU)",
-  subsidies: "Subsídios, em duodécimos",
-  meal_allowance: "Subsídio de alimentação",
-  insurance: "Seguro de acidentes de trabalho",
+  base: textos.salarios.base,
+  social_security: textos.salarios.tsu,
+  subsidies: textos.salarios.subsidios,
+  meal_allowance: textos.salarios.alimentacao,
+  insurance: textos.salarios.seguro,
 };
 
 const ROTULOS_DE_PARTE = new Map<string, string>(Object.entries(ROTULO_DE_PARTE_DE_SALARIOS));
@@ -271,8 +276,8 @@ export function rotuloDeParteDeSalarios(id: IdDeParteDeSalarios): string {
  * ela e onde o interruptor de explicação a revela a quem a pedir.
  */
 const ROTULO_DA_BASE_DOS_SALARIOS: Record<BaseDosSalarios, string> = {
-  employer_cost: "custo-empresa",
-  gross: "bruto",
+  employer_cost: textos.salarios.custoEmpresa,
+  gross: textos.salarios.bruto,
 };
 
 const ROTULOS_DA_BASE_DOS_SALARIOS = new Map<string, string>(
@@ -284,8 +289,8 @@ export function rotuloDaBaseDosSalarios(base: BaseDosSalarios): string {
 }
 
 const ROTULO_DA_ORIGEM_DOS_SALARIOS: Record<OrigemDosSalarios, string> = {
-  contractual: "do contrato",
-  actual: "do processamento",
+  contractual: textos.salarios.origemContrato,
+  actual: textos.salarios.origemProcessamento,
 };
 
 const ROTULOS_DA_ORIGEM_DOS_SALARIOS = new Map<string, string>(
@@ -297,8 +302,8 @@ export function rotuloDaOrigemDosSalarios(origem: OrigemDosSalarios): string {
 }
 
 const NOTA_DA_BASE_DOS_SALARIOS: Record<BaseDosSalarios, string> = {
-  employer_cost: "custo-empresa: o bruto mais o que a empresa paga por cima",
-  gross: "bruto: o que o trabalhador recebe antes de descontos",
+  employer_cost: textos.salarios.custoEmpresaNota,
+  gross: textos.salarios.brutoNota,
 };
 
 const NOTAS_DOS_SALARIOS = new Map<string, string>(Object.entries(NOTA_DA_BASE_DOS_SALARIOS));
@@ -308,8 +313,8 @@ export function notaDaBaseDosSalarios(base: BaseDosSalarios): string {
 }
 
 const NOTA_DA_ORIGEM_DOS_SALARIOS: Record<OrigemDosSalarios, string> = {
-  contractual: "do contrato, sem trabalho suplementar",
-  actual: "do processamento do mês",
+  contractual: textos.salarios.origemContratoNota,
+  actual: textos.salarios.origemProcessamentoNota,
 };
 
 const NOTAS_DA_ORIGEM_DOS_SALARIOS = new Map<string, string>(
@@ -321,14 +326,14 @@ export function notaDaOrigemDosSalarios(origem: OrigemDosSalarios): string {
 }
 
 const ROTULO_DE_OUTRO_CUSTO: Record<CategoriaDeOutroCusto, string> = {
-  rent: "Renda",
-  energy: "Energia",
-  water: "Água",
-  gas: "Gás",
-  card_fees: "TPA e cartões",
-  licences: "Licenças",
-  accounting: "Contabilista",
-  other: "Outros",
+  rent: textos.outrosCustos.renda,
+  energy: textos.outrosCustos.energia,
+  water: textos.outrosCustos.agua,
+  gas: textos.outrosCustos.gas,
+  card_fees: textos.outrosCustos.cartoes,
+  licences: textos.outrosCustos.licencas,
+  accounting: textos.outrosCustos.contabilista,
+  other: textos.outrosCustos.outros,
 };
 
 const ROTULOS_DE_OUTRO_CUSTO = new Map<string, string>(Object.entries(ROTULO_DE_OUTRO_CUSTO));
@@ -338,10 +343,10 @@ export function rotuloDeOutroCusto(categoria: CategoriaDeOutroCusto): string {
 }
 
 const ROTULO_DE_EXCLUSAO: Record<ExclusaoDoResultado, string> = {
-  depreciation: "amortizações",
-  financing: "financiamento",
-  income_tax: "IRC",
-  owner_compensation: "remuneração do dono",
+  depreciation: textos.exclusoes.amortizacoes,
+  financing: textos.exclusoes.financiamento,
+  income_tax: textos.exclusoes.irc,
+  owner_compensation: textos.exclusoes.remuneracaoDoDono,
 };
 
 const ROTULOS_DE_EXCLUSAO = new Map<string, string>(Object.entries(ROTULO_DE_EXCLUSAO));
@@ -368,11 +373,9 @@ function rotuloDeExclusao(exclusao: ExclusaoDoResultado): string {
  */
 export function fraseDasExclusoes(exclusoes: readonly ExclusaoDoResultado[]): string | null {
   if (exclusoes.length === 0) return null;
-  const palavras = exclusoes.map(rotuloDeExclusao);
-  const ultima = palavras.at(-1) ?? "";
-  const frase =
-    palavras.length === 1 ? ultima : `${palavras.slice(0, -1).join(", ")} e ${ultima}`;
-  return `Não inclui ${frase}.`;
+  // A junção — vírgulas e o remate — é regra da língua e por isso vive na
+  // função do catálogo: o inglês remata com "and" e não com "e".
+  return textos.exclusoes.naoInclui(exclusoes.map(rotuloDeExclusao));
 }
 
 /**
@@ -402,15 +405,8 @@ export function avisoDoRacioDePessoal(
   exclusoes: readonly ExclusaoDoResultado[],
 ): string | null {
   if (!exclusoes.includes("owner_compensation")) return null;
-  // **A palavra "lucro" não entra nesta frase**, e isso é a regra do ecrã levada
-  // ao sítio onde era mais tentador quebrá-la: a explicação de contabilidade é
-  // "o que o dono tira é distribuição de lucro, não despesa", e bastava
-  // escrevê-la assim para pôr a palavra ao lado de um número. Uma negação não
-  // protege ninguém — quem passa os olhos lê o substantivo, não o "não" —, e é
-  // por isso que a frase diz a mesma coisa por outras palavras.
-  return (
-    "Este rácio não é comparável com os do sector: a remuneração do dono não entra nos " +
-    "custos de pessoal. Quando o dono trabalha no negócio sem se pagar, o custo de pessoal " +
-    "real é 4 a 5 pontos mais alto do que este número."
-  );
+  // A frase **não** usa a palavra "lucro", e a razão está escrita ao lado dela
+  // no catálogo: é lá que ela se escreve em cada língua, e é lá que alguém a
+  // poderia quebrar sem passar por aqui.
+  return textos.pessoal.avisoDoRacio;
 }

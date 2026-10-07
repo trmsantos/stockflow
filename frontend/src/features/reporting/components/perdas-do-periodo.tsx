@@ -5,6 +5,7 @@ import { formatMoney, formatMoneyRounded } from "@/lib/format";
 import { COLUNAS_DE_RUBRICA, LARGURA_MINIMA_DE_RUBRICA } from "../colunas";
 import { notaDaContagem } from "../contagem";
 import type { ResumoDoPeriodo } from "../schemas";
+import { textos } from "../textos";
 import { notaDeCusto, rotuloDaQuebraDesconhecida, rotuloDeMotivo } from "../vocabulario";
 import { LinhaDeRubrica } from "./linha-de-rubrica";
 
@@ -64,7 +65,7 @@ export function PerdasDoPeriodo({
     // O número de movimentos entra no rótulo e não numa coluna: "3 vezes" é
     // accionável de outra maneira que "18,40 €" — uma quebra grande de uma vez
     // é um acidente, dezoito pequenas são um processo.
-    rotulo: `${rotuloDeMotivo(linha.reason)} · ${String(linha.movements)} ${linha.movements === 1 ? "movimento" : "movimentos"}`,
+    rotulo: textos.perdas.rotuloDaBarra(rotuloDeMotivo(linha.reason), linha.movements),
     // Arredondado ao euro, como todas as leituras da casa
     // (`formatMoneyRounded`): o valor exacto do desperdício está na tabela
     // acima, e numa coluna de 128px um "1 234,56 €" parte em duas linhas e
@@ -78,11 +79,11 @@ export function PerdasDoPeriodo({
       <MolduraDeTabela
         colunas={COLUNAS_DE_RUBRICA}
         larguraMinima={LARGURA_MINIMA_DE_RUBRICA}
-        rotulo="As duas perdas do período: desperdício e quebra desconhecida"
+        rotulo={textos.perdas.tabela}
       >
         <tbody>
           <LinhaDeRubrica
-            rubrica="Desperdício"
+            rubrica={textos.custos.desperdicioRotulo}
             valor={formatMoney(resumo.waste_eur)}
             nota={notaDeCusto("waste")}
             explicar={explicar}
@@ -98,21 +99,17 @@ export function PerdasDoPeriodo({
       </MolduraDeTabela>
 
       {barras.length === 0 ? (
-        <p className="px-celula-x py-3 text-sm text-muted-foreground">
-          Nada deitado fora neste período. O desperdício aparece aqui por motivo, do maior para o
-          menor, à medida que for registado.
-        </p>
+        <p className="px-celula-x py-3 text-sm text-muted-foreground">{textos.perdas.vazio}</p>
       ) : (
         <div className="flex flex-col gap-1 py-2">
           <p className="px-celula-x text-xs text-muted-foreground">
-            Desperdício por motivo, {formatMoneyRounded(resumo.waste_eur)} no total — a ordem é a
-            grandeza.
+            {textos.perdas.notaDasBarras(formatMoneyRounded(resumo.waste_eur))}
           </p>
           <BarrasOrdenadas
             barras={barras}
-            campo="Motivo"
-            rotuloDoValor="Valor"
-            rotulo="Desperdício por motivo, do maior para o menor"
+            campo={textos.perdas.campoMotivo}
+            rotuloDoValor={textos.grafico.valor}
+            rotulo={textos.perdas.rotuloDasBarras}
           />
         </div>
       )}
@@ -126,7 +123,7 @@ export function EsqueletoDasPerdas() {
     <EsqueletoDeTabela
       colunas={COLUNAS_DE_RUBRICA}
       larguraMinima={LARGURA_MINIMA_DE_RUBRICA}
-      rotulo="A carregar as perdas do período…"
+      rotulo={textos.perdas.aCarregar}
       linhas={2}
     />
   );

@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 
 import type { AbaDoPainel } from "../abas";
 import { ABAS, rotuloDaAba } from "../abas";
+import { textos } from "../textos";
 
 /**
  * As **três abas do painel** — e são `<Link>`s, não botões.
@@ -33,7 +34,7 @@ import { ABAS, rotuloDaAba } from "../abas";
  */
 export function AbasDoPainel({ ativa }: { readonly ativa: AbaDoPainel }) {
   return (
-    <nav aria-label="Secções do painel" className="flex items-stretch self-stretch">
+    <nav aria-label={textos.abas.regua} className="flex items-stretch self-stretch">
       {ABAS.map((chave) => {
         const ativo = chave === ativa;
         return (

@@ -16,6 +16,7 @@ import { isApiError, mensagemDeErro } from "@/lib/api/errors";
 import { formatDayMonth, formatMoney, formatMoneyRounded } from "@/lib/format";
 
 import { useSeriesDoPeriodo } from "../api";
+import { textos } from "../textos";
 import { tintaDeSerie } from "../tinta-do-painel";
 import { rotuloDeSerie } from "../vocabulario";
 import { CartaoDeEcra, CLASSE_DO_DESTINO, LinhaDoCartao } from "./cartao-de-ecra";
@@ -69,11 +70,11 @@ export function CartaoDoQueExpira() {
     <CartaoDeEcra
       destino={
         <Link to="/alertas" search={{ ver: "expira" }} className={CLASSE_DO_DESTINO}>
-          Alertas — o que expira
+          {textos.inicio.alertasExpira}
         </Link>
       }
       aCarregar={alertas.isPending}
-      rotuloDeCarga="A carregar o que está a expirar…"
+      rotuloDeCarga={textos.inicio.aCarregarExpira}
       erro={alertas.isError ? mensagemDeErro(alertas.error) : null}
       aoTentarOutraVez={() => {
         void alertas.refetch();
@@ -81,7 +82,7 @@ export function CartaoDoQueExpira() {
       // Sem guardas de `isPending`/`isError`: a precedência dos três estados é
       // do `CartaoDeEcra` — esqueleto, depois erro, depois vazio — e repeti-la
       // aqui seis vezes era seis sítios onde ela pode divergir.
-      vazio={linhas.length === 0 ? "nada a expirar" : null}
+      vazio={linhas.length === 0 ? textos.inicio.vazioExpira : null}
     >
       <ul className="flex flex-col">
         {linhas.map((alerta) => {
@@ -136,16 +137,16 @@ export function CartaoDoQueFalta() {
     <CartaoDeEcra
       destino={
         <Link to="/alertas" search={{ ver: "falta" }} className={CLASSE_DO_DESTINO}>
-          Alertas — o que falta
+          {textos.inicio.alertasFalta}
         </Link>
       }
       aCarregar={alertas.isPending}
-      rotuloDeCarga="A carregar o que está em falta…"
+      rotuloDeCarga={textos.inicio.aCarregarFalta}
       erro={alertas.isError ? mensagemDeErro(alertas.error) : null}
       aoTentarOutraVez={() => {
         void alertas.refetch();
       }}
-      vazio={linhas.length === 0 ? "nada abaixo do mínimo" : null}
+      vazio={linhas.length === 0 ? textos.inicio.vazioFalta : null}
     >
       <ul className="flex flex-col">
         {linhas.map((alerta) => (
@@ -165,7 +166,7 @@ export function CartaoDoQueFalta() {
             </span>
             {alerta.min_quantity === null ? null : (
               <span data-numeric className="shrink-0 text-xs text-muted-foreground">
-                mín. {textoDeQuantidade(alerta.min_quantity)}
+                {textos.inicio.minimo(textoDeQuantidade(alerta.min_quantity))}
               </span>
             )}
           </LinhaDoCartao>
@@ -199,16 +200,16 @@ export function CartaoDeReceber() {
     <CartaoDeEcra
       destino={
         <Link to="/receber" search={{ estado: "revisao" }} className={CLASSE_DO_DESTINO}>
-          Receber
+          {textos.inicio.receber}
         </Link>
       }
       aCarregar={rececoes.isPending}
-      rotuloDeCarga="A carregar o que está por dar entrada…"
+      rotuloDeCarga={textos.inicio.aCarregarRececoes}
       erro={rececoes.isError ? mensagemDeErro(rececoes.error) : null}
       aoTentarOutraVez={() => {
         void rececoes.refetch();
       }}
-      vazio={linhas.length === 0 ? "nada por dar entrada" : null}
+      vazio={linhas.length === 0 ? textos.inicio.vazioRececoes : null}
       linhasDoEsqueleto={DOCUMENTOS_DE_PREVIA}
     >
       <ul className="flex flex-col">
@@ -221,7 +222,9 @@ export function CartaoDeReceber() {
             {/* Uma guia de remessa entra sem preços, e dizê-lo é mais honesto
                 do que um "0,00 €" — é a mesma decisão da tabela do Receber. */}
             {rececao.document_total === null ? (
-              <span className="shrink-0 text-xs text-muted-foreground">sem valor</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {textos.inicio.semValor}
+              </span>
             ) : (
               <span data-numeric className="shrink-0 text-sm">
                 {formatMoney(rececao.document_total)}
@@ -250,11 +253,11 @@ export function CartaoDeContar() {
     <CartaoDeEcra
       destino={
         <Link to="/contar" search={{}} className={CLASSE_DO_DESTINO}>
-          Contar
+          {textos.inicio.contar}
         </Link>
       }
       aCarregar={contagem.isPending}
-      rotuloDeCarga="A carregar a contagem a decorrer…"
+      rotuloDeCarga={textos.inicio.aCarregarContagem}
       erro={contagem.isError ? mensagemDeErro(contagem.error) : null}
       aoTentarOutraVez={() => {
         void contagem.refetch();
@@ -269,9 +272,9 @@ export function CartaoDeContar() {
       // ecrã para onde o cartão leva.
       vazio={
         aberta === null
-          ? "nenhuma contagem a decorrer — comece uma"
+          ? textos.inicio.vazioSemContagem
           : zonas.length === 0
-            ? "contagem aberta, sem zonas para contar"
+            ? textos.inicio.vazioSemZonas
             : null
       }
     >
@@ -323,17 +326,17 @@ export function CartaoDeStock() {
     <CartaoDeEcra
       destino={
         <Link to="/stock" search={{}} className={CLASSE_DO_DESTINO}>
-          Stock
+          {textos.inicio.stock}
         </Link>
       }
       aCarregar={aCarregar}
-      rotuloDeCarga="A carregar as piores linhas de stock…"
+      rotuloDeCarga={textos.inicio.aCarregarStock}
       erro={falhou ? mensagemDeErro(niveis.error ?? resumo.error) : null}
       aoTentarOutraVez={() => {
         void niveis.refetch();
         void resumo.refetch();
       }}
-      vazio={linhas.length === 0 ? "sem stock registado" : null}
+      vazio={linhas.length === 0 ? textos.inicio.vazioStock : null}
     >
       <ul className="flex flex-col">
         {linhas.map((nivel) => (
@@ -403,20 +406,20 @@ export function CartaoDoPainel() {
     <CartaoDeEcra
       destino={
         <Link to="/painel" search={{}} className={CLASSE_DO_DESTINO}>
-          Painel
+          {textos.inicio.painel}
         </Link>
       }
       aCarregar={series.isPending}
-      rotuloDeCarga="A carregar o gráfico de vendas e compras…"
+      rotuloDeCarga={textos.inicio.aCarregarGrafico}
       erro={series.isError && !recusado ? mensagemDeErro(series.error) : null}
       aoTentarOutraVez={() => {
         void series.refetch();
       }}
       vazio={
         recusado
-          ? "sem acesso ao painel"
+          ? textos.inicio.vazioSemAcesso
           : semDesenho
-            ? "um só intervalo — nada para comparar"
+            ? textos.inicio.vazioUmIntervalo
             : null
       }
       linhasDoEsqueleto={2}
@@ -431,7 +434,7 @@ export function CartaoDoPainel() {
             intervalos={dados.buckets.map((intervalo) => formatDayMonth(intervalo.since))}
             series={paraDesenhar}
             maximo={formatMoneyRounded(dados.scale_max_eur)}
-            rotulo={`Vendas e compras dos últimos sete dias, com o máximo do eixo em ${formatMoneyRounded(dados.scale_max_eur)}`}
+            rotulo={textos.inicio.rotuloDoGrafico(formatMoneyRounded(dados.scale_max_eur))}
             // Lado a lado e não empilhadas: são grandezas a comparar e não
             // partes de um todo. Empilhar vendas sobre compras somava dinheiro
             // que entrou com dinheiro que saiu.

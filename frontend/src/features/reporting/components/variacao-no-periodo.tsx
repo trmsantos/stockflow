@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDayMonth, formatMoneyRounded } from "@/lib/format";
 
 import type { SeriesDoPeriodo } from "../schemas";
+import { textos } from "../textos";
 import { tintaDeSerie } from "../tinta-do-painel";
 import { rotuloDaGranularidade, rotuloDeSerie } from "../vocabulario";
 
@@ -47,8 +48,7 @@ export function VariacaoNoPeriodo({ series }: { readonly series: SeriesDoPeriodo
   if (series.buckets.length < 2 || series.series.length === 0) {
     return (
       <p className="px-celula-x pb-3 text-sm text-muted-foreground">
-        Um só intervalo neste período: não há variação para desenhar. Os totais estão em cima, e os
-        outros períodos da barra do topo dão sete dias ou mais.
+        {textos.grafico.umSoIntervalo}
       </p>
     );
   }
@@ -60,7 +60,10 @@ export function VariacaoNoPeriodo({ series }: { readonly series: SeriesDoPeriodo
 
   const paraDesenhar: SerieDeBarras[] = series.series.map((serie) => ({
     id: serie.id,
-    rotulo: `${rotuloDeSerie(serie.id)} — ${formatMoneyRounded(serie.total_eur)} no total`,
+    rotulo: textos.grafico.rotuloDaSerie(
+      rotuloDeSerie(serie.id),
+      formatMoneyRounded(serie.total_eur),
+    ),
     tinta: tintaDeSerie(serie.id),
     pontos: serie.points.map((ponto) => ({
       share: Number(ponto.share),
@@ -74,7 +77,10 @@ export function VariacaoNoPeriodo({ series }: { readonly series: SeriesDoPeriodo
         intervalos={intervalos}
         series={paraDesenhar}
         maximo={formatMoneyRounded(series.scale_max_eur)}
-        rotulo={`Vendas e compras ${rotuloDaGranularidade(series.granularity)}, com o máximo do eixo em ${formatMoneyRounded(series.scale_max_eur)}`}
+        rotulo={textos.grafico.rotulo(
+          rotuloDaGranularidade(series.granularity),
+          formatMoneyRounded(series.scale_max_eur),
+        )}
         // Lado a lado e não empilhadas: são **grandezas a comparar** e não
         // partes de um todo. Empilhar vendas sobre compras somava dinheiro que
         // entrou com dinheiro que saiu, que é a pior leitura possível deste
@@ -88,7 +94,7 @@ export function VariacaoNoPeriodo({ series }: { readonly series: SeriesDoPeriodo
 export function EsqueletoDaVariacao() {
   return (
     <div aria-busy="true" className="flex flex-col gap-2 px-celula-x pb-3">
-      <span className="sr-only">A carregar o gráfico do período…</span>
+      <span className="sr-only">{textos.grafico.aCarregar}</span>
       <Skeleton className="h-3 w-40" />
       {/* A mesma altura do gráfico (`h-40`), para o bloco não saltar quando os
           dados chegarem. */}

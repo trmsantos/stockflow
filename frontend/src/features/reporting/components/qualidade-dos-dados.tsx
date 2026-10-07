@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { formatDate, formatDaysAway, formatMoney } from "@/lib/format";
 
 import { eZero, type QualidadeDosDados } from "../schemas";
+import { textos } from "../textos";
 import { rotuloDaOrigemDaReceita } from "../vocabulario";
 
 /**
@@ -77,40 +78,50 @@ function declaracoesDe(qualidade: QualidadeDosDados): readonly Declaracao[] {
 
   return [
     {
-      campo: "consumo registado",
-      valor: qualidade.consumption_registered ? "sim" : "não",
+      campo: textos.qualidade.campoConsumo,
+      valor: qualidade.consumption_registered ? textos.qualidade.sim : textos.qualidade.nao,
       tinta: qualidade.consumption_registered ? "" : "text-warning",
       consequencia: qualidade.consumption_registered
-        ? "A mercadoria consumida vem do ledger, ao custo gravado em cada movimento."
-        : "Sem consumo no ledger não há mercadoria consumida nem rácio de mercadoria — e sem eles este painel mostraria uma margem que não existe.",
+        ? textos.qualidade.consumoSim
+        : textos.qualidade.consumoNao,
       ...(qualidade.consumption_registered
         ? {}
-        : { porta: { rotulo: "Registar o que saiu", para: "/contar" } }),
+        : { porta: { rotulo: textos.qualidade.portaRegistar, para: "/contar" } }),
     },
     {
-      campo: "mercadoria sem fatura",
+      campo: textos.qualidade.campoSemFatura,
       valor: formatMoney(qualidade.purchases_awaiting_invoice_eur),
       tinta: semFatura ? "text-warning" : "",
       consequencia: semFatura
-        ? "Entrou por guia de remessa e está valorizada ao último preço conhecido; a diferença aparece quando a fatura chegar."
-        : "Toda a mercadoria deste período tem fatura: as compras estão ao preço certo.",
-      ...(semFatura ? { porta: { rotulo: "Ver as receções", para: "/receber" } } : {}),
+        ? textos.qualidade.semFaturaHa
+        : textos.qualidade.semFaturaNenhuma,
+      ...(semFatura
+        ? { porta: { rotulo: textos.qualidade.portaRececoes, para: "/receber" } }
+        : {}),
     },
     {
-      campo: "última contagem",
-      valor: ultimaContagem === null ? "nunca" : formatDate(ultimaContagem),
+      campo: textos.qualidade.campoUltimaContagem,
+      valor: ultimaContagem === null ? textos.qualidade.nunca : formatDate(ultimaContagem),
       tinta: semContagem ? "text-warning" : "",
       consequencia:
         ultimaContagem === null
-          ? "Sem nenhuma contagem, a quebra desconhecida é zero por falta de medida e não por falta de quebra."
-          : `Contou-se ${formatDaysAway(diasDesde(ultimaContagem))}. A quebra desconhecida só mede o que foi contado até aí.`,
-      ...(semContagem ? { porta: { rotulo: "Contar agora", para: "/contar" } } : {}),
+          ? textos.qualidade.semContagem
+          : textos.qualidade.contouSe(formatDaysAway(diasDesde(ultimaContagem))),
+      ...(semContagem
+        ? { porta: { rotulo: textos.qualidade.portaContar, para: "/contar" } }
+        : {}),
     },
     {
-      campo: "origem das vendas",
-      valor: semVendas ? "nenhuma" : qualidade.revenue_source === "pos" ? "POS" : "à mão",
+      campo: textos.qualidade.campoOrigemDasVendas,
+      valor: semVendas
+        ? textos.qualidade.nenhuma
+        : qualidade.revenue_source === "pos"
+          ? textos.qualidade.pos
+          : textos.qualidade.aMao,
       tinta: semVendas ? "text-warning" : "",
-      consequencia: `${rotuloDaOrigemDaReceita(qualidade.revenue_source)}. Os rácios são sobre vendas sem IVA; o valor com IVA é o do fecho de caixa.`,
+      consequencia: textos.qualidade.origemDasVendas(
+        rotuloDaOrigemDaReceita(qualidade.revenue_source),
+      ),
     },
   ];
 }
@@ -192,9 +203,11 @@ export function QualidadeDosDadosDoPainel({
         className="px-celula-x pb-3 text-sm text-muted-foreground"
         title={declaracoes.map((uma) => `${uma.campo}: ${uma.valor}`).join("; ")}
       >
-        O painel sabe tudo o que precisa. Última contagem a{" "}
+        {textos.qualidade.sabeTudo}
         <span data-numeric className="text-left text-sm">
-          {qualidade.last_count_at === null ? "nunca" : formatDate(qualidade.last_count_at)}
+          {qualidade.last_count_at === null
+            ? textos.qualidade.nunca
+            : formatDate(qualidade.last_count_at)}
         </span>
         .
       </p>

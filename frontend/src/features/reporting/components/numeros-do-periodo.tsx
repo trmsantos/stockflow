@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatMoneyRounded, formatPercentPoints } from "@/lib/format";
 
 import type { ResumoDoPeriodo } from "../schemas";
+import { textos } from "../textos";
 import { notaDaBaseDaReceita } from "../vocabulario";
 
 /**
@@ -62,7 +63,7 @@ export function NumerosDoPeriodo({ resumo }: { readonly resumo: ResumoDoPeriodo 
             microrótulo é um **nome de campo**, como o `<th>` da tabela que vem
             a seguir: um `<th>` não repete o filtro. */}
         <CorpoDoContador
-          campo="vendas"
+          campo={textos.contadores.vendas}
           figura={formatMoneyRounded(resumo.revenue_gross_eur)}
           nota={notaDaBaseDaReceita(resumo.revenue_basis)}
         />
@@ -71,18 +72,18 @@ export function NumerosDoPeriodo({ resumo }: { readonly resumo: ResumoDoPeriodo 
       {comRacio ? (
         <div className={CLASSE_CONTADOR}>
           <CorpoDoContador
-            campo="mercadoria"
+            campo={textos.contadores.mercadoria}
             figura={formatPercentPoints(Number(resumo.goods_cost_ratio_pct))}
-            nota="do que se vendeu, sem IVA"
+            nota={textos.contadores.doQueSeVendeu}
           />
         </div>
       ) : null}
 
       <div className={CLASSE_CONTADOR}>
         <CorpoDoContador
-          campo="valor de stock"
+          campo={textos.contadores.valorDeStock}
           figura={formatMoneyRounded(resumo.stock_value_eur)}
-          nota="ao custo gravado no movimento"
+          nota={textos.contadores.aoCustoGravado}
         />
       </div>
     </ReguaDeContadores>
@@ -92,7 +93,7 @@ export function NumerosDoPeriodo({ resumo }: { readonly resumo: ResumoDoPeriodo 
 /** Pendente: um aviso só, no contentor, para quem ouve o ecrã. */
 export function EsqueletoDosNumeros() {
   return (
-    <ReguaDeContadores aria-busy="true" rotulo="A carregar os números do período…">
+    <ReguaDeContadores aria-busy="true" rotulo={textos.contadores.aCarregar}>
       {[0, 1, 2].map((indice) => (
         <div key={indice} className={CLASSE_CONTADOR}>
           <Skeleton className="h-3 w-24" />
@@ -114,7 +115,7 @@ export function ErroDosNumeros({
   return (
     <div className="border-b border-border px-celula-x py-3">
       <ErroAoCarregar
-        titulo="Não foi possível carregar o período"
+        titulo={textos.contadores.erroDoPeriodo}
         mensagem={mensagem}
         aoTentarOutraVez={aoTentarOutraVez}
       />

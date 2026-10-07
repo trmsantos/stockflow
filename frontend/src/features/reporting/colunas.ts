@@ -1,4 +1,5 @@
 import type { ColunaDeTabela } from "@/components/tabela";
+import { textos } from "./textos";
 
 /**
  * **Duas colunas** para as três tabelas de dinheiro do painel: a rubrica e o
@@ -22,8 +23,8 @@ import type { ColunaDeTabela } from "@/components/tabela";
  * componente que o usa.
  */
 export const COLUNAS_DE_RUBRICA: readonly ColunaDeTabela[] = [
-  { chave: "rubrica", rotulo: "Rubrica", classe: "w-64" },
-  { chave: "valor", rotulo: "Valor", classe: "w-40 text-right" },
+  { chave: "rubrica", rotulo: textos.rubricas.coluna, classe: "w-64" },
+  { chave: "valor", rotulo: textos.rubricas.colunaDoValor, classe: "w-40 text-right" },
 ];
 
 /**

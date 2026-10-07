@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDayMonthShort, formatTime } from "@/lib/format";
 
 import type { FechoDoMes } from "../schemas";
+import { textos } from "../textos";
 
 /**
  * O **segundo grão** do painel: o fecho do mês, com salários. Vive na aba
@@ -57,17 +58,17 @@ export function NavegacaoDeMes({
   const podeAvancar = seguinte <= limite;
 
   return (
-    <nav aria-label="Mês do fecho" className="flex items-center gap-1">
+    <nav aria-label={textos.fecho.navegacao} className="flex items-center gap-1">
       <Button asChild variant="outline" size="sm">
         <Link to="/painel" search={(anteriores) => ({ ...anteriores, month: anterior })}>
           <ChevronLeft aria-hidden="true" />
-          Mês anterior
+          {textos.fecho.mesAnterior}
         </Link>
       </Button>
       {podeAvancar ? (
         <Button asChild variant="outline" size="sm">
           <Link to="/painel" search={(anteriores) => ({ ...anteriores, month: seguinte })}>
-            Mês seguinte
+            {textos.fecho.mesSeguinte}
             <ChevronRight aria-hidden="true" />
           </Link>
         </Button>
@@ -78,9 +79,9 @@ export function NavegacaoDeMes({
           disabled
           // O `disabled` de um botão já é anunciado; o `title` diz **porquê**,
           // que é a parte que falta a quem o encontra inerte.
-          title="O mês corrente é o último com dados: o seguinte ainda não aconteceu."
+          title={textos.fecho.semMesSeguinte}
         >
-          Mês seguinte
+          {textos.fecho.mesSeguinte}
           <ChevronRight aria-hidden="true" />
         </Button>
       )}
@@ -99,7 +100,7 @@ export function NavegacaoDeMes({
 export function FronteiraDoMes({ mes }: { readonly mes: FechoDoMes }) {
   return (
     <p className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
-      <span className="sr-only">Mês de negócio: </span>
+      <span className="sr-only">{textos.barra.mesDeNegocio}</span>
       <span data-numeric className="text-xs">
         {formatDayMonthShort(mes.since)} {formatTime(mes.since)}
       </span>
@@ -109,8 +110,8 @@ export function FronteiraDoMes({ mes }: { readonly mes: FechoDoMes }) {
       </span>
       <span>
         {mes.closed
-          ? " · mês fechado"
-          : ` · a correr: ${String(mes.days_elapsed)} de ${String(mes.days_in_month)} dias`}
+          ? textos.fecho.mesFechado
+          : textos.fecho.aCorrer(mes.days_elapsed, mes.days_in_month)}
       </span>
     </p>
   );
@@ -128,15 +129,9 @@ export function AvisoDoMesACorrer({ mes }: { readonly mes: FechoDoMes }) {
     <div className="px-celula-x py-3">
       <Alert className="border-warning-border bg-warning-surface">
         <ShieldAlert aria-hidden="true" className="text-warning" />
-        <AlertTitle>
-          Mês a correr: {mes.days_elapsed} de {mes.days_in_month} dias
-        </AlertTitle>
+        <AlertTitle>{textos.fecho.avisoTitulo(mes.days_elapsed, mes.days_in_month)}</AlertTitle>
         <AlertDescription className="text-foreground">
-          <span className="text-pretty">
-            O pessoal e os custos fixos são do mês inteiro — um salário é um facto mensal e não se
-            divide por dias. As vendas e a mercadoria são as dos dias que já passaram, logo o
-            resultado e os rácios desta aba só ficam comparáveis quando o mês fechar.
-          </span>
+          <span className="text-pretty">{textos.fecho.avisoCorpo}</span>
         </AlertDescription>
       </Alert>
     </div>
@@ -164,19 +159,13 @@ export function SemPermissaoParaOPainel() {
     <div className="px-celula-x py-3">
       <Alert className="border-warning-border bg-warning-surface">
         <ShieldAlert aria-hidden="true" className="text-warning" />
-        <AlertTitle>O painel de gestão é do dono do estabelecimento</AlertTitle>
+        <AlertTitle>{textos.fecho.semPermissaoTitulo}</AlertTitle>
         <AlertDescription className="flex flex-col items-start gap-2 text-foreground">
-          <span className="text-pretty">
-            Inclui salários e custo por cargo, e um custo por cargo com uma pessoa é o salário dessa
-            pessoa com outro nome. O trabalho do dia — o que expira, o que falta, o que chegou por
-            dar entrada — está no Início, e é igual para toda a gente.
-          </span>
+          <span className="text-pretty">{textos.fecho.semPermissaoCorpo}</span>
           <Button asChild variant="outline" size="sm">
-            <Link to="/">Ir para o Início</Link>
+            <Link to="/">{textos.fecho.irParaOInicio}</Link>
           </Button>
-          <span className="text-xs text-muted-foreground">
-            Quem decide isto é o servidor, não este ecrã.
-          </span>
+          <span className="text-xs text-muted-foreground">{textos.fecho.decideOServidor}</span>
         </AlertDescription>
       </Alert>
     </div>
@@ -186,7 +175,7 @@ export function SemPermissaoParaOPainel() {
 export function EsqueletoDoMes() {
   return (
     <div aria-busy="true" className="flex flex-col gap-3 px-celula-x pb-3">
-      <span className="sr-only">A carregar o fecho do mês…</span>
+      <span className="sr-only">{textos.fecho.aCarregar}</span>
       <Skeleton className="h-8 w-48" />
       <Skeleton className="h-4 w-full max-w-md" />
       <Skeleton className="h-linha w-full" />
