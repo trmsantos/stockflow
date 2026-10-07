@@ -97,6 +97,16 @@ COPY --from=builder --chown=app:app /app /app
 # Corre com variáveis de fachada porque o `prod.py` exige-as sem default e este
 # comando não liga a nada.
 #
+# **As quatro do email entraram a 2026-10-07 e a lição é a que importa aqui**: o
+# commit que tornou o SMTP obrigatório partiu esta linha, e nada local o disse —
+# o `uv run pytest` usa `settings.test`, o `manage.py` usa `settings.dev`, e esta
+# é a única vez em que o `prod.py` é **importado** antes de produção. O sintoma
+# foi um `KeyError: 'EMAIL_HOST'` no CI, duas horas e dezoito commits depois.
+#
+# Qualquer `required(env, …)` novo no `prod.py` tem de aparecer aqui também. É a
+# fachada inteira e não um subconjunto: a regra do `prod.py` é "sem default", e
+# ela existe para um worker falhar à partida em vez de servir sem segredos.
+#
 # Nota para quem revê (SECURITY.md §8, "`docker history` não pode mostrar
 # segredos"): o `docker history` **mostra** a string `DJANGO_SECRET_KEY=` desta
 # linha, e verificar isso é o reflexo certo. O que ele mostra é o *comando*, com
@@ -109,6 +119,8 @@ RUN DJANGO_SECRET_KEY="x-collectstatic-$(python -c 'import secrets; print(secret
     DATABASE_URL=postgres://ninguem@127.0.0.1:1/vazio \
     ALLOWED_HOSTS=localhost CSRF_TRUSTED_ORIGINS=https://localhost \
     DJANGO_ADMIN_URL=x/ REDIS_URL=redis://127.0.0.1:1 \
+    EMAIL_HOST=127.0.0.1 EMAIL_HOST_USER=ninguem EMAIL_HOST_PASSWORD=vazio \
+    DEFAULT_FROM_EMAIL=ninguem@invalido \
     python manage.py collectstatic --noinput --clear \
  && chown -R app:app /app/staticfiles
 

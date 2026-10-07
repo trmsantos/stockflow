@@ -13,6 +13,8 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import pathlib
+import re
 import sys
 
 import pytest
@@ -303,4 +305,57 @@ def test_o_dev_escreve_na_consola_e_o_test_guarda_em_memoria(clean_env: None) ->
     assert (
         _reload("test").EMAIL_BACKEND
         == "django.core.mail.backends.locmem.EmailBackend"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A fachada do `collectstatic` tem de acompanhar o `prod.py`
+# ---------------------------------------------------------------------------
+
+#: O `prod.py` e a linha do `collectstatic` do Dockerfile, lidos como texto.
+RAIZ = pathlib.Path(__file__).resolve().parents[2]
+PROD = RAIZ / "backend/config/settings/prod.py"
+DOCKERFILE = RAIZ / "docker/backend.Dockerfile"
+
+
+def test_a_fachada_do_collectstatic_cobre_todos_os_required_do_prod() -> None:
+    """O `collectstatic` da build importa o `prod.py`, e é o único sítio que o faz.
+
+    **Esta é a divergência que já aconteceu**, a 2026-10-07: o commit que tornou
+    o SMTP obrigatório acrescentou quatro `required(env, …)` ao `prod.py` e não
+    tocou na linha do Dockerfile. Nada local o disse — o `pytest` usa
+    `settings.test`, o `manage.py` usa `settings.dev` — e o sintoma foi um
+    `KeyError: 'EMAIL_HOST'` a partir a build de imagens no CI, dezoito commits
+    depois de a causa ter entrado.
+
+    Este teste é a única coisa que liga as duas pontas, e **é texto a ler texto**
+    de propósito: importar o `prod.py` aqui obrigava a ter a fachada no ambiente
+    do teste, que é precisamente o acoplamento que se quer medir em vez de
+    satisfazer.
+
+    O que afirma é a inclusão, e não a igualdade: a fachada pode trazer mais do
+    que o `prod.py` exige (o `EMAIL_PORT`, por exemplo, tem default).
+    """
+    exigidas = set(re.findall(r'required\(\s*env\s*,\s*"([A-Z0-9_]+)"', PROD.read_text()))
+    assert exigidas, (
+        f"não encontrei nenhum `required(env, …)` em {PROD}. Se a forma mudou, este "
+        "teste deixou de medir o que diz medir — arranja-o em vez de o apagar."
+    )
+
+    dockerfile = DOCKERFILE.read_text()
+    # O fecho é `python manage.py collectstatic` e não `collectstatic`: a própria
+    # linha gera a chave com um `x-collectstatic-…`, e um `.*?collectstatic`
+    # fechava ali — o teste passava a ler uma fachada de uma variável só. Apanhado
+    # porque ele acusou seis que **estavam** lá.
+    bloco = re.search(
+        r"RUN DJANGO_SECRET_KEY=.*?python manage\.py collectstatic", dockerfile, re.DOTALL
+    )
+    assert bloco is not None, f"não encontrei a linha do `collectstatic` em {DOCKERFILE}"
+    na_fachada = set(re.findall(r"([A-Z0-9_]+)=", bloco.group(0)))
+
+    assert exigidas <= na_fachada, (
+        "o `prod.py` passou a exigir variáveis que a fachada do `collectstatic` não "
+        f"dá: {sorted(exigidas - na_fachada)}. Acrescenta-as à linha `RUN` do "
+        f"{DOCKERFILE.name} — senão a build da imagem falha com um `KeyError`, e só "
+        "no CI, porque é o único sítio onde o `prod.py` é importado."
     )
