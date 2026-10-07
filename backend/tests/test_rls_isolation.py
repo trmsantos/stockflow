@@ -756,6 +756,15 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
     transação é a razão mais fraca que existe para alargar a superfície sem
     âmbito.
 
+    O `estabelecimento` (ADR 0017) é o caso mais limpo deste lado, e vale lê-lo
+    ao lado do `preferencias`: os dois são ecrãs de configurações e estão em
+    lados opostos desta asserção, porque as **tabelas** são diferentes. O das
+    preferências escreve no `accounts_user`, que não tem política e tem de
+    funcionar antes de haver âmbito; este lê e escreve o `accounts_tenant`, cuja
+    política compara `id` com o GUC — dentro do âmbito a tabela tem no máximo uma
+    linha visível, que é o que permite ao service fazer `get()` sem filtro e o que
+    torna o IDOR impossível por construção em vez de por verificação.
+
     As duas da saúde estão aqui pelo mesmo critério das outras, e não por serem
     inofensivas: não abrem âmbito porque não leem dados de tenant nenhum, e não
     o abrem *de propósito* porque o `tenant_scope` abre uma transação por
@@ -792,6 +801,7 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^convites$",
         "api/v1/^convites/(?P<pk>[^/.]+)/reenviar$",
         "api/v1/^convites/(?P<pk>[^/.]+)/revogar$",
+        "api/v1/estabelecimento",
         "api/v1/menu",
         "api/v1/menu/rotas",
         "api/v1/schema/",

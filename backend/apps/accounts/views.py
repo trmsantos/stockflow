@@ -181,6 +181,8 @@ from apps.accounts.serializers import (
     ConviteInSerializer,
     ConviteOutSerializer,
     ErroOutSerializer,
+    EstabelecimentoInSerializer,
+    EstabelecimentoOutSerializer,
     ItemDeMenuInSerializer,
     ItemDeMenuOutSerializer,
     LoginInSerializer,
@@ -203,6 +205,8 @@ from apps.accounts.services import (
     ativar_convite,
     criar_convite,
     escolher_tenant_ativo,
+    estabelecimento_atual,
+    guardar_estabelecimento,
     guardar_menu,
     guardar_preferencias,
     iniciar_sessao,
@@ -217,6 +221,7 @@ __all__ = [
     "STATUS_DA_RECUSA_DE_CONVITE",
     "AtivacaoView",
     "ConviteViewSet",
+    "EstabelecimentoView",
     "LoginView",
     "LogoutView",
     "MenuView",
@@ -863,3 +868,103 @@ class MenuView(APIView):
             itens=corpo.validated_data,
         )
         return Response(ItemDeMenuOutSerializer(itens, many=True).data)
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class EstabelecimentoView(APIView):
+    """`GET`/`PATCH /api/v1/estabelecimento` — a configuração da empresa (ADR 0017).
+
+    ## Com âmbito, e é o default que o diz
+
+    Não leva `@tenant_scope_exempt` e é essa ausência que a torna normal: lê e
+    escreve o `accounts_tenant`, que **tem** política (a única cuja política
+    compara `id` em vez de `tenant_id`, porque a tabela *é* o tenant). Dentro do
+    âmbito a tabela tem no máximo uma linha visível, que é a razão de o service
+    fazer `Tenant.objects.get()` sem filtro.
+
+    ## Sem `has_object_permission`, porque não há objecto endereçável
+
+    O `SECURITY.md` §5 exige `obj.tenant_id == request.tenant.id` em toda a view
+    que receba um `pk` — esta não recebe nenhum, nem no path nem no corpo. Qual é
+    o estabelecimento decide-se no âmbito que o middleware abriu a partir da
+    sessão, logo não existe id de outro tenant para rejeitar. O `PertenceAoTenant`
+    continua na lista pelo seu `has_permission`, que nega quando não há
+    `request.tenant`.
+
+    ## `owner` em leitura **e** em escrita, e o 403 é a rede e não o controlo
+
+    A ADR 0011 escolheu `owner` para editar; a ADR 0017 estende-o à leitura com o
+    argumento da ADR 0013 — *o default é o mais fechado, e um conjunto de um
+    elemento alarga-se sem se desfazer* — e porque nada fora deste ecrã precisa
+    destas leituras por HTTP.
+
+    **403 e não 200 com blocos ausentes**, com a forma exacta do DRF (`detail`,
+    **sem `code` novo**): num ecrã de configurações, um 200 parcial torna "não
+    podes ver isto" indistinguível de "esta empresa ainda não configurou nada", e
+    os dois precisam de ecrãs opostos — o vazio ensina a configurar, o restrito
+    não pode. O cliente já sabe o papel antes de pedir (vem na sessão), logo não
+    monta o ecrã e não dispara o pedido; o 403 é a rede do deep link e da pertença
+    revogada a meio da sessão.
+
+    ## `csrf_protect` **está** aqui, ao contrário do `/auth/preferencias`
+
+    Os dois são autenticados, logo o `SessionAuthentication` verifica o token nos
+    dois e a linha é, hoje, redundante. Fica porque esta view tem uma diferença
+    que a outra não tem: **escreve configuração de uma empresa inteira**, e o
+    `as_view()` do DRF embrulha tudo em `csrf_exempt` — a protecção depende de o
+    `SessionAuthentication` correr e **encontrar** utilizador. No dia em que
+    alguém acrescentar aqui uma autenticação por token (que não verifica CSRF), a
+    diferença entre as duas views é esta linha. A redundância é barata; descobrir
+    que não havia nenhuma não é.
+
+    ## 400 por campo, e um deles é uma regra de negócio
+
+    A hora fora da janela 00:00–06:00 e um regime fora dos dois valores saem como
+    400 no campo (`EstabelecimentoInSerializer`). O terceiro 400 vem do service e
+    é do `nome`: no estabelecimento de demonstração o nome não se altera (ADR
+    0018) — e essa é a única recusa desta família que não é sobre a forma.
+    """
+
+    permission_classes = [IsAuthenticated, PertenceAoTenant, TemPapel.exige(Papel.OWNER)]
+    parser_classes = [JSONParser]
+
+    @extend_schema(
+        operation_id="estabelecimento_ler",
+        summary="A configuração deste estabelecimento",
+        responses={
+            status.HTTP_200_OK: EstabelecimentoOutSerializer,
+            status.HTTP_403_FORBIDDEN: ErroOutSerializer,
+        },
+    )
+    def get(self, request: Request) -> Response:
+        return Response(
+            EstabelecimentoOutSerializer(estabelecimento_atual(_pedido_django(request))).data
+        )
+
+    @extend_schema(
+        operation_id="estabelecimento_guardar",
+        summary="Guardar a configuração deste estabelecimento",
+        request=EstabelecimentoInSerializer,
+        responses={
+            status.HTTP_200_OK: EstabelecimentoOutSerializer,
+            status.HTTP_403_FORBIDDEN: ErroOutSerializer,
+        },
+    )
+    def patch(self, request: Request) -> Response:
+        corpo = EstabelecimentoInSerializer(data=request.data)
+        corpo.is_valid(raise_exception=True)
+        try:
+            estabelecimento = guardar_estabelecimento(
+                _pedido_django(request),
+                nome=corpo.validated_data["nome"],
+                vat_regime=corpo.validated_data["vat_regime"],
+                business_day_starts_at=corpo.validated_data["business_day_starts_at"],
+            )
+        except ValidationError as erro:
+            # O nome do estabelecimento de demonstração. Sem este `except` era um
+            # **500** numa recusa de validação, porque o DRF não converte o
+            # `ValidationError` do `django.core.exceptions` — foi o que aconteceu
+            # à primeira, e o teste apanhou-o. A razão inteira está no
+            # `_resposta_de_validacao`.
+            return _resposta_de_validacao(erro)
+        return Response(EstabelecimentoOutSerializer(estabelecimento).data)

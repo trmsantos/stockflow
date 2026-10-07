@@ -100,7 +100,7 @@ import hashlib
 import logging
 import secrets
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import time, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -1552,3 +1552,165 @@ def guardar_menu(*, tenant_id: UUID, itens: list[dict[str, Any]]) -> tuple[ItemD
         extra={"event": "menu", "outcome": "ok", "count": len(itens)},
     )
     return projeccao_de_menu(tenant_id=tenant_id)
+
+
+# ---------------------------------------------------------------------------
+# O estabelecimento: a configuração da **empresa** (ADR 0017)
+# ---------------------------------------------------------------------------
+#: A janela em que o dia de negócio pode começar.
+#:
+#: Afirmada pelo `domain-expert` a 2026-10-07 e **imposta pela base de dados**
+#: (`tenant_dia_de_negocio_entre_0_e_6`, migração 0009). Vive aqui como constante
+#: porque o serializer precisa dela para recusar com um 400 por campo em vez de
+#: deixar a `IntegrityError` subir — que é a mesma relação que o menu tem com a
+#: sua unicidade: o serializer é a mensagem, a base de dados é a rede.
+DIA_DE_NEGOCIO_MINIMO = time(0, 0)
+DIA_DE_NEGOCIO_MAXIMO = time(6, 0)
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EstabelecimentoOut:
+    """O que o `GET` e o `PATCH /estabelecimento` devolvem (ADR 0017).
+
+    **Não vive no `api.py`**, e é a regra deste repositório e não arrumação:
+    nenhum módulo precisa disto hoje. A ADR 0017 escreveu que "o `vat_regime` é
+    consumido pelo `reporting` do lado do servidor, através do `accounts.api`", e
+    a consulta ao domínio corrigiu-o — para **valorizar** o passado o `reporting`
+    não pode ler esta coluna, porque reavaliaria janeiro com a regra de março. Um
+    DTO público sem consumidor é um contrato público escrito ao contrário, e o dia
+    em que houver um consumidor real a subida para o `api.py` é uma linha.
+
+    `business_day_starts_at` é uma **string** `"HH:MM"` no contrato e um
+    `TimeField` na coluna: a hora é um valor com ordem e a base de dados tem de a
+    poder comparar e recusar (`"25:00"`), e o cliente tem de a poder pôr num
+    `<input type="time">`, que fala `"04:00"`. A tradução acontece num sítio só,
+    no serializer.
+
+    `demonstracao` é só de leitura e o nome é em português como o resto do
+    contrato (`is_demo` é a coluna). Marcar um estabelecimento real como
+    demonstração era esconder dados reais atrás de um aviso de "isto é de
+    brincar"; desmarcar o de demonstração era promover dados semeados a dados de
+    negócio sem ninguém os ter introduzido.
+    """
+
+    id: UUID
+    nome: str
+    vat_regime: str
+    business_day_starts_at: str
+    demonstracao: bool
+
+
+def _estabelecimento_out(tenant: Tenant) -> EstabelecimentoOut:
+    """A linha, como o contrato a descreve. O único tradutor dos dois lados."""
+    return EstabelecimentoOut(
+        id=tenant.id,
+        nome=tenant.name,
+        vat_regime=tenant.vat_regime,
+        business_day_starts_at=tenant.business_day_starts_at.strftime("%H:%M"),
+        demonstracao=tenant.is_demo,
+    )
+
+
+def estabelecimento_atual(request: HttpRequest) -> EstabelecimentoOut:
+    """`GET /estabelecimento` — a configuração do estabelecimento ativo.
+
+    **Não recebe `pk` nem `tenant_id`, e é isso que fecha o IDOR por construção.**
+    Qual é o estabelecimento decide-se no âmbito que o middleware abriu a partir
+    da sessão, e o `SECURITY.md` §5 exige a comparação `obj.tenant_id ==
+    request.tenant.id` em toda a view que receba um id — esta não recebe nenhum,
+    logo não há id de outro tenant para rejeitar.
+
+    O `get()` sem filtro é deliberado e não um descuido: a política do
+    `accounts_tenant` compara `id` com o GUC (ADR 0007), logo **dentro de um
+    âmbito esta tabela tem no máximo uma linha visível**. Um `filter(pk=…)` daria
+    o mesmo resultado com uma segunda verificação ao lado da política — e duas
+    verificações acabam com uma a ser a única que importa. Fora de âmbito isto
+    levanta `Tenant.DoesNotExist`, que é o modo de falha certo: falha fechada e
+    alta, em vez de devolver a configuração de outra pessoa.
+    """
+    return _estabelecimento_out(Tenant.objects.get())
+
+
+def guardar_estabelecimento(
+    request: HttpRequest,
+    *,
+    nome: str,
+    vat_regime: str,
+    business_day_starts_at: time,
+) -> EstabelecimentoOut:
+    """`PATCH /estabelecimento` — grava a configuração da empresa.
+
+    ## O nome do estabelecimento de demonstração não se altera
+
+    É a única recusa desta função, e vem da ADR 0018 pela mão da sessão 0: um
+    `nome` editável no estabelecimento de demonstração deixa o dono escrever lá o
+    nome da pastelaria **dele**, e aí os dados semeados passam a parecer os dele —
+    é a proibição nº 12 do guião a ser quebrada pelo próprio utilizador, com a app
+    a ajudar.
+
+    Recusa com **400 no campo `nome`** e não com um código de recusa próprio, e a
+    escolha é sobre o contrato e não sobre a semântica. Um código novo obrigava a
+    uma **terceira** família de códigos no `views.py` — o docstring de lá explica
+    porque é que há duas e não uma: juntá-las dava ao cliente gerado a união de
+    todos os códigos em cada resposta, a sugerir ramos que aquele endpoint nunca
+    devolve. Uma família inteira para uma situação é o mecanismo a custar mais do
+    que a propriedade que compra.
+
+    O 400 por campo é o precedente que já existe nesta camada ("esta pessoa já é
+    membro deste estabelecimento", nos convites) e aterra exactamente onde a
+    frase é mostrada: debaixo do input do nome.
+
+    O resto do `PATCH` continua a funcionar no demo — o regime e a hora mudam-se
+    lá, que é precisamente a propriedade que a ADR 0018 quer (o demo comporta-se
+    como o real). E enviar o nome **igual** ao que está é aceite: o ecrã submete
+    os três campos de cada vez, logo recusar um nome inalterado tornava o demo
+    inconfigurável por um campo que ninguém tocou.
+
+    ## O que esta função não valida
+
+    A janela do dia de negócio e os valores do regime: quem os recusa é o
+    serializer, contra a mesma constante e o mesmo enum, com a frase pronta para
+    aparecer debaixo do campo. Repeti-los aqui dava duas verificações e uma delas
+    acabaria por ser a única.
+
+    E **não** valida o regime contra o volume de negócios: o limiar do art. 53.º
+    muda com cada Orçamento do Estado e as condições são mais do que o número
+    (`domain-expert`, 2026-10-07). Registamos o que o dono diz; não decidimos se
+    ele tem direito.
+
+    ## Mudar a hora é retroactivo, e isso é a escolha certa
+
+    Os dias e os meses já passados passam a ser calculados com a hora nova. A
+    alternativa — histórico da hora — parte o invariante `Σ(dias) == mês` da ADR
+    0013 na data da mudança. O efeito real é limitado aos movimentos registados
+    **entre as duas horas**, e o ecrã di-lo antes de gravar em vez de o deixar
+    descobrir.
+    """
+    tenant: Tenant = Tenant.objects.get()
+
+    if tenant.is_demo and nome != tenant.name:
+        raise ValidationError(
+            {
+                "nome": [
+                    "Este é o estabelecimento de demonstração: o nome não se altera. "
+                    "O resto da configuração muda normalmente."
+                ]
+            }
+        )
+
+    tenant.name = nome
+    tenant.vat_regime = vat_regime
+    tenant.business_day_starts_at = business_day_starts_at
+    tenant.save(update_fields=["name", "vat_regime", "business_day_starts_at", "updated_at"])
+
+    logger.info(
+        "estabelecimento guardado",
+        extra={
+            "event": "estabelecimento",
+            "outcome": "ok",
+            # O nome **não** vai para o log: é dado de um cliente e o log não é
+            # sítio para ele (SECURITY.md). O que vai é o que decide cálculos.
+            "vat_regime": vat_regime,
+            "business_day_starts_at": business_day_starts_at.strftime("%H:%M"),
+        },
+    )
+    return _estabelecimento_out(tenant)

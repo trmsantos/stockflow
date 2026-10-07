@@ -64,6 +64,7 @@ duas funções de `apps/accounts/services.py`.
 
 from __future__ import annotations
 
+from datetime import time
 from typing import Any
 from uuid import uuid4
 
@@ -107,6 +108,41 @@ class Papel(models.TextChoices):
     STAFF = "staff", "colaborador"
 
 
+class RegimeDeIva(models.TextChoices):
+    """O regime de IVA do estabelecimento. **Dois valores, e dois bastam.**
+
+    Validado com o `domain-expert` a 2026-10-07, que descartou um a um os que
+    pareciam faltar — e nenhum dos descartes é por simplificação nossa:
+
+    * **art. 60.º (pequenos retalhistas): inaplicável à restauração.** Exige
+      compras de bens para revenda **sem transformação** ≥ 90% e exclui quem
+      presta serviços não isentos. Uma pastelaria transforma; um café presta
+      serviço de restauração. Não é uma escolha de modelação, é a lei;
+    * **IVA de caixa (DL 71/2013): muda *quando* o IVA é devido, não *se* nem
+      *quanto*.** O StockFlow não faz declarações nem tesouraria, logo é
+      invisível ao custo e à margem;
+    * **"forfetário" não existe em IVA para restauração** — é dos produtores
+      agrícolas. O que um dono chama "simplificado" é o regime de **IRS**, que a
+      ADR 0013 já pôs nas exclusões do resultado. **Consequência directa para o
+      ecrã: o rótulo diz "Regime de IVA" e nunca "Regime"**, ou metade das
+      respostas é sobre IRS;
+    * **`pro rata` / dedução parcial (art. 23.º) é o único buraco real** —
+      sujeito passivo misto, raro neste mercado. A forma que o resolve é um
+      terceiro valor **mais** uma percentagem, e o gatilho é o primeiro cliente
+      que diga "só deduzo uma parte". Não entra por precaução: um valor que
+      ninguém pode escolher é um ramo que ninguém testa.
+
+    **O limiar do art. 53.º não está em código e o regime não é validado contra o
+    volume de negócios.** O valor muda com cada Orçamento do Estado e as
+    condições são mais do que o número — é o mesmo argumento com que a ADR 0013
+    manteve as taxas de TSU fora daqui. Registamos o que o dono diz; não decidimos
+    se ele tem direito.
+    """
+
+    NORMAL = "normal", "Regime normal"
+    ISENTO_ART_53 = "isento_art_53", "Isento (art. 53.º)"
+
+
 class Tenant(models.Model):
     """Um cliente do StockFlow: um restaurante, uma pastelaria, um café.
 
@@ -138,12 +174,137 @@ class Tenant(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     name = models.CharField(max_length=200, verbose_name="nome")
+
+    #: O regime de IVA, que decide **uma** coisa: se o IVA suportado numa compra
+    #: é custo. Em regime normal é dedutível e o custo é a base tributável; no
+    #: art. 53.º não é dedutível e o custo é o total da fatura.
+    #:
+    #: **É mutável, e o que é imutável é a consequência.** Passar de isento a
+    #: normal a meio do ano é um evento real (passa-se o limiar, declaração de
+    #: alterações em janeiro), e é por isso que isto é uma coluna e não uma tabela
+    #: com `valid_from`: o `vat_regime` é lido **no momento em que uma linha de
+    #: compra é escrita**, e a consequência fica *snapshotada* na linha
+    #: (`vat_deductible`) e no `unit_cost` do movimento.
+    #:
+    #: **O `reporting` não lê esta coluna para valorizar o passado**, e isto é
+    #: uma correcção à ADR 0017, que escrevia "o `vat_regime` é consumido pelo
+    #: `reporting` do lado do servidor". Para **valorizar**, não deve ser: a ADR
+    #: 0014 já fixou que qualquer agregado se valoriza pelo `unit_cost` gravado, e
+    #: um `reporting` que lesse esta coluna reavaliava janeiro com a regra de
+    #: março — o mesmo defeito da manteiga que sobe de preço, com outro nome. Para
+    #: **rotular** ("valores sem IVA"), a frase também é derivada dos snapshots do
+    #: período, para um mês anterior à mudança ser rotulado como era.
+    #:
+    #: Gatilho para a tabela com histórico: alguém precisar do regime em vigor
+    #: numa data por outra razão que não o custo (uma declaração, uma
+    #: reconciliação com o contabilista).
+    vat_regime = models.CharField(
+        max_length=20,
+        choices=RegimeDeIva.choices,
+        default=RegimeDeIva.NORMAL,
+        db_default=RegimeDeIva.NORMAL,
+        verbose_name="regime de IVA",
+        help_text=(
+            "Decide se o IVA de uma compra é custo. "
+            "Não é validado contra o volume de negócios."
+        ),
+    )
+
+    #: A hora a que o dia de negócio começa, e **não** é a meia-noite.
+    #:
+    #: `TimeField` e não `CharField`, apesar de o contrato serializar `"04:00"`
+    #: (ADR 0017): a comparação vive em SQL e a base recusa `"25:00"`. É hora de
+    #: parede local — o fuso é `Europe/Lisbon` — e a consequência é que na noite
+    #: da mudança de hora o dia de negócio tem 23 ou 25 horas: os *buckets*
+    #: calculam-se por data+hora local e **nunca somando 24 h**, que duplicaria
+    #: uma hora de movimentos em outubro e perderia uma em março.
+    #:
+    #: ## O que decide, e o que **não** decide
+    #:
+    #: Decide a que dia pertence cada movimento (uma quebra à 01:30 é do dia
+    #: anterior), a fronteira do mês da ADR 0013
+    #: (`[dia 1 04:00, dia 1 do mês seguinte 04:00)`, que é o que faz
+    #: `Σ(dias) == mês`), o rótulo "desde as 04:00" dos Alertas, e o dia a que é
+    #: atribuído o fecho de uma contagem.
+    #:
+    #: **Não decide validades, e a assimetria é de segurança alimentar.** O
+    #: `expires_at` é a data impressa na embalagem: um facto legal e físico, que
+    #: não se desloca pelo relógio de ninguém. E a palavra relativa ("expirou",
+    #: "hoje") calcula-se no calendário **civil**, porque entre as 00:00 e as
+    #: 04:00 o "hoje" do negócio e o civil diferem — com o relógio do negócio a
+    #: app diria "expira hoje" três horas depois de a ASAE já o considerar
+    #: expirado. Também não decide a data do documento de uma fatura.
+    #:
+    #: ## 04:00 é hipótese e não resposta
+    #:
+    #: Num café de balcão qualquer hora entre as 02:00 e as 06:00 dá o mesmo
+    #: resultado, porque não acontece nada de noite. O que o número protege é o
+    #: restaurante: com a meia-noite, o serviço de uma noite parte-se em dois dias
+    #: e o dono vê 1 650 € e 150 € onde contou 1 800 € na caixa — e esse é o erro
+    #: que destrói a confiança, porque é dinheiro e ele confere-o. O custo do
+    #: 04:00 é uma padaria cuja fornada das 03:30 conta no dia anterior: um erro
+    #: de **rótulo de dia num movimento de stock**, não de dinheiro. Protege-se o
+    #: primeiro. A hora exacta é a Q6 da sessão 0.
+    #:
+    #: Um relógio **por tenant** e não por localização: por localização seria
+    #: melhor para rotular e destruía o `Σ(dias) == mês` do painel. Gatilho: um
+    #: grupo com uma padaria e um restaurante de noite sob o mesmo NIF.
+    business_day_starts_at = models.TimeField(
+        default=time(4, 0),
+        db_default=time(4, 0),
+        verbose_name="início do dia de negócio",
+        help_text=(
+            "A hora que separa um dia do seguinte nos totais e nos alertas. "
+            "Não afeta validades."
+        ),
+    )
+
+    #: Este estabelecimento é o de demonstração (ADR 0018).
+    #:
+    #: A coluna vive aqui e agora porque o `EstabelecimentoOut` da ADR 0017 a
+    #: expõe como campo **só de leitura**, e um contrato com um campo que não tem
+    #: coluna é um contrato a prometer o que não existe. O resto da ADR 0018 — o
+    #: módulo `apps/demo/` que semeia o estabelecimento — não está feito, e esta
+    #: coluna é `False` em todas as linhas de hoje.
+    #:
+    #: Só de leitura no contrato, por duas razões independentes: marcar um
+    #: estabelecimento real como demonstração era esconder dados reais atrás de um
+    #: aviso de "isto é de brincar", e desmarcar o de demonstração era transformar
+    #: dados semeados em dados de negócio sem ninguém os ter introduzido.
+    is_demo = models.BooleanField(
+        default=False,
+        db_default=False,
+        verbose_name="é de demonstração",
+        help_text="Semeado para experimentar. Os dados não são de um negócio real.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="criado em")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="atualizado em")
 
     class Meta:
         verbose_name = "tenant"
         verbose_name_plural = "tenants"
+        constraints = [
+            # **A rede, e não a validação.** O serializer já recusa uma hora fora
+            # da janela com um 400 por campo; isto é o que impede a linha de
+            # existir, pela mesma razão com que a unicidade do menu vive na base
+            # de dados: um dia de negócio a começar às 16:00 não é uma
+            # preferência, é um erro de dedo que parte todos os dias em dois em
+            # silêncio — e silêncio é o modo de falha que esta casa não aceita.
+            #
+            # A janela é 00:00–06:00 (`domain-expert`, 2026-10-07): a meia-noite
+            # é o limite inferior legítimo (uma casa que fecha ao jantar) e as
+            # 06:00 o superior (um bar com licença até às 04:00 mais a limpeza).
+            #
+            # **Só a janela, e não "minutos em {0, 30}".** Essa seria uma regra
+            # sobre o que é um valor *razoável* e não sobre o que é um valor
+            # *possível*, e a diferença decide onde ela vive: o passo do controlo
+            # é do ecrã. Uma casa que queira as 03:45 não tem nada de errado.
+            models.CheckConstraint(
+                condition=models.Q(business_day_starts_at__range=(time(0, 0), time(6, 0))),
+                name="tenant_dia_de_negocio_entre_0_e_6",
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.name
@@ -715,13 +876,20 @@ class RotaDeMenu(models.TextChoices):
     `pnpm typecheck`. É isso — e não a cardinalidade — que substitui a garantia
     dos "4 itens" que morreu com a tab bar (ADR 0009).
 
-    Os sete ids são exactamente os do `frontend/src/shell/registo-de-rotas.ts`,
+    Os oito ids são exactamente os do `frontend/src/shell/registo-de-rotas.ts`,
     que os escreveu primeiro (incluindo o `convites`, que entrou lá no mesmo dia
-    em que esta tabela nasceu). Acrescentar um sétimo aqui **faz o
-    `pnpm typecheck` do frontend falhar** até o `Record` dele o ter, e tirar um
-    falha do mesmo modo pelo outro lado: é essa a propriedade que se compra, e é
-    por isso que o id da rota do painel de configuração ainda não está nesta
-    lista — a rota não existe na árvore da SPA.
+    em que esta tabela nasceu). Acrescentar um aqui **faz o `pnpm typecheck` do
+    frontend falhar** até o `Record` dele o ter, e tirar um falha do mesmo modo
+    pelo outro lado: é essa a propriedade que se compra.
+
+    O `configuracao` é o oitavo e entrou a 2026-10-07 (ADR 0017), o que fechou a
+    frase que aqui estava a dizer que ele "ainda não está nesta lista porque a
+    rota não existe na árvore da SPA". A ordem em que isso se faz é a única
+    possível e vale escrevê-la: o id entra **primeiro** aqui, o `pnpm gen:api`
+    leva-o ao `types.ts`, e aí o frontend não compila até a rota existir na
+    árvore e a entrada existir no registo. O erro é o mecanismo — foi este id que
+    o docstring do `registo-de-rotas.ts` usou como sonda do `TS2741`, e desta vez
+    não foi uma sonda.
 
     O valor é curto e estável de propósito: é uma chave de configuração guardada
     em linhas de clientes, e renomear um id é uma migração de dados.
@@ -734,6 +902,7 @@ class RotaDeMenu(models.TextChoices):
     CONTAR = "contar", "Contar"
     RECEBER = "receber", "Receber"
     CONVITES = "convites", "Convites"
+    CONFIGURACAO = "configuracao", "Configuração"
 
 
 class TenantMenuItem(TenantModel):

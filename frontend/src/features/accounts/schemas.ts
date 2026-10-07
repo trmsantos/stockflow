@@ -153,6 +153,179 @@ export const itemDeMenuSchema = z.object({
 });
 
 /**
+ * O regime de IVA. `VatRegimeEnum` (ADR 0017).
+ *
+ * Enum fechado em runtime, ao contrário do `route_id` e pela mesma razão do
+ * `temaSchema`: é um valor **escalar** de um objecto obrigatório, não um elemento
+ * de uma lista que se possa ignorar. E tem uma razão própria, mais forte: é um
+ * valor que decide **dinheiro** — se o IVA de uma compra é custo. Um terceiro
+ * valor que este bundle não conheça não deve ser mostrado como se fosse
+ * conhecido; deve derrubar a leitura e aparecer como erro, porque o ecrã que o
+ * mostrasse estaria a dizer ao dono que a sua margem foi calculada com uma regra
+ * que ele não escolheu.
+ *
+ * Os dois valores e a razão de serem dois estão no `RegimeDeIva` do backend, que
+ * é quem fala com a lei. Aqui só se verifica que a resposta é um deles.
+ */
+export const regimeDeIvaSchema = z.enum(["normal", "isento_art_53"]);
+
+/**
+ * A hora a que o dia de negócio começa, como `"HH:MM"` (ADR 0017).
+ *
+ * String e não um `Date`: é uma **hora de parede local**, sem dia e sem fuso, e
+ * um `Date` obrigaria a escolher um dia para a ancorar — que é exactamente o erro
+ * que a consulta ao domínio nomeou (os *buckets* calculam-se por data+hora local
+ * e nunca somando 24 h, senão a noite da mudança de hora duplica uma hora de
+ * movimentos em outubro e perde uma em março).
+ *
+ * O regex é `^([01]\d|2[0-3]):[0-5]\d$` e não `/^\d{2}:\d{2}$/`: o segundo
+ * aceita `"99:99"`. **A janela 00:00–06:00 não é validada aqui** — quem a recusa
+ * é o servidor (serializer, com a frase; `CheckConstraint`, como rede), e uma
+ * terceira definição no cliente seria a que fica desactualizada no dia em que o
+ * domínio a alargar. O que este schema garante é que a resposta é uma hora.
+ */
+export const horaDoDiaSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "A hora escreve-se como HH:MM, por exemplo 04:00.");
+
+/**
+ * `EstabelecimentoOut` — a configuração da empresa (ADR 0017).
+ *
+ * **Não é o `estabelecimentoSchema`**, e os dois existem de propósito: aquele
+ * descreve o estabelecimento como o **seletor** o mostra (id, nome e o papel de
+ * quem está a ver) e viaja em cada resposta de sessão; este descreve a
+ * **entidade** — o que ela é e como está configurada —, sem papel nenhum, porque
+ * a configuração não muda com quem olha. Juntá-los punha o regime de IVA em cada
+ * `GET /auth/sessao` de cada colaborador.
+ *
+ * `demonstracao` é só de leitura e não está no corpo de escrita: marcar um
+ * estabelecimento real como demonstração era esconder dados reais atrás de um
+ * aviso de "isto é de brincar", e desmarcar o de demonstração era promover dados
+ * semeados a dados de negócio sem ninguém os ter introduzido.
+ */
+export const configuracaoDoEstabelecimentoSchema = z.object({
+  id: z.uuid(),
+  nome: z.string().min(1),
+  vat_regime: regimeDeIvaSchema,
+  business_day_starts_at: horaDoDiaSchema,
+  demonstracao: z.boolean(),
+});
+
+/**
+ * `EstabelecimentoInRequest` — o corpo do `PATCH /estabelecimento`.
+ *
+ * Os três campos configuráveis. O `nome` leva o limite do serializer (200) e as
+ * mensagens vivem aqui porque este schema tem os **dois** papéis do
+ * `credenciaisSchema`: valida o que o formulário submete (e aí as frases
+ * aparecem debaixo do input) e valida o corpo antes de ele sair.
+ *
+ * A janela do dia de negócio continua a não ser validada aqui — ver o
+ * `horaDoDiaSchema`. O que o cliente recusa é uma hora que não é uma hora; o que
+ * o servidor recusa é uma hora que não serve, com a frase que explica porquê.
+ */
+export const estabelecimentoParaGuardarSchema = z.object({
+  nome: z
+    .string()
+    .trim()
+    .min(1, "Escreva o nome do estabelecimento.")
+    .max(200, "O nome não pode ter mais de 200 caracteres."),
+  vat_regime: regimeDeIvaSchema,
+  business_day_starts_at: horaDoDiaSchema,
+});
+
+/**
+ * `RotaDeMenuOut` — uma rota do **registo**: o que existe para configurar.
+ *
+ * É a resposta do `GET /menu/rotas` e o que ela descreve é **código**, não dados
+ * de um tenant: a lista fechada de rotas que o menu pode nomear, com o rótulo e
+ * o grupo por omissão, quem as pode ver, e se foram desenhadas para 360px.
+ * Nenhuma linha de base de dados é lida para a produzir.
+ *
+ * Serve um ecrã só — o `/configuracao` — e é por isso que carrega os defaults:
+ * são eles que permitem mostrar "o que esta rota se chama se ninguém lhe mexer",
+ * que é a informação que falta a quem está a decidir se lhe mexe.
+ *
+ * `route_id` é `z.string()` pela razão do `itemDeMenuSchema`, e aqui a
+ * consequência é ainda mais benigna: uma rota que este bundle não conheça
+ * aparece na lista de configuração sem ícone nem caminho (o `REGISTO_DE_ROTAS`
+ * do shell não a tem) e o ecrã salta-a. Um `z.enum` derrubava a lista inteira
+ * durante o intervalo de um rolling deploy.
+ *
+ * `papeis_permitidos` **é** um enum fechado, e a diferença é de forma: é um
+ * conjunto de papéis e os papéis são três desde a ADR 0007, enquanto as rotas
+ * crescem a cada feature. Um papel novo é uma decisão de produto (a Q7), não um
+ * efeito secundário de um deploy.
+ */
+export const rotaDeMenuSchema = z.object({
+  route_id: z.string().min(1),
+  rotulo_default: z.string().min(1),
+  grupo_default: z.string().min(1),
+  papeis_permitidos: z.array(papelSchema),
+  campo: z.boolean(),
+});
+
+/**
+ * `ItemDeMenuInRequest` — uma linha do corpo do `PUT /menu`.
+ *
+ * Os quatro campos configuráveis e nada mais. **Não** há `campo`, e isso é
+ * estrutural: se a forma que a configuração transporta o tivesse, uma empresa
+ * promovia uma rota de escritório para o telemóvel escrevendo `campo: true` — e
+ * o predicado que diz "este ecrã foi desenhado para 360px" é código (ADR 0009,
+ * adenda 2). Também não há `caminho` nem `icone`: a árvore de rotas é código, e
+ * um menu que nomeasse caminhos punha o deep link a depender da configuração.
+ *
+ * Os limites são os do serializer — grupo e rótulo a 50, ordem em `0..32767` —,
+ * **lidos de lá e não adivinhados**, porque são eles que decidem se o 400 vem
+ * daqui com a frase pronta ou do servidor a meio de uma submissão de oito linhas.
+ *
+ * `rotulo` é `null` para "usa o default" e nunca `""`: a coluna guarda a ausência
+ * como `""` e a tradução entre as duas formas acontece num sítio só, no servidor.
+ * Daí o `.transform`: o que um `<input>` vazio dá é `""`, e mandá-lo tal e qual
+ * era um 400 por `allow_blank=False` em vez de um rótulo reposto ao default.
+ */
+export const itemDeMenuParaGuardarSchema = z.object({
+  route_id: z.string().min(1),
+  grupo: z
+    .string()
+    .trim()
+    .min(1, "Escreva o nome do grupo.")
+    .max(50, "O nome do grupo não pode ter mais de 50 caracteres."),
+  ordem: z
+    .number()
+    .int("A ordem é um número inteiro.")
+    .min(0, "A ordem não pode ser negativa.")
+    .max(32767, "A ordem não pode passar de 32767."),
+  visivel: z.boolean(),
+  rotulo: z
+    .string()
+    .trim()
+    .max(50, "O rótulo não pode ter mais de 50 caracteres.")
+    .nullable()
+    .transform((valor) => (valor === "" ? null : valor)),
+});
+
+/**
+ * O corpo inteiro do `PUT /menu` — um array no topo, e a lista **é** a entidade.
+ *
+ * `PUT` de substituição total e não N `PATCH`: reordenar é uma intenção, e N
+ * pedidos deixam um menu meio ordenado se um deles falhar, com o cliente sem
+ * saber quais passaram (ADR 0009).
+ *
+ * O `.refine` repete a única validação que o `MenuInListSerializer` faz sobre a
+ * lista como um todo — nenhuma rota duas vezes — e repeti-la aqui não é
+ * duplicação inútil: sem ela, a recusa chega em `non_field_errors` depois de a
+ * pessoa ter arrastado oito linhas, e o ecrã tem de a mostrar longe da causa.
+ * Com ela, o botão nem submete. Quem **impõe** continua a ser o servidor, com a
+ * unicidade na base de dados por baixo como rede.
+ */
+export const menuParaGuardarSchema = z
+  .array(itemDeMenuParaGuardarSchema)
+  .refine(
+    (itens) => new Set(itens.map((item) => item.route_id)).size === itens.length,
+    "Há uma rota repetida na configuração. Cada rota aparece uma vez.",
+  );
+
+/**
  * `SessaoOut` — a resposta dos **cinco** endpoints de autenticação, sempre
  * nesta forma. Uma forma só é o que permite ao cliente guardar as cinco numa
  * entrada de cache em vez de ter cinco ramos de Zod. O quinto é o
@@ -433,6 +606,14 @@ export type Estabelecimento = z.output<typeof estabelecimentoSchema>;
 export type Utilizador = z.output<typeof utilizadorSchema>;
 export type EstadoDaSessao = z.output<typeof estadoDaSessaoSchema>;
 export type ItemDeMenu = z.output<typeof itemDeMenuSchema>;
+export type RotaDeMenu = z.output<typeof rotaDeMenuSchema>;
+export type RegimeDeIva = z.output<typeof regimeDeIvaSchema>;
+export type ConfiguracaoDoEstabelecimento = z.output<
+  typeof configuracaoDoEstabelecimentoSchema
+>;
+export type EstabelecimentoParaGuardar = z.input<typeof estabelecimentoParaGuardarSchema>;
+export type ItemDeMenuParaGuardar = z.input<typeof itemDeMenuParaGuardarSchema>;
+export type MenuParaGuardar = z.input<typeof menuParaGuardarSchema>;
 export type Sessao = z.output<typeof sessaoSchema>;
 export type Credenciais = z.output<typeof credenciaisSchema>;
 export type FormularioDeAtivacao = z.output<typeof formularioDeAtivacaoSchema>;

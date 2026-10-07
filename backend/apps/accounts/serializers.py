@@ -34,12 +34,18 @@ divergir com o tempo — e a que menos se vê.
 from __future__ import annotations
 
 from collections import Counter
+from datetime import time
 from typing import Any
 
 from rest_framework import serializers
 
-from apps.accounts.models import EstadoDoConvite, Papel, RotaDeMenu, Tema
-from apps.accounts.services import LIMITE_DO_FRAGMENTO, EstadoDaSessao
+from apps.accounts.models import EstadoDoConvite, Papel, RegimeDeIva, RotaDeMenu, Tema
+from apps.accounts.services import (
+    DIA_DE_NEGOCIO_MAXIMO,
+    DIA_DE_NEGOCIO_MINIMO,
+    LIMITE_DO_FRAGMENTO,
+    EstadoDaSessao,
+)
 
 __all__ = [
     "AtivacaoInSerializer",
@@ -406,6 +412,80 @@ class RotaDeMenuOutSerializer(serializers.Serializer):
         child=serializers.ChoiceField(choices=Papel.choices)
     )
     campo = serializers.BooleanField()
+
+
+class EstabelecimentoOutSerializer(serializers.Serializer):
+    """A resposta do `GET` e do `PATCH /estabelecimento` (ADR 0017).
+
+    **Não é o `TenantOutSerializer`**, e a diferença é a razão de existirem os
+    dois: aquele descreve o estabelecimento como o **seletor** o mostra — id,
+    nome e o papel de quem está a ver — e viaja em cada resposta de sessão. Este
+    descreve a **entidade**: o que ela é e como está configurada, sem papel
+    nenhum, porque a configuração não muda com quem olha. Juntá-los punha o
+    regime de IVA em cada `GET /auth/sessao` de cada colaborador.
+
+    `business_day_starts_at` sai como `"04:00"` e não `"04:00:00"`: o `format`
+    está explícito porque o default do DRF é `"%H:%M:%S"`, e o que o contrato da
+    ADR 0017 fixa — e o que um `<input type="time">` consome — são horas e
+    minutos. Os segundos seriam três caracteres que nunca são outra coisa que
+    `00`.
+    """
+
+    id = serializers.UUIDField()
+    nome = serializers.CharField()
+    vat_regime = serializers.ChoiceField(choices=RegimeDeIva.choices)
+    business_day_starts_at = serializers.TimeField(format="%H:%M")
+    demonstracao = serializers.BooleanField()
+
+
+class EstabelecimentoInSerializer(serializers.Serializer):
+    """O corpo do `PATCH /estabelecimento`: os três campos configuráveis.
+
+    **Não há `demonstracao` e não há `id`.** O primeiro é só de leitura (a razão
+    está no modelo: marcar um estabelecimento real como demonstração era esconder
+    dados reais atrás de um aviso de "isto é de brincar"); o segundo não existe
+    porque qual é o estabelecimento decide-se no âmbito e não no corpo — é a
+    mesma forma com que o `PreferenciasInSerializer` não tem `user_id`. Não é uma
+    verificação que a view faz: é um argumento que não existe.
+
+    ## `PATCH` com os três campos obrigatórios, e é coerente e não contraditório
+
+    Hoje o corpo tem de os trazer todos, logo isto comporta-se como um `PUT`. O
+    método é `PATCH` pelo que acontece **depois**: um quarto campo entra como
+    `required=False` e nenhum cliente antigo tem de ser alterado, enquanto com
+    `PUT` a semântica obrigava-o a reenviar tudo e um cliente que não conhecesse
+    o campo novo apagava-o. É a mesma escolha do `/auth/preferencias`, e é
+    compatível com o `COMPONENT_SPLIT_PATCH = False` das settings — nenhuma view
+    desta casa valida com `partial=True`, pelo que o `types.ts` gerado diz que os
+    três são obrigatórios, que é a verdade.
+
+    ## A janela do dia de negócio é validada aqui **e** na base de dados
+
+    O `TimeField` recusa `"25:00"` por forma, e o `validate_business_day_starts_at`
+    recusa `"16:00"` por domínio — com a frase que aparece debaixo do campo. A
+    `CheckConstraint` da migração 0009 é a **rede**: um dia de negócio às 16:00
+    parte todos os dias em dois em silêncio, e a linha não deve conseguir existir
+    venha de onde vier. É a mesma relação que o menu tem com a sua unicidade.
+    """
+
+    nome = serializers.CharField(max_length=200)
+    vat_regime = serializers.ChoiceField(choices=RegimeDeIva.choices)
+    business_day_starts_at = serializers.TimeField(
+        # As duas formas que o contrato aceita à entrada, e **só** estas: a de
+        # saída (`"04:00"`), que é a que o cliente devolve sem pensar, e a
+        # completa, porque é o que um `curl` escrito à mão costuma mandar.
+        input_formats=["%H:%M", "%H:%M:%S"],
+    )
+
+    def validate_business_day_starts_at(self, valor: time) -> time:
+        if not DIA_DE_NEGOCIO_MINIMO <= valor <= DIA_DE_NEGOCIO_MAXIMO:
+            raise serializers.ValidationError(
+                "O dia de negócio começa entre as "
+                f"{DIA_DE_NEGOCIO_MINIMO:%H:%M} e as {DIA_DE_NEGOCIO_MAXIMO:%H:%M}. "
+                "Esta hora separa um dia do seguinte nos totais: fora desta janela, "
+                "um serviço de noite ficaria partido em dois dias."
+            )
+        return valor
 
 
 class SessaoOutSerializer(serializers.Serializer):

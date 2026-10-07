@@ -10,9 +10,10 @@ detalhe de arrumação interna a aparecer no contrato.
 
 As seis rotas sob `auth/` são as que correm **antes** de existir tenant na
 sessão (ADR 0007 e ADR 0010): login, logout, sessão, troca de estabelecimento,
-activação de convite e as preferências da pessoa. Os `convites` e o `menu` ficam
-**fora** do `auth/` de propósito — são endpoints normais, com âmbito e só para o
-`owner`, e um `/auth/convites` sugeria o contrário a quem lesse o path. A dispensa continua a
+activação de convite e as preferências da pessoa. Os `convites`, o `menu` e o
+`estabelecimento` ficam **fora** do `auth/` de propósito — são endpoints normais,
+com âmbito e só para o `owner`, e um `/auth/convites` sugeria o contrário a quem
+lesse o path. A dispensa continua a
 ser declarada na **view** e nunca inferida do prefixo
 (`tenant_scope_exempt`); o prefixo é o que torna a regra legível, não o que a
 impõe.
@@ -47,6 +48,7 @@ from rest_framework.routers import SimpleRouter
 from apps.accounts.views import (
     AtivacaoView,
     ConviteViewSet,
+    EstabelecimentoView,
     LoginView,
     LogoutView,
     MenuView,
@@ -84,5 +86,12 @@ urlpatterns = [
     # configuração "guardava" com um 405 e nada no log a explicá-lo.
     path("menu/rotas", RotasDeMenuView.as_view(), name="menu-rotas"),
     path("menu", MenuView.as_view(), name="menu"),
+    # O estabelecimento (ADR 0017). **Fora do `auth/`** e sem barra final, como o
+    # resto: é um endpoint normal, com âmbito e só para o `owner` — a mesma
+    # família dos convites e do menu. No singular porque é **um**: qual é
+    # decide-se no âmbito da sessão e não por um id no path, e um
+    # `/estabelecimentos/<id>` sugeria uma colecção endereçável que esta API não
+    # tem (quem lista os estabelecimentos de alguém é o `GET /auth/sessao`).
+    path("estabelecimento", EstabelecimentoView.as_view(), name="estabelecimento"),
     *router.urls,
 ]

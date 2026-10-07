@@ -46,11 +46,14 @@ dia em que a Q7 for respondida um conjunto derivado de uma ordem continua a ser
 um conjunto. O caminho contrário — escrever a ordem agora e derivar o conjunto
 dela — não se desfaz sem mudar o contrato.
 
-**Hoje há exactamente uma rota restrita, e não foi esta ADR que a restringiu:**
+**Hoje há três rotas restritas, e nenhuma foi restringida por esta ADR:**
 `convites` é do `owner` porque a ADR 0010 o decidiu e porque é o que o
-`ConviteViewSet` impõe (`TemPapel.exige(Papel.OWNER)`). Esconder do `staff` um
-item que o leva a um 403 é o caso literal da frase da ADR 0011 — autorização e
-não preferência — e é a razão de o filtro não ser teórico.
+`ConviteViewSet` impõe (`TemPapel.exige(Papel.OWNER)`); `painel` porque a ADR
+0013 o decidiu e porque é o que as permissões dos três endpoints do `reporting`
+impõem; `configuracao` porque a ADR 0017 o decidiu e porque é o que o
+`EstabelecimentoView` impõe. Esconder do `staff` um item que o leva a um 403 é o
+caso literal da frase da ADR 0011 — autorização e não preferência — e é a razão
+de o filtro não ser teórico.
 
 As outras cinco estão abertas aos três papéis, e isso é uma afirmação e não um
 descuido: dizer que um `staff` não pode ver o Stock ou os Alertas é uma decisão
@@ -274,6 +277,29 @@ _ROTAS: Final[tuple[RotaDoRegisto, ...]] = (
         # feitos ao computador. A 360px funciona, com a tabela a deslizar na
         # horizontal — o que o DESIGN.md §4 declara em vez de tratar como
         # defeito. É o mesmo valor que o registo do shell declara.
+        campo=False,
+    ),
+    RotaDoRegisto(
+        route_id=RotaDeMenu.CONFIGURACAO,
+        rotulo_default="Configuração",
+        # No grupo "Equipa" e não num grupo novo, e a razão está escrita lá em
+        # cima: "Equipa" é onde a configuração entra sem um grupo a mais. Fica
+        # **depois** dos convites porque é a definição da casa e eles são a porta
+        # de entrada para ela — quem abre este grupo vem quase sempre convidar.
+        grupo_default=GRUPO_EQUIPA,
+        ordem_default=70,
+        # **A terceira rota restrita, e é a mais literal das três.** A ADR 0017
+        # decide que a distinção entre as definições da pessoa e as da empresa
+        # fica legível **no próprio menu**: a um `staff` este item simplesmente
+        # não existe, em vez de existir e levar a um 403. É o único "como se lê no
+        # ecrã" desta ADR que não é um ícone a explicar uma regra.
+        #
+        # Segue a permissão real do endpoint, como manda o docstring deste
+        # módulo: o `GET /estabelecimento` é `owner` em leitura e escrita no v1.
+        papeis=frozenset({Papel.OWNER}),
+        # Escritório. É um ecrã de formulários e de uma tabela de configuração do
+        # menu, feito sentado — e a hora a que o dia de negócio começa não se
+        # muda no telemóvel entre duas mesas.
         campo=False,
     ),
 )
