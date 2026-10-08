@@ -270,7 +270,36 @@ for img in "${imagens[@]}"; do
             && conteudo="$conteudo$rel (chave privada em bloco PEM)"$'\n'
         LC_ALL=C grep -qa '_authToken' "$f" 2>/dev/null \
             && conteudo="$conteudo$rel (token de registry)"$'\n'
-        LC_ALL=C grep -oaE "$RE_DSN" "$f" 2>/dev/null | grep -qvE "$RE_PLACEHOLDER" \
+        # O `IMPRIMIVEL` no meio é o que separa um DSN de código de máquina, e
+        # entrou por um achado real: na imagem amd64, o
+        # `/usr/lib/x86_64-linux-gnu/libcfitsio.so.10.4.2.0` — que a libvips
+        # arrasta — deu "credencial em DSN" três vezes. O que casava era o
+        # literal `file://`, `http://`, `shmem://` ou `ftp://` que a biblioteca
+        # embute, mais os opcodes em volta a completarem o padrão com um `:` e um
+        # `@`. **Medido**: a mesma biblioteca em arm64 não casa nada, e uma
+        # credencial a sério estaria na fonte e apareceria nas duas arquitecturas.
+        #
+        # O filtro é sobre a **forma do que casou** e não sobre o nome do
+        # ficheiro, de propósito: uma lista de ficheiros isentos seria uma lista
+        # de adivinhações, que é o erro que o bloco do ambiente mais abaixo já
+        # documenta ter cometido. E não enfraquece nada — um DSN verdadeiro é
+        # imprimível de ponta a ponta, incluindo dentro de um binário que o
+        # tenha embutido como string. O que deixa de passar é só o que nunca foi
+        # texto.
+        #
+        # Em C, `[[:print:]]` é 0x20–0x7E: qualquer byte de opcode acima de 0x7F
+        # cai aqui.
+        #
+        # **O `-a` do filtro não é decoração, e a primeira versão não o tinha.**
+        # Sem ele o `grep` detecta a entrada como binária, imprime "binary file
+        # matches" e **suprime a saída toda** — o que dava o resultado certo no
+        # libcfitsio pela razão errada, e num ficheiro com um DSN verdadeiro **e**
+        # ruído binário engolia o verdadeiro com o ruído. Com `-a`, cada linha é
+        # julgada pelos seus próprios bytes, que é o que se quer. Medido nos dois
+        # casos, incluindo o misto.
+        LC_ALL=C grep -oaE "$RE_DSN" "$f" 2>/dev/null \
+            | LC_ALL=C grep -aE '^[[:print:]]+$' \
+            | grep -qvE "$RE_PLACEHOLDER" \
             && conteudo="$conteudo$rel (credencial em DSN)"$'\n'
         # Os dois com quantificador aberto, só abaixo do limite — a mesma
         # condição da passagem de descoberta, para o relatório não afirmar uma
