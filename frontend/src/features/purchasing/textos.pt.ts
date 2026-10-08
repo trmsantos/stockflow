@@ -184,11 +184,65 @@ export const PT = {
         "O servidor respondeu com um erro sem explicação. Tente outra vez — se continuar, o problema é nosso e não do ficheiro.",
     },
 
-    /** A ponte desktop→telemóvel, que **não** é desta fatia e não se promete. */
+    /**
+     * A ponte computador→telemóvel (ADR 0020), construída a 2026-10-08.
+     *
+     * Estas duas chaves eram um `titulo` e um `corpo` a dizer que o bloco não
+     * existia e porquê — *"falta escolher a biblioteca que desenha o código"*. A
+     * biblioteca é o `uqr` e o bloco existe, logo a frase saiu em vez de ficar a
+     * contradizer o ecrã.
+     *
+     * ## O que esta copy tem de dizer antes de tudo o mais
+     *
+     * **Que o telemóvel vai pedir a conta.** É o custo que o dono escolheu pagar
+     * (ADR 0020, decisão 2c: *"Login uma vez no telemóvel"*), e quem o descobre
+     * com o telemóvel na mão, a caixa à porta e o motorista à espera desiste da
+     * feature. Dizê-lo no computador, antes de gerar o código, custa uma linha.
+     *
+     * E **que o código não é uma senha**. Um QR num ecrã de escritório é visível
+     * de longe e isso tem de ser dito sem alarme: não é segredo, não concede
+     * nada, e quem o fotografar sem pertença recebe o ecrã de entrada e para aí.
+     */
     ponte: {
-      titulo: "Ler por código QR no telemóvel",
-      corpo:
-        "Ainda não está construído, e é aqui que vai ficar: o computador abre o documento, o telemóvel lê o código e junta-lhe as fotografias. Falta escolher a biblioteca que desenha o código, e essa decisão não é desta entrega. Até lá o caminho é o campo acima — com o PDF no computador, ou abrindo este mesmo ecrã no telemóvel, onde ele abre a câmara.",
+      titulo: "Fotografar com o telemóvel",
+      comoFunciona:
+        "O computador abre o documento, o telemóvel lê o código e junta-lhe as fotografias. O telemóvel entra uma vez com a conta de quem o usa — o código não é uma senha e não dá acesso a nada por si.",
+      abrir: "Abrir para o telemóvel",
+      aAbrir: "A abrir…",
+      aCarregar: "A carregar a captura…",
+      /**
+       * A alternativa textual do `<svg>`: diz **o que o código é** e manda-o
+       * procurar o endereço, que está em texto logo abaixo. Ler 140 caracteres
+       * de URL em voz alta não é acessibilidade — é castigo.
+       */
+      alternativaDoCodigo:
+        "Código QR com o endereço desta captura. O mesmo endereço está escrito abaixo, para copiar.",
+      comoLer:
+        "Aponte a câmara do telemóvel ao código. Ele pede a conta uma vez e abre este ecrã já neste documento.",
+      endereco: "Endereço desta captura",
+      copiar: "Copiar o endereço",
+      copiado: "Copiado",
+      semCopiar: "Não deu para copiar — selecione o endereço e copie à mão.",
+      expiraAs: (hora: string) => `O código serve até às ${hora}.`,
+      semPaginas: "Ainda não chegou nenhuma página do telemóvel.",
+      paginasChegadas: (quantas: number) =>
+        quantas === 1
+          ? "Chegou 1 página do telemóvel."
+          : `Chegaram ${String(quantas)} páginas do telemóvel.`,
+      expiradoTitulo: "O código expirou",
+      expiradoCorpo:
+        "Passaram quinze minutos sem chegar nenhuma página, e o código deixou de servir. Abra outro documento para ter um código novo.",
+      /** A pergunta do ecrã para quem chegou pelo código, em vez da do escritório. */
+      noTelemovel:
+        "Fotografe o documento folha a folha. As páginas aparecem abaixo à medida que chegam, e no fim diga que acabou.",
+      trocaTitulo: "Este código é de outro estabelecimento",
+      trocaCorpo: (doCodigo: string, atual: string) =>
+        `O código foi aberto no ${doCodigo} e esta sessão está no ${atual}. Mude de estabelecimento para juntar as fotografias ao documento certo.`,
+      trocar: (nome: string) => `Mudar para ${nome}`,
+      aTrocar: "A mudar…",
+      semAcessoTitulo: "Este código não é deste estabelecimento",
+      semAcessoCorpo:
+        "O código foi aberto num estabelecimento a que esta conta não tem acesso. Entre com a conta certa, ou peça a quem abriu o documento para o abrir onde você trabalha.",
     },
 
     zona: {
@@ -234,9 +288,27 @@ export const PT = {
        * A desistência do polling, aos 3 minutos (ADR 0020, decisão 3). Diz-se
        * **no ecrã**, porque a alternativa é um indicador aceso para sempre.
        */
+      /**
+       * A frase de um documento que **já tem páginas e ainda aceita mais**.
+       *
+       * Existe porque o estado do contrato não distingue esse caso do "a imagem
+       * está a ser preparada" (os dois são `a_normalizar`), e a frase desse
+       * estado diz "pode sair deste ecrã" — o conselho errado a quem tem a
+       * segunda folha na mão.
+       */
+      aindaAceitaPaginas:
+        "O documento está aberto e já tem páginas. Junte as folhas que faltam e diga que acabou — é esse toque que o manda para leitura.",
       desistiuTitulo: "Deixei de perguntar",
       desistiuCorpo:
         "Passaram três minutos e o documento continua a ser preparado. O trabalho não se perdeu — quando ficar pronto aparece na lista de documentos, aqui abaixo. Recarregar esta página volta a perguntar.",
+      /**
+       * A mesma desistência, no estado em que a frase de cima seria **falsa**: um
+       * documento à espera de páginas e ainda vazio nunca aparece na lista (o
+       * servidor esconde os slots sem páginas), logo não se pode prometer que
+       * aparece lá.
+       */
+      desistiuCorpoDaCaptura:
+        "Passaram três minutos e não chegou nenhuma página. Nada se perdeu: as páginas que o telemóvel já enviou estão abaixo, e o documento aceita mais até expirar. Recarregar esta página volta a acompanhar.",
       abrirOutro: "Abrir outro documento",
       aCarregar: "A carregar o documento…",
       erroAoCarregar: "Não foi possível carregar este documento",

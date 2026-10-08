@@ -14,16 +14,24 @@ import { buscaDeRececoesSchema } from "./busca-de-rececoes";
  * alargá-lo punha dois uuids no tipo da lista e do detalhe"*. O `estende` paga o
  * link de voltar: `/receber` continua a receber o `estado` e nada mais.
  *
- * ## Um uuid e não dois, e a diferença é quem o constrói
+ * ## Dois uuids, e cada um escrito por quem é
  *
- * A ADR prevê **dois** — `estabelecimento` e `documento` — porque os dois viajam
- * no QR que o telemóvel lê. O `estabelecimento` só existe para o caso em que o
- * âmbito activo da sessão do telemóvel não é o do QR, e aí o ecrã pede a troca
- * com um toque; sem o bloco do QR construído, **ninguém escreve esse parâmetro**,
- * e um campo que nada produz é um ramo que nada exercita. Entra com o QR, que é
- * quem lhe dá sujeito.
+ * São **dois** — `estabelecimento` e `documento` — porque os dois viajam no QR
+ * que o telemóvel lê, e desde 2026-10-08 o QR existe: é o `urlDaPonte` do
+ * `features/purchasing/ponte-de-captura.ts` que os escreve, numa função só, e é
+ * o `scripts/check-ponte-de-captura.mjs` que afirma que são exactamente estes
+ * dois, os dois uuid, sem fragmento (ADR 0020, adenda 2, gate 4). Até esse dia o
+ * `estabelecimento` estava **fora** deste schema com a razão escrita — um campo
+ * que nada produz é um ramo que nada exercita —, e entrou com quem lhe dá
+ * sujeito.
  *
- * O `documento` tem sujeito hoje: é escrito por este ecrã quando um ficheiro
+ * O `estabelecimento` não é uma credencial e não abre nada: é **argumento** (ADR
+ * 0007), e o trabalho dele é fazer o telemóvel aterrar na casa certa. Se o
+ * âmbito activo da sessão não é o do código, o ecrã **pede** a troca com um
+ * toque, pelo `POST /auth/tenant-ativo` que já existe, e nunca a faz em
+ * silêncio. Sem pertença, a política recusa genericamente.
+ *
+ * O `documento` tem sujeito desde a fatia 1: é escrito por este ecrã quando um ficheiro
  * entra, e lido por ele para saber o que mostrar no painel. É a regra da ADR 0008
  * — o URL carrega o que **reproduz o ecrã** — e vale aqui por uma razão que não
  * valia para o slot: um documento com páginas **não expira**. A decisão 7 da ADR
@@ -41,6 +49,7 @@ import { buscaDeRececoesSchema } from "./busca-de-rececoes";
  * default **em silêncio**, e é o que acontece.
  */
 export const buscaDeFotografarSchema = buscaDeRececoesSchema.extend({
+  estabelecimento: z.uuid().optional().catch(undefined),
   documento: z.uuid().optional().catch(undefined),
 });
 

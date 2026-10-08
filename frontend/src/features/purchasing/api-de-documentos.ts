@@ -5,7 +5,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { apiRequest, apiRequestVoid } from "@/lib/api/http";
 import { paginated, type Paginated } from "@/lib/api/pagination";
@@ -71,20 +71,34 @@ const INTERVALO_DE_SONDAGEM_MS = 2_000;
 const TETO_DE_SONDAGEM_MS = 3 * 60 * 1_000;
 
 /**
- * Os dois estados em que há trabalho a decorrer do lado do servidor, e portanto
- * os dois únicos em que vale a pena sondar.
+ * Os três estados em que vale a pena sondar, e o terceiro entrou com o código QR.
  *
- * Os outros seis são terminais ou relógios: `aguarda_captura` e `expirado`
- * esperam por uma **pessoa** (ou pelos quinze minutos), e `lido`, `ilegivel`,
- * `erro` e `descartado` não voltam a mudar sozinhos. Sondar um `aguarda_captura`
- * seria a única excepção defensável — é o que o bloco do QR faria enquanto está
- * aberto —, e ela fica para o dia em que esse bloco existir: sem QR não há nada
- * a chegar de outro aparelho, e a página que falta vem deste mesmo ecrã, pelo
- * input de ficheiro, que já invalida a cache por si.
+ * Os outros cinco são terminais ou relógios mortos: `expirado` já acabou, e
+ * `lido`, `ilegivel`, `erro` e `descartado` não voltam a mudar sozinhos.
+ *
+ * ## `aguarda_captura` passou a ser sondado a 2026-10-08, e a razão é a ponte
+ *
+ * Esta função dizia dois estados, com a excepção nomeada e datada: *"sondar um
+ * `aguarda_captura` seria a única excepção defensável — é o que o bloco do QR
+ * faria enquanto está aberto —, e ela fica para o dia em que esse bloco
+ * existir"*. O bloco existe, e com ele a premissa caiu: a página que falta já
+ * **não** vem só deste ecrã. Vem de um telemóvel que leu o código, e sem
+ * sondagem o computador ficava a olhar para um slot vazio enquanto as páginas
+ * chegavam do outro lado — exactamente o acontecimento externo para que a
+ * decisão 3 da ADR 0020 desenhou o polling.
+ *
+ * A conta dela não muda: 2 s com desistência aos 3 minutos, 90 pedidos no máximo
+ * por documento. E o que o teto significa é diferente neste estado, o que o
+ * `PainelDoDocumento` diz por extenso — um slot **sem páginas** nunca aparece na
+ * lista, logo a frase "aparece na lista quando ficar pronto" seria falsa aqui.
  */
 function aTrabalhar(documento: Documento | undefined): boolean {
   if (documento === undefined) return false;
-  return documento.state === "a_normalizar" || documento.state === "a_extrair";
+  return (
+    documento.state === "aguarda_captura" ||
+    documento.state === "a_normalizar" ||
+    documento.state === "a_extrair"
+  );
 }
 
 function invalidarDocumentos(
@@ -141,6 +155,7 @@ export interface DocumentoSondado {
  */
 export function useDocumento(documento: string | null): DocumentoSondado {
   const tenant = tenantDaCache();
+  const queryClient = useQueryClient();
 
   /**
    * **Qual** documento é que esgotou o relógio, e não um booleano.
@@ -180,6 +195,44 @@ export function useDocumento(documento: string | null): DocumentoSondado {
       clearTimeout(relogio);
     };
   }, [documento, emTrabalho]);
+
+  /**
+   * **A lista também tem de saber**, e até à ponte não tinha de saber nada.
+   *
+   * Antes do código QR, tudo o que mudava num documento mudava por uma mutação
+   * **deste** cliente, e as cinco invalidam o recurso inteiro. Com a ponte
+   * deixou de ser verdade: as páginas chegam de **outro aparelho**, logo o
+   * computador descobre a mudança pela sondagem e a lista abaixo do painel fica
+   * a dizer o que era verdade ao montar. Medido numa sonda de duas folhas: o
+   * painel dizia duas páginas e a lista não tinha o documento, porque um slot
+   * vazio não aparece lá — e passou a ter páginas sem ninguém o invalidar.
+   *
+   * Invalida-se **quando muda**, e não a cada sondagem. A assinatura é o par
+   * que a lista mostra (estado e contagem de páginas): com ela, dez páginas
+   * custam dez pedidos à lista em vez de um a cada dois segundos.
+   *
+   * `useRef` e não `useState` de propósito: um `setState` dentro de um efeito
+   * para comparar com o render anterior é a cascata que o
+   * `react-hooks/set-state-in-effect` recusa, e com razão. O que isto guarda não
+   * pinta nada — é memória entre efeitos.
+   *
+   * A primeira assinatura **não** invalida: ela é o estado com que o ecrã
+   * montou, e a lista acabou de ser lida com ele.
+   */
+  const assinatura =
+    consulta.data === undefined
+      ? null
+      : `${consulta.data.state}:${String(consulta.data.page_count)}`;
+  const ultimaAssinatura = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (documento === null || assinatura === null) return;
+    const primeira = ultimaAssinatura.current === null;
+    if (ultimaAssinatura.current === assinatura) return;
+    ultimaAssinatura.current = assinatura;
+    if (primeira) return;
+    void invalidarDocumentos(queryClient, tenant);
+  }, [assinatura, documento, queryClient, tenant]);
 
   return { consulta, desistiu: emTrabalho && desistidoEm === documento };
 }
