@@ -31,7 +31,18 @@ export const PT = {
    */
   comuns: {
     receber: "Receber",
-    fotografarFatura: "Fotografar fatura",
+    /**
+     * **"Novo documento" e não "Fotografar fatura", desde que o ecrã passou a
+     * ter uma zona de ficheiro** (ADR 0020, decisão 7: *"o botão do fundo da
+     * lista passa a dizer Novo documento"*).
+     *
+     * A palavra antiga era verdadeira num telemóvel e falsa num computador, onde
+     * o gesto é arrastar o PDF do fornecedor e não fotografar nada — e era o
+     * nome do destino, logo mentia duas vezes: no botão e no `h1` do ecrã. "Novo
+     * documento" é verdade nas duas larguras, e cobre a guia de remessa e a
+     * fatura simplificada tão bem como a fatura.
+     */
+    novoDocumento: "Novo documento",
     verAsRececoes: "Ver as receções",
     aGuardar: "A guardar…",
     semNumero: "sem número",
@@ -89,9 +100,12 @@ export const PT = {
   },
 
   fotografar: {
-    semCamaraTitulo: "Neste ecrã ainda não há câmara",
-    semCamaraCorpo:
-      "No telemóvel este botão abre a câmara e a fotografia fica anexada ao documento. Aqui não há câmara nem leitura do documento: a receção que está à espera de revisão foi preenchida à mão, para se poder percorrer a revisão de ponta a ponta — que é a parte que decide se o stock muda.",
+    /**
+     * A pergunta do ecrã, debaixo do `h1`. Diz as **duas** pontas que a zona de
+     * ficheiro resolve, porque elas não são óbvias a partir de um campo: no
+     * computador o explorador de ficheiros, no telemóvel a câmara.
+     */
+    pergunta: "O documento do fornecedor entra aqui — o PDF no computador, a fotografia no telemóvel.",
     porOndeEntra: "Por onde é que a mercadoria entra",
     /**
      * Os três caminhos por onde a mercadoria entra, cada um em **duas partes**
@@ -109,11 +123,203 @@ export const PT = {
     semDocumentoEnfase: "Sem documento nenhum",
     semDocumentoFim:
       ", ou com um escrito à mão no mercado: também tem de dar entrada, e o documento aparece depois.",
-    aProcurar: "A procurar receções por revisar…",
-    semRevisaoTitulo: "Não há nada à espera de revisão",
-    semRevisaoCorpo:
-      "Quando um documento novo entrar, aparece na lista a precisar de revisão — e o stock só muda depois de alguém confirmar as linhas.",
-    rever: (fornecedor: string) => `Rever ${fornecedor}`,
+  },
+
+  /**
+   * O documento de fornecedor — a fatia 1 da ADR 0021.
+   *
+   * ## As palavras são as de quem está à espera, não as do worker
+   *
+   * "a preparar" e não "a normalizar"; "a ler" e não "a extrair". Os dois
+   * segundos são os nomes das tarefas Celery, e são bons nomes **lá**. Num ecrã
+   * dizem a quem está com a fatura na mão que o produto fala consigo em jargão.
+   *
+   * ## Oito estados, oito frases, e nenhuma partilhada
+   *
+   * `ilegivel` e `erro` acabam os dois no mesmo sítio — alguém vai ter de ler o
+   * papel — e são a tentação de fundir numa frase só. Não se fundem porque o
+   * passo seguinte é diferente: num caso a fotografia é que não serve e vale a
+   * pena repetir, no outro o problema é nosso e repetir não muda nada.
+   */
+  documento: {
+    estados: {
+      aguardaCaptura: "à espera de páginas",
+      expirado: "expirado",
+      aNormalizar: "a preparar",
+      aExtrair: "a ler",
+      lido: "lido",
+      ilegivel: "ilegível",
+      erro: "não foi lido",
+      descartado: "descartado",
+    },
+
+    frases: {
+      aguardaCaptura:
+        "O documento está aberto e à espera de páginas. Junte as folhas uma a uma e diga quando acabou — até lá não vai para leitura.",
+      expirado:
+        "Passaram quinze minutos sem chegar nenhuma página, e o documento expirou. Nada se perdeu: abra outro e envie o ficheiro.",
+      aNormalizar:
+        "As páginas chegaram e estão a ser preparadas para leitura. Pode sair deste ecrã — o documento fica na lista.",
+      aExtrair: "As páginas estão preparadas e o modelo está a ler o documento.",
+      lido:
+        "O modelo leu o documento. O que ele leu está abaixo, só de leitura: nada entra no stock sem alguém confirmar as linhas.",
+      ilegivel:
+        "O modelo respondeu e o que devolveu não bate com uma fatura. Vale a pena fotografar outra vez, com a folha direita e sem sombra em cima dos números.",
+      erro:
+        "A leitura não chegou ao fim. A razão está abaixo, como o servidor a deu — repetir a fotografia não muda este caso.",
+      descartado:
+        "Este documento foi descartado e saiu da lista. O original fica guardado; o que deixou de existir é a entrada.",
+    },
+
+    origens: { upload: "ficheiro", capture: "fotografia" },
+
+    recusas: {
+      /**
+       * A frase para uma recusa **sem corpo JSON**, onde o `message` do
+       * `ApiError` é texto de diagnóstico (`"500 em /documents"`). Diz as duas
+       * coisas que quem está à frente do ecrã precisa: o que fazer, e que o
+       * problema não é do ficheiro que acabou de escolher.
+       */
+      semCorpo:
+        "O servidor respondeu com um erro sem explicação. Tente outra vez — se continuar, o problema é nosso e não do ficheiro.",
+    },
+
+    /** A ponte desktop→telemóvel, que **não** é desta fatia e não se promete. */
+    ponte: {
+      titulo: "Ler por código QR no telemóvel",
+      corpo:
+        "Ainda não está construído, e é aqui que vai ficar: o computador abre o documento, o telemóvel lê o código e junta-lhe as fotografias. Falta escolher a biblioteca que desenha o código, e essa decisão não é desta entrega. Até lá o caminho é o campo acima — com o PDF no computador, ou abrindo este mesmo ecrã no telemóvel, onde ele abre a câmara.",
+    },
+
+    zona: {
+      rotulo: "Ficheiro ou fotografia do documento",
+      rotuloParaSlot: "Juntar a página seguinte",
+      ajuda:
+        "PDF, JPEG ou PNG, até 11 MiB. Um PDF entra como um documento só, com as páginas que tiver — no máximo dez. O envio começa assim que escolher o ficheiro.",
+      ajudaDoSlot:
+        "Cada fotografia é uma página deste documento. Quando a última folha estiver enviada, diga que acabou.",
+      /**
+       * A frase que **substitui** a ajuda quando o campo está desactivado por ter
+       * chegado ao teto. Um controlo desactivado sem razão é um beco: quem olha
+       * não sabe se é um defeito ou um limite, e não sabe o que fazer a seguir.
+       */
+      noTeto: (limite: number) =>
+        `Este documento já tem as ${String(limite)} páginas que o limite permite. Diga que acabou, ou descarte-o e abra outro.`,
+      aEnviar: "A enviar o ficheiro…",
+      erroTitulo: "O ficheiro não foi aceite",
+    },
+
+    slot: {
+      abrir: "Documento de várias folhas",
+      aAbrir: "A abrir…",
+      explicacao:
+        "Uma fatura de duas folhas fotografa-se folha a folha: abre-se o documento, juntam-se as páginas e diz-se quando acabou. Um ficheiro só não precisa disto — o campo acima resolve-o num gesto.",
+    },
+
+    painel: {
+      titulo: "Este documento",
+      /** Os microrótulos da régua de campos: o mesmo tratamento do `<th>`. */
+      campoEstado: "Estado",
+      campoPaginas: "Páginas",
+      campoOrigem: "Entrou por",
+      campoQuem: "Aberto por",
+      campoQuando: "Aberto às",
+      limiteDePaginas: (limite: number) => `máximo ${String(limite)}`,
+      expiraAs: (hora: string) => `expira às ${hora}`,
+      terminei: "Acabei — não vêm mais páginas",
+      aFechar: "A fechar…",
+      descartar: "Descartar",
+      aDescartar: "A descartar…",
+      /**
+       * A desistência do polling, aos 3 minutos (ADR 0020, decisão 3). Diz-se
+       * **no ecrã**, porque a alternativa é um indicador aceso para sempre.
+       */
+      desistiuTitulo: "Deixei de perguntar",
+      desistiuCorpo:
+        "Passaram três minutos e o documento continua a ser preparado. O trabalho não se perdeu — quando ficar pronto aparece na lista de documentos, aqui abaixo. Recarregar esta página volta a perguntar.",
+      abrirOutro: "Abrir outro documento",
+      aCarregar: "A carregar o documento…",
+      erroAoCarregar: "Não foi possível carregar este documento",
+      naoExisteTitulo: "Este documento já não está aqui",
+      naoExisteCorpo:
+        "O endereço aponta para um documento que não existe neste estabelecimento, ou que foi apagado.",
+    },
+
+    paginas: {
+      titulo: "Páginas",
+      semPaginas: "Ainda não chegou nenhuma página a este documento.",
+      etiqueta: (posicao: number) => `Página ${String(posicao)}`,
+      /**
+       * O que se mostra em vez da imagem. **Não é um esqueleto**: um esqueleto
+       * promete que a imagem está a chegar, e ela não está — falta o
+       * rasterizador. Um esqueleto eterno é a mentira mais fácil de escrever.
+       */
+      aPreparar: "recebida, imagem a preparar",
+      porqueNaoHaImagem:
+        "Nenhuma página mostra imagem ainda, e isto não é um erro deste documento: falta no projecto o componente que converte uma página num ficheiro de imagem, e essa dependência está por escolher. As páginas estão guardadas — o que falta é a pré-visualização.",
+      alternativa: (posicao: number) => `Página ${String(posicao)} deste documento`,
+    },
+
+    ficheiros: {
+      titulo: "Ficheiros enviados",
+      semNome: "sem nome",
+      paginas: (quantas: number) =>
+        quantas === 1 ? "1 página" : `${String(quantas)} páginas`,
+    },
+
+    leitura: {
+      titulo: "O que o modelo leu",
+      pendente: "a ler",
+      soLeitura:
+        "Só de leitura, e de propósito: nada disto é a verdade deste estabelecimento. O que entra no stock é o que uma pessoa confirmar linha a linha, e essa revisão ainda não está construída.",
+      semLeitura: "Ainda não houve nenhuma tentativa de leitura deste documento.",
+      razaoTitulo: "A leitura não chegou ao fim",
+      confianca: "Confiança",
+      lidoA: (quando: string) => `lido a ${quando}`,
+      campos: {
+        fornecedor: "Fornecedor",
+        nif: "NIF",
+        tipo: "Tipo",
+        numero: "Número",
+        emitidaA: "Data",
+        adquirente: "NIF do adquirente",
+        total: "Total",
+      },
+      colunas: {
+        posicao: "#",
+        descricao: "Descrição",
+        quantidade: "Quantidade",
+        preco: "Preço",
+        iva: "IVA",
+        total: "Total",
+        confianca: "Confiança",
+      },
+      tabela: "Linhas que o modelo leu, na ordem em que estão no documento",
+      semLinhas:
+        "O modelo não devolveu nenhuma linha. Um documento sem linhas nunca pode dar entrada de mercadoria.",
+    },
+
+    lista: {
+      titulo: "Documentos deste estabelecimento",
+      tabela: "Documentos deste estabelecimento, os mais recentes primeiro",
+      aCarregar: "A carregar os documentos…",
+      erroAoCarregar: "Não foi possível carregar os documentos",
+      vazioTitulo: "Ainda não entrou nenhum documento",
+      vazioCorpo:
+        "Um documento aparece aqui quando tiver pelo menos uma página. Um documento aberto à espera de folhas e um documento descartado não aparecem — e é por isso que o painel acima existe.",
+      ver: (quando: string) => `Ver o documento de ${quando}`,
+      rodape: (quantos: number, total: number | null) => {
+        const contagem = quantos === 1 ? "1 documento" : `${String(quantos)} documentos`;
+        const de = total === null ? "" : ` de ${String(total)}`;
+        return `${contagem}${de}, os mais recentes primeiro.`;
+      },
+      colunas: {
+        documento: "Documento",
+        chegou: "Chegou",
+        paginas: "Páginas",
+        estado: "Estado",
+      },
+    },
   },
 
   rececao: {
