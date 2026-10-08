@@ -51,13 +51,52 @@ You need Docker, [uv](https://docs.astral.sh/uv/) and
 docker compose --env-file backend/.env -f docker/compose.yml up --build
 
 # or, for development: the backend on :8010 and the frontend on :5183
-cd backend  && uv sync && uv run manage.py migrate && uv run manage.py runserver 8010
+cd backend  && uv sync && uv run manage.py runserver 8010
 cd frontend && pnpm install && pnpm dev
 ```
 
 `backend/.env.example` lists every variable. There are **no defaults for
 secrets**: a missing `DJANGO_SECRET_KEY` or `DATABASE_URL` is a startup failure,
 not a silent fallback.
+
+### Migrations run as a different role
+
+The app connects as `stockflow_app`, which has `USAGE` on the schema and **not
+`CREATE`** — that is the point of the three roles (ADR 0006), and it means
+`manage.py migrate` fails with `permission denied for schema public`. This line
+used to say `uv run manage.py migrate` and it was wrong; the owner's URL is
+already in your `.env`, as `MIGRATION_DATABASE_URL`:
+
+```bash
+cd backend && DATABASE_URL="$(grep -m1 '^MIGRATION_DATABASE_URL=' .env | cut -d= -f2-)" \
+  uv run manage.py migrate
+```
+
+The shell wins over the file (`read_env` does not override the environment), and
+`runserver` keeps connecting as the app role, which is what you want. In Docker
+this is the one-shot `migrate` service, which is the only process that gets the
+owner's credential.
+
+### The asynchronous half needs a worker, and a fresh one
+
+Document rasterisation and invoice extraction are Celery tasks. Without a worker
+they are enqueued and nothing happens; **with a stale worker they are enqueued
+and silently discarded** — `Received unregistered task … The message has been
+ignored and discarded`, which is what a container built before these apps existed
+does with them. If a document stays in `a_normalizar` forever, that is the first
+thing to check:
+
+```bash
+cd backend && uv run celery -A config worker -l info     # on the host
+docker compose -f docker/compose.yml up --build worker   # or rebuild the container
+```
+
+Two things differ between the two. The page **image** needs libvips, which the
+Docker image installs (`libvips42`, pinned) and your host probably does not —
+without it the page is stored and stays without a preview, which the screen says
+out loud instead of spinning. And the bytes live in `MEDIA_ROOT`, which is
+`backend/media/` on the host and a shared volume in the stack: a host web process
+and a containerised worker **do not see the same files**. Pick one side.
 
 ## The gates
 
