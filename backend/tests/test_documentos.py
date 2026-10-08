@@ -81,7 +81,7 @@ from apps.purchasing.models import (
     InvoiceDocument,
     OrigemDoDocumento,
 )
-from apps.purchasing.rasterizacao import ImagemNormalizada
+from apps.purchasing.rasterizacao import ImagemNormalizada, RasterizadorIndisponivel
 from apps.purchasing.services import CODIGOS_DE_RECUSA_DE_DOCUMENTO
 from apps.purchasing.views import STATUS_DA_RECUSA_DE_DOCUMENTO
 from apps.shared.db import tenant_scope
@@ -748,12 +748,27 @@ def test_uma_sessao_sem_estabelecimento_activo_e_recusada(cenario: Cenario) -> N
 # ---------------------------------------------------------------------------
 # 9. Os bytes da imagem
 # ---------------------------------------------------------------------------
-def test_a_imagem_de_uma_pagina_sem_normalizacao_da_404(cenario: Cenario) -> None:
-    """Sem rasterizador não há imagem, e um 404 é a resposta honesta.
+def test_a_imagem_de_uma_pagina_sem_normalizacao_da_404(
+    cenario: Cenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uma página sem normalização dá 404, e a ausência é **encenada**.
 
-    É o estado de **hoje** em todo o projecto: a fronteira da rasterização levanta
-    (`apps/purchasing/rasterizacao.py`) e nenhuma página tem `image_path`.
+    O `monkeypatch` é a correcção de um defeito deste teste, não um adorno: ele
+    media a ausência de rasterizador **do ambiente** — passava num portátil sem a
+    libvips e falhava no CI, que a instala de propósito. Um teste cujo veredicto
+    depende do que está instalado na máquina não afirma nada sobre o código.
+
+    O que se afirma é o que o nome diz: **sem `image_path`, 404**. Vale também
+    para uma posição que não existe, e os dois casos têm de ser indistinguíveis
+    de fora.
     """
+    import apps.purchasing.tasks as tarefas
+
+    def sem_rasterizador(**_: object) -> ImagemNormalizada:
+        raise RasterizadorIndisponivel("encenado por este teste")
+
+    monkeypatch.setattr(tarefas, "rasterizar", sem_rasterizador)
+
     cliente = _cliente(cenario.ana, cenario.alfa.id)
     documento_id = _criar(cliente, PDF_DE_UMA_PAGINA).json()["id"]
 
@@ -802,13 +817,26 @@ def test_a_imagem_normalizada_sai_inline_com_nosniff(
     assert b"".join(imagem.streaming_content) == b"RIFF-nao-e-um-webp-a-serio"
 
 
-def test_a_tarefa_de_normalizacao_nao_rebenta_sem_rasterizador(cenario: Cenario) -> None:
+def test_a_tarefa_de_normalizacao_nao_rebenta_sem_rasterizador(
+    cenario: Cenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Sem rasterizador a tarefa devolve um estado e não uma excepção.
 
     E a página fica **sem** `normalized_at`: nada mente, não há uma coluna de
     "normalizada" escrita sem imagem por baixo.
+
+    A ausência é **encenada** e não ambiental, pela razão escrita no teste do 404:
+    este media o que estava instalado na máquina, e por isso passava sem a libvips
+    e falhava com ela. O ramo que interessa — a tarefa a traduzir uma dependência
+    em falta num estado — existe nos dois mundos e tem de ser testado nos dois.
     """
+    import apps.purchasing.tasks as tarefas
     from apps.purchasing.tasks import normalizar_pagina
+
+    def sem_rasterizador(**_: object) -> ImagemNormalizada:
+        raise RasterizadorIndisponivel("encenado por este teste")
+
+    monkeypatch.setattr(tarefas, "rasterizar", sem_rasterizador)
 
     cliente = _cliente(cenario.ana, cenario.alfa.id)
     documento_id = _criar(cliente, PDF_DE_UMA_PAGINA).json()["id"]
