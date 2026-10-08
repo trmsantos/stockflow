@@ -55,13 +55,16 @@ de documento, e o rasterizador pela libvips do sistema. **As outras duas apps de
 cascas** — `catalog`, `inventory`, `recipes` e `notifications` têm zero models —, logo o Stock e o
 Painel continuam a mostrar fixtures.
 
-**Cinco decisões à espera do dono, e nenhuma é técnica:** a biblioteca de QR para a ponte
+**Quatro decisões à espera do dono, e nenhuma é técnica:** a biblioteca de QR para a ponte
 desktop→telemóvel; a quota de armazenamento por estabelecimento (hoje não há teto e um membro
-autenticado escreve ~13 GiB/h); o consumidor da outbox e o `beat`, que é o que faz a divergência
-deliberada ao CLAUDE.md ("efeitos secundários via outbox") deixar de ser necessária e desbloqueia o
-email de convite; as três perguntas da fatia 1 (páginas máximas, retenção do original, quem apaga um
-documento); e as do ledger, das quais a mais cara é **quanto vale a mercadoria que entra por guia de
-remessa sem preço** — sem ela a fatia 3 não tem migração.
+autenticado escreve ~13 GiB/h); as três perguntas da fatia 1 (páginas máximas, retenção do original,
+quem apaga um documento); e as do ledger, das quais a mais cara é **quanto vale a mercadoria que
+entra por guia de remessa sem preço** — sem ela a fatia 3 não tem migração.
+
+Eram cinco. **O consumidor da outbox e o `beat` existem desde 2026-10-08**, e deixaram de ser uma
+escolha para passarem a ser uma correcção: a divergência ao CLAUDE.md ("efeitos secundários via
+outbox") cobrou o preço num worker desactualizado que recebeu duas tarefas e as descartou em
+silêncio. O email de convite continua por escrever, mas já não está bloqueado por mecanismo nenhum.
 
 **O passo 8 foi fechado sem PASS independente da última versão, e isso é uma decisão consciente.**
 O `security-reviewer` correu **quatro** vezes e deu FAIL nas quatro. As duas primeiras rondas acharam
