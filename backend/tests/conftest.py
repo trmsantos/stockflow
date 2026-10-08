@@ -108,6 +108,19 @@ def _restaura_os_environ() -> Iterator[None]:
         os.environ.update(snapshot)
 
 
+@pytest.fixture(autouse=True)
+def _media_isolado(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Um `MEDIA_ROOT` por teste, numa pasta temporária.
+
+    O `MEDIA_ROOT` do `base.py` é `backend/media/` (ADR 0020, decisão 4: um
+    volume partilhado pelo `backend` e pelo `worker`). Sem esta fixture, o
+    primeiro teste que aceita um upload escreve dentro do repositório — e fica
+    lá, porque nada o apaga. Autouse e não por teste: o esquecimento falha no
+    lado seguro, e um teste que **queira** medir o caminho real não existe.
+    """
+    monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path / "media"))
+
+
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ambiente determinístico para reimportar módulos de settings."""

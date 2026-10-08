@@ -247,7 +247,20 @@ PY
   else skip semgrep "uv tool install semgrep"; fi
 
   log "Padrões perigosos (grep)"
-  danger=$(grep -rnE "dangerouslySetInnerHTML|localStorage\.(set|get)Item\(['\"](token|jwt|access|refresh)|VITE_[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)" src 2>/dev/null || true)
+  # O segundo `grep` descarta **linhas de comentário**, e é uma correcção com
+  # história: a 2026-10-07 este gate deu FAIL com dois HIGH que eram as duas
+  # frases de dois catálogos de copy a explicar **porque é que o
+  # `dangerouslySetInnerHTML` não se usa** neste produto. Um varredor que acusa a
+  # prosa que documenta a proibição ensina a não documentar, e um FAIL que
+  # ninguém acredita é pior do que não ter gate.
+  #
+  # O filtro é sobre o **início** da linha (`// `, ` * `, `/* `, `# `), logo o que
+  # continua apanhado é tudo o que é código: um `<div dangerouslySetInnerHTML=`
+  # indentado, uma chamada com comentário à direita, e uma string literal. O
+  # formato do `grep -rn` é `ficheiro:linha:conteúdo`, e é por isso que o padrão
+  # salta o prefixo antes de olhar para a indentação.
+  danger=$(grep -rnE "dangerouslySetInnerHTML|localStorage\.(set|get)Item\(['\"](token|jwt|access|refresh)|VITE_[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)" src 2>/dev/null \
+    | grep -vE ':[0-9]+:[[:space:]]*(//|\*|/\*|#)' || true)
   if [[ -n "$danger" ]]; then note "  HIGH padrões perigosos:"; echo "$danger" | head -20 | sed 's/^/    /' | tee -a "$SUMMARY"; count_sev 0 "$(echo "$danger" | wc -l)" 0 0; else note "  ok"; fi
 
   popd >/dev/null

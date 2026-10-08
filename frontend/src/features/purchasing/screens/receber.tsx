@@ -1,5 +1,5 @@
 import { Link, useSearch } from "@tanstack/react-router";
-import { Camera, Search, Truck } from "lucide-react";
+import { FilePlus2, Search, Truck } from "lucide-react";
 
 import { ErroAoCarregar } from "@/components/erro-ao-carregar";
 import { EstadoVazio } from "@/components/estado-vazio";
@@ -114,8 +114,8 @@ export function EcraDeReceber() {
               >
                 <Button asChild>
                   <Link to="/receber/fotografar" search={true}>
-                    <Camera aria-hidden="true" />
-                    {textos.comuns.fotografarFatura}
+                    <FilePlus2 aria-hidden="true" />
+                    {textos.comuns.novoDocumento}
                   </Link>
                 </Button>
               </EstadoVazio>
@@ -167,8 +167,8 @@ export function EcraDeReceber() {
       >
         <Button asChild>
           <Link to="/receber/fotografar" search={true}>
-            <Camera aria-hidden="true" />
-            {textos.comuns.fotografarFatura}
+            <FilePlus2 aria-hidden="true" />
+            {textos.comuns.novoDocumento}
           </Link>
         </Button>
       </div>

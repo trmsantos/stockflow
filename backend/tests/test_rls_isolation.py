@@ -802,6 +802,16 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^convites$",
         "api/v1/^convites/(?P<pk>[^/.]+)/reenviar$",
         "api/v1/^convites/(?P<pk>[^/.]+)/revogar$",
+        # As cinco rotas de `/documents` (ADR 0021, fatia 1). Entram **todas** no
+        # lado com âmbito, e é esse o gate principal daquela feature: a adenda 2
+        # da ADR 0020 revogou a ponte com token anónimo, logo o
+        # `fora_do_admin` acima **não cresceu em nenhuma entrada** e estas
+        # aparecem aqui, que é o default.
+        "api/v1/^documents$",
+        "api/v1/^documents/(?P<pk>[^/.]+)$",
+        "api/v1/^documents/(?P<pk>[^/.]+)/closing$",
+        "api/v1/^documents/(?P<pk>[^/.]+)/files$",
+        "api/v1/^documents/(?P<pk>[^/.]+)/pages/(?P<posicao>[0-9]{1,4})/image$",
         "api/v1/estabelecimento",
         "api/v1/menu",
         "api/v1/menu/rotas",

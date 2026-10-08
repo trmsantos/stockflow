@@ -28,6 +28,12 @@ api_v1_patterns = [
     # nossas para lhes pôr um atributo. A lista fechada das dispensas está em
     # `tests/test_rls_isolation.py` e falha nos dois sentidos.
     path("", include("apps.accounts.urls")),
+    # O recurso `/documents` (ADR 0021, fatia 1). Com âmbito, como tudo o que não
+    # declara o contrário: nenhuma destas views leva `tenant_scope_exempt`, e é
+    # essa ausência que as torna normais. A lista fechada das dispensas em
+    # `tests/test_rls_isolation.py` **não cresce** com esta feature, e é o gate
+    # principal da ADR 0020 (adenda 2, gate 3).
+    path("", include("apps.purchasing.urls")),
 ]
 
 if settings.API_DOCS_ENABLED:

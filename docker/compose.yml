@@ -195,6 +195,22 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
+    # O `MEDIA_ROOT` (ADR 0021), em volume e **partilhado com o worker**.
+    #
+    # Duas razões, e as duas são de correcção e não de arrumação. O contentor é
+    # `read_only: true` e o `MEDIA_ROOT` é `/app/media`, logo sem esta montagem o
+    # primeiro upload apanha um `OSError` no `mkdir` e sai 500 — a feature
+    # inteira está partida em `docker compose up` e nenhum teste o pode ver,
+    # porque a fixture do `conftest.py` redirige o `MEDIA_ROOT` para um `tmp_path`.
+    # E o `backend` e o `worker` são contentores com sistemas de ficheiros
+    # separados: sem o **mesmo** volume nos dois, o worker nunca lê os bytes que o
+    # pedido escreveu, e a rasterização fica partida por construção.
+    #
+    # O `read_only: true` fica: um volume montado é escrevível mesmo num rootfs
+    # read-only, que é precisamente o ponto — escreve-se onde é para escrever e
+    # em mais lado nenhum.
+    volumes:
+      - media:/app/media
     read_only: true
     tmpfs:
       - /tmp
@@ -224,10 +240,18 @@ services:
       REDIS_URL: redis://redis:6379
       DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
       ALLOWED_HOSTS: localhost
-      CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
-    depends_on:
-      db: { condition: service_healthy }
-      redis: { condition: service_healthy }
+    # O `MEDIA_ROOT` (ADR 0021), em volume e **partilhado com o backend**.
+    #
+    # Duas razões, e as duas são de correcção e não de arrumação. É o **mesmo** volume do
+    # `backend`, e tem de ser: são contentores com sistemas de ficheiros
+    # separados, logo sem isto o worker não lê os bytes que o pedido escreveu e a
+    # rasterização está partida por construção.
+    #
+    # O `read_only: true` fica: um volume montado é escrevível mesmo num rootfs
+    # read-only, que é precisamente o ponto — escreve-se onde é para escrever e
+    # em mais lado nenhum.
+    volumes:
+      - media:/app/media
     read_only: true
     tmpfs:
       - /tmp
@@ -300,3 +324,8 @@ services:
 
 volumes:
   pgdata:
+  #: Os documentos de fornecedor (ADR 0021). Volume e não bind-mount: os bytes
+  #: não pertencem à árvore do repositório, e um bind-mount da fonte punha
+  #: faturas com NIF e morada dentro do directório que o `COPY backend/ ./` da
+  #: imagem lê.
+  media:

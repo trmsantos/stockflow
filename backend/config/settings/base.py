@@ -311,7 +311,17 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.UserRateThrottle",
         "rest_framework.throttling.AnonRateThrottle",
     ],
-    "DEFAULT_THROTTLE_RATES": {"user": "600/min", "anon": "60/min"},
+    # O balde `documentos` é o das **escritas** de `/api/v1/documents` (ADR 0021,
+    # decisão 9): cada página aceite custa uma rasterização e uma chamada a LLM a
+    # jusante, e é o primeiro sítio onde o limite de custo do SECURITY.md §6
+    # aterra. 20/min é o número da ADR 0020 e é folgado para o caso real — dez
+    # páginas é o teto de um documento —, mas não para um script. O teto de custo
+    # a sério continua a ser o teto de páginas por documento.
+    "DEFAULT_THROTTLE_RATES": {
+        "user": "600/min",
+        "anon": "60/min",
+        "documentos": "20/min",
+    },
     # Nº de proxies de confiança à frente do Django. É o que decide a chave do
     # AnonRateThrottle: sem esta setting o DRF usa o `X-Forwarded-For` cru como
     # identidade (`BaseThrottle.get_ident`), e o limite de anónimos contorna-se
@@ -391,6 +401,14 @@ SPECTACULAR_SETTINGS = {
     "ENUM_NAME_OVERRIDES": {
         "PapelEnum": "apps.accounts.models.Papel",
         "RotaIdEnum": "apps.accounts.models.RotaDeMenu",
+        # Os três enums do recurso `/documents` (ADR 0021). Sem estas entradas o
+        # drf-spectacular derivava o nome do **campo**, e dois campos chamados
+        # `state` com conjuntos de valores diferentes — o do documento e o da
+        # extração — dão dois componentes com o mesmo nome, que é um warning e
+        # portanto exit 1 no `spectacular --fail-on-warn` do `pnpm gen:api`.
+        "OrigemDoDocumentoEnum": "apps.purchasing.models.OrigemDoDocumento",
+        "EstadoDoDocumentoEnum": "apps.purchasing.models.EstadoDoDocumento",
+        "EstadoDaLeituraEnum": "apps.purchasing.models.EstadoDaLeitura",
     },
 }
 
@@ -402,9 +420,15 @@ SPECTACULAR_SETTINGS = {
 #   * FILE_UPLOAD_MAX_MEMORY_SIZE só decide a partir de que tamanho o ficheiro
 #     passa de memória para um temporário em disco. Acima do limite o Django
 #     continua a aceitar o upload, só o escreve no disco.
-# O teto real de uma foto de fatura são duas coisas que não estão aqui:
-# `client_max_body_size` no proxy (passo 6 do kickoff) e um validador de
-# tamanho/MIME no serializer do upload (passo 3 em diante).
+# O teto real de uma foto de fatura são duas coisas que não estão aqui, e as duas
+# **já existem** desde 2026-10-07 (esta nota dizia "passo 6 do kickoff" e "passo 3
+# em diante", e um marcador de futuro obsoleto faz o leitor seguinte concluir que
+# o controlo falta):
+#   * `request_body { max_size 12MB }` no `docker/caddy/proxy.Caddyfile`;
+#   * o `TAMANHO_MAXIMO_DO_FICHEIRO` do `apps/purchasing/ficheiros.py`, a 11 MiB
+#     e **estritamente abaixo** do do proxy, com um teste que lê o Caddyfile e
+#     afirma essa ordem — quem recusa primeiro tem de ser quem tem uma frase.
+#     Esse módulo valida também o tipo, pelos bytes e não pelo `content_type`.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
@@ -524,6 +548,42 @@ CELERY_ENABLE_UTC = True
 # ---------------------------------------------------------------------------
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# ---------------------------------------------------------------------------
+# Ficheiros de media: as imagens das faturas (ADR 0020, decisão 4)
+# ---------------------------------------------------------------------------
+# `MEDIA_ROOT` é um volume partilhado pelo `backend` e pelo `worker` no compose:
+# o pedido escreve o original, o worker escreve a imagem normalizada. O gatilho
+# para trocar por S3/MinIO está escrito na ADR 0020 — mais de uma réplica web, ou
+# backups que tenham de incluir os blobs — e é `STORAGES`, não código.
+MEDIA_ROOT = BASE_DIR / "media"
+
+# **`MEDIA_URL` fica sem valor, e é deliberado.** O proxy nunca encaminha
+# `/media/` (há um gate que o afirma com `curl -I`), logo um caminho emitido por
+# um `.url()` acidental seria um link para 404 — ou, pior, um link que um dia
+# alguém "corrige" encaminhando o directório inteiro. Com `None`, o
+# `FileSystemStorage.url()` **levanta** em vez de o emitir, que é o
+# comportamento que se quer de uma afordância que não deve existir.
+#
+# Quem serve as imagens é uma view com âmbito (`GET /documents/<id>/pages/<n>/
+# image`), com `inline`, `nosniff` e `Cache-Control: private` — ADR 0021,
+# decisão 9.
+MEDIA_URL = None
+
+# ---------------------------------------------------------------------------
+# Extração de faturas (ADR 0021, fatia 1)
+# ---------------------------------------------------------------------------
+# O nome do modelo que lê um documento. **Vazio por omissão, e não é um
+# esquecimento**: sem valor, a fronteira de `apps/agents/modelo.py` levanta uma
+# excepção clara e a tarefa grava a tentativa com `status=erro` e uma razão
+# legível. Não há cliente de LLM, nem chave de API, nem rede em nenhum ponto
+# deste repositório — ligar a extração a sério é esta definição, uma credencial
+# e um prompt.
+#
+# Não é lido do ambiente de propósito: uma variável de ambiente que ninguém
+# consome é uma promessa de configuração que não existe. Passa a `env(...)` no
+# dia em que houver cliente.
+AGENTS_EXTRACTION_MODEL = ""
 
 # ---------------------------------------------------------------------------
 # Logging estruturado (ARCHITECTURE.md §8) — ver `config/log.py`.

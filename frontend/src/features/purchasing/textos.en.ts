@@ -28,7 +28,7 @@ import type { PT } from "./textos.pt";
 export const EN: typeof PT = {
   comuns: {
     receber: "Receive",
-    fotografarFatura: "Photograph the invoice",
+    novoDocumento: "New document",
     verAsRececoes: "View goods receipts",
     aGuardar: "Saving…",
     semNumero: "no number",
@@ -69,9 +69,8 @@ export const EN: typeof PT = {
   },
 
   fotografar: {
-    semCamaraTitulo: "There is no camera on this screen yet",
-    semCamaraCorpo:
-      "On a phone this button opens the camera and the photograph is attached to the document. Here there is no camera and no document reading: the goods receipt waiting for review was filled in by hand, so that the review can be walked end to end — which is the part that decides whether stock changes.",
+    pergunta:
+      "The supplier document comes in here — the PDF on a computer, the photograph on a phone.",
     porOndeEntra: "How goods come in",
     faturaEnfase: "Invoice or simplified invoice",
     faturaFim:
@@ -82,11 +81,164 @@ export const EN: typeof PT = {
     semDocumentoEnfase: "No document at all",
     semDocumentoFim:
       ", or one written by hand at the market: it still has to be entered, and the document shows up later.",
-    aProcurar: "Looking for goods receipts to review…",
-    semRevisaoTitulo: "There is nothing waiting for review",
-    semRevisaoCorpo:
-      "When a new document arrives, it shows up in the list needing review — and stock only changes once someone confirms the lines.",
-    rever: (fornecedor: string) => `Review ${fornecedor}`,
+  },
+
+  documento: {
+    estados: {
+      aguardaCaptura: "waiting for pages",
+      expirado: "expired",
+      aNormalizar: "preparing",
+      aExtrair: "reading",
+      lido: "read",
+      ilegivel: "unreadable",
+      erro: "not read",
+      descartado: "discarded",
+    },
+
+    frases: {
+      aguardaCaptura:
+        "The document is open and waiting for pages. Add the sheets one by one and say when you are done — until then it does not go for reading.",
+      expirado:
+        "Fifteen minutes went by without a single page arriving, and the document expired. Nothing was lost: open another one and send the file.",
+      aNormalizar:
+        "The pages arrived and are being prepared for reading. You can leave this screen — the document stays in the list.",
+      aExtrair: "The pages are prepared and the model is reading the document.",
+      lido:
+        "The model read the document. What it read is below, read-only: nothing enters stock until someone confirms the lines.",
+      ilegivel:
+        "The model answered and what it returned does not look like an invoice. It is worth taking the photograph again, with the sheet straight and no shadow over the numbers.",
+      erro:
+        "The reading did not finish. The reason is below, exactly as the server gave it — taking the photograph again does not change this case.",
+      descartado:
+        "This document was discarded and left the list. The original is kept; what stopped existing is the entry.",
+    },
+
+    origens: { upload: "file", capture: "photograph" },
+
+    recusas: {
+      semCorpo:
+        "The server answered with an error and no explanation. Try again — if it keeps happening, the problem is ours and not the file's.",
+    },
+
+    ponte: {
+      titulo: "Read a QR code on a phone",
+      corpo:
+        "Not built yet, and this is where it will go: the computer opens the document, the phone reads the code and adds the photographs to it. The library that draws the code still has to be chosen, and that decision is not part of this delivery. Until then the way in is the field above — with the PDF on a computer, or by opening this same screen on a phone, where it opens the camera.",
+    },
+
+    zona: {
+      rotulo: "File or photograph of the document",
+      rotuloParaSlot: "Add the next page",
+      ajuda:
+        "PDF, JPEG or PNG, up to 11 MiB. A PDF comes in as a single document with as many pages as it has — ten at most. Sending starts as soon as you choose the file.",
+      ajudaDoSlot:
+        "Each photograph is one page of this document. Once the last sheet is sent, say that you are done.",
+      noTeto: (limite: number) =>
+        `This document already has the ${String(limite)} pages the limit allows. Say that you are done, or discard it and open another.`,
+      aEnviar: "Sending the file…",
+      erroTitulo: "The file was not accepted",
+    },
+
+    slot: {
+      abrir: "Multi-sheet document",
+      aAbrir: "Opening…",
+      explicacao:
+        "An invoice of two sheets is photographed sheet by sheet: open the document, add the pages, and say when you are done. A single file does not need this — the field above handles it in one gesture.",
+    },
+
+    painel: {
+      titulo: "This document",
+      campoEstado: "State",
+      campoPaginas: "Pages",
+      campoOrigem: "Came in as",
+      campoQuem: "Opened by",
+      campoQuando: "Opened at",
+      limiteDePaginas: (limite: number) => `${String(limite)} max`,
+      expiraAs: (hora: string) => `expires at ${hora}`,
+      terminei: "I am done — no more pages",
+      aFechar: "Closing…",
+      descartar: "Discard",
+      aDescartar: "Discarding…",
+      desistiuTitulo: "I stopped asking",
+      desistiuCorpo:
+        "Three minutes went by and the document is still being prepared. The work was not lost — when it is ready it shows up in the document list below. Reloading this page asks again.",
+      abrirOutro: "Open another document",
+      aCarregar: "Loading the document…",
+      erroAoCarregar: "Could not load this document",
+      naoExisteTitulo: "This document is no longer here",
+      naoExisteCorpo:
+        "The address points to a document that does not exist in this establishment, or that was deleted.",
+    },
+
+    paginas: {
+      titulo: "Pages",
+      semPaginas: "No page has reached this document yet.",
+      etiqueta: (posicao: number) => `Page ${String(posicao)}`,
+      aPreparar: "received, image being prepared",
+      porqueNaoHaImagem:
+        "No page shows an image yet, and this is not a fault of this document: the project is missing the component that turns a page into an image file, and that dependency has not been chosen. The pages are stored — what is missing is the preview.",
+      alternativa: (posicao: number) => `Page ${String(posicao)} of this document`,
+    },
+
+    ficheiros: {
+      titulo: "Files sent",
+      semNome: "no name",
+      paginas: (quantas: number) => (quantas === 1 ? "1 page" : `${String(quantas)} pages`),
+    },
+
+    leitura: {
+      titulo: "What the model read",
+      pendente: "reading",
+      soLeitura:
+        "Read-only, and on purpose: none of this is the truth about this establishment. What enters stock is what a person confirms line by line, and that review is not built yet.",
+      semLeitura: "There has been no reading attempt on this document yet.",
+      razaoTitulo: "The reading did not finish",
+      confianca: "Confidence",
+      lidoA: (quando: string) => `read at ${quando}`,
+      campos: {
+        fornecedor: "Supplier",
+        nif: "NIF",
+        tipo: "Type",
+        numero: "Number",
+        emitidaA: "Date",
+        adquirente: "Customer NIF",
+        total: "Total",
+      },
+      colunas: {
+        posicao: "#",
+        descricao: "Description",
+        quantidade: "Quantity",
+        preco: "Price",
+        iva: "VAT",
+        total: "Total",
+        confianca: "Confidence",
+      },
+      tabela: "Lines the model read, in the order they appear on the document",
+      semLinhas:
+        "The model returned no lines. A document without lines can never bring goods into stock.",
+    },
+
+    lista: {
+      titulo: "Documents in this establishment",
+      tabela: "Documents in this establishment, most recent first",
+      aCarregar: "Loading the documents…",
+      erroAoCarregar: "Could not load the documents",
+      vazioTitulo: "No document has come in yet",
+      vazioCorpo:
+        "A document shows up here once it has at least one page. A document that is open waiting for sheets and a discarded document do not show up — and that is why the panel above exists.",
+      ver: (quando: string) => `View the document from ${quando}`,
+      rodape: (quantos: number, total: number | null) => {
+        const contagem = quantos === 1 ? "1 document" : `${String(quantos)} documents`;
+        const de = total === null ? "" : ` of ${String(total)}`;
+        return `${contagem}${de}, most recent first.`;
+      },
+      colunas: {
+        documento: "Document",
+        chegou: "Arrived",
+        paginas: "Pages",
+        estado: "State",
+      },
+    },
   },
 
   rececao: {

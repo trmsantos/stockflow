@@ -89,6 +89,36 @@ jobs:
             "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname='stockflow_app'" \
             | grep -qx f
 
+      - name: libvips (o rasterizador de páginas)
+        # **A libvips tem de estar aqui ou o rasterizador não é testado por
+        # ninguém.** Ela vem da camada de apt do `docker/backend.Dockerfile`, e
+        # sem a mesma biblioteca no runner os testes que renderizam uma página
+        # saltam por falta de dependência — um `skip` verde é indistinguível de
+        # um teste que passa, e era assim que a única dependência nativa deste
+        # projecto ficava sem gate.
+        #
+        # Só a biblioteca: o `libvips-tools` traz executáveis que este código não
+        # usa (o `pyvips` liga-se à biblioteca, e não lança processo nenhum —
+        # ver o docstring do `apps/purchasing/rasterizacao.py`).
+        #
+        # **Sem pino, e a versão não é a de produção.** Medido na primeira
+        # corrida: o runner resolve `libvips42` para `libvips42t64` (a renomeação
+        # do `time_t` de 64 bits do Ubuntu 24.04) na versão **8.15.1**, enquanto a
+        # imagem corre a **8.14.1** do Debian 12, pinada no
+        # `docker/backend.Dockerfile`. O gate prova a API numa versão e produção
+        # corre outra.
+        #
+        # Não se pina aqui porque o Ubuntu não tem a 8.14.1, e o que cobre a
+        # diferença é uma verificação à mão: a mesma função foi exercitada num
+        # contentor com os pinos de produção antes de ser escrita (ver a adenda do
+        # rasterizador na ADR 0021). O campo onde a diferença morde é o `strip` do
+        # `webpsave`, que a 8.15 deprecou em favor do `keep` — funciona nas duas
+        # hoje. **O dia em que isto doer:** correr os testes do backend dentro da
+        # imagem, que é a única forma de a versão ser a mesma.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libvips42
+
       - working-directory: backend
         run: uv sync --frozen
 

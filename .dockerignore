@@ -54,3 +54,10 @@ docs
 # imagem de produção. O único `.md` sob `backend/` era exactamente esse, logo a
 # re-inclusão não protegia nada e só desfazia uma exclusão.
 backend/tests
+
+# O `MEDIA_ROOT` de desenvolvimento (ADR 0021). O `COPY backend/ ./` levaria as
+# faturas que alguém carregou no `runserver` para **dentro da imagem de
+# produção** — que é, à letra, o incidente que o `SECURITY.md` §8 regista (o
+# `backend/.env` dentro da imagem que servia pedidos). Em produção o `MEDIA_ROOT`
+# é um volume e nunca uma camada da imagem.
+backend/media

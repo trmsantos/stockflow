@@ -66,6 +66,9 @@ const dinheiroComSinal = new Intl.NumberFormat(LOCALE, {
 
 const inteiro = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 0 });
 
+/** Uma casa decimal: o tamanho de um ficheiro em MiB, e mais nada por agora. */
+const umaCasa = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 1 });
+
 const taxa = new Intl.NumberFormat(LOCALE, {
   style: "percent",
   maximumFractionDigits: 1,
@@ -183,6 +186,30 @@ export function formatPercentPoints(points: number): string {
 /** `360 un` — para unidades que não se contam em frações. */
 export function formatCount(value: string | number, unit: string): string {
   return `${inteiro.format(Number(value))}${NBSP}${unit}`;
+}
+
+/**
+ * `11,4 MiB` · `840 KiB` — o tamanho de um ficheiro enviado.
+ *
+ * **MiB e não MB**, e isso não é pedantismo: o teto do serializer são
+ * 11 × 1024 × 1024 bytes e a recusa dele diz "11 MiB". Um ecrã que mostrasse
+ * "11,9 MB" ao lado dessa frase parecia estar a contradizer-se, e quem está a
+ * tentar enviar uma fotografia grande ficava sem saber qual dos dois acreditar.
+ *
+ * Abaixo de 1 MiB arredonda-se ao KiB inteiro (um ficheiro de fatura nunca tem
+ * um tamanho interessante na terceira casa) e nunca desce a zero: `0 KiB` para
+ * um ficheiro que existe é um número errado, e um ficheiro de zero bytes é
+ * recusado antes de chegar aqui.
+ *
+ * A unidade fica **sempre visível**, como em todo o número deste produto, e com
+ * o espaço inquebrável do resto do ficheiro.
+ */
+const KIB = 1024;
+const MIB = 1024 * 1024;
+
+export function formatFileSize(bytes: number): string {
+  if (bytes >= MIB) return `${umaCasa.format(bytes / MIB)}${NBSP}MiB`;
+  return `${inteiro.format(Math.max(1, Math.round(bytes / KIB)))}${NBSP}KiB`;
 }
 
 /** `29/09/2026` */

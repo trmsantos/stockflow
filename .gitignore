@@ -14,3 +14,13 @@ staticfiles/
 # revistos; os `.mo` são binários cujo diff ninguém lê, e geram-se do `.po` com
 # `msgfmt`. Quem apanha um `.mo` esquecido é o `backend/tests/test_i18n.py`.
 *.mo
+
+# As imagens e os PDF de faturas que entram pelo `/documents` (ADR 0021).
+#
+# Fora do Docker — que é como este repositório se desenvolve — o `MEDIA_ROOT` é
+# `backend/media/`, e um upload de ensaio com uma fatura a sério escreve lá um
+# ficheiro que traz **o NIF, a morada e a assinatura** do documento. Dados
+# pessoais em história de git não se tiram baratos, e nenhum gate deste
+# repositório os veria: o `gitleaks` procura padrões de segredo, e um JPEG de uma
+# fatura não casa com nenhum.
+backend/media/
