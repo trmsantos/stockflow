@@ -22,13 +22,26 @@ dependência inverte-se — o `agents` registra-se aqui no arranque
 objecto cujo tipo conhece e cuja classe não importa. É a forma do adaptador, com
 o grafo de imports a apontar para o lado que já estava declarado.
 
-**O mecanismo certo era o evento.** Um `DocumentoFechado` na outbox resolvia isto
-sem porto nenhum: o `purchasing` publicava, o `handlers.py` do `agents`
-subscrevia, e nenhum dos dois conhecia o outro. Não há consumidor da outbox (ADR
-0010, ADR 0020), logo um evento hoje significa que a extração **nunca corre**. A
-condição para trocar o porto pelo evento é exactamente essa: **existir um
-consumidor da outbox**. Enquanto não existir, é isto — um slot, com um nome, num
-sítio.
+## O que o evento levou, e o que o porto ficou a fazer
+
+Este ficheiro dizia, até 2026-10-08, que *"o mecanismo certo era o evento"* e que
+a condição para trocar o porto por ele era **existir um consumidor da outbox**.
+Existe (`apps/shared/consumidor.py`), e a troca está feita na metade em que fazia
+sentido:
+
+* **`pedir` saiu.** Era um aviso — *"este documento está pronto, lê-o"* —, e um
+  aviso não precisa de saber quem o ouve. O `purchasing` publica
+  `DocumentoFechado` (`events.py`) e o `apps/agents/handlers.py` subscreve-o.
+  Nenhum dos dois conhece o outro, e a aresta de import que sobra é a mais fraca
+  possível: `apps.purchasing.events`, um DTO sem dependências, em vez do `api.py`
+  inteiro;
+* **`leituras` ficou**, e não é inconsistência. É uma **pergunta** com resposta
+  síncrona: o `DocumentoOut` precisa da última leitura de cada documento no
+  instante em que serve a resposta HTTP, e um evento não responde a perguntas. É
+  aqui que a inversão de dependência continua a ser necessária, e é só por ela
+  que este porto continua a existir.
+
+Se nada se registar, o porto é `None` — ver o parágrafo seguinte.
 
 Se nada se registar, o porto é `None`: o `purchasing` serve `extraction: null` e
 um estado sem a metade da extração. Falha fechado e não levanta — um
@@ -145,19 +158,16 @@ class LeituraDeDocumento:
 class FronteiraDaExtracao(Protocol):
     """O que o `purchasing` precisa do módulo que fala com o modelo.
 
-    Duas operações, as duas direcções do mesmo trabalho:
+    **Uma** operação, desde que o `pedir` saiu para a outbox (ver o topo do
+    ficheiro): `leituras` — a última leitura **de cada** documento pedido, em
+    lote. Em lote porque a alternativa é uma query por linha na listagem, que é o
+    N+1 clássico a atravessar uma fronteira de módulo.
 
-    * `pedir` — enfileira a extração de um documento. É chamada de dentro de um
-      serviço, e a implementação tem de usar `transaction.on_commit`: enfileirar
-      antes do commit é publicar um facto que pode desaparecer;
-    * `leituras` — a última leitura **de cada** documento pedido, em lote. Em
-      lote porque a alternativa é uma query por linha na listagem, que é o N+1
-      clássico a atravessar uma fronteira de módulo.
+    Um `Protocol` de um método só continua a valer a pena: o que ele compra não é
+    a contagem de métodos, é o `purchasing` não importar o `agents` — e a
+    substituição por um cliente HTTP no dia em que o `agents` sair para serviço
+    próprio (ARCHITECTURE.md §7) fica a ser uma classe, aqui nomeada.
     """
-
-    def pedir(self, *, tenant_id: UUID, documento_id: UUID) -> None:
-        """Enfileira a extração deste documento, depois do commit."""
-        ...
 
     def leituras(
         self, *, tenant_id: UUID, documento_ids: Sequence[UUID]

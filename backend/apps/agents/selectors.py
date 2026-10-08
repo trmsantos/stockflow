@@ -1,9 +1,10 @@
 """Queries de leitura das extrações. Nenhuma escreve.
 
-Uma só, e serve o porto: **a última tentativa de cada documento**, em lote. Em
-lote porque a alternativa é uma query por linha na listagem de documentos — o N+1
-clássico, aqui a atravessar uma fronteira de módulo, que é onde é mais difícil de
-ver.
+Duas. A primeira serve o porto: **a última tentativa de cada documento**, em
+lote. Em lote porque a alternativa é uma query por linha na listagem de
+documentos — o N+1 clássico, aqui a atravessar uma fronteira de módulo, que é
+onde é mais difícil de ver. A segunda serve o handler do `DocumentoFechado`, e é
+a pergunta de que depende não se pagar uma leitura duas vezes.
 
 Todas recebem `tenant_id` e filtram por ele, ao lado da política (SECURITY.md §1).
 """
@@ -15,7 +16,23 @@ from uuid import UUID
 
 from apps.agents.models import Extraction
 
-__all__ = ["ultimas_tentativas"]
+__all__ = ["ja_houve_tentativa", "ultimas_tentativas"]
+
+
+def ja_houve_tentativa(*, tenant_id: UUID, documento_id: UUID) -> bool:
+    """Este documento já teve alguma chamada ao modelo?
+
+    É a idempotência do `handlers.pedir_extracao`, e vive aqui em vez de lá por
+    ser uma leitura com nome: o que o handler pergunta não é "quantas tentativas
+    há" nem "qual foi a última", é só se já se gastou dinheiro neste documento.
+
+    `exists()` e não `count()`: o índice `(tenant, document_id, -attempt)` serve
+    o primeiro com um `LIMIT 1` e o segundo obrigava a varrer as linhas todas
+    para devolver um número que ninguém lê.
+    """
+    return Extraction.objects.filter(
+        tenant_id=tenant_id, document_id=documento_id
+    ).exists()
 
 
 def ultimas_tentativas(

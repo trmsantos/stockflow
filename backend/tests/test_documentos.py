@@ -39,10 +39,16 @@ disco` compara o `path` contra o nome enviado.
 
 O mesmo motivo do `tests/test_convites.py`: com a transação do pytest-django por
 fora, o `set_config('app.tenant_id', ..., true)` que o `tenant_scope` corre só
-reverte no fim **dela** e não no fim do bloco `with`. E há uma segunda razão
-nesta feature — o `transaction.on_commit` do enfileiramento só corre num commit a
-sério, logo sem `transactional_db` a extração nunca era pedida e metade do estado
-derivado não se mediria.
+reverte no fim **dela** e não no fim do bloco `with`. E há uma segunda razão nesta
+feature: o `transaction.on_commit` com que os handlers da outbox enfileiram as
+tarefas só corre num commit a sério, logo sem `transactional_db` nada era
+enfileirado e metade do estado derivado não se mediria.
+
+Desde 2026-10-08 o fecho de um documento publica um evento em vez de enfileirar
+(`apps/shared/consumidor.py`), pelo que os dois testes deste ficheiro que
+dependiam do trabalho ter sido feito chamam `consumir_outbox()` — que é o que o
+`beat` faz a cada 5 segundos. Os outros não chamam, e isso é informação: o POST
+passou a registar o trabalho em vez de o fazer.
 
 ## O guarda de âmbito do `conftest.py` está a trabalhar aqui
 
@@ -308,8 +314,15 @@ def test_fechar_e_repetivel_e_nao_agenda_trabalho_duas_vezes(cenario: Cenario) -
     1g). A contagem de extrações é o que prova que o segundo fecho não agendou
     nada — e é também a razão de `fechar_documento` sair cedo quando já está
     fechado.
+
+    Desde 2026-10-08 o fecho publica um evento em vez de enfileirar (ver o
+    `apps/shared/consumidor.py`), logo a passagem do consumidor está aqui: é ela
+    que transforma os eventos em trabalho, e corrê-la **depois dos dois fechos**
+    é o que torna o teste honesto — se o segundo fecho tivesse publicado uma
+    segunda linha, haveria duas extrações.
     """
     from apps.agents.models import Extraction
+    from apps.shared.consumidor import consumir_outbox
 
     cliente = _cliente(cenario.ana, cenario.alfa.id)
     documento_id = _criar(cliente).json()["id"]
@@ -317,6 +330,7 @@ def test_fechar_e_repetivel_e_nao_agenda_trabalho_duas_vezes(cenario: Cenario) -
 
     primeiro = _fechar(cliente, documento_id)
     segundo = _fechar(cliente, documento_id)
+    consumir_outbox()
 
     assert primeiro.status_code == 200
     assert segundo.status_code == 200
@@ -763,6 +777,7 @@ def test_a_imagem_de_uma_pagina_sem_normalizacao_da_404(
     de fora.
     """
     import apps.purchasing.tasks as tarefas
+    from apps.shared.consumidor import consumir_outbox
 
     def sem_rasterizador(**_: object) -> ImagemNormalizada:
         raise RasterizadorIndisponivel("encenado por este teste")
@@ -771,6 +786,11 @@ def test_a_imagem_de_uma_pagina_sem_normalizacao_da_404(
 
     cliente = _cliente(cenario.ana, cenario.alfa.id)
     documento_id = _criar(cliente, PDF_DE_UMA_PAGINA).json()["id"]
+    # A passagem do consumidor é o que faz a rasterização ser **tentada** — sem
+    # ela a página ficava sem imagem por ninguém ter pedido, e o teste passava
+    # por uma razão que não é a que ele mede. Com ela, a ausência de imagem é do
+    # rasterizador encenado, que é o que o nome do teste afirma.
+    consumir_outbox()
 
     assert cliente.get(f"{URL}/{documento_id}/pages/1/image").status_code == 404
     assert cliente.get(f"{URL}/{documento_id}/pages/9/image").status_code == 404

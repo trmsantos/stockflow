@@ -11,19 +11,29 @@ Também se verifica aqui o `DJANGO_SETTINGS_MODULE` por omissão dos
 entrypoints — o `config/__init__.py` importa a app Celery, logo o default que
 estiver no `config/celery.py` decide as settings de qualquer processo que
 importe `config` sem a variável definida.
+
+E, desde 2026-10-08, o **`beat`**: a entrada agendada (o consumidor da outbox, a
+cada 5 s) e o serviço do `docker/compose.yml` que a corre. O serviço entra neste
+ficheiro e não noutro porque o que se afirma dele é configuração de Celery que
+não cabe nas settings: onde o agendador guarda o estado é uma consequência do
+`read_only` e do `tmpfs` do contentor, e as três linhas só se leem juntas lá.
 """
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 from django.conf import settings
 
+from apps.shared.tasks import consumir_outbox
 from config.celery import app
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+COMPOSE = BACKEND_DIR.parent / "docker" / "compose.yml"
 
 
 def test_acks_late_e_reject_on_worker_lost() -> None:
@@ -127,3 +137,102 @@ def test_entrypoints_de_servidor_fazem_default_para_prod(entrypoint: str) -> Non
 def test_manage_py_faz_default_para_dev() -> None:
     """O `manage.py` é CLI de desenvolvimento e fica em `dev` de propósito."""
     assert _default_settings_module("manage.py") == "config.settings.dev"
+
+
+# ---------------------------------------------------------------------------
+# O `beat`: a única entrada agendada, e onde ele guarda o estado
+# ---------------------------------------------------------------------------
+def test_o_beat_agenda_o_consumidor_da_outbox_a_cada_cinco_segundos() -> None:
+    """A entrada do `beat`, lida do `app.conf` e não do ficheiro de settings.
+
+    O `beat_schedule` é uma setting com prefixo `CELERY_`, logo está sujeita ao
+    modo de falha que este ficheiro inteiro existe para apanhar: um prefixo
+    errado é ignorado em silêncio e o agendador corre sem entrada nenhuma — a
+    outbox deixava de ser lida e **nada** falhava.
+
+    O nome da tarefa é comparado com o `name` da tarefa real e não com um
+    literal. É a asserção que apanha o defeito de 2026-10-08 do outro lado: um
+    nome que não casa com nenhuma tarefa registada dá `Received unregistered
+    task`, e o `beat` publicaria para o vazio a cada cinco segundos.
+    """
+    entrada = app.conf.beat_schedule["consumir-outbox"]
+
+    assert entrada["task"] == consumir_outbox.name == "shared.consumir_outbox"
+    assert entrada["schedule"] == 5.0
+    # `expires`: um worker em baixo uma hora deixaria 720 passagens na fila, e ao
+    # voltar corria-as todas para fazer o trabalho de uma.
+    assert entrada["options"]["expires"] == 60
+    assert entrada["schedule"] < entrada["options"]["expires"], (
+        "uma mensagem que expira antes do intervalo seguinte é uma passagem que "
+        "nunca corre"
+    )
+
+
+def _servico_do_compose(nome: str) -> dict[str, Any]:
+    """Um serviço do `docker/compose.yml`, lido como YAML.
+
+    Por `yaml.safe_load` e não por `grep`: o que interessa é a relação entre três
+    campos do **mesmo** serviço, e casar isso com expressões regulares num
+    ficheiro de 300 linhas dava um teste que passa com o bloco errado. O PyYAML
+    já está instalado (é dependência do `drf-spectacular`), logo isto não
+    acrescenta dependência nenhuma.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    return compose["services"][nome]
+
+
+def test_o_beat_guarda_o_estado_no_tmpfs_do_contentor() -> None:
+    """As três linhas que têm de concordar, afirmadas juntas.
+
+    O `beat` guarda a última execução de cada entrada num ficheiro. O default é
+    o directório de trabalho — `/app` na imagem — e o contentor corre com
+    `read_only: true`: sem `--schedule`, o processo morre no arranque e o
+    sintoma é a outbox a parar de ser lida, não um erro no sítio do defeito.
+
+    Logo as três condições são uma: `read_only`, `/tmp` em `tmpfs`, e o
+    `--schedule` a apontar para lá. Este teste é o que as liga — mexer numa sem
+    as outras fica vermelho aqui em vez de ficar verde e partido.
+    """
+    beat = _servico_do_compose("beat")
+    comando = beat["command"]
+
+    assert beat["read_only"] is True
+    assert "beat" in comando, "este serviço devia correr o agendador"
+    caminho = comando[comando.index("--schedule") + 1]
+    # A asserção é a **relação** entre os dois campos e não o caminho literal: o
+    # que tem de ser verdade é que o `--schedule` cai dentro de uma montagem
+    # escrevível declarada por este serviço. Mudar o ficheiro para outra montagem
+    # continua a passar; tirar a montagem e deixar o caminho, não.
+    montagens = beat["tmpfs"]
+    assert any(caminho.startswith(f"{montagem}/") for montagem in montagens), (
+        f"o --schedule aponta para {caminho}, fora das montagens escrevíveis "
+        f"deste serviço ({montagens}) — num rootfs read_only o beat morre no "
+        f"arranque"
+    )
+
+
+def test_o_beat_nao_herda_o_healthcheck_http_da_imagem() -> None:
+    """Pela mesma razão do `worker`, e é obrigatório dizê-lo.
+
+    A imagem é partilhada com o `backend` e traz um `HEALTHCHECK` que faz um
+    pedido HTTP a `127.0.0.1:8000`. Um agendador não serve HTTP: sem isto fica
+    `unhealthy` para sempre, o que num orquestrador é um ciclo de reinícios de um
+    processo que está bem — e no CI é o gate da stack a falhar por uma razão que
+    não é a que ele testa.
+    """
+    assert _servico_do_compose("beat")["healthcheck"] == {"disable": True}
+    assert _servico_do_compose("worker")["healthcheck"] == {"disable": True}
+
+
+def test_so_ha_um_beat_e_ele_nao_e_uma_flag_do_worker() -> None:
+    """Duas instâncias publicam cada entrada duas vezes.
+
+    O `celery worker --beat` existe e é expressamente para desenvolvimento:
+    amarra o agendador ao ciclo de vida de um worker, logo um `--scale worker=3`
+    inocente passava a ter três agendadores. Este teste é o que o impede de
+    entrar por distracção.
+    """
+    worker = _servico_do_compose("worker")["command"]
+
+    assert "--beat" not in worker
+    assert "-B" not in worker

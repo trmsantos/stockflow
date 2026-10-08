@@ -6,11 +6,10 @@ um import está escrita no topo desse ficheiro, e é onde deve ser lida — em d
 linhas: o `purchasing` não pode importar o `agents` (import-linter), o `agents`
 pode importar o `purchasing.api`, logo a dependência inverte-se.
 
-Duas metades, as duas triviais de propósito — um adaptador com lógica é lógica
-fora do `services.py`:
-
-* `pedir` enfileira a tarefa **depois do commit**;
-* `leituras` traduz a última tentativa de cada documento no DTO do porto.
+Uma metade só, desde que o `pedir` saiu para a outbox: `leituras` traduz a última
+tentativa de cada documento no DTO do porto. Quem enfileira a extração é agora o
+`apps/agents/handlers.py`, subscrito ao `DocumentoFechado` — e a razão da troca
+está no topo do `apps/purchasing/extracao.py`.
 
 A tradução é a única coisa com substância, e tem um porquê em cada ramo: o
 cabeçalho e as linhas só saem quando o `status` é `lido`, e saem já **revalidados
@@ -24,8 +23,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from uuid import UUID
-
-from django.db import transaction
 
 from apps.agents.models import EstadoDaExtracao, Extraction
 from apps.agents.serializers import leitura_validada
@@ -47,27 +44,6 @@ class FronteiraLocalDaExtracao(FronteiraDaExtracao):
     tipos e o que dá ao `FronteiraDaExtracao` o consumidor que justifica ele ser
     público.
     """
-
-    def pedir(self, *, tenant_id: UUID, documento_id: UUID) -> None:
-        """Enfileira a extração, depois do commit.
-
-        Import no corpo e não no topo: o `tasks.py` importa o `modelo.py` e os
-        serviços, e o `apps.py` importa este ficheiro no `ready()` — um import do
-        `tasks.py` no topo puxaria a cadeia inteira durante o arranque do registo
-        de apps. É o mesmo padrão do `semear_demonstracao` do `accounts/api.py`, e
-        sem supressão de lint nenhuma.
-
-        O `on_commit` não é opcional: enfileirar antes do commit publica um facto
-        que pode desaparecer, e a tarefa corria contra um documento que não
-        existe.
-        """
-        from apps.agents.tasks import extrair_documento
-
-        transaction.on_commit(
-            lambda: extrair_documento.delay(
-                tenant_id=str(tenant_id), documento_id=str(documento_id)
-            )
-        )
 
     def leituras(
         self, *, tenant_id: UUID, documento_ids: Sequence[UUID]

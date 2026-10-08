@@ -24,3 +24,8 @@ staticfiles/
 # repositório os veria: o `gitleaks` procura padrões de segredo, e um JPEG de uma
 # fatura não casa com nenhum.
 backend/media/
+
+# O estado do `beat` (a última execução de cada entrada agendada). Dentro do
+# compose vive em `/tmp` pelo `--schedule` do comando; um `celery -A config beat`
+# corrido à mão em `backend/` escreve-o aqui, e não é artefacto de revisão.
+celerybeat-schedule*

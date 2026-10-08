@@ -39,7 +39,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from apps.purchasing.extracao import fronteira_da_extracao
+from apps.purchasing.events import DocumentoFechado
 from apps.purchasing.ficheiros import (
     caminho_da_imagem,
     caminho_dentro_do_media,
@@ -55,6 +55,7 @@ from apps.purchasing.models import (
 )
 from apps.purchasing.rasterizacao import ImagemNormalizada
 from apps.purchasing.selectors import slots_expirados
+from apps.shared.outbox import OutboxEvent, publish
 
 __all__ = [
     "CODIGOS_DE_RECUSA_DE_DOCUMENTO",
@@ -158,63 +159,56 @@ class FicheiroRecebido:
         self.paginas = paginas
 
 
-def enfileirar_trabalho_do_documento(*, tenant_id: UUID, documento_id: UUID) -> None:
+def enfileirar_trabalho_do_documento(
+    *, tenant_id: UUID, documento_id: UUID
+) -> OutboxEvent:
     """O **único** ponto onde o trabalho de um documento é agendado.
 
-    Duas coisas, nesta ordem e as duas depois do commit: rasterizar as páginas
-    que ainda não têm imagem, e pedir a extração.
+    Uma escrita: a linha do `DocumentoFechado` na outbox, na mesma transação que
+    fechou o documento. O que fazer com ele é de quem o subscreve — hoje o
+    `handlers.py` do `purchasing` (rasterizar as páginas sem imagem) e o do
+    `agents` (pedir a leitura ao modelo), e esta função não conhece nenhum dos
+    dois.
 
-    ## Porque é que isto não escreve na outbox
+    ## O que aqui estava escrito, e porque é que deixou de ser verdade
 
-    O `CLAUDE.md` diz *"efeitos secundários em Celery via outbox"*, e esta função
-    usa `transaction.on_commit` + `.delay()` em vez disso. **A divergência é
-    deliberada e está decidida por quem manda nesta feature**: não há consumidor
-    da outbox nem `beat` neste repositório (ADR 0010, ADR 0020, ADR 0021), logo
-    escrever na outbox hoje significa que a rasterização e a extração **nunca
-    correm** — o evento ficaria numa tabela à espera de um worker que não existe,
-    e a fatia 1 entregaria um documento que nunca é lido.
+    Até 2026-10-08 esta função usava `transaction.on_commit` + `.delay()` e tinha
+    neste sítio uma divergência deliberada ao `CLAUDE.md` (*"efeitos secundários
+    em Celery via outbox"*), com uma condição nomeada para a desfazer: **existir
+    um consumidor da outbox**. A razão era que, sem consumidor nem `beat`,
+    escrever na outbox significava que a rasterização e a extração nunca
+    corriam.
 
-    **A condição exacta para trocar:** existir um consumidor da outbox. Nesse dia
-    isto passa a `publish(DocumentoFechado(...))` e as duas tarefas são
-    enfileiradas pelos `handlers.py` dos módulos respectivos — o que resolve de
-    caminho a razão pela qual a extração é pedida através de um porto
-    (`extracao.py`) em vez de um import.
+    A condição cumpriu-se — `apps/shared/consumidor.py` e a entrada de
+    `CELERY_BEAT_SCHEDULE` — e a divergência está desfeita. O que a motivou
+    também cobrou o preço entretanto, e é a razão de isto ter deixado de ser
+    adiável: um worker com uma imagem de sete dias recebeu as duas tarefas que
+    esta função enfileirava e respondeu `Received unregistered task ... The
+    message has been ignored and discarded`. Fila a zero, nenhum rasto na
+    aplicação, documento preso em `a_normalizar`. Com a outbox, o mesmo worker
+    velho deixa a linha pendente, com `attempts`, `last_error` e `processed_at`
+    nulo — o atraso passa a ser uma linha que se consulta.
 
-    O `on_commit` **não** é opcional: enfileirar antes do commit publica um facto
-    que pode desaparecer, e a tarefa corre contra uma linha que não existe — é o
-    modo de falha que a própria outbox existe para evitar, e é a metade da regra
-    que esta função mantém.
+    ## O que esta função deixou de ter de fazer
+
+    Dois mecanismos desapareceram daqui, os dois por o handler correr **dentro**
+    do âmbito do tenant:
+
+    * a leitura das páginas antes do `on_commit`. Era obrigatória e tinha sido um
+      defeito a sério: a closure de um `on_commit` corre fora do `tenant_scope`,
+      onde a política devolve zero linhas sem erro, pelo que a lista vinha vazia
+      e nada era enfileirado — em produção, *"a imagem nunca fica pronta"*, sem
+      uma linha de log. Quem o apanhou foi o guarda de âmbito do
+      `tests/conftest.py`. O handler lê as páginas ele mesmo, com âmbito aberto;
+    * a chamada ao `pedir` do porto da extração. O porto existia por o
+      `purchasing` não poder importar o `agents`; o evento resolve a mesma coisa
+      sem porto nenhum, que é o que o topo do `apps/purchasing/extracao.py` já
+      dizia ser o mecanismo certo. A metade `leituras` do porto fica.
+
+    Devolve a linha da outbox, que é o que torna o enfileiramento **observável**
+    num teste sem espiar o broker.
     """
-    # Import no corpo e não no topo: o `tasks.py` importa este módulo (os
-    # serviços são a única forma de escrever), logo um import no topo era um
-    # ciclo. É o mesmo padrão do `semear_demonstracao` no `accounts/api.py`, e
-    # sem supressão de lint nenhuma.
-    from apps.purchasing.tasks import normalizar_pagina
-
-    # **A leitura é aqui e não dentro do `_agendar`**, e isto foi um defeito a
-    # sério: um `on_commit` corre *depois* de a transação fechar, logo **fora** do
-    # `tenant_scope` — e lá a política devolve zero linhas sem erro, pelo que a
-    # lista de páginas vinha vazia e nenhuma rasterização era enfileirada. Em
-    # produção isso aparecia como "a imagem nunca fica pronta", sem erro nenhum
-    # no log. Quem o apanhou foi o guarda de âmbito do `tests/conftest.py`, que é
-    # exactamente a classe de defeito que ele existe para apanhar.
-    paginas = list(
-        DocumentPage.objects.filter(
-            tenant_id=tenant_id, document_id=documento_id, normalized_at__isnull=True
-        ).values_list("id", flat=True)
-    )
-
-    def _agendar() -> None:
-        for pagina_id in paginas:
-            normalizar_pagina.delay(tenant_id=str(tenant_id), pagina_id=str(pagina_id))
-
-    transaction.on_commit(_agendar)
-    fronteira = fronteira_da_extracao()
-    if fronteira is not None:
-        # O `pedir` do porto é que faz o seu próprio `on_commit` — é o contrato
-        # declarado em `extracao.py`, e deixá-lo a ele mantém a regra num sítio
-        # por aresta em vez de a embrulhar duas vezes.
-        fronteira.pedir(tenant_id=tenant_id, documento_id=documento_id)
+    return publish(DocumentoFechado(tenant_id=tenant_id, documento_id=documento_id))
 
 
 @transaction.atomic
@@ -383,10 +377,12 @@ def limpar_slots_expirados(*, tenant_id: UUID, agora: datetime | None = None) ->
     filtra) e não tem bytes, porque sem página nenhuma nunca houve ficheiro
     aceite. Apagar é a limpeza que a ADR 0020 prometeu à decisão 2.
 
-    **Não corre hoje**: não há `beat` neste projecto, e esta feature é a primeira
-    a precisar dele — dívida já nomeada no `SESSION-CONTEXT.md` e repetida na
-    ADR 0021. A função existe, é testável, e o dia em que o `beat` existir é uma
-    entrada de configuração e não código novo.
+    **Continua a não correr**, e já não é por falta de `beat` — esse existe desde
+    2026-10-08. É porque ela é por tenant e o cron que iteraria os
+    estabelecimentos teria de ler o `accounts_tenant`, que dentro de
+    `system_scope()` devolve zero linhas sem erro: a política dele não tem o
+    disjunto `app.scope`. A razão por extenso, e as duas saídas possíveis, estão
+    no topo do `apps/purchasing/tasks.py`.
     """
     agora = agora or timezone.now()
     ids = list(

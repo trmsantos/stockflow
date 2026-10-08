@@ -137,11 +137,21 @@ livre — `apps.notifications` a importar `apps.inventory.api` dá `BROKEN` e ex
    middleware, onde nenhum middleware lhe consegue pôr o `set_config`.
 9. O Celery não tem middleware. `TenantTask` é o `task_cls` do app, logo toda a tarefa o herda:
    `tenant_id` é argumento obrigatório e o corpo corre dentro de `tenant_scope`. A dispensa é
-   explícita (`tenant_scope_exempt`) e hoje só a têm o cron que itera tenants e o consumidor da
-   outbox, que lê a linha sob `system_scope()` e reentra em `tenant_scope(row.tenant_id)` antes de
-   tocar em mais nada.
+   explícita (a base `SystemTask`, com `tenant_scope_exempt`) e só a podem ter duas coisas: o cron
+   que itera tenants e o consumidor da outbox, que lê a linha sob `system_scope()` e reentra em
+   `tenant_scope(row.tenant_id)` antes de tocar em mais nada. **Das duas, existe uma** — a do
+   consumidor. O cron que itera tenants não existe e não é esquecimento: teria de ler o
+   `accounts_tenant`, cuja política não tem o disjunto `app.scope`, logo dentro de `system_scope()`
+   devolve zero linhas sem erro. Dar-lho é uma decisão de ADR, porque alarga o alcance do âmbito de
+   sistema, que hoje é uma tabela só.
 10. Um worker Celery lê a `outbox`, publica o evento aos `handlers.py` subscritos, marca como
-   processado. Handlers são idempotentes (chave: `event_id`).
+   processado — a marca commita **na mesma transação** que os handlers. Handlers são idempotentes
+   (chave: `event_id`), porque a reentrega existe: um handler que levante desfaz os irmãos que
+   correram antes dele. O `apps.shared` não importa módulos, logo é cada módulo que registra os seus
+   handlers no `ready()` do seu `AppConfig`; o registo (`event_type` → handlers) vive em
+   `apps/shared/handlers.py` e só conhece strings e funções. A passagem é agendada pelo `beat` a cada
+   5 segundos, e uma linha que falhe `TETO_DE_TENTATIVAS` vezes deixa de ser candidata **sem** ser
+   marcada: fica pendente e visível, que é a diferença entre esta tabela e um broker.
 
 ## 5. Contratos e compatibilidade
 
@@ -170,9 +180,18 @@ Agentes são componentes de primeira classe, mas o seu output é **entrada não 
 
 ## 6b. Fluxos-chave do StockFlow
 
-**Receção por fatura**: `purchasing.upload_invoice` → evento `InvoiceUploaded` → `agents.extract_invoice`
-(Celery) → `PurchaseReceiptDraft` → utilizador revê → `purchasing.confirm_receipt` → `inventory.api.record_movements`
-(uma transação: lotes + movimentos + CMP + SupplierPrice) → evento `StockReceived`.
+**Receção por fatura**: `POST /documents` → evento **`DocumentoFechado`** → (outbox) →
+`purchasing.normalizar_pagina` + `agents.extrair_documento` (Celery) → `Receipt` com linhas →
+utilizador revê linha a linha → `purchasing.confirm_receipt` → `inventory.api.record_movements`
+(uma transação: lotes + movimentos + CMP) → evento `StockReceived`.
+
+> Os nomes desta linha mudaram quando a fatia 1 da ADR 0021 a construiu, e a diferença não é
+> cosmética: **`DocumentoFechado` e não `InvoiceUploaded`** porque o que entra pode não ser uma
+> fatura (uma guia de remessa não traz preços) e porque o momento que interessa é o **fecho** — num
+> documento de várias folhas o upload acontece N vezes e o fecho uma. O `PurchaseReceiptDraft`
+> passou a `Receipt` e o `SupplierPrice` saiu (o histórico de preços lê-se das linhas confirmadas).
+> **O que está escrito aqui a partir do `Receipt` ainda não existe**: é a fatia 2, e a revisão linha
+> a linha é a primeira coisa dela.
 
 **Venda/produção de receita**: `recipes.api.consume(recipe, qty)` → N `consumption` por FEFO → `StockConsumed`.
 

@@ -34,6 +34,15 @@ Além da razão do `tests/test_convites.py` (o `set_config` da RLS), há uma des
 feature: a extração é enfileirada num `transaction.on_commit`, que só corre num
 commit a sério. Sem `transactional_db` nenhuma extração aconteceria e este
 ficheiro media o vazio.
+
+## E porque é que o `_documento_com_pagina` chama o consumidor da outbox
+
+Porque desde 2026-10-08 o fecho de um documento **publica um evento** em vez de
+enfileirar as tarefas (`apps/shared/consumidor.py`), e quem transforma o evento
+em trabalho é uma passagem do consumidor — em produção, o `beat`, a cada 5
+segundos. O POST deixou de fazer o trabalho: regista-o. O auxiliar faz a
+passagem, numa linha, e é a única diferença deste ficheiro em relação à versão
+anterior.
 """
 
 from __future__ import annotations
@@ -70,6 +79,7 @@ from apps.purchasing.models import (
     EstadoDoDocumento,
     estado_do_documento,
 )
+from apps.shared.consumidor import ENTREGUE, consumir_outbox
 from apps.shared.db import tenant_scope
 
 URL = "/api/v1/documents"
@@ -156,11 +166,19 @@ def _cliente(cenario: Cenario) -> Client:
 
 
 def _documento_com_pagina(cliente: Client) -> str:
-    """Um documento com um PDF: nasce fechado e com a extração já pedida."""
+    """Um documento com um PDF: nasce fechado, e a extração corre na passagem.
+
+    O `consumir_outbox()` é a parte que mudou a 2026-10-08, e é a latência desta
+    feature a ser visível num teste: o POST escreve `DocumentoFechado` na outbox e
+    mais nada. Em produção é o `beat` que faz esta chamada, a cada 5 segundos;
+    aqui é o teste, porque o que ele quer medir é o que acontece **depois** de o
+    consumidor passar.
+    """
     resposta = cliente.post(
         URL, data={"ficheiro": SimpleUploadedFile("fatura.pdf", PDF, "application/pdf")}
     )
     assert resposta.status_code == 201, resposta.content
+    assert consumir_outbox() == {ENTREGUE: 1}
     return resposta.json()["id"]
 
 

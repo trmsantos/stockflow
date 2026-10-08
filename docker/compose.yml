@@ -273,6 +273,65 @@ services:
       disable: true
     restart: unless-stopped
 
+  # O agendador. **Uma instância e só uma**: duas réplicas publicam cada entrada
+  # duas vezes, e o que esta agenda é a leitura da outbox — duas passagens em
+  # paralelo não corrompem nada (a reclamação é um `UPDATE` condicional no
+  # `attempts`), mas é trabalho a dobrar a cada 5 segundos, para sempre.
+  #
+  # Processo separado do `worker` e não uma flag dele. O `celery worker --beat`
+  # existe e é expressamente para desenvolvimento: amarra o agendador ao ciclo de
+  # vida de um worker, logo escalar workers passava a multiplicar agendadores — o
+  # modo de falha de cima, com um `--scale` inocente a provocá-lo.
+  beat:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    # `--schedule` em `/tmp`: o `beat` guarda a última execução de cada entrada
+    # num ficheiro e o default é o directório de trabalho, que aqui é `/app` e
+    # está `read_only`. Sem isto o processo morre no arranque, e o `tmpfs: /tmp`
+    # mais abaixo é a outra metade desta linha — mexer numa obriga a olhar para a
+    # outra.
+    #
+    # `--max-interval=5`: o PersistentScheduler acorda no instante da próxima
+    # entrada, logo com uma entrada de 5 s isto é redundante hoje. Fica como
+    # travão: uma entrada futura em `crontab(hour=…)` punha o `beat` a dormir
+    # horas, e a entrada de 5 s passava a ser servida quando ele acordasse.
+    command:
+      - celery
+      - -A
+      - config
+      - beat
+      - --loglevel=INFO
+      - --schedule
+      - /tmp/celerybeat-schedule
+      - --max-interval=5
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?}
+      DATABASE_URL: postgres://stockflow_app:${STOCKFLOW_APP_PASSWORD:?}@db:5432/${POSTGRES_DB:-stockflow}
+      REDIS_URL: redis://redis:6379
+      DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
+      ALLOWED_HOSTS: localhost
+    depends_on:
+      redis: { condition: service_healthy }
+    # **Sem o volume do `media`**, de propósito: este processo não lê nem escreve
+    # ficheiros de documentos. Ele publica mensagens no broker e mais nada — quem
+    # toca nos bytes é o `worker`.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Desligado pela mesma razão do `worker`, e é obrigatório: a imagem é a mesma
+    # do `backend` e traz um `HEALTHCHECK` que faz um pedido HTTP a
+    # `127.0.0.1:8000`. Um agendador não serve HTTP, logo ficaria `unhealthy`
+    # para sempre — num orquestrador, um ciclo de reinícios de um processo que
+    # está bem.
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
   frontend:
     build:
       context: ..
