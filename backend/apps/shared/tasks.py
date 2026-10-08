@@ -25,12 +25,24 @@ toda a tarefa criada por `@app.task` — e por `@shared_task`, que usa o app atu
 
 `tenant_scope_exempt = True` é um atributo de classe, visível na declaração da
 tarefa e greppável em todo o repositório — que é precisamente o que se quer de
-uma exceção a uma regra de isolamento. Hoje só a devem ter duas coisas
-(ADR 0005):
+uma exceção a uma regra de isolamento. Para não andar copiada, tem uma base
+própria, a `SystemTask`, e declara-se assim:
 
-    @app.task(base=TenantTask)          # ou uma subclasse
-    class ...  # o cron que itera tenants e enfileira uma tarefa por cada
-               # e o consumidor da outbox, que lê a linha sob system_scope()
+    @shared_task(name="…", base=SystemTask)
+    def ...
+
+A ADR 0005 nomeia **duas** coisas que a podem ter. Hoje existe uma:
+
+* **o consumidor da outbox** (`shared.consumir_outbox`, aqui em baixo), que lê a
+  linha sob `system_scope()` e reentra em `tenant_scope(row.tenant_id)` antes de
+  tocar em mais nada;
+* **o cron que itera tenants**, que **não existe** — e não por esquecimento. Ele
+  teria de ler a lista de estabelecimentos, e a política do `accounts_tenant`
+  compara `id` contra `app.tenant_id` sem o disjunto `app.scope`: dentro de
+  `system_scope()` essa leitura devolve **zero linhas sem erro**, que é o defeito
+  silencioso que a ADR 0007 existe para evitar. Dar-lhe o disjunto de sistema é
+  uma decisão de ADR — alarga o alcance do âmbito de sistema, que hoje é uma
+  tabela só — e não se toma ao lado de uma entrada de `beat`.
 
 Uma tarefa dispensada **não** tem âmbito nenhum: se toca em dados de um tenant,
 abre `tenant_scope` ela mesma.
@@ -49,11 +61,11 @@ import inspect
 from typing import Any
 from uuid import UUID
 
-from celery import Task
+from celery import Task, shared_task
 
 from apps.shared.db import tenant_scope
 
-__all__ = ["TenantIdRequired", "TenantTask"]
+__all__ = ["SystemTask", "TenantIdRequired", "TenantTask", "consumir_outbox"]
 
 #: Nome do argumento que transporta o tenant. Um só nome, em todas as tarefas.
 TENANT_ID_ARG = "tenant_id"
@@ -137,3 +149,49 @@ class TenantTask(Task):
                 "tarefa (ADR 0005)."
             )
         return ligados.arguments[TENANT_ID_ARG]
+
+
+class SystemTask(TenantTask):
+    """Tarefa **dispensada** do âmbito do tenant. Ver "A dispensa", no topo.
+
+    Uma classe e não um `tenant_scope_exempt=True` solto em cada decorador: o
+    Celery aceita opções arbitrárias no decorador e põe-nas no dicionário da
+    classe que cria, logo as duas formas funcionam — mas uma delas é um atributo
+    com nome, tipado e greppável, e a outra é um `kwargs` que ninguém verifica.
+    Uma dispensa a uma regra de isolamento tem de ser do primeiro tipo.
+
+    Quem a herda **não tem âmbito nenhum**: abre `tenant_scope` ou
+    `system_scope` ela mesma, e sem isso lê zero linhas de tudo, em silêncio.
+    """
+
+    tenant_scope_exempt = True
+
+
+@shared_task(name="shared.consumir_outbox", base=SystemTask)
+def consumir_outbox() -> dict[str, int]:
+    """Uma passagem pela outbox. Agendada pelo `beat` a cada 5 segundos.
+
+    Sem argumentos — nem `tenant_id`, que é o ponto da `SystemTask`: esta é a
+    tarefa que atravessa tenants para reclamar linhas de todos, e o âmbito de
+    cada linha abre-se lá dentro, a partir da coluna `tenant_id` dela.
+
+    O corpo inteiro vive em `apps/shared/consumidor.py`, que é onde está escrito
+    o porquê de cada decisão: a ordem dos dois âmbitos, o `processed_at` a
+    commitar com os handlers, o teto de tentativas e a latência de 0–5 s que a
+    passagem periódica custa.
+
+    Idempotente por construção, e tem de ser: com `task_acks_late` uma passagem
+    interrompida é reentregue, e duas passagens em paralelo não tratam a mesma
+    linha (a reclamação é um `UPDATE` condicional no `attempts`).
+
+    Import no corpo e não no topo do ficheiro: este módulo é o `task_cls` do app
+    Celery (`config/celery.py`) e é por isso o primeiro a ser importado quando a
+    primeira tarefa do processo é criada. O `consumidor.py` puxa o `models.py` do
+    `shared`, e um import de models no topo deste ficheiro era um
+    `AppRegistryNotReady` à espera de um caminho de arranque que o alcançasse. É
+    o mesmo padrão do `semear_demonstracao` no `accounts/api.py`, e sem supressão
+    de lint nenhuma.
+    """
+    from apps.shared.consumidor import consumir_outbox as passagem
+
+    return passagem()

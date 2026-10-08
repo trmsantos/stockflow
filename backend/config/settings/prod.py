@@ -164,20 +164,39 @@ AXES_IPWARE_PROXY_COUNT = max(TRUSTED_PROXY_COUNT - 1, 0)
 # ---------------------------------------------------------------------------
 # Email (SMTP)
 # ---------------------------------------------------------------------------
-# **Obrigatório e sem default, como o resto deste ficheiro.** A alternativa — um
-# default que cai no `console.EmailBackend` — era a pior possível: um convite
-# "enviado" a escrever no stdout de um contentor, sem erro nenhum, e a pessoa do
-# outro lado à espera de um email que nunca existiu. Um arranque que falha por
-# falta de configuração é ruidoso e corrige-se em dois minutos.
+# **Opcionais, e isso é uma correcção.** Estas quatro nasceram obrigatórias sem
+# default, pelo argumento certo — a alternativa era um default que cai no
+# `console.EmailBackend`, com um email "enviado" a escrever no stdout de um
+# contentor e a pessoa do outro lado à espera. Esse argumento continua bom e é
+# por isso que o **backend** não tem caminho para a consola.
 #
-# `EMAIL_HOST_USER` e `EMAIL_HOST_PASSWORD` **são** obrigatórios: um SMTP sem
-# autenticação ou é um relay aberto (que não existe) ou é um serviço interno —
-# e nesse caso a variável fica com o valor que ele pede, não vazia por omissão.
+# O que estava errado era o momento: **nada neste código envia email.** Zero
+# `send_mail`, zero `EmailMessage` — medido. O convite não é enviado por desenho
+# (ADR 0010: o link aparece uma vez e é entregue à mão, e a copy do ecrã afirma-o
+# a quem convida), e a reposição de password, que será o primeiro remetente a
+# sério, não existe: o `accounts_passwordreset` que a ADR 0010 planeou nunca foi
+# escrito.
+#
+# Exigir SMTP para arrancar um produto que não envia nada compra uma coisa só:
+# alguém põe um valor de fachada para o deploy passar. E um valor de fachada que
+# **parece** configurado é pior do que a ausência — falha mais tarde, com menos
+# contexto. Já cobrou uma vez: partiu a build das imagens, porque o
+# `collectstatic` importa este ficheiro.
+#
+# O dono disse-o por extenso: hoje é configuração básica, funcional localmente, e
+# o provedor a sério (Resend ou equivalente) é uma decisão mais à frente. Quando
+# ele entrar, é aqui que entra.
+#
+# **E o regresso a obrigatório é medido e não prometido**: o
+# `test_o_smtp_volta_a_ser_obrigatorio_quando_alguem_enviar` do
+# `tests/test_settings_smoke.py` varre as apps à procura de um remetente e, no dia
+# em que houver um, exige que o `EMAIL_HOST` volte a `required()`. Esse é o dia em
+# que um deploy sem servidor de email tem de falhar no arranque e não no envio.
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = required(env, "EMAIL_HOST")
+EMAIL_HOST = env("EMAIL_HOST", default="")
 EMAIL_PORT = env.int("EMAIL_PORT", default=587)
-EMAIL_HOST_USER = required(env, "EMAIL_HOST_USER")
-EMAIL_HOST_PASSWORD = required(env, "EMAIL_HOST_PASSWORD")
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 
 # **TLS, e qual dos dois.** São mutuamente exclusivos no Django e ligar os dois
 # faz o `smtplib` falhar com uma mensagem que não aponta para isto. A escolha é
@@ -192,10 +211,12 @@ EMAIL_HOST_PASSWORD = required(env, "EMAIL_HOST_PASSWORD")
 EMAIL_USE_SSL = EMAIL_PORT == 465
 EMAIL_USE_TLS = not EMAIL_USE_SSL
 
-# Quem assina. Obrigatório porque o default do Django é `webmaster@localhost`,
-# que é um endereço que não existe em domínio nenhum: a mensagem sai, o servidor
-# de quem recebe rejeita-a por SPF, e o envio "funciona" sem ninguém receber.
-DEFAULT_FROM_EMAIL = required(env, "DEFAULT_FROM_EMAIL")
+# Quem assina. Fica **vazio** por omissão e não com o `webmaster@localhost` do
+# Django: aquele é um endereço que não existe em domínio nenhum, a mensagem sai, o
+# servidor de quem recebe rejeita-a por SPF, e o envio "funciona" sem ninguém
+# receber. Um valor vazio não finge nada — e com nada a enviar hoje, não fingir é
+# o comportamento certo.
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="")
 SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 
 # O prefixo do `mail_admins`, que é o único consumidor de email que o Django

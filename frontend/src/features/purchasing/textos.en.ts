@@ -121,9 +121,39 @@ export const EN: typeof PT = {
     },
 
     ponte: {
-      titulo: "Read a QR code on a phone",
-      corpo:
-        "Not built yet, and this is where it will go: the computer opens the document, the phone reads the code and adds the photographs to it. The library that draws the code still has to be chosen, and that decision is not part of this delivery. Until then the way in is the field above — with the PDF on a computer, or by opening this same screen on a phone, where it opens the camera.",
+      titulo: "Photograph with a phone",
+      comoFunciona:
+        "The computer opens the document, the phone reads the code and adds the photographs to it. The phone signs in once with the account of whoever uses it — the code is not a password and grants nothing on its own.",
+      abrir: "Open for a phone",
+      aAbrir: "Opening…",
+      aCarregar: "Loading the capture…",
+      alternativaDoCodigo:
+        "QR code holding the address of this capture. The same address is written below, ready to copy.",
+      comoLer:
+        "Point the phone camera at the code. It asks for the account once and opens this screen already on this document.",
+      endereco: "Address of this capture",
+      copiar: "Copy the address",
+      copiado: "Copied",
+      semCopiar: "Copying did not work — select the address and copy it by hand.",
+      expiraAs: (hora: string) => `The code works until ${hora}.`,
+      semPaginas: "No page has arrived from the phone yet.",
+      paginasChegadas: (quantas: number) =>
+        quantas === 1
+          ? "1 page arrived from the phone."
+          : `${String(quantas)} pages arrived from the phone.`,
+      expiradoTitulo: "The code expired",
+      expiradoCorpo:
+        "Fifteen minutes went by without a single page arriving, and the code stopped working. Open another document to get a new code.",
+      noTelemovel:
+        "Photograph the document sheet by sheet. The pages show up below as they arrive, and when you are finished say so.",
+      trocaTitulo: "This code belongs to another establishment",
+      trocaCorpo: (doCodigo: string, atual: string) =>
+        `The code was opened at ${doCodigo} and this session is at ${atual}. Switch establishment to add the photographs to the right document.`,
+      trocar: (nome: string) => `Switch to ${nome}`,
+      aTrocar: "Switching…",
+      semAcessoTitulo: "This code is not from this establishment",
+      semAcessoCorpo:
+        "The code was opened at an establishment this account cannot reach. Sign in with the right account, or ask whoever opened the document to open it where you work.",
     },
 
     zona: {
@@ -159,9 +189,13 @@ export const EN: typeof PT = {
       aFechar: "Closing…",
       descartar: "Discard",
       aDescartar: "Discarding…",
+      aindaAceitaPaginas:
+        "The document is open and already has pages. Add the sheets that are missing and say that you are done — that tap is what sends it for reading.",
       desistiuTitulo: "I stopped asking",
       desistiuCorpo:
         "Three minutes went by and the document is still being prepared. The work was not lost — when it is ready it shows up in the document list below. Reloading this page asks again.",
+      desistiuCorpoDaCaptura:
+        "Three minutes went by and no page arrived. Nothing was lost: the pages the phone already sent are below, and the document takes more until it expires. Reloading this page starts following again.",
       abrirOutro: "Open another document",
       aCarregar: "Loading the document…",
       erroAoCarregar: "Could not load this document",

@@ -19,7 +19,6 @@ import sys
 
 import pytest
 from django.conf import settings
-from django.core.exceptions import ImproperlyConfigured
 
 from config.log import JsonFormatter, RequestContextFilter
 from tests.conftest import reload_settings as _reload
@@ -237,18 +236,26 @@ def test_num_proxies_definido_em_todos_os_ambientes(
 # ---------------------------------------------------------------------------
 # Email (SMTP) em produção
 # ---------------------------------------------------------------------------
-def test_prod_exige_smtp_e_nao_cai_na_consola(
+def test_prod_nunca_cai_na_consola_mesmo_sem_smtp_configurado(
     prod_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Um email "enviado" para o stdout de um contentor é a pior falha possível.
 
-    Não levanta, não aparece em log nenhum, e a pessoa do outro lado fica à
-    espera de um convite que nunca existiu. É por isso que o `EMAIL_HOST` é
-    `required` e não tem default: um arranque que falha por falta de
-    configuração é ruidoso e corrige-se em dois minutos.
+    Não levanta, não aparece em log nenhum, e a pessoa do outro lado fica à espera
+    de uma mensagem que nunca existiu. **Esta é a metade da decisão que fica**: o
+    backend é SMTP e não há variável, default ou caminho que o troque pela consola.
 
-    O teste afirma as duas metades: com configuração, o backend é o de SMTP; sem
-    ela, o módulo não importa.
+    A outra metade saiu a 2026-10-08. O `EMAIL_HOST` era `required` sem default, e
+    com nada neste código a enviar email isso só comprava um valor de fachada para
+    o deploy passar — que **parece** configurado e falha mais tarde com menos
+    contexto. Já partiu a build das imagens uma vez, porque o `collectstatic`
+    importa este ficheiro.
+
+    Então o teste afirma agora o contrário do que afirmava: **sem `EMAIL_HOST` o
+    módulo importa**, e o backend continua a ser o de SMTP. Quem garante que isto
+    não fica assim para sempre é o
+    `test_o_smtp_volta_a_ser_obrigatorio_quando_alguem_enviar`, que varre as apps
+    à procura de um remetente.
     """
     prod = _reload("prod")
 
@@ -257,8 +264,19 @@ def test_prod_exige_smtp_e_nao_cai_na_consola(
     assert prod.DEFAULT_FROM_EMAIL == "StockFlow <stockflow@example.pt>"
 
     monkeypatch.delenv("EMAIL_HOST")
-    with pytest.raises(ImproperlyConfigured, match="EMAIL_HOST"):
-        _reload("prod")
+    monkeypatch.delenv("DEFAULT_FROM_EMAIL")
+    sem_smtp = _reload("prod")
+
+    assert sem_smtp.EMAIL_BACKEND == "django.core.mail.backends.smtp.EmailBackend", (
+        "sem SMTP configurado o backend mudou — é o único caminho que não pode "
+        "existir, porque um email no stdout não levanta e não aparece em log nenhum."
+    )
+    assert sem_smtp.EMAIL_HOST == ""
+    assert sem_smtp.DEFAULT_FROM_EMAIL == "", (
+        "o default do Django é `webmaster@localhost`, um endereço que não existe em "
+        "domínio nenhum: a mensagem sai, quem recebe rejeita-a por SPF, e o envio "
+        "'funciona' sem ninguém receber. Vazio não finge nada."
+    )
 
 
 @pytest.mark.parametrize(
@@ -358,4 +376,64 @@ def test_a_fachada_do_collectstatic_cobre_todos_os_required_do_prod() -> None:
         f"dá: {sorted(exigidas - na_fachada)}. Acrescenta-as à linha `RUN` do "
         f"{DOCKERFILE.name} — senão a build da imagem falha com um `KeyError`, e só "
         "no CI, porque é o único sítio onde o `prod.py` é importado."
+    )
+
+
+#: Os nomes que o Django usa para enviar email. Se um deles aparecer nas apps,
+#: há um remetente — e a configuração de SMTP deixa de poder ser opcional.
+#:
+#: `mail_admins` fica de fora de propósito: é o único consumidor que o Django traz
+#: de série, só envia com `ADMINS` configurado, e o `prod.py` diz por extenso que
+#: não está.
+REMETENTES = (
+    "send_mail(",
+    "send_mass_mail(",
+    "EmailMessage(",
+    "EmailMultiAlternatives(",
+    ".send_messages(",
+)
+
+
+def test_o_smtp_volta_a_ser_obrigatorio_quando_alguem_enviar() -> None:
+    """A condição que torna o SMTP opcional, verificada em vez de prometida.
+
+    O `prod.py` tinha as quatro variáveis de email **obrigatórias sem default**,
+    pelo argumento certo — um default que caia na consola era um email "enviado"
+    para o stdout de um contentor. Mas nada neste código envia email: o convite é
+    entregue à mão por desenho (ADR 0010) e a reposição de password não existe.
+    Exigir SMTP para arrancar um produto que não envia nada compra uma coisa só:
+    um valor de fachada, que **parece** configurado e falha mais tarde com menos
+    contexto. Já partiu a build das imagens uma vez.
+
+    Então ficaram opcionais — e este teste é o que impede isso de se tornar
+    permanente por esquecimento. No dia em que alguém escrever o primeiro
+    remetente, ele fica vermelho e a mensagem diz o que fazer: um deploy sem
+    servidor de email tem de falhar no **arranque** e não no envio.
+
+    Varre o código das apps e não o `.venv`: o Django envia emails lá dentro (o
+    reset de password dele, o `mail_admins`) e isso não é um remetente nosso.
+    """
+    apps = pathlib.Path(__file__).resolve().parents[1] / "apps"
+    com_remetente: list[str] = []
+    for ficheiro in sorted(apps.rglob("*.py")):
+        if "/migrations/" in ficheiro.as_posix():
+            continue
+        fonte = ficheiro.read_text(encoding="utf-8")
+        # Sem comentários: este repositório fala sobre email em prosa mais vezes
+        # do que o enviaria, e um gate que acusa quem documenta ensina a não
+        # documentar — é a lição que o `security_check.sh` aprendeu duas vezes.
+        fonte = re.sub(r'"""[\s\S]*?"""', "", fonte)
+        fonte = re.sub(r"^\s*#.*$", "", fonte, flags=re.MULTILINE)
+        if any(nome in fonte for nome in REMETENTES):
+            com_remetente.append(ficheiro.relative_to(apps).as_posix())
+
+    obrigatorio = 'required(env, "EMAIL_HOST")' in PROD.read_text(encoding="utf-8")
+
+    assert bool(com_remetente) == obrigatorio, (
+        f"remetentes de email encontrados: {com_remetente or 'nenhum'}; "
+        f"`EMAIL_HOST` obrigatório no prod.py: {obrigatorio}. "
+        "Com um remetente, as quatro variáveis de SMTP voltam a `required(env, …)` "
+        "— e acrescenta-as à fachada do `collectstatic` no Dockerfile, senão a "
+        "build das imagens parte (já partiu). Sem remetente nenhum, exigir SMTP só "
+        "compra um valor de fachada que finge estar configurado."
     )

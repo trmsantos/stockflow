@@ -246,21 +246,88 @@ PY
   # invisível por executar, que é o defeito que este script já teve uma vez.
   else skip semgrep "uv tool install semgrep"; fi
 
-  log "Padrões perigosos (grep)"
-  # O segundo `grep` descarta **linhas de comentário**, e é uma correcção com
-  # história: a 2026-10-07 este gate deu FAIL com dois HIGH que eram as duas
-  # frases de dois catálogos de copy a explicar **porque é que o
-  # `dangerouslySetInnerHTML` não se usa** neste produto. Um varredor que acusa a
-  # prosa que documenta a proibição ensina a não documentar, e um FAIL que
-  # ninguém acredita é pior do que não ter gate.
+  log "Padrões perigosos"
+  # **Não é um `grep`, e as duas tentativas anteriores dizem porquê.**
   #
-  # O filtro é sobre o **início** da linha (`// `, ` * `, `/* `, `# `), logo o que
-  # continua apanhado é tudo o que é código: um `<div dangerouslySetInnerHTML=`
-  # indentado, uma chamada com comentário à direita, e uma string literal. O
-  # formato do `grep -rn` é `ficheiro:linha:conteúdo`, e é por isso que o padrão
-  # salta o prefixo antes de olhar para a indentação.
-  danger=$(grep -rnE "dangerouslySetInnerHTML|localStorage\.(set|get)Item\(['\"](token|jwt|access|refresh)|VITE_[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)" src 2>/dev/null \
-    | grep -vE ':[0-9]+:[[:space:]]*(//|\*|/\*|#)' || true)
+  # A 2026-10-07 este gate deu FAIL com dois HIGH que eram frases de catálogos de
+  # copy a explicar **porque é que o `dangerouslySetInnerHTML` não se usa** neste
+  # produto. Um varredor que acusa a prosa que documenta a proibição ensina a não
+  # documentar, e um FAIL em que ninguém acredita é pior do que não ter gate.
+  #
+  # A primeira correcção descartou **linhas que começam** por `//`, ` * `, `/* `
+  # ou `# ` — e a 2026-10-08 falhou outra vez, no mesmo padrão: a menção estava
+  # numa **linha de continuação** de um comentário de bloco de JSX, a começar com
+  # texto simples. Filtrar por prefixo de linha não sabe onde um comentário
+  # começou.
+  #
+  # O que ficou apaga os comentários **a sério** e preserva as linhas, para o
+  # número continuar a bater. E apaga-os sem apagar strings: um `//` dentro de
+  # `"https://…"` não abre comentário nenhum, e tratá-lo como se abrisse cegava o
+  # gate para o resto daquela linha — que é como um varredor passa a esconder o
+  # que devia mostrar. Daí o consumo de literais, em vez de uma expressão regular
+  # sobre o ficheiro todo.
+  #
+  # O que continua apanhado é tudo o que é código: um `<div
+  # dangerouslySetInnerHTML=` indentado, uma chamada com comentário à direita, e
+  # uma string literal.
+  danger=$(python3 - <<'PY' || true
+import pathlib, re
+
+PADRAO = re.compile(
+    r"dangerouslySetInnerHTML"
+    r"|localStorage\.(?:set|get)Item\(['\"](?:token|jwt|access|refresh)"
+    r"|VITE_[A-Z_]*(?:SECRET|KEY|TOKEN|PASSWORD)"
+)
+EXTENSOES = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".css"}
+
+
+def sem_comentarios(fonte: str) -> str:
+    """Troca o conteúdo dos comentários por espaços, mantendo as linhas.
+
+    Consome strings e templates para não confundir o `//` de um URL com o início
+    de um comentário. É o mesmo varredor do `frontend/scripts/check-textos.mjs`,
+    pela mesma razão.
+    """
+    saida = list(fonte)
+    i, n = 0, len(fonte)
+    while i < n:
+        c = fonte[i]
+        if c in "\"'`":
+            j = i + 1
+            while j < n and fonte[j] != c:
+                if fonte[j] == "\\":
+                    j += 1
+                elif c != "`" and fonte[j] == "\n":
+                    break
+                j += 1
+            i = j + 1
+            continue
+        if c == "/" and i + 1 < n and fonte[i + 1] == "/":
+            while i < n and fonte[i] != "\n":
+                saida[i] = " "
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and fonte[i + 1] == "*":
+            fim = fonte.find("*/", i + 2)
+            fim = n if fim == -1 else fim + 2
+            for k in range(i, fim):
+                if saida[k] != "\n":
+                    saida[k] = " "
+            i = fim
+            continue
+        i += 1
+    return "".join(saida)
+
+
+for caminho in sorted(pathlib.Path("src").rglob("*")):
+    if caminho.suffix not in EXTENSOES or not caminho.is_file():
+        continue
+    texto = caminho.read_text(encoding="utf-8", errors="replace")
+    for numero, linha in enumerate(sem_comentarios(texto).split("\n"), 1):
+        if PADRAO.search(linha):
+            print(f"{caminho}:{numero}:{linha.strip()}")
+PY
+)
   if [[ -n "$danger" ]]; then note "  HIGH padrões perigosos:"; echo "$danger" | head -20 | sed 's/^/    /' | tee -a "$SUMMARY"; count_sev 0 "$(echo "$danger" | wc -l)" 0 0; else note "  ok"; fi
 
   popd >/dev/null

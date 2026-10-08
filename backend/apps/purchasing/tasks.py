@@ -5,10 +5,11 @@ As duas herdam o `TenantTask` por construção — é o `task_cls` do app
 projecto —, pelo que `tenant_id` é argumento **obrigatório** e o corpo corre
 dentro de `tenant_scope(tenant_id)`.
 
-E o `tenant_id` vem **da linha do documento** e nunca de `request.tenant` (ADR
-0020): quem enfileira é o `services.enfileirar_trabalho_do_documento`, que já
-está dentro do âmbito e o passa como argumento. Uma tarefa que o fosse buscar ao
-pedido era uma tarefa a ler um pedido que já acabou.
+E o `tenant_id` vem **da linha** e nunca de `request.tenant` (ADR 0020): quem
+enfileira a `normalizar_pagina` é o `handlers.rasterizar_paginas_pendentes`, a
+reagir ao `DocumentoFechado` que o `services.py` escreveu na outbox, e o tenant
+que ele passa é o da **coluna** da linha do evento. Uma tarefa que o fosse buscar
+ao pedido era uma tarefa a ler um pedido que já acabou.
 
 ## Nenhuma delas escreve directamente na base de dados
 
@@ -17,14 +18,23 @@ tarefa acrescenta é o **fora** da transação: a chamada à fronteira da
 rasterização, que é lenta e nativa e nunca pode correr no processo que serve
 pedidos.
 
-## A limpeza não corre
+## A limpeza continua a não correr, e agora por outra razão
 
-`limpar_slots_expirados` não tem agendamento: **não há `beat`** neste projecto, e
-esta feature é a primeira a precisar dele (dívida nomeada no `SESSION-CONTEXT.md`
-e repetida na ADR 0021). A tarefa existe, tem teste, e o dia em que o `beat`
-existir é uma entrada de configuração — mais o cron que itera tenants, que é a
-única coisa deste repositório que pode ter `tenant_scope_exempt` e que também não
-existe.
+Já há `beat` (`CELERY_BEAT_SCHEDULE`, em `config/settings/base.py`), e a
+`limpar_slots_expirados_do_tenant` continua sem agendamento. A razão deixou de
+ser a falta do agendador e passou a ser a **forma** da tarefa: ela recebe um
+`tenant_id`, logo alguém tem de iterar os estabelecimentos para a enfileirar um
+por um — e esse cron teria de ler o `accounts_tenant`, cuja política compara `id`
+contra `app.tenant_id` sem o disjunto `app.scope`. Dentro de `system_scope()`
+essa leitura devolve **zero linhas sem erro**: o cron corria, dizia que varreu
+tudo, e não varria nada.
+
+Alargar aquela política ao âmbito de sistema é uma decisão de ADR — o âmbito de
+sistema alcança hoje uma tabela só, de propósito (ADR 0005) — e não se toma ao
+lado de uma entrada de `beat`. A alternativa sem RLS nova é dar a esta limpeza um
+gatilho por tenant em vez de um cron global (um evento na abertura do slot, com
+`countdown`), e é também uma decisão de desenho. Fica escrito nos dois sítios: na
+`services.limpar_slots_expirados` e aqui.
 """
 
 from __future__ import annotations

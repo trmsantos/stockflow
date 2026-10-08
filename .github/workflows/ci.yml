@@ -344,8 +344,8 @@ jobs:
             --profile setup run --rm migrate
 
       - name: Subir a aplicação
-        # **O `--wait` não alcança o worker, e tem de ser dito pelo nome.** Ele
-        # tem `healthcheck: disable: true` por uma razão escrita no
+        # **O `--wait` não alcança o worker nem o `beat`, e têm de ser ditos pelo
+        # nome.** Os dois têm `healthcheck: disable: true` por uma razão escrita no
         # `compose.yml` (herdava o healthcheck HTTP da imagem partilhada, que um
         # worker Celery não serve), e o Compose do runner — mais antigo do que o
         # de uma máquina de hoje — recusa esperar por um serviço sem healthcheck
@@ -366,7 +366,12 @@ jobs:
         run: |
           docker compose --env-file backend/.env -f docker/compose.yml \
             up -d --wait --wait-timeout 180 db redis backend frontend proxy
-          docker compose --env-file backend/.env -f docker/compose.yml up -d worker
+          # O `beat` entra aqui e não na linha de cima pela mesma razão do
+          # worker: não tem healthcheck, logo o `--wait` recusa esperar por ele.
+          # Quem o vigia é o passo seguinte — um agendador que morra no arranque
+          # (o caso real é o ficheiro `--schedule` num rootfs read-only) aparece
+          # como `exited` no `ps -a`.
+          docker compose --env-file backend/.env -f docker/compose.yml up -d worker beat
 
       - name: Nenhum serviço unhealthy, e o worker vivo
         # Duas asserções, porque a primeira **não pode** ver o worker: ele tem

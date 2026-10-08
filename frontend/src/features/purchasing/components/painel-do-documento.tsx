@@ -39,9 +39,11 @@ import {
  *    `aguarda_captura`: o `expires_at` é servido sempre (também num documento
  *    que já tem páginas, onde não quer dizer nada), e mostrá-lo fora desse
  *    estado era mostrar um relógio que não conta nada;
- *  - as **acções**, que existem enquanto o documento está aberto e desaparecem
- *    quando fecha. Um botão desactivado no lugar diria que ainda há ali algo a
- *    fazer.
+ *  - as **acções**, que existem enquanto o documento aceita páginas e
+ *    desaparecem quando fecha. Um botão desactivado no lugar diria que ainda há
+ *    ali algo a fazer. Quem decide é o `aceitaPaginas`, que vem de fora e é
+ *    `closed_at === null` — **não** o estado, que passa a `a_normalizar` com a
+ *    primeira folha e levava o botão de terminar com ele.
  *
  * ## A régua de campos, e não uma grelha de cartões
  *
@@ -53,6 +55,7 @@ import {
  */
 export function PainelDoDocumento({
   documento,
+  aceitaPaginas,
   desistiu,
   aFechar,
   aDescartar,
@@ -61,6 +64,18 @@ export function PainelDoDocumento({
   aoDescartar,
 }: {
   readonly documento: Documento;
+  /**
+   * O documento **aceita mais páginas**, o que é `closed_at === null` e não um
+   * estado.
+   *
+   * Vem de fora e não se deriva aqui, porque a derivação é a mesma do ecrã e
+   * duas cópias dela divergiriam — e porque a cópia que este painel tinha
+   * **estava errada**: era `state === "aguarda_captura"`, que o servidor deriva
+   * de *zero páginas*, logo o botão de terminar desaparecia no instante em que a
+   * primeira folha chegava. A razão inteira está no `aceitaPaginas` do
+   * `screens/fotografar.tsx`, com a sonda que o apanhou.
+   */
+  readonly aceitaPaginas: boolean;
   /** O polling desistiu aos 3 minutos (ADR 0020, decisão 3). */
   readonly desistiu: boolean;
   readonly aFechar: boolean;
@@ -71,7 +86,8 @@ export function PainelDoDocumento({
   readonly aoDescartar: () => void;
 }) {
   const idTitulo = useId();
-  const aberto = documento.state === "aguarda_captura";
+  /** O slot ainda vazio: é o único estado em que o `expires_at` conta algo. */
+  const aVazio = documento.state === "aguarda_captura";
   const aTrabalhar = estaAAcontecer(documento.state);
   const palavra = rotuloDeEstadoDoDocumento(documento.state);
 
@@ -118,7 +134,7 @@ export function PainelDoDocumento({
         <Campo
           rotulo={textos.documento.painel.campoPaginas}
           nota={
-            aberto
+            aVazio
               ? textos.documento.painel.expiraAs(formatTime(documento.expires_at))
               : textos.documento.painel.limiteDePaginas(documento.page_limit)
           }
@@ -149,8 +165,18 @@ export function PainelDoDocumento({
         )}
       </dl>
 
+      {/* **A frase do estado, com uma correcção que o cliente pode fazer e o
+          servidor não.** O `a_normalizar` do contrato cobre duas situações — a
+          imagem a ser preparada e *"o documento ainda aberto à espera da segunda
+          folha"*, nas palavras do `models.estado_do_documento` — e a frase do
+          vocabulário só serve a primeira ("pode sair deste ecrã"). A quem está a
+          fotografar folha a folha isso é o conselho errado: falta-lhe dizer que
+          acabou. Quem sabe distinguir as duas é este lado, porque tem o
+          `closed_at`; o enum do servidor não o distingue. */}
       <p className="max-w-prose text-pretty px-celula-x py-3 text-sm text-muted-foreground">
-        {fraseDeEstadoDoDocumento(documento.state)}
+        {aceitaPaginas && documento.page_count > 0
+          ? textos.documento.painel.aindaAceitaPaginas
+          : fraseDeEstadoDoDocumento(documento.state)}
       </p>
 
       {/* A desistência do polling. Fica **acima** das páginas porque é a resposta
@@ -160,8 +186,16 @@ export function PainelDoDocumento({
           <Alert className="border-warning-border bg-warning-surface">
             <CircleAlert aria-hidden="true" className="text-warning" />
             <AlertTitle>{textos.documento.painel.desistiuTitulo}</AlertTitle>
+            {/* Duas frases, porque o teto quer dizer duas coisas diferentes. Um
+                documento a ser preparado **aparece na lista** quando ficar
+                pronto; um slot à espera de páginas não aparece lá nunca
+                enquanto estiver vazio, logo a mesma frase seria falsa. A
+                segunda entrou com o bloco do código QR, que é o que pôs o
+                `aguarda_captura` a ser sondado. */}
             <AlertDescription className="text-pretty">
-              {textos.documento.painel.desistiuCorpo}
+              {aceitaPaginas
+                ? textos.documento.painel.desistiuCorpoDaCaptura
+                : textos.documento.painel.desistiuCorpo}
             </AlertDescription>
           </Alert>
         </div>
@@ -193,7 +227,7 @@ export function PainelDoDocumento({
         </div>
       )}
 
-      {aberto ? (
+      {aceitaPaginas ? (
         <div className="flex flex-col gap-2 border-t border-border px-celula-x py-3">
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={aoFechar} disabled={aFechar || aDescartar}>

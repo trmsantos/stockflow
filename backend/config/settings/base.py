@@ -494,6 +494,47 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 15 * 60}
 
 # ---------------------------------------------------------------------------
+# `beat` — o agendador. Uma entrada só, e é o consumidor da outbox.
+# ---------------------------------------------------------------------------
+#: De quantos em quantos segundos a outbox é lida. **Cinco**, e o número é uma
+#: troca medida: a rasterização de uma página arrancava em ~0 s com o `.delay()`
+#: directo que esta feature substituiu e passa a arrancar em 0–5 s. O ecrã de
+#: entrada de documento sonda a 2 s com um orçamento de 3 minutos (ADR 0021),
+#: logo cinco segundos são duas sondagens e não um timeout.
+#:
+#: Descer isto não é de graça: cada passagem é uma tarefa, uma mensagem no broker
+#: e pelo menos uma transação de leitura (`_candidatas`). Subir atrasa toda a
+#: cadeia de uma receção. Cinco é o ponto em que a latência deixa de ser visível
+#: no ecrã e o custo de polling continua a ser ruído.
+INTERVALO_DO_CONSUMIDOR_DA_OUTBOX = 5.0
+
+CELERY_BEAT_SCHEDULE = {
+    "consumir-outbox": {
+        "task": "shared.consumir_outbox",
+        "schedule": INTERVALO_DO_CONSUMIDOR_DA_OUTBOX,
+        # **`expires` não é adorno.** Sem ele, um worker em baixo durante uma hora
+        # deixa 720 mensagens de consumo na fila e, ao voltar, corre-as todas —
+        # 720 passagens a competir pelas mesmas linhas, quando uma só fazia o
+        # mesmo trabalho. Com 60 s, o broker descarta as que já não servem. É o
+        # equivalente, para uma tarefa periódica, do que o `acks_late` é para uma
+        # tarefa de trabalho.
+        "options": {"expires": 60},
+    },
+}
+
+# **Onde fica o ficheiro de estado do `beat` não se decide aqui**, e é uma
+# escolha e não uma omissão. O `beat` guarda a última execução de cada entrada
+# num ficheiro (`celerybeat-schedule`, no directório de trabalho por omissão) e o
+# contentor corre com `read_only: true`: o caminho tem de ser `/tmp`, que é o
+# `tmpfs` do serviço. Fica no `--schedule` do comando, em `docker/compose.yml`,
+# ao lado do `read_only` e do `tmpfs` que o obrigam — que é o único sítio onde as
+# três linhas se leem juntas e onde uma delas a mudar obriga a olhar para as
+# outras. Uma setting aqui era a mesma verdade num segundo sítio, e com `/tmp`
+# escrito à mão num ficheiro que corre também fora de contentor.
+# Que o comando do compose e o `tmpfs` concordam é um teste
+# (`tests/test_celery_config.py`).
+
+# ---------------------------------------------------------------------------
 # Internacionalização
 # ---------------------------------------------------------------------------
 LANGUAGE_CODE = "pt-pt"
