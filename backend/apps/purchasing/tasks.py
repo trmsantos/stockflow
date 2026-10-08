@@ -35,7 +35,11 @@ from uuid import UUID
 from celery import shared_task
 
 from apps.purchasing.models import DocumentPage
-from apps.purchasing.rasterizacao import RasterizadorIndisponivel, rasterizar
+from apps.purchasing.rasterizacao import (
+    PaginaIlegivel,
+    RasterizadorIndisponivel,
+    rasterizar,
+)
 from apps.purchasing.services import limpar_slots_expirados, registar_normalizacao
 
 __all__ = ["limpar_slots_expirados_do_tenant", "normalizar_pagina"]
@@ -50,18 +54,21 @@ def normalizar_pagina(*, tenant_id: str, pagina_id: str) -> str:
     **Por página à chegada e não no fecho** (ADR 0020, adenda 2): senão o polling
     do desktop não tem nada para mostrar enquanto a segunda fotografia não chega.
 
-    Três saídas, e as três são normais:
+    Quatro saídas, e as quatro são normais:
 
     * `sem_pagina` — a página já não existe (o documento foi descartado entre o
       enfileiramento e a execução). Uma tarefa a correr tarde não é um erro;
-    * `sem_rasterizador` — a fronteira levantou. **É a saída de hoje**: não há
-      rasterizador nas dependências deste projecto (ver
-      `apps/purchasing/rasterizacao.py`). A página fica sem imagem, o documento
-      fica em `a_normalizar`, e nada mente — não há uma coluna `normalized_at`
-      escrita sem imagem por baixo. Não se faz `self.retry`: a dependência não
-      aparece por esperar;
+    * `sem_rasterizador` — este ambiente não tem a libvips. Na imagem do worker
+      ela vem da camada de apt; numa máquina de desenvolvimento é opcional. A
+      página fica sem imagem, o documento fica em `a_normalizar`, e nada mente —
+      não há uma coluna `normalized_at` escrita sem imagem por baixo. Não se faz
+      `self.retry`: uma dependência não aparece por esperar;
+    * `pagina_ilegivel` — a biblioteca **está** lá e recusou este ficheiro: um PDF
+      truncado a meio do upload, uma página que o poppler não lê. É um ramo
+      próprio porque a acção é outra — não há nada a instalar, há um documento
+      que não serve — e também não se repete, porque repetir lê o mesmo ficheiro;
     * `normalizada` — o caminho completo, que é o que um teste exercita
-      substituindo a fronteira.
+      substituindo a fronteira (e, onde a libvips existe, de verdade).
     """
     pagina = DocumentPage.objects.filter(
         tenant_id=UUID(tenant_id), pk=UUID(pagina_id)
@@ -78,6 +85,18 @@ def normalizar_pagina(*, tenant_id: str, pagina_id: str) -> str:
             extra={"event": "documento.normalizacao", "outcome": "sem_rasterizador"},
         )
         return "sem_rasterizador"
+    except PaginaIlegivel:
+        # Distinto do de cima, e por isso é um ramo próprio: aqui a biblioteca
+        # está lá e **este ficheiro** não serve — um PDF truncado a meio do
+        # upload, uma página que o poppler recusa. Sem isto a excepção subia, a
+        # tarefa ficava "failed" no Celery e um documento mau parecia uma avaria
+        # da infraestrutura. Também não se faz `retry`: repetir lê o mesmo
+        # ficheiro.
+        logger.warning(
+            "página ilegível: a libvips recusou este ficheiro",
+            extra={"event": "documento.normalizacao", "outcome": "pagina_ilegivel"},
+        )
+        return "pagina_ilegivel"
     registar_normalizacao(
         tenant_id=UUID(tenant_id), pagina_id=UUID(pagina_id), imagem=imagem
     )

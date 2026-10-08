@@ -1010,3 +1010,69 @@ def test_o_throttle_vive_nas_escritas_e_nao_nas_leituras() -> None:
         "de 2 s da ADR 0020: a espera por uma rasterização passa a gastar o "
         "orçamento de uploads."
     )
+
+
+# ---------------------------------------------------------------------------
+# 10. O rasterizador, de verdade
+# ---------------------------------------------------------------------------
+def test_rasterizar_um_pdf_da_um_webp_que_nao_amplia() -> None:
+    """A única dependência nativa deste projecto, exercitada a sério.
+
+    **Salta onde a libvips não existe** (uma máquina de desenvolvimento sem o
+    `libvips42`) e corre no CI, que a instala de propósito — o passo "libvips" do
+    `.github/workflows/ci.yml` existe por causa deste teste. Sem ele, um `skip`
+    verde era indistinguível de um teste que passa, e a única peça nativa ficava
+    sem gate nenhum.
+
+    Afirma três coisas, e as três são decisão e não mecanismo:
+
+    1. **sai WebP**, que é o único formato que o endpoint da imagem serve — um
+       JPEG servido como `image/webp` era um ficheiro que o browser recusa;
+    2. **não amplia.** O PDF de ensaio é minúsculo; com `size="down"` a saída fica
+       pelo tamanho natural da página e não esticada até 2000px. Ampliar não
+       acrescenta informação e multiplica os bytes;
+    3. **a geometria devolvida é a da imagem**, porque é ela que vai para as
+       colunas `width`/`height` e daí para o `<img>` do ecrã de revisão — se
+       mentir, o ecrã salta quando a imagem carrega.
+    """
+    from apps.purchasing.ficheiros import caminho_dentro_do_media
+    from apps.purchasing.rasterizacao import LADO_MAXIMO, ha_rasterizador, rasterizar
+
+    if not ha_rasterizador():
+        pytest.skip("sem libvips neste ambiente: o CI instala-a de propósito")
+
+    relativo = "documentos/ensaio/rasterizar/pagina.pdf"
+    destino = caminho_dentro_do_media(relativo)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_bytes(PDF_DE_UMA_PAGINA)
+
+    imagem = rasterizar(caminho=relativo, numero_da_pagina=1)
+
+    # O cabeçalho de um WebP: "RIFF" + 4 bytes de tamanho + "WEBP".
+    assert imagem.webp[:4] == b"RIFF", imagem.webp[:16]
+    assert imagem.webp[8:12] == b"WEBP", imagem.webp[:16]
+    assert 0 < imagem.width <= LADO_MAXIMO
+    assert 0 < imagem.height <= LADO_MAXIMO
+    assert len(imagem.webp) > 0
+
+
+def test_rasterizar_um_ficheiro_que_nao_e_imagem_diz_que_a_pagina_e_ilegivel() -> None:
+    """Lixo no disco é `PaginaIlegivel` e **não** uma tarefa em falha.
+
+    A diferença entre esta excepção e a `RasterizadorIndisponivel` é a diferença
+    entre "falta instalar" e "este documento não serve", e é ela que impede um PDF
+    truncado a meio de um upload de aparecer como avaria da infraestrutura.
+    """
+    from apps.purchasing.ficheiros import caminho_dentro_do_media
+    from apps.purchasing.rasterizacao import PaginaIlegivel, ha_rasterizador, rasterizar
+
+    if not ha_rasterizador():
+        pytest.skip("sem libvips neste ambiente: o CI instala-a de propósito")
+
+    relativo = "documentos/ensaio/rasterizar/lixo.pdf"
+    destino = caminho_dentro_do_media(relativo)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_bytes(b"%PDF-1.4\nisto nao e um PDF\n")
+
+    with pytest.raises(PaginaIlegivel):
+        rasterizar(caminho=relativo, numero_da_pagina=1)

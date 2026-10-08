@@ -70,10 +70,28 @@ FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb235
 # vermelho e alguém sobe a versão aqui — e a subida aparece no diff, com o nome
 # do pacote e o número. É a mesma forma das outras listas fechadas deste
 # repositório: a manutenção é visível em vez de automática e silenciosa.
+#
+# **As duas últimas são o rasterizador de páginas (ADR 0021, fatia 1), e custam
+# 149 MiB.** O número foi medido dentro desta imagem antes de a escolha ser
+# feita, com a alternativa medida ao lado: uma wheel (`pypdfium2` + `pillow`)
+# custava ~10 MiB e zero pacotes de sistema. O dono escolheu o apt com os dois
+# números à frente, e a razão é esta camada: um binário vendorizado dentro de uma
+# wheel não é visto por ferramenta nenhuma deste repositório, e estes 90 pacotes
+# são 90 nomes com versão que o `trivy` do CI lê e reporta. Mais superfície **e**
+# mais visibilidade, que é a troca que se quis.
+#
+# O `libpoppler-glib8` vem como dependência do `libvips42` e é pinado **à mão de
+# propósito**: é ele que faz o parse de um PDF que chegou de fora, logo é o que
+# interessa ver subir num diff quando a próxima CVE de poppler sair.
+#
+# A reversão é barata e está escrita no `apps/purchasing/rasterizacao.py`: estas
+# duas linhas, uma no `pyproject.toml`, e o corpo de uma função.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libpcre2-8-0=10.42-1+deb12u2 \
       perl-base=5.36.0-7+deb12u4 \
+      libvips42=8.14.1-3+deb12u3 \
+      libpoppler-glib8=22.12.0-2+deb12u3 \
  && rm -rf /var/lib/apt/lists/*
 
 # Utilizador sem privilégios, com UID fixo: o default do Docker é root, e um

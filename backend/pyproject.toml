@@ -27,6 +27,7 @@ dependencies = [
     # Teto no major: um `gunicorn 24` muda defaults de worker sem aviso.
     "gunicorn>=23.0,<24",
     "psycopg[binary]>=3.3.6",
+    "pyvips>=3.2.0",
     "redis>=8.1.0",
 ]
 

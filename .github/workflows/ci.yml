@@ -89,6 +89,21 @@ jobs:
             "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname='stockflow_app'" \
             | grep -qx f
 
+      - name: libvips (o rasterizador de páginas)
+        # **A libvips tem de estar aqui ou o rasterizador não é testado por
+        # ninguém.** Ela vem da camada de apt do `docker/backend.Dockerfile`, e
+        # sem a mesma biblioteca no runner os testes que renderizam uma página
+        # saltam por falta de dependência — um `skip` verde é indistinguível de
+        # um teste que passa, e era assim que a única dependência nativa deste
+        # projecto ficava sem gate.
+        #
+        # Só a biblioteca: o `libvips-tools` traz executáveis que este código não
+        # usa (o `pyvips` liga-se à biblioteca, e não lança processo nenhum —
+        # ver o docstring do `apps/purchasing/rasterizacao.py`).
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libvips42
+
       - working-directory: backend
         run: uv sync --frozen
 

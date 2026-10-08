@@ -512,3 +512,53 @@ O artigo exacto do CIVA que exclui as embalagens retornáveis da base tributáve
 fundamento legal preciso da facturação global mensal contra guias, o limiar do art. 53.º para 2026, e
 os limites de temperatura por produto — que existem, variam e vivem no plano HACCP. **As quatro são
 para o contabilista de um cliente, não para o dono**, e nenhuma bloqueia uma migração.
+
+### Adenda — o rasterizador: a libvips do sistema, e porque não foi o `pdftoppm`
+
+A fatia 1 deixou a rasterização como uma fronteira que levantava sempre, com a
+dependência por escolher. Escolheu-se a 2026-10-08, com as duas opções medidas
+dentro da imagem antes de a pergunta ser feita:
+
+| | wheel (`pypdfium2` + `pillow`) | apt (`libvips42`) |
+|---|---|---|
+| pacotes novos | 2 Python, zero transitivos | 3 Python (`pyvips`→`cffi`→`pycparser`) + ~90 de sistema |
+| custo na imagem | ~10 MiB | **149 MiB** |
+| apt no runtime | nenhum | na camada pinada |
+| quem vê as CVE | o aviso do PyPI (`pip-audit`) | **o `trivy`, pacote a pacote** |
+
+**O dono escolheu o apt com os dois números à frente**, e a razão vale ser dita
+porque não é a que um engenheiro escolheria sozinho: um binário vendorizado dentro
+de uma wheel não é visto por ferramenta nenhuma deste repositório, e os 139 MiB a
+mais compram 90 nomes com versão que o CI lê e reporta. Mais superfície **e** mais
+visibilidade. O `libpoppler-glib8` vem como dependência e é pinado à mão de
+propósito: é ele que faz o parse de um PDF que chegou de fora.
+
+**E não é o `pdftoppm`, que era o caminho óbvio do apt.** Um
+`subprocess.run(["pdftoppm", …])` não passa os gates deste repositório, e isto foi
+medido: o `bandit` do CI corre sem limiar de severidade, um `subprocess.run`
+levanta B404 e B603 em LOW, e o `# nosec` é supressão — que o `CLAUDE.md` proíbe e
+que o próprio `security_check.sh` procura em ficheiros de configuração. A saída foi
+ligar à **biblioteca** pelo `pyvips`: a libvips do Debian traz
+`VipsForeignLoadPdf` (poppler) **e** `webpsave`, verificado dentro da imagem, logo
+renderizar, encolher e gravar são uma chamada e não três ferramentas. **Zero
+processos lançados.**
+
+Três coisas que a implementação decide e que ficam escritas no módulo: só
+**encolhe** (`size="down"` — ampliar não acrescenta informação e multiplica
+bytes); **achata o alfa sobre branco**, porque uma página de PDF vem transparente
+e o papel branco ficaria preto nesta aplicação escura; e **apaga os metadados**
+(`strip`), que aqui é privacidade e não higiene — a fotografia de uma fatura tirada
+num telemóvel traz EXIF com GPS, e a imagem é servida a qualquer membro do
+estabelecimento.
+
+**E o CI passou a instalar a libvips**, porque sem ela os dois testes que
+renderizam uma página saltavam — e um `skip` verde é indistinguível de um teste
+que passa. Era assim que a única dependência nativa deste projecto ficava sem gate.
+A API foi exercitada contra a biblioteca a sério com os pinos exactos, dentro de um
+contentor: o PDF de ensaio sai 612×792 em 1160 bytes de WebP, e um ficheiro de lixo
+levanta o erro que o ramo `PaginaIlegivel` apanha.
+
+**O que continua por decidir:** a subcontagem de páginas de um PDF com `/ObjStm`
+comprimidos (o contador em Python puro devolve 1). A autoridade real passou a
+existir — a libvips sabe quantas páginas o PDF tem —, mas usá-la obriga a decidir o
+que fazer quando a contagem verdadeira passa o tecto de dez, e isso é produto.
