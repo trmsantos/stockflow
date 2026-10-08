@@ -36,14 +36,32 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
-**Estado atual (2026-09-30, sessão 2):** repo `trmsantos/stockflow`, privado, na conta pessoal, em
-`main`, HEAD `43525ff`. **`/kickoff` fechado: os 8 passos estão feitos.** `backend/` com uv, os 9
-módulos, 10 contratos de import-linter, a camada de settings completa, `apps/shared/` com
-`tenant_scope`/outbox, `apps/accounts/` com `Tenant`/`User`/`Membership` e o `TenantMiddleware` como
-último middleware, `frontend/` em Vite+TS strict com os tokens do DESIGN.md, `docker/` com 8
-serviços e o Caddy construído de um `go.mod` nosso, e CI com 7 jobs. **200 testes**, ruff limpo sem
-`# noqa`, `check --deploy` sem warnings, `security_check.sh` a dar **PASS** com zero ferramentas
-saltadas e zero gates sem resultado.
+**Estado atual (2026-10-08):** repo `trmsantos/stockflow`, privado, na conta pessoal. `main` tem o
+PR #3 mergeado (i18n, definições, temas, demonstração, SMTP); o **PR #4 está aberto** com a fatia 1 da
+recepção de mercadoria. **454 testes** no backend, `ruff` limpo sem `# noqa`, import-linter 11/11,
+`security_check.sh` a dar **PASS** com zero achados, e os seis gates do `pnpm lint` verdes.
+
+O que existe para além do kickoff: o **shell** navegável com o menu como dados por tenant; os ecrãs de
+**Stock, Alertas, Artigo, Contar, Receber, Receção e Painel**, servidos em desenvolvimento pelo
+`frontend/fixtures/servidor.ts`; **três paletas** com gate de cor e o tema como preferência da pessoa
+guardada no servidor; **um ecrã para todas as definições** em secções; o **estabelecimento de
+demonstração** como tenant semeado; e **duas línguas vindas do browser** (pt-PT e inglês), com sete
+catálogos, 975 chaves e o teste que amarra as duas pontas da decisão — o inglês só liga com a lista
+fechada do `check-textos.mjs` vazia.
+
+**A recepção de mercadoria arrancou** (ADR 0021, três fatias: documento → catálogo+revisão → ledger).
+A fatia 1 está feita: quatro tabelas com RLS, sete endpoints em `/api/v1/documents`, o ecrã de entrada
+de documento, e o rasterizador pela libvips do sistema. **As outras duas apps de domínio continuam
+cascas** — `catalog`, `inventory`, `recipes` e `notifications` têm zero models —, logo o Stock e o
+Painel continuam a mostrar fixtures.
+
+**Cinco decisões à espera do dono, e nenhuma é técnica:** a biblioteca de QR para a ponte
+desktop→telemóvel; a quota de armazenamento por estabelecimento (hoje não há teto e um membro
+autenticado escreve ~13 GiB/h); o consumidor da outbox e o `beat`, que é o que faz a divergência
+deliberada ao CLAUDE.md ("efeitos secundários via outbox") deixar de ser necessária e desbloqueia o
+email de convite; as três perguntas da fatia 1 (páginas máximas, retenção do original, quem apaga um
+documento); e as do ledger, das quais a mais cara é **quanto vale a mercadoria que entra por guia de
+remessa sem preço** — sem ela a fatia 3 não tem migração.
 
 **O passo 8 foi fechado sem PASS independente da última versão, e isso é uma decisão consciente.**
 O `security-reviewer` correu **quatro** vezes e deu FAIL nas quatro. As duas primeiras rondas acharam
