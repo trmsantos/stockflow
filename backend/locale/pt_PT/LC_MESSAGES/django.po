@@ -232,3 +232,70 @@ msgstr "Este ficheiro é maior do que {limite} MiB."
 
 msgid "This PDF has {paginas} pages and a document takes at most {limite}."
 msgstr "Este PDF tem {paginas} páginas e um documento aceita no máximo {limite}."
+
+# ---------------------------------------------------------------------------
+# Validações do catálogo e inventário (apps/catalog, apps/inventory)
+# ---------------------------------------------------------------------------
+
+msgid "A NIF has nine digits and a valid check digit. This one does not."
+msgstr "Um NIF tem nove dígitos e um dígito de verificação válido. Este não tem."
+
+msgid "An EAN has 8, 12, 13 or 14 digits and a valid check digit. This one does not."
+msgstr "Um EAN tem 8, 12, 13 ou 14 dígitos e um dígito de verificação válido. Este não tem."
+
+msgid "Another packaging in this establishment already has this EAN."
+msgstr "Já existe outra embalagem neste estabelecimento com este código de barras."
+
+msgid "Another supplier in this establishment already has this NIF."
+msgstr "Já existe outro fornecedor neste estabelecimento com este NIF."
+
+msgid "At most {limite} characters."
+msgstr "No máximo {limite} caracteres."
+
+msgid "Display factor must be positive."
+msgstr "O factor de apresentação tem de ser positivo."
+
+msgid "Invalid EAN: must be 8, 12, 13 or 14 digits with check digit."
+msgstr "Código de barras inválido: tem de ter 8, 12, 13 ou 14 dígitos com dígito de verificação."
+
+msgid "Invalid NIF: must be 9 digits with valid check digit."
+msgstr "NIF inválido: tem de ter 9 dígitos com dígito de verificação válido."
+
+msgid "Not one of the allowed values."
+msgstr "Não é um dos valores permitidos."
+
+msgid "One {unidade} is {factor} {base}, and the factor is fixed by the unit table. Use {factor}, or a display unit that is not a known unit."
+msgstr "Uma {unidade} é {factor} {base}, e o factor é fixo pela tabela de unidades. Use {factor}, ou uma unidade de apresentação que não seja uma unidade conhecida."
+
+msgid "Position must be between 0 and 32767."
+msgstr "A posição tem de estar entre 0 e 32767."
+
+msgid "The factor has to be greater than zero."
+msgstr "O factor tem de ser maior que zero."
+
+msgid "The position is a whole number between 0 and {limite}."
+msgstr "A posição é um número inteiro entre 0 e {limite}."
+
+msgid "There is already a location with this name in this establishment."
+msgstr "Já existe uma localização com este nome neste estabelecimento."
+
+msgid "There is already a supplier with this name in this establishment."
+msgstr "Já existe um fornecedor com este nome neste estabelecimento."
+
+msgid "There is already an item with this name in this establishment."
+msgstr "Já existe um artigo com este nome neste estabelecimento."
+
+msgid "This field cannot be changed here."
+msgstr "Este campo não pode ser alterado aqui."
+
+msgid "This item already has a packaging with this label."
+msgstr "Este artigo já tem uma embalagem com esta designação."
+
+msgid "This item does not exist in this establishment."
+msgstr "Este artigo não existe neste estabelecimento."
+
+msgid "This supplier does not exist in this establishment."
+msgstr "Este fornecedor não existe neste estabelecimento."
+
+msgid "{unidade} is a unit of {dimensao} and the base unit of this item is {base}. Choose a display unit of the same dimension."
+msgstr "{unidade} é uma unidade de {dimensao} e a unidade base deste artigo é {base}. Escolha uma unidade de apresentação da mesma dimensão."

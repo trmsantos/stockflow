@@ -33,12 +33,16 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from apps.purchasing.events import DocumentoFechado
+from apps.catalog import api as catalog_api
+from apps.inventory import api as inventory_api
+from apps.purchasing.events import DocumentoFechado, StockReceived
 from apps.purchasing.ficheiros import (
     caminho_da_imagem,
     caminho_dentro_do_media,
@@ -51,6 +55,8 @@ from apps.purchasing.models import (
     DocumentPage,
     InvoiceDocument,
     OrigemDoDocumento,
+    Receipt,
+    ReceiptLine,
 )
 from apps.purchasing.rasterizacao import ImagemNormalizada
 from apps.purchasing.selectors import slots_expirados
@@ -575,12 +581,6 @@ def _apagar_bytes(relativo: str) -> None:
 # ============================================================================
 
 
-from django.db import transaction
-
-from apps.catalog import api as catalog_api
-from apps.purchasing.models import Receipt, ReceiptLine
-
-
 class CriacaoDeRececaoJaExiste(Exception):
     """Receção já existe para este documento."""
 
@@ -771,17 +771,22 @@ def confirmar_rececao(
     confirmed_by_id: UUID | None = None,
     confirmed_by_name: str = "",
 ) -> Receipt:
-    """Confirma uma receção de mercadoria.
+    """Confirma uma receção de mercadoria (fatia 3: escreve no ledger de stock).
 
-    - Se já confirmada, retorna 200.
-    - Se não há linhas revistas (confirmed/skipped), lança SemLinhasRevistas.
-    - Passa linhas needs_review restantes a skipped.
-    - Chama catalog.api.memorizar_correspondencias para linhas confirmed de goods.
+    Executa de forma atómica:
+    1. Se já confirmada, retorna o estado atual (idempotência).
+    2. Se não há linhas revistas (confirmed/skipped), lança SemLinhasRevistas.
+    3. Passa linhas needs_review restantes a skipped.
+    4. Cria os lotes para as linhas confirmed (inventory_api.get_or_create_lots).
+    5. Grava os movimentos de stock (inventory_api.record_movements).
+    6. Preenche movement_id nas linhas confirmed (deduplicação por reference).
+    7. Emite evento StockReceived na outbox.
+    8. Memoriza correspondências do catálogo (catalog_api).
     """
     with transaction.atomic():
         receipt = _bloquear_rececao(receipt_id)
 
-        # Se já confirmada, retorna como está
+        # Se já confirmada, retorna como está (idempotência observável — 200)
         if receipt.confirmed_at:
             return receipt
 
@@ -814,16 +819,105 @@ def confirmar_rececao(
         receipt.confirmed_by_name = confirmed_by_name
         receipt.save()
 
+        # === Fatia 3: Escrever no ledger de stock ===
+        linhas_confirmed = list(
+            receipt.lines.filter(status="confirmed", product_id__isnull=False)
+        )
+
+        if linhas_confirmed:
+            # 1. Criar lotes (se track_lots=True)
+            lotes_a_criar = []
+            for linha in linhas_confirmed:
+                # expires_at é DateField na receção, mas Lot espera DateTime
+                expires_dt = None
+                if linha.expires_at:
+                    expires_dt = datetime.combine(linha.expires_at, datetime.min.time())
+                    expires_dt = timezone.make_aware(expires_dt)
+
+                lotes_a_criar.append(
+                    (
+                        linha.product_id,
+                        linha.lot_code or f"__{linha.product_id}__",  # Lote sintético se vazio
+                        expires_dt,
+                        receipt.received_at,  # received_at vem da receção
+                    )
+                )
+
+            lotes_map = inventory_api.get_or_create_lots(
+                tenant_id=receipt.tenant_id,
+                items=lotes_a_criar,
+            )
+
+            # 2. Preparar movimentos
+            movimentos_dtos = []
+            for linha in linhas_confirmed:
+                # unit_cost = line_total / quantity_received (ADR 0023, decisão 3)
+                if linha.quantity_received and linha.line_total:
+                    unit_cost = linha.line_total / linha.quantity_received
+                else:
+                    unit_cost = Decimal("0")
+
+                lot_id = lotes_map.get(
+                    (linha.product_id, linha.lot_code or f"__{linha.product_id}__")
+                )
+
+                mvt_dto = inventory_api.MovementDTO(
+                    product_id=linha.product_id,
+                    location_id=linha.location_id,
+                    lot_id=lot_id,
+                    quantity=linha.quantity_received,
+                    unit_cost=unit_cost,
+                    cost_is_estimate=False,  # Opção B da Q8: custo confirmado (não estimado)
+                    movement_type="receipt" if receipt.doc_type == "FT" else "return",
+                    occurred_at=receipt.received_at,
+                    created_by_id=confirmed_by_id,
+                    created_by_name=confirmed_by_name,
+                    reference=receipt.reference,
+                    reason=None,
+                    production_id=None,
+                )
+                movimentos_dtos.append((linha, mvt_dto))
+
+            # 3. Gravar movimentos (atomicamente)
+            movement_ids = inventory_api.record_movements(
+                tenant_id=receipt.tenant_id,
+                movements=[mvt_dto for _, mvt_dto in movimentos_dtos],
+            )
+
+            # 4. Preencher movement_id nas linhas (mesma transação)
+            for (linha, _), movimento_id in zip(movimentos_dtos, movement_ids):
+                linha.movement_id = movimento_id
+                linha.save(update_fields=["movement_id", "updated_at"])
+
+            # 5. Emitir evento StockReceived
+            linhas_para_evento = [
+                {
+                    "product_id": str(linha.product_id),
+                    "quantity": str(linha.quantity_received),
+                    "unit_cost": str(linha.line_total / linha.quantity_received)
+                    if linha.quantity_received and linha.line_total
+                    else "0",
+                }
+                for linha in linhas_confirmed
+            ]
+            publish(
+                StockReceived(
+                    tenant_id=receipt.tenant_id,
+                    receipt_id=receipt.id,
+                    lines=linhas_para_evento,
+                )
+            )
+
         # Memorizar correspondências do catálogo
         if receipt.supplier_id:
-            linhas_confirmed = receipt.lines.filter(
+            linhas_confirmed_goods = receipt.lines.filter(
                 status="confirmed",
                 kind="goods",
                 product_id__isnull=False,
                 supplier_code__gt="",
             ).values_list("supplier_code", "description", "product_id", "packaging_id")
 
-            if linhas_confirmed:
+            if linhas_confirmed_goods:
                 correspondencias_aprendidas = [
                     catalog_api.CorrespondenciaAprendida(
                         code=row[0].strip().upper(),
@@ -831,7 +925,7 @@ def confirmar_rececao(
                         product_id=row[2],
                         packaging_id=row[3],
                     )
-                    for row in linhas_confirmed
+                    for row in linhas_confirmed_goods
                 ]
 
                 catalog_api.memorizar_correspondencias(

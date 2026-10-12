@@ -501,6 +501,12 @@ class RececaoViewSet(viewsets.ModelViewSet):
         else:
             return RececaoOutSerializer
 
+    def retrieve(self, request, *args, **kwargs):
+        """GET /receipts/{id} — retorna uma receção com estrutura completa."""
+        receipt = self.get_object()
+        output = RececaoOutSerializer(self._compor_rececao(receipt))
+        return Response(output.data)
+
     def list(self, request, *args, **kwargs):
         """GET /receipts — lista paginada."""
         estado = request.query_params.get("estado", None)
@@ -605,7 +611,10 @@ class RececaoViewSet(viewsets.ModelViewSet):
         serializer = LinhaOutSerializer(
             [self._compor_linha(l) for l in linhas], many=True
         )
-        return Response(serializer.data)
+        return Response({
+            "count": linhas.count(),
+            "results": serializer.data
+        })
 
     @action(detail=True, methods=["post"], url_path=r"lines/(?P<linha_id>[^/.]+)/confirmation")
     def line_confirmation(self, request, pk=None, linha_id=None):
@@ -632,7 +641,7 @@ class RececaoViewSet(viewsets.ModelViewSet):
             receipt_id=receipt.id,
             linha_id=linha.id,
             reviewed_by_id=request.user.id,
-            reviewed_by_name=request.user.get_full_name() or request.user.username,
+            reviewed_by_name=request.user.email,
             **serializer.validated_data,
         )
 
@@ -671,7 +680,7 @@ class RececaoViewSet(viewsets.ModelViewSet):
             receipt = confirmar_rececao(
                 receipt_id=receipt.id,
                 confirmed_by_id=request.user.id,
-                confirmed_by_name=request.user.get_full_name() or request.user.username,
+                confirmed_by_name=request.user.email,
             )
             output = RececaoOutSerializer(self._compor_rececao(receipt))
             return Response(output.data, status=status.HTTP_201_CREATED)

@@ -35,6 +35,8 @@ tudo o que este módulo faz aos bytes é comparar prefixos e contar um token.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from django.core.files.uploadedfile import UploadedFile
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
@@ -432,6 +434,18 @@ class RececaoInSerializer(serializers.Serializer):
     )
     received_at = serializers.DateTimeField(required=False)
 
+    def to_internal_value(self, data):
+        """Mapeia os nomes dos campos para os que a função de serviço espera."""
+        ret = super().to_internal_value(data)
+        # Renomear campos
+        if 'location' in ret:
+            ret['location_id'] = ret.pop('location')
+        if 'document' in ret:
+            ret['document_id'] = ret.pop('document')
+        if 'supplier' in ret:
+            ret['supplier_id'] = ret.pop('supplier')
+        return ret
+
 
 class CabecalhoInSerializer(serializers.Serializer):
     """Entrada para PATCH de cabeçalho (zona da pessoa)."""
@@ -440,6 +454,16 @@ class CabecalhoInSerializer(serializers.Serializer):
     doc_type = serializers.ChoiceField(choices=["FT", "FR", "FS", "NC", "ND", "GR"], required=False)
     received_at = serializers.DateTimeField(required=False)
     location = serializers.UUIDField(required=False)
+
+    def to_internal_value(self, data):
+        """Mapeia os nomes dos campos para os que a função de serviço espera."""
+        ret = super().to_internal_value(data)
+        # Renomear campos
+        if 'location' in ret:
+            ret['location_id'] = ret.pop('location')
+        if 'supplier' in ret:
+            ret['supplier_id'] = ret.pop('supplier')
+        return ret
 
 
 class LinhaInSerializer(serializers.Serializer):
@@ -540,32 +564,149 @@ class VatBreakdownSerializer(serializers.Serializer):
 class RececaoOutSerializer(serializers.Serializer):
     """Saída de receção."""
 
-    id = serializers.UUIDField()
-    document = serializers.UUIDField(allow_null=True)
-    supplier = FornecedorReferenceSerializer()
-    supplier_id = serializers.UUIDField(allow_null=True)
-    doc_type = serializers.ChoiceField(choices=["FT", "FR", "FS", "NC", "ND", "GR"])
-    doc_number = serializers.CharField(max_length=100, allow_blank=True)
-    doc_date = serializers.DateField(allow_null=True)
-    received_at = serializers.DateTimeField()
-    confirmed_at = serializers.DateTimeField(allow_null=True)
-    confirmed_by = serializers.CharField(max_length=150, allow_null=True)
-    status = serializers.ChoiceField(choices=["needs_review", "confirmed"])
-    lines_to_review = serializers.IntegerField()
-    line_count = serializers.IntegerField()
-    customer_name = serializers.CharField(max_length=200, allow_blank=True)
-    customer_nif = serializers.CharField(max_length=20, allow_blank=True)
-    company_name = serializers.CharField(max_length=200)
-    company_nif = serializers.CharField(max_length=20, allow_blank=True)
-    awaiting_invoice = serializers.BooleanField()
-    document_total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
-    lines_total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
-    vat_breakdown = VatBreakdownSerializer(many=True)
-    temperatures = TemperaturaRegistadaOutSerializer(many=True)
-    cold_chain = serializers.BooleanField()
-    location = LocalizacaoReferenceSerializer()
-    locations = LocalizacaoReferenceSerializer(many=True)
-    reference = serializers.CharField(max_length=120, allow_blank=True)
+    id = serializers.UUIDField(source="receipt.id")
+    document = serializers.UUIDField(source="receipt.document_id", allow_null=True)
+    supplier = serializers.SerializerMethodField()
+    supplier_id = serializers.UUIDField(source="receipt.supplier_id", allow_null=True)
+    doc_type = serializers.ChoiceField(
+        source="receipt.doc_type",
+        choices=["FT", "FR", "FS", "NC", "ND", "GR"]
+    )
+    doc_number = serializers.CharField(source="receipt.doc_number", max_length=100, allow_blank=True)
+    doc_date = serializers.DateField(source="receipt.doc_date", allow_null=True)
+    received_at = serializers.DateTimeField(source="receipt.received_at")
+    confirmed_at = serializers.DateTimeField(source="receipt.confirmed_at", allow_null=True)
+    confirmed_by = serializers.CharField(source="receipt.confirmed_by_name", max_length=150, allow_null=True)
+    status = serializers.SerializerMethodField()
+    lines_to_review = serializers.SerializerMethodField()
+    line_count = serializers.SerializerMethodField()
+    customer_name = serializers.CharField(source="receipt.customer_name", max_length=200, allow_blank=True)
+    customer_nif = serializers.CharField(source="receipt.customer_nif", max_length=20, allow_blank=True)
+    company_name = serializers.SerializerMethodField()
+    company_nif = serializers.SerializerMethodField()
+    awaiting_invoice = serializers.SerializerMethodField()
+    document_total = serializers.DecimalField(source="receipt.document_total_eur", max_digits=12, decimal_places=2, allow_null=True)
+    lines_total = serializers.SerializerMethodField()
+    vat_breakdown = serializers.SerializerMethodField()
+    temperatures = serializers.SerializerMethodField()
+    cold_chain = serializers.SerializerMethodField()
+    location = serializers.SerializerMethodField()
+    locations = serializers.SerializerMethodField()
+    reference = serializers.CharField(source="receipt.reference", max_length=120, allow_blank=True)
+
+    def get_supplier(self, obj):
+        """Extrai supplier do receipt."""
+        return {
+            "name": obj["receipt"].supplier_name,
+            "nif": obj["receipt"].supplier_nif,
+        }
+
+    def get_status(self, obj):
+        """Determina status da receção."""
+        return "confirmed" if obj["receipt"].confirmed_at else "needs_review"
+
+    def get_lines_to_review(self, obj):
+        """Conta linhas que precisam de revisão."""
+        return sum(1 for l in obj["linhas"] if l["linha"].status == "needs_review")
+
+    def get_line_count(self, obj):
+        """Total de linhas."""
+        return len(obj["linhas"])
+
+    def get_company_name(self, obj):
+        """Nome da empresa (tenant)."""
+        return obj["receipt"].tenant.name if obj["receipt"].tenant else ""
+
+    def get_company_nif(self, obj):
+        """NIF da empresa (tenant)."""
+        return ""
+
+    def get_awaiting_invoice(self, obj):
+        """Retorna True se está a aguardar fatura."""
+        return obj["receipt"].document_id is not None and obj["receipt"].confirmed_at is None
+
+    def get_lines_total(self, obj):
+        """Soma dos totais das linhas."""
+        total = Decimal(0)
+        for linha_data in obj["linhas"]:
+            if linha_data["linha"].line_total:
+                total += linha_data["linha"].line_total
+        return total if total else None
+
+    def get_vat_breakdown(self, obj):
+        """Breakdown de IVA."""
+        # Agrupar linhas por taxa de IVA
+        vat_map = {}
+        for linha_data in obj["linhas"]:
+            linha = linha_data["linha"]
+            if linha.status != "skipped" and linha.vat_rate:
+                rate = str(linha.vat_rate)
+                if rate not in vat_map:
+                    vat_map[rate] = {"base": Decimal(0), "vat": Decimal(0)}
+                if linha.line_total and linha.vat_rate:
+                    vat_amount = linha.line_total * (linha.vat_rate / Decimal(100))
+                    vat_map[rate]["vat"] += vat_amount
+                    vat_map[rate]["base"] += linha.line_total - vat_amount
+
+        return [
+            {
+                "rate": Decimal(rate),
+                "base": value["base"],
+                "vat": value["vat"],
+            }
+            for rate, value in sorted(vat_map.items())
+        ]
+
+    def get_temperatures(self, obj):
+        """Temperaturas registadas."""
+        temps = []
+        receipt = obj["receipt"]
+        if receipt.chilled_temperature_c is not None:
+            temps.append({
+                "conservation": "chilled",
+                "celsius": receipt.chilled_temperature_c,
+                "measured_by": receipt.chilled_measured_by_name or "",
+                "measured_at": receipt.chilled_measured_at,
+            })
+        if receipt.frozen_temperature_c is not None:
+            temps.append({
+                "conservation": "frozen",
+                "celsius": receipt.frozen_temperature_c,
+                "measured_by": receipt.frozen_measured_by_name or "",
+                "measured_at": receipt.frozen_measured_at,
+            })
+        return temps
+
+    def get_cold_chain(self, obj):
+        """Retorna True se há registos de temperatura."""
+        receipt = obj["receipt"]
+        return (
+            receipt.chilled_temperature_c is not None or
+            receipt.frozen_temperature_c is not None
+        )
+
+    def get_location(self, obj):
+        """Localização principal da receção."""
+        locais = obj["locais"]
+        receipt = obj["receipt"]
+        local = locais.get(receipt.location_id)
+        if local:
+            return {
+                "id": local.id,
+                "name": local.name,
+            }
+        return None
+
+    def get_locations(self, obj):
+        """Todas as localizações usadas."""
+        locais = obj["locais"]
+        return [
+            {
+                "id": local.id,
+                "name": local.name,
+            }
+            for local in locais.values()
+        ]
 
 
 class ResumoDeRececoesOutSerializer(serializers.Serializer):

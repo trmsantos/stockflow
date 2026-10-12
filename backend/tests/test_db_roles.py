@@ -56,12 +56,11 @@ from django.db import connection
 from tests.conftest import APP_ROLE, reload_settings
 
 #: Tabelas onde o role da app **não** tem `UPDATE` nem `DELETE`, por serem
-#: append-only como regra de negócio. Hoje vazia: o `inventory_stockmovement` só
-#: nasce no passo do ledger, e é a migração que o cria que faz o
-#: `REVOKE UPDATE, DELETE`, ao lado do bloco de RLS. A lista existe já para que
-#: a asserção exista já — e para que acrescentar a segunda entrada seja uma
-#: decisão visível, com o `domain-expert` consultado (ADR 0006).
-APPEND_ONLY: frozenset[str] = frozenset()
+#: append-only como regra de negócio. O `inventory_stockmovement` nasce no passo
+#: do ledger, e a migração que o cria faz o `REVOKE UPDATE, DELETE` ao lado do
+#: bloco de RLS. A lista é fechada e qualquer nova entrada é uma decisão visível
+#: com o `domain-expert` consultado (ADR 0006).
+APPEND_ONLY: frozenset[str] = frozenset({"inventory_stockmovement"})
 
 #: Uma tabela que tem de aparecer em todas as varreduras. Sem esta âncora, uma
 #: query mal escrita devolvia zero linhas e todos os testes deste ficheiro

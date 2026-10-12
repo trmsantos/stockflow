@@ -25,11 +25,12 @@ tornou medíveis:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from apps.shared.events import DomainEvent
 
-__all__ = ["DocumentoFechado"]
+__all__ = ["DocumentoFechado", "StockReceived"]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -56,3 +57,20 @@ class DocumentoFechado(DomainEvent):
     """
 
     documento_id: UUID
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StockReceived(DomainEvent):
+    """Uma receção de mercadoria foi confirmada e o stock foi atualizado.
+
+    Publicado por `purchasing.services.confirmar_rececao` na fatia 3,
+    na mesma transação que grava os movimentos. Consumidores futuros
+    (painel de stock, alertas, previsões) reagem a este evento.
+
+    Campos:
+    - receipt_id: o UUID da receção confirmada
+    - lines: lista de dicts {product_id, quantity, unit_cost} para auditoria
+    """
+
+    receipt_id: UUID
+    lines: list[dict[str, Any]]
