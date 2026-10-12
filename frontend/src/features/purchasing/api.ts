@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { z } from "zod";
 
 import { useInvalidarLedger } from "@/features/inventory/api";
 import { apiRequest } from "@/lib/api/http";
@@ -7,13 +8,19 @@ import { queryKeys } from "@/lib/api/query-keys";
 import { tenantDaCache } from "@/lib/api/tenant";
 
 import {
+  cabecalhoParaReverSchema,
   linhaDeRececaoSchema,
+  linhaParaCriarSchema,
+  rececaoParaCriarSchema,
   rececaoSchema,
   resumoDeRececoesSchema,
   revisaoDeLinhaSchema,
   temperaturaSchema,
+  type CabecalhoParaRever,
   type LinhaDeRececao,
+  type LinhaParaCriar,
   type Rececao,
+  type RececaoParaCriar,
   type ResumoDeRececoes,
   type RevisaoDeLinha,
 } from "./schemas";
@@ -186,6 +193,7 @@ export function useRevisarLinha() {
 
 export interface TemperaturaPedida {
   readonly rececao: string;
+  readonly conservation: "chilled" | "frozen";
   readonly celsius: string;
 }
 
@@ -195,10 +203,10 @@ export function useRegistarTemperatura() {
   const tenant = tenantDaCache();
 
   return useMutation({
-    mutationFn: ({ rececao, celsius }: TemperaturaPedida) =>
+    mutationFn: ({ rececao, conservation, celsius }: TemperaturaPedida) =>
       apiRequest(`${CAMINHO_RECECOES}/${rececao}/temperature`, rececaoSchema, {
         method: "POST",
-        body: temperaturaSchema.parse({ celsius }),
+        body: temperaturaSchema.parse({ conservation, celsius }),
       }),
     onSuccess: async () => {
       await invalidarRececoes(queryClient, tenant);
@@ -235,6 +243,73 @@ export function useConfirmarRececao() {
       }),
     onSuccess: async () => {
       await Promise.all([invalidarRececoes(queryClient, tenant), invalidarLedger()]);
+    },
+  });
+}
+
+/** Criar uma receção a partir de um documento ou à mão. */
+export function useCriarRececao() {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: (pedido: RececaoParaCriar) =>
+      apiRequest(CAMINHO_RECECOES, rececaoSchema, {
+        method: "POST",
+        body: rececaoParaCriarSchema.parse(pedido),
+      }),
+    onSuccess: async () => {
+      await invalidarRececoes(queryClient, tenant);
+    },
+  });
+}
+
+/** Rever o cabeçalho de uma receção (zona da pessoa). */
+export function useReverCabecalho() {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: ({ id, ...revisao }: CabecalhoParaRever & { id: string }) =>
+      apiRequest(`${CAMINHO_RECECOES}/${id}`, rececaoSchema, {
+        method: "PATCH",
+        body: cabecalhoParaReverSchema.parse(revisao),
+      }),
+    onSuccess: async () => {
+      await invalidarRececoes(queryClient, tenant);
+    },
+  });
+}
+
+/** Apagar uma receção em rascunho. */
+export function useApagarRascunho() {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiRequest(`${CAMINHO_RECECOES}/${id}`, z.void(), {
+        method: "DELETE",
+      }),
+    onSuccess: async () => {
+      await invalidarRececoes(queryClient, tenant);
+    },
+  });
+}
+
+/** Adicionar uma linha à mão numa receção. */
+export function useAdicionarLinha() {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: ({ id, ...linha }: LinhaParaCriar & { id: string }) =>
+      apiRequest(`${CAMINHO_RECECOES}/${id}/lines`, linhaDeRececaoSchema, {
+        method: "POST",
+        body: linhaParaCriarSchema.parse(linha),
+      }),
+    onSuccess: async () => {
+      await invalidarRececoes(queryClient, tenant);
     },
   });
 }

@@ -160,14 +160,30 @@ export function EcraDeRececao() {
             <AvisoDeTotais rececao={dados} />
 
             {dados.cold_chain ? (
-              <TemperaturaAEntrega
-                rececao={dados}
-                aGuardar={temperatura.isPending}
-                erroDoServidor={temperatura.isError ? mensagemDeErro(temperatura.error) : null}
-                aoGuardar={(celsius) => {
-                  temperatura.mutate({ rececao: dados.id, celsius });
-                }}
-              />
+              <>
+                {dados.locations.some((l) => l.name === "Refrigerado") && (
+                  <TemperaturaAEntrega
+                    rececao={dados}
+                    conservation="chilled"
+                    aGuardar={temperatura.isPending}
+                    erroDoServidor={temperatura.isError ? mensagemDeErro(temperatura.error) : null}
+                    aoGuardar={(conservation, celsius) => {
+                      temperatura.mutate({ rececao: dados.id, conservation, celsius });
+                    }}
+                  />
+                )}
+                {dados.locations.some((l) => l.name === "Congelado") && (
+                  <TemperaturaAEntrega
+                    rececao={dados}
+                    conservation="frozen"
+                    aGuardar={temperatura.isPending}
+                    erroDoServidor={temperatura.isError ? mensagemDeErro(temperatura.error) : null}
+                    aoGuardar={(conservation, celsius) => {
+                      temperatura.mutate({ rececao: dados.id, conservation, celsius });
+                    }}
+                  />
+                )}
+              </>
             ) : null}
 
             {dados.status === "confirmed" ? (

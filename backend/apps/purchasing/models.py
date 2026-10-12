@@ -45,6 +45,8 @@ __all__ = [
     "EstadoDoDocumento",
     "InvoiceDocument",
     "OrigemDoDocumento",
+    "Receipt",
+    "ReceiptLine",
     "estado_do_documento",
 ]
 
@@ -483,3 +485,471 @@ class DocumentPage(TenantModel):
 
     def __str__(self) -> str:
         return f"página {self.position}"
+
+
+class Receipt(TenantModel):
+    """Uma receção de mercadoria — o cabeçalho e as linhas.
+
+    Liga o documento de fatura (fatia 1) ao catálogo (parte A). Tem duas zonas:
+    - **zona do documento**: o que o papel impresso diz (lido uma vez, pode ser corrigido na criação).
+    - **zona da pessoa**: o que o utilizador revê e confirma.
+
+    A receção nasce com `status = needs_review` e pode passar a `confirmed` quando
+    o utilizador confirma (fatia 3 escreve `movement_id`). As linhas são `needs_review`,
+    `confirmed` ou `skipped` — trata-se de uma linha revista pelo utilizador.
+
+    Herda de `TenantModel` — política RLS por `tenant_id`.
+    """
+
+    # Ligação ao documento
+    document = models.ForeignKey(
+        "purchasing.InvoiceDocument",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        default=None,
+        related_name="+",
+        verbose_name="documento de fatura",
+    )
+
+    # Zona do documento — lida uma vez, correível na criação
+    supplier_name = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        verbose_name="nome do fornecedor como impresso",
+    )
+    supplier_nif = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="NIF do fornecedor como impresso",
+    )
+    doc_number = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        verbose_name="número de documento como impresso",
+    )
+    doc_number_normalized = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        verbose_name="número de documento normalizado",
+    )
+    doc_date = models.DateField(
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="data do documento",
+    )
+    atcud = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        verbose_name="ATCUD da fatura",
+    )
+    fiscal_space = models.CharField(
+        max_length=5,
+        blank=True,
+        default="",
+        verbose_name="espaço fiscal",
+    )
+    customer_name = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        verbose_name="nome do cliente",
+    )
+    customer_nif = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="NIF do cliente",
+    )
+    document_total_eur = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="total do documento em EUR",
+    )
+
+    # Zona da pessoa — revista e confirmada
+    supplier = models.ForeignKey(
+        "catalog.Supplier",
+        on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
+        default=None,
+        related_name="+",
+        verbose_name="fornecedor do catálogo",
+    )
+    doc_type = models.CharField(
+        max_length=2,
+        choices=[
+            ("FT", "Fatura"),
+            ("FR", "Fatura-Recibo"),
+            ("FS", "Fatura Simplificada"),
+            ("NC", "Nota de Crédito"),
+            ("ND", "Nota de Débito"),
+            ("GR", "Guia de Remessa"),
+        ],
+        verbose_name="tipo de documento",
+    )
+    received_at = models.DateTimeField(verbose_name="recebido em")
+    location = models.ForeignKey(
+        "inventory.Location",
+        on_delete=models.RESTRICT,
+        related_name="+",
+        verbose_name="localização de destino",
+    )
+    settled_by = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        default=None,
+        related_name="+",
+        verbose_name="liquidado por",
+    )
+    reference = models.CharField(
+        max_length=120,
+        blank=True,
+        default="",
+        verbose_name="referência para o ledger",
+    )
+
+    # Temperatura — pares de colunas
+    chilled_temperature_c = models.DecimalField(
+        max_digits=5,
+        decimal_places=1,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="temperatura refrigerado (°C)",
+    )
+    chilled_measured_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="temperatura refrigerado medida em",
+    )
+    chilled_measured_by_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        verbose_name="temperatura refrigerado medida por",
+    )
+    frozen_temperature_c = models.DecimalField(
+        max_digits=5,
+        decimal_places=1,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="temperatura congelado (°C)",
+    )
+    frozen_measured_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="temperatura congelado medida em",
+    )
+    frozen_measured_by_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        verbose_name="temperatura congelado medida por",
+    )
+
+    # Confirmação
+    confirmed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="confirmada em",
+    )
+    confirmed_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        default=None,
+        related_name="+",
+        verbose_name="confirmada por",
+    )
+    confirmed_by_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        verbose_name="confirmada por (nome)",
+    )
+
+    # Quem criou
+    created_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        default=None,
+        related_name="+",
+        verbose_name="criada por",
+    )
+    created_by_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        verbose_name="criada por (nome)",
+    )
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "receção de mercadoria"
+        verbose_name_plural = "receções de mercadoria"
+        constraints = [
+            # Unicidade parcial: documento-tenant
+            models.UniqueConstraint(
+                fields=["tenant", "document"],
+                name="receipt_tenant_document_uniq",
+                condition=models.Q(document__isnull=False),
+            ),
+            # Chave de duplicado: (tenant, supplier_nif, doc_type, doc_number_normalized)
+            models.UniqueConstraint(
+                fields=["tenant", "supplier_nif", "doc_type", "doc_number_normalized"],
+                name="receipt_tenant_supplier_nif_doc_type_number_uniq",
+                condition=models.Q(doc_number_normalized__gt=""),
+            ),
+            # Chave de ATCUD: (tenant, atcud)
+            models.UniqueConstraint(
+                fields=["tenant", "atcud"],
+                name="receipt_tenant_atcud_uniq",
+                condition=models.Q(atcud__gt=""),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "confirmed_at"]),
+            models.Index(fields=["tenant", "-received_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Receção {self.reference or self.doc_number or self.pk}"
+
+
+class ReceiptLine(TenantModel):
+    """Uma linha de receção — um item do documento.
+
+    Tem duas zonas análogas ao `Receipt`:
+    - **zona do documento**: o que o papel impresso diz.
+    - **zona da pessoa**: o que o utilizador revê, confirma e eventualmente entra no stock.
+
+    O status é `needs_review` (inicial), `confirmed` (revista e aprovada) ou
+    `skipped` (revista e rejeitada — e.g., "faltou esta linha").
+
+    Herda de `TenantModel` — política RLS por `tenant_id`.
+    """
+
+    receipt = models.ForeignKey(
+        "purchasing.Receipt",
+        on_delete=models.CASCADE,
+        related_name="lines",
+        verbose_name="receção",
+    )
+    position = models.PositiveSmallIntegerField(verbose_name="posição")
+
+    # Zona do documento — lida uma vez
+    description = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        verbose_name="descrição como impresso",
+    )
+    invoice_unit = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="unidade da fatura",
+    )
+    quantity_invoiced = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="quantidade na fatura",
+    )
+    unit_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="preço unitário",
+    )
+    discount_pct = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="percentagem de desconto",
+    )
+    vat_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="taxa de IVA",
+    )
+    line_total = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="total da linha",
+    )
+    supplier_code = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        verbose_name="código do fornecedor",
+    )
+    ean = models.CharField(
+        max_length=14,
+        blank=True,
+        default="",
+        verbose_name="EAN/código de barras",
+    )
+    variable_weight = models.BooleanField(
+        default=False,
+        verbose_name="peso variável",
+    )
+    extraction_confidence = models.DecimalField(
+        max_digits=4,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="confiança de extração",
+    )
+
+    # Zona da pessoa — revista e confirmada
+    product = models.ForeignKey(
+        "catalog.Product",
+        on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
+        default=None,
+        related_name="+",
+        verbose_name="artigo do catálogo",
+    )
+    packaging = models.ForeignKey(
+        "catalog.ProductPackaging",
+        on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
+        default=None,
+        related_name="+",
+        verbose_name="embalagem",
+    )
+    base_per_invoice_unit = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="unidades base por unidade de fatura",
+    )
+    quantity_received = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        verbose_name="quantidade recebida",
+    )
+    location = models.ForeignKey(
+        "inventory.Location",
+        on_delete=models.RESTRICT,
+        related_name="+",
+        verbose_name="localização",
+    )
+    kind = models.CharField(
+        max_length=20,
+        choices=[
+            ("goods", "Mercadoria"),
+            ("deposit", "Vasilhame"),
+            ("charge", "Encargo"),
+            ("document_ref", "Referência de Documento"),
+        ],
+        verbose_name="tipo de linha",
+    )
+    lot_code = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        verbose_name="lote",
+    )
+    expires_at = models.DateField(
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="data de expiração",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("needs_review", "Precisa de Revisão"),
+            ("confirmed", "Confirmada"),
+            ("skipped", "Saltada"),
+        ],
+        default="needs_review",
+        verbose_name="estado",
+    )
+    reviewed_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        default=None,
+        related_name="+",
+        verbose_name="revista por",
+    )
+    reviewed_by_name = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+        verbose_name="revista por (nome)",
+    )
+    reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="revista em",
+    )
+    movement_id = models.UUIDField(
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="movimento de stock",
+    )
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "linha de receção"
+        verbose_name_plural = "linhas de receção"
+        constraints = [
+            # Posição única por receção
+            models.UniqueConstraint(
+                fields=["receipt", "position"],
+                name="receiptline_receipt_position_uniq",
+            ),
+            # Quantidade recebida >= 0
+            models.CheckConstraint(
+                check=models.Q(quantity_received__gte=0),
+                name="receiptline_quantity_received_nonnegative",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "product", "receipt"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Linha {self.position} de {self.receipt_id}"

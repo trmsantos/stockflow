@@ -73,7 +73,7 @@ export const tipoValidadeSchema = z.enum(["use_by", "best_before"]);
  * "outro": um documento que não seja nenhum destes é uma conversa a ter, não um
  * caso a tratar em silêncio.
  */
-export const tipoDeDocumentoSchema = z.enum(["FT", "FR", "FS", "NC", "GR"]);
+export const tipoDeDocumentoSchema = z.enum(["FT", "FR", "FS", "NC", "ND", "GR"]);
 
 /**
  * O estado da receção. **Dois**, e não três: ou está à espera de revisão, ou já
@@ -96,10 +96,11 @@ export const estadoDeLinhaSchema = z.enum(["needs_review", "confirmed", "skipped
  * `goods` é mercadoria e é a única espécie que gera movimento. `deposit` é
  * tara/vasilhame retornável: linha de fatura **com valor** que não é stock
  * consumível (guião §2, prática 5). `charge` é portes, serviço ou desconto —
- * valor sem mercadoria. Tratar as três como iguais era inventar stock de
- * grades de plástico e de portes de envio.
+ * valor sem mercadoria. `document_ref` é uma referência a outro documento
+ * (nota fiscal complementar). Tratar as quatro como iguais era inventar stock de
+ * grades de plástico, portes de envio e documentação.
  */
-export const especieDeLinhaSchema = z.enum(["goods", "deposit", "charge"]);
+export const especieDeLinhaSchema = z.enum(["goods", "deposit", "charge", "document_ref"]);
 
 /**
  * Como se conserva o que vem nesta linha. É o que decide se a receção pede
@@ -109,8 +110,8 @@ export const conservacaoSchema = z.enum(["ambient", "chilled", "frozen"]);
 
 export const fornecedorSchema = z.object({
   name: z.string().min(1),
-  /** NIF de nove dígitos. `null` quando o documento não o traz legível. */
-  nif: z.string().regex(/^\d{9}$/, "NIF inválido").nullable(),
+  /** NIF como impresso. `null` quando o documento não o traz legível. */
+  nif: z.string().nullable(),
 });
 
 /**
@@ -123,6 +124,7 @@ export const fornecedorSchema = z.object({
  * aqui o cliente só escreve a frase.
  */
 export const embalagemSchema = z.object({
+  id: z.uuid(),
   /** Como o fornecedor lhe chama: "caixa 12×1 L", "bloco 2,5 kg", "kg". */
   label: z.string().min(1),
   base_quantity: decimal,
@@ -146,7 +148,7 @@ export const embalagemSchema = z.object({
  */
 export const historicoDePrecoSchema = z.object({
   last_price: decimal,
-  /** A unidade a que os dois preços se referem ("kg", "bloco 2,5 kg"). */
+  /** A unidade de apresentação a que o preço se refere. */
   unit_label: z.string().min(1),
   /** `21` = 21 % acima. Negativo quando está mais barato. */
   change_pct: z.number().int(),
@@ -200,12 +202,22 @@ export const linhaDeRececaoSchema = z.object({
   stock_quantity: quantidadeSchema.nullable(),
   /** Peso irregular, pesado peça a peça na fatura: o queijo e o fiambre ao kg. */
   variable_weight: z.boolean(),
+  /** Código do fornecedor para este artigo. */
+  supplier_code: z.string(),
+  /** Código de barras EAN. */
+  ean: z.string(),
   /** Por `invoice_unit`. `null` numa guia de remessa, que não traz preços. */
   unit_price: decimal.nullable(),
+  /** Percentagem de desconto linear. */
+  discount_pct: decimal.nullable(),
   /** A taxa **como vem na linha**, em fração (`"0.230"`). Nunca do artigo. */
   vat_rate: decimal.nullable(),
   line_total: decimal.nullable(),
+  /** Quantas unidades base vale uma unidade de fatura. */
+  base_per_invoice_unit: decimal.nullable(),
   price_history: historicoDePrecoSchema.nullable(),
+  /** Divergência entre o impresso e o total: |quantidade × preço × (1 - desconto) - total| > 0,02. */
+  amount_mismatch: z.boolean(),
   /** Se este artigo exige lote: perecível, ou de origem animal (HACCP). */
   requires_lot: z.boolean(),
   lot_code: z.string().min(1).nullable(),
@@ -235,10 +247,16 @@ export const totalDeIvaSchema = z.object({
 
 export const rececaoSchema = z.object({
   id: z.uuid(),
+  /** O documento que gerou esta receção. `null` quando é receção à mão. */
+  document: z.uuid().nullable(),
   supplier: fornecedorSchema,
+  /** O fornecedor do catálogo, se resolvido. */
+  supplier_id: z.uuid().nullable(),
   doc_type: tipoDeDocumentoSchema,
   /** `null` numa fatura manuscrita sem número — e existem. */
   doc_number: z.string().min(1).nullable(),
+  /** Quando a mercadoria chegou, segundo o documento. */
+  doc_date: z.iso.date().nullable(),
   /** Quando a mercadoria chegou, segundo o documento. */
   received_at: z.iso.datetime({ offset: true }),
   /**
@@ -278,10 +296,19 @@ export const rececaoSchema = z.object({
    */
   lines_total: decimal.nullable(),
   vat_breakdown: z.array(totalDeIvaSchema),
-  /** A temperatura à entrega, em °C. */
-  temperature_c: decimal.nullable(),
+  /** Temperaturas registadas à entrega, por classe (refrigerado, congelado). */
+  temperatures: z.array(
+    z.object({
+      conservation: conservacaoSchema,
+      celsius: decimal,
+      measured_by: z.string(),
+      measured_at: z.iso.datetime({ offset: true }),
+    })
+  ),
   /** Esta receção traz frio: refrigerado ou congelado. */
   cold_chain: z.boolean(),
+  /** Localização de omissão para as linhas. */
+  location: localizacaoSchema,
   /** Onde a mercadoria entrou. Mais do que uma numa ida ao cash & carry. */
   locations: z.array(localizacaoSchema),
   /** A referência com que os movimentos desta receção vivem no ledger. */
@@ -321,19 +348,14 @@ export const resumoDeRececoesSchema = z.object({
  *
  * Não há schema para **apagar** uma linha: um documento não se edita, e uma
  * linha que não devia entrar fica `skipped` com registo de quem o decidiu.
- *
- * **Não há `product`, e a ausência é uma decisão por tomar e não um
- * esquecimento.** Uma linha que o catálogo não tem resolve-se de duas maneiras
- * — criar o artigo, ou associar a um existente — e as duas precisam de saber
- * quantas unidades base vale a embalagem daquela linha ("pacote de 500 folhas"
- * não converte para nada). Dar aqui um seletor de artigo sem essa conversão era
- * prometer uma entrada de stock com um número inventado, que é exactamente o
- * que este ecrã existe para não fazer; e um formulário de criação de artigo
- * pré-decide o âmbito do catálogo v1, que é uma das perguntas da sessão. No
- * shell a linha sem artigo só se deixa de fora; o campo entra quando houver
- * resposta sobre o catálogo.
  */
 export const revisaoDeLinhaSchema = z.object({
+  product: z.uuid().optional(),
+  packaging: z.uuid().optional(),
+  base_per_invoice_unit: decimal.optional(),
+  quantity_received: decimal.optional(),
+  location: z.uuid().optional(),
+  kind: especieDeLinhaSchema.optional(),
   lot_code: z.string().trim().min(1).max(40).optional(),
   expires_at: z.iso.date().optional(),
   /** Deixa a linha fora desta entrada. Reversível: volta a `needs_review`. */
@@ -348,7 +370,67 @@ export const revisaoDeLinhaSchema = z.object({
  * registar.
  */
 export const temperaturaSchema = z.object({
+  conservation: conservacaoSchema,
   celsius: decimal,
+});
+
+/**
+ * O corpo de `POST /receipts` — criação de uma receção.
+ *
+ * Com `document`: semeia cabeçalho e linhas da última leitura `lido`.
+ * Sem `document`: receção à mão, só o cabeçalho.
+ */
+export const rececaoParaCriarSchema = z.object({
+  location: z.uuid(),
+  document: z.uuid().optional(),
+  supplier_name: z.string().optional(),
+  supplier_nif: z.string().optional(),
+  doc_number: z.string().optional(),
+  doc_date: z.iso.date().optional(),
+  customer_name: z.string().optional(),
+  customer_nif: z.string().optional(),
+  document_total_eur: decimal.optional(),
+  supplier: z.uuid().optional(),
+  doc_type: tipoDeDocumentoSchema.optional(),
+  received_at: z.iso.datetime({ offset: true }).optional(),
+});
+
+/**
+ * O corpo de `PATCH /receipts/{id}` — revisão do cabeçalho da receção.
+ *
+ * Só a zona da pessoa: fornecedor, tipo, data de receção, destino.
+ */
+export const cabecalhoParaReverSchema = z.object({
+  supplier: z.uuid().optional(),
+  doc_type: tipoDeDocumentoSchema.optional(),
+  received_at: z.iso.datetime({ offset: true }).optional(),
+  location: z.uuid().optional(),
+});
+
+/**
+ * O corpo de `POST /receipts/{id}/lines` — uma linha adicionada à mão.
+ *
+ * A zona do documento, escrita pela pessoa uma vez.
+ */
+export const linhaParaCriarSchema = z.object({
+  description: z.string().min(1),
+  invoice_unit: z.string().min(1),
+  quantity_invoiced: decimal,
+  unit_price: decimal.optional(),
+  discount_pct: decimal.optional(),
+  vat_rate: decimal.optional(),
+  line_total: decimal.optional(),
+  supplier_code: z.string().optional(),
+  ean: z.string().optional(),
+  variable_weight: z.boolean().optional(),
+  kind: especieDeLinhaSchema.optional(),
+  product: z.uuid().optional(),
+  packaging: z.uuid().optional(),
+  base_per_invoice_unit: decimal.optional(),
+  quantity_received: decimal.optional(),
+  location: z.uuid().optional(),
+  lot_code: z.string().optional(),
+  expires_at: z.iso.date().optional(),
 });
 
 export type UnidadeBase = z.output<typeof unidadeBaseSchema>;
@@ -369,3 +451,6 @@ export type Rececao = z.output<typeof rececaoSchema>;
 export type ResumoDeRececoes = z.output<typeof resumoDeRececoesSchema>;
 export type RevisaoDeLinha = z.output<typeof revisaoDeLinhaSchema>;
 export type Temperatura = z.output<typeof temperaturaSchema>;
+export type RececaoParaCriar = z.output<typeof rececaoParaCriarSchema>;
+export type CabecalhoParaRever = z.output<typeof cabecalhoParaReverSchema>;
+export type LinhaParaCriar = z.output<typeof linhaParaCriarSchema>;

@@ -34,6 +34,10 @@ api_v1_patterns = [
     # `tests/test_rls_isolation.py` **não cresce** com esta feature, e é o gate
     # principal da ADR 0020 (adenda 2, gate 3).
     path("", include("apps.purchasing.urls")),
+    # Catálogo: produtos, embalagens, fornecedores (ADR 0021, fatia 2).
+    path("", include("apps.catalog.urls")),
+    # Inventário: localizações (ADR 0021, fatia 2). O ledger vem na fatia 3.
+    path("", include("apps.inventory.urls")),
 ]
 
 if settings.API_DOCS_ENABLED:

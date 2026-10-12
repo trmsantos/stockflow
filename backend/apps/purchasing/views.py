@@ -442,3 +442,322 @@ def _resposta_de_recusa(recusa: RecusaDeDocumento) -> Response:
         {"code": recusa.codigo, "detail": str(recusa.detalhe)}
     )
     return Response(corpo.data, status=STATUS_DA_RECUSA_DE_DOCUMENTO[recusa.codigo])
+
+
+# ============================================================================
+# Receção de mercadoria (fatia 2, parte B)
+# ============================================================================
+
+from apps.purchasing.models import Receipt, ReceiptLine
+from apps.purchasing.selectors import (
+    preco_historico,
+    resumo_de_recebidas,
+)
+from apps.purchasing.serializers import (
+    CabecalhoInSerializer,
+    LinhaInSerializer,
+    LinhaOutSerializer,
+    RececaoInSerializer,
+    RececaoOutSerializer,
+    ResumoDeRececoesOutSerializer,
+    RevisaoDeLinhaInSerializer,
+    TemperaturaInSerializer,
+)
+from apps.purchasing.services import (
+    CriacaoDeRececaoJaExiste,
+    SemLinhasRevistas,
+    apagar_rascunho,
+    confirmar_rececao,
+    criar_rececao,
+    registar_temperatura,
+    rever_linha,
+)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        parameters=[
+            OpenApiParameter("estado", OpenApiTypes.STR, OpenApiTypes.STR, required=False),
+        ]
+    ),
+)
+class RececaoViewSet(viewsets.ModelViewSet):
+    """ViewSet para receções de mercadoria."""
+
+    permission_classes = [IsAuthenticated, PertenceAoTenant]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "rececoes"
+
+    def get_queryset(self) -> QuerySet:
+        """Filtrado por tenant."""
+        return Receipt.objects.filter(tenant_id=self.request.tenant.id).prefetch_related("lines")
+
+    def get_serializer_class(self):
+        """Serializers por ação."""
+        if self.action in ["create"]:
+            return RececaoInSerializer
+        elif self.action in ["partial_update"]:
+            return CabecalhoInSerializer
+        else:
+            return RececaoOutSerializer
+
+    def list(self, request, *args, **kwargs):
+        """GET /receipts — lista paginada."""
+        estado = request.query_params.get("estado", None)
+        page = int(request.query_params.get("page", 1))
+
+        queryset = self.get_queryset()
+
+        if estado == "revisao":
+            queryset = queryset.filter(confirmed_at__isnull=True)
+        elif estado == "hoje":
+            from django.utils import timezone
+            today = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            queryset = queryset.filter(confirmed_at__gte=today)
+
+        # Ordenação
+        queryset = queryset.order_by("-received_at")
+
+        # Paginação
+        page_size = 50
+        offset = (page - 1) * page_size
+        items = queryset[offset : offset + page_size]
+
+        serializer = self.get_serializer(items, many=True)
+        return Response(serializer.data)
+
+    def create(self, request, *args, **kwargs):
+        """POST /receipts — cria receção."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            receipt = criar_rececao(
+                tenant_id=request.tenant.id,
+                **serializer.validated_data,
+            )
+            output = RececaoOutSerializer(self._compor_rececao(receipt))
+            return Response(output.data, status=status.HTTP_201_CREATED)
+        except CriacaoDeRececaoJaExiste as e:
+            # Repetição com documento já existente
+            receipt = Receipt.objects.get(pk=e.receipt_id)
+            output = RececaoOutSerializer(self._compor_rececao(receipt))
+            return Response(output.data, status=status.HTTP_200_OK)
+
+    def partial_update(self, request, pk=None, *args, **kwargs):
+        """PATCH /receipts/{id} — atualiza cabeçalho."""
+        receipt = self.get_object()
+
+        if receipt.confirmed_at:
+            return Response(
+                {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Atualizar apenas zona da pessoa
+        for field in ["supplier_id", "doc_type", "received_at", "location_id"]:
+            if field in serializer.validated_data:
+                setattr(receipt, field, serializer.validated_data[field])
+        receipt.save()
+
+        output = RececaoOutSerializer(self._compor_rececao(receipt))
+        return Response(output.data)
+
+    def destroy(self, request, pk=None, *args, **kwargs):
+        """DELETE /receipts/{id} — apaga rascunho."""
+        receipt = self.get_object()
+
+        if receipt.confirmed_at:
+            return Response(
+                {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        apagar_rascunho(receipt_id=receipt.id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["get", "post"])
+    def lines(self, request, pk=None):
+        """GET/POST /receipts/{id}/lines — lista/cria linhas."""
+        receipt = self.get_object()
+
+        if request.method == "POST":
+            serializer = LinhaInSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            # Criar linha
+            position = receipt.lines.count() + 1
+            linha = ReceiptLine.objects.create(
+                tenant_id=request.tenant.id,
+                receipt_id=receipt.id,
+                position=position,
+                **serializer.validated_data,
+            )
+
+            output = LinhaOutSerializer(self._compor_linha(linha))
+            return Response(output.data, status=status.HTTP_201_CREATED)
+
+        # GET
+        linhas = receipt.lines.all()
+        serializer = LinhaOutSerializer(
+            [self._compor_linha(l) for l in linhas], many=True
+        )
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path=r"lines/(?P<linha_id>[^/.]+)/confirmation")
+    def line_confirmation(self, request, pk=None, linha_id=None):
+        """POST /receipts/{id}/lines/{linha}/confirmation — revê linha."""
+        receipt = self.get_object()
+
+        if receipt.confirmed_at:
+            return Response(
+                {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            linha = ReceiptLine.objects.get(pk=linha_id, receipt_id=receipt.id)
+        except ReceiptLine.DoesNotExist:
+            raise Http404
+
+        serializer = RevisaoDeLinhaInSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Rever linha
+        membership = membership_atual(request)
+        linha = rever_linha(
+            receipt_id=receipt.id,
+            linha_id=linha.id,
+            reviewed_by_id=request.user.id,
+            reviewed_by_name=request.user.get_full_name() or request.user.username,
+            **serializer.validated_data,
+        )
+
+        output = LinhaOutSerializer(self._compor_linha(linha))
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def temperature(self, request, pk=None):
+        """POST /receipts/{id}/temperature — registra temperatura."""
+        receipt = self.get_object()
+
+        if receipt.confirmed_at:
+            return Response(
+                {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = TemperaturaInSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        receipt = registar_temperatura(
+            receipt_id=receipt.id,
+            measured_by_name=request.user.get_full_name() or request.user.username,
+            **serializer.validated_data,
+        )
+
+        output = RececaoOutSerializer(self._compor_rececao(receipt))
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def confirmation(self, request, pk=None):
+        """POST /receipts/{id}/confirmation — confirma receção."""
+        receipt = self.get_object()
+
+        try:
+            receipt = confirmar_rececao(
+                receipt_id=receipt.id,
+                confirmed_by_id=request.user.id,
+                confirmed_by_name=request.user.get_full_name() or request.user.username,
+            )
+            output = RececaoOutSerializer(self._compor_rececao(receipt))
+            return Response(output.data, status=status.HTTP_201_CREATED)
+        except SemLinhasRevistas:
+            return Response(
+                {"code": "sem_linhas_revistas", "detail": "No reviewed lines"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+    @action(detail=False, methods=["get"])
+    def summary(self, request):
+        """GET /receipts/summary — resumo de receções."""
+        resumo = resumo_de_recebidas(tenant_id=request.tenant.id)
+        serializer = ResumoDeRececoesOutSerializer(resumo)
+        return Response(serializer.data)
+
+    # -----------------------------------------------------------------------
+    # Privado
+    # -----------------------------------------------------------------------
+
+    def _compor_rececao(self, receipt: Receipt) -> dict:
+        """Compor resposta de receção com dados relacionados."""
+        from apps.catalog import api as catalog_api
+        from apps.inventory import api as inventory_api
+
+        # Recarregar com linhas
+        receipt = Receipt.objects.prefetch_related("lines").get(pk=receipt.id)
+
+        # Buscar dados relacionados
+        product_ids = [l.product_id for l in receipt.lines.all() if l.product_id]
+        location_ids = [receipt.location_id] + [l.location_id for l in receipt.lines.all() if l.location_id]
+
+        produtos = catalog_api.produtos_por_id(tenant_id=receipt.tenant_id, ids=product_ids)
+        locais = inventory_api.localizacoes_por_id(tenant_id=receipt.tenant_id, ids=location_ids)
+
+        # Compor dados
+        dados = {
+            "receipt": receipt,
+            "produtos": produtos,
+            "locais": locais,
+            "linhas": [self._compor_linha(l, produtos, locais) for l in receipt.lines.all()],
+        }
+
+        return dados
+
+    def _compor_linha(self, linha: ReceiptLine, produtos=None, locais=None) -> dict:
+        """Compor resposta de linha."""
+        from apps.catalog import api as catalog_api
+        from apps.inventory import api as inventory_api
+
+        if not produtos:
+            product_ids = [linha.product_id] if linha.product_id else []
+            produtos = catalog_api.produtos_por_id(tenant_id=linha.tenant_id, ids=product_ids)
+
+        if not locais:
+            locais = inventory_api.localizacoes_por_id(
+                tenant_id=linha.tenant_id, ids=[linha.location_id]
+            )
+
+        produto = produtos.get(linha.product_id) if linha.product_id else None
+
+        # Calcular price_history
+        price_history = None
+        if linha.status == "confirmed" and produto:
+            price_history = preco_historico(
+                tenant_id=linha.tenant_id,
+                product_id=linha.product_id,
+                linha=linha,
+            )
+
+        # Stock quantity
+        stock_quantity = None
+        if linha.kind == "goods" and produto and linha.base_per_invoice_unit and linha.quantity_received:
+            base_qty = linha.quantity_received * linha.base_per_invoice_unit
+            display_qty = base_qty / produto.display_factor if produto.display_factor else base_qty
+            stock_quantity = {
+                "base": base_qty,
+                "base_unit": produto.base_unit,
+                "display": display_qty,
+                "display_unit": produto.display_unit,
+            }
+
+        return {
+            "linha": linha,
+            "produto": produto,
+            "locais": locais,
+            "price_history": price_history,
+            "stock_quantity": stock_quantity,
+        }

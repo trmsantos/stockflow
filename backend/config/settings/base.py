@@ -321,6 +321,8 @@ REST_FRAMEWORK = {
         "user": "600/min",
         "anon": "60/min",
         "documentos": "20/min",
+        "catalogo": "20/min",
+        "rececoes": "20/min",
     },
     # Nº de proxies de confiança à frente do Django. É o que decide a chave do
     # AnonRateThrottle: sem esta setting o DRF usa o `X-Forwarded-For` cru como

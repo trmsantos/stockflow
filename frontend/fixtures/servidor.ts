@@ -5,7 +5,6 @@ import type { z } from "zod";
 import { ROTAS_DE_ALERTAS } from "./alertas.ts";
 import { ROTAS_DE_CONTAGEM } from "./contagem.ts";
 import { ROTAS_DO_PAINEL } from "./painel.ts";
-import { ROTAS_DE_RECECOES } from "./rececoes.ts";
 import { ROTAS_DE_STOCK } from "./stock.ts";
 
 /**
@@ -232,7 +231,6 @@ const ROTAS: readonly Rota[] = [
   ...ROTAS_DE_STOCK,
   ...ROTAS_DE_CONTAGEM,
   ...ROTAS_DE_ALERTAS,
-  ...ROTAS_DE_RECECOES,
   ...ROTAS_DO_PAINEL,
 ];
 

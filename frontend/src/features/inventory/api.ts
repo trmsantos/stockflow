@@ -15,6 +15,7 @@ import {
   fechoDeContagemSchema,
   fechoParaRegistarSchema,
   linhaDeContagemSchema,
+  localizacaoSchema,
   movimentoSchema,
   nivelDeStockSchema,
   quebraParaRegistarSchema,
@@ -28,6 +29,7 @@ import {
   type FechoDeContagem,
   type FechoParaRegistar,
   type LinhaDeContagem,
+  type Localizacao,
   type Movimento,
   type NivelDeStock,
   type QuebraParaRegistar,
@@ -487,6 +489,47 @@ export function useDesperdicio(
         signal,
       }),
     enabled: ativo,
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ * Localizações — o ecrã de receção precisa delas.
+ * ------------------------------------------------------------------------ */
+
+const CAMINHO_LOCALIZACOES = "/locations";
+const RECURSO_LOCALIZACOES_INV = "inventory-locations";
+
+/**
+ * Lista de localizações do estabelecimento.
+ */
+export function useLocalizacoes(): UseQueryResult<Paginated<Localizacao>> {
+  const tenant = tenantDaCache();
+
+  return useQuery({
+    queryKey: queryKeys.list(tenant, RECURSO_LOCALIZACOES_INV, {}),
+    queryFn: ({ signal }) =>
+      apiRequest(CAMINHO_LOCALIZACOES, paginated(localizacaoSchema), { signal }),
+  });
+}
+
+/**
+ * Criar uma nova localização.
+ */
+export function useCriarLocalizacao() {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: (pedido: { name: string; position?: number }) =>
+      apiRequest(CAMINHO_LOCALIZACOES, localizacaoSchema, {
+        method: "POST",
+        body: pedido,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.resource(tenant, RECURSO_LOCALIZACOES_INV),
+      });
+    },
   });
 }
 

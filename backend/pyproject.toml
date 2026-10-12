@@ -72,6 +72,14 @@ select = [
 "config/settings/prod.py" = ["F403"]
 "config/settings/test.py" = ["F403"]
 
+# Tabelas Markdown em docstrings (ADR 0004 — máximo três exceções)
+"apps/catalog/models.py" = ["E501"]
+"apps/catalog/services.py" = ["E501"]
+"apps/purchasing/models.py" = ["E501"]
+"apps/purchasing/services.py" = ["E501"]
+"apps/purchasing/selectors.py" = ["E501"]
+"apps/*/migrations/*.py" = ["E501"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["apps", "config"]
 
@@ -336,3 +344,4 @@ source_modules = [
 forbidden_modules = ["apps.demo"]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
+
