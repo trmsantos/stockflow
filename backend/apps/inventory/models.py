@@ -13,6 +13,7 @@ Nenhum é registado no admin (ADR 0007). O ledger é append-only no Postgres
 from __future__ import annotations
 
 from decimal import Decimal
+
 from django.db import models
 from django.db.models.functions import Lower
 
@@ -84,6 +85,13 @@ class Lot(TenantModel):
                 fields=["tenant", "product", "code"],
                 name="inventory_lot_unique_by_tenant_product_code",
                 nulls_distinct=False,
+            ),
+        ]
+        indexes = [
+            models.Index(
+                condition=models.Q(expires_at__isnull=False),
+                fields=["tenant", "expires_at"],
+                name="inv_lot_tenant_expires_idx",
             ),
         ]
 
@@ -250,6 +258,18 @@ class StockLevel(TenantModel):
                 fields=["tenant", "product", "location", "lot"],
                 name="inventory_stocklevel_unique_by_tenant_product_location_lot",
                 nulls_distinct=False,
+            ),
+        ]
+        indexes = [
+            models.Index(
+                condition=~models.Q(quantity=Decimal("0")),
+                fields=["tenant", "location", "product"],
+                name="inv_stk_tenant_loc_prod",
+            ),
+            models.Index(
+                condition=~models.Q(quantity=Decimal("0")),
+                fields=["tenant", "product", "location"],
+                name="inv_stk_tenant_prod_loc",
             ),
         ]
 

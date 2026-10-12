@@ -1,12 +1,12 @@
-"""Serializers para o inventory (ADR 0021, fatia 2; ADR 0022).
+"""Serializers para o inventory (ADR 0021, fatia 2; ADR 0022; ADR 0024, fatia 4).
 
 Leitura e escrita em classes separadas, campos listados um a um.
 Sem `fields = "__all__"` (CLAUDE.md, SECURITY.md §4).
-
-Nesta fatia: apenas `Location`.
 """
 
 from __future__ import annotations
+
+from decimal import Decimal
 
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
@@ -15,6 +15,9 @@ __all__ = [
     "LocalizacaoInSerializer",
     "LocalizacaoOutSerializer",
     "LocalizacaoPatchInSerializer",
+    "StockSummarySerializer",
+    "StockDetailSerializer",
+    "AlertSerializer",
 ]
 
 
@@ -70,3 +73,92 @@ class LocalizacaoPatchInSerializer(serializers.Serializer):
                     _("Position must be between 0 and 32767.")
                 )
         return value
+
+
+class StockSummarySerializer(serializers.Serializer):
+    """Resumo de stock agregado por produto (painel, fatia 4)."""
+
+    product_id = serializers.UUIDField(read_only=True)
+    product_name = serializers.CharField(read_only=True)
+    quantity = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        read_only=True,
+        help_text="Quantidade total em unidade base",
+    )
+    unit_cost = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        read_only=True,
+        allow_null=True,
+        help_text="Custo unitário (NULL se zero)",
+    )
+    total_value = serializers.SerializerMethodField(read_only=True)
+
+    def get_total_value(self, obj) -> Decimal | None:
+        """Quantidade × custo unitário."""
+        quantity = obj.get("total_quantity")
+        unit_cost = obj.get("avg_unit_cost")
+        if quantity and unit_cost:
+            return quantity * unit_cost
+        return None
+
+
+class StockDetailSerializer(serializers.Serializer):
+    """Detalhe de stock por (product, lot) ou (location, lot) (fatia 4)."""
+
+    product_id = serializers.UUIDField(read_only=True)
+    product_name = serializers.CharField(read_only=True)
+    location_id = serializers.UUIDField(read_only=True, allow_null=True)
+    location_name = serializers.CharField(read_only=True, allow_null=True)
+    lot_code = serializers.CharField(read_only=True, allow_null=True)
+    expires_at = serializers.DateTimeField(
+        read_only=True,
+        allow_null=True,
+        help_text="Data de validade (NULL se sem data)",
+    )
+    quantity = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        read_only=True,
+        help_text="Quantidade em unidade base",
+    )
+    unit_cost = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        read_only=True,
+        allow_null=True,
+        help_text="Custo unitário (NULL se zero)",
+    )
+    total_value = serializers.SerializerMethodField(read_only=True)
+
+    def get_total_value(self, obj) -> Decimal | None:
+        """Quantidade × custo unitário."""
+        quantity = obj.get("quantity") or obj.get("total_quantity")
+        unit_cost = obj.get("unit_cost")
+        if quantity and unit_cost:
+            return quantity * unit_cost
+        return None
+
+
+class AlertSerializer(serializers.Serializer):
+    """Alerta de stock (falta, validade a vencer, vencida) (fatia 4)."""
+
+    alert_type = serializers.CharField(
+        read_only=True,
+        help_text="shortage|expiring_soon|expired",
+    )
+    severity = serializers.CharField(
+        read_only=True,
+        help_text="critical|warning|info",
+    )
+    product_id = serializers.UUIDField(read_only=True)
+    product_name = serializers.CharField(read_only=True)
+    location_id = serializers.UUIDField(read_only=True, allow_null=True)
+    location_name = serializers.CharField(read_only=True, allow_null=True)
+    lot_code = serializers.CharField(read_only=True, allow_null=True)
+    expires_at = serializers.DateTimeField(
+        read_only=True,
+        allow_null=True,
+        help_text="Data de validade (NULL se sem data)",
+    )

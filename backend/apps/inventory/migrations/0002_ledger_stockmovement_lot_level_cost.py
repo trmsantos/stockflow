@@ -8,9 +8,10 @@
 # imutáveis, projeção por (product, location, lot), custo médio por
 # (product, location).
 
-import django.db.models.deletion
 import uuid
 from decimal import Decimal
+
+import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 

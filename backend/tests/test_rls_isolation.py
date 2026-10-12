@@ -826,6 +826,11 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^receipts/(?P<pk>[^/.]+)/lines/(?P<linha_id>[^/.]+)/confirmation$",
         "api/v1/^receipts/(?P<pk>[^/.]+)/temperature$",
         "api/v1/^receipts/summary$",
+        # Painel de stock (fatia 4): queries read-only ao ledger
+        "api/v1/^stock/alerts$",
+        "api/v1/^stock/by-location$",
+        "api/v1/^stock/by-product$",
+        "api/v1/^stock/summary$",
         "api/v1/^suppliers$",
         "api/v1/^suppliers/(?P<pk>[^/.]+)$",
         "api/v1/^suppliers/(?P<pk>[^/.]+)/product-codes$",

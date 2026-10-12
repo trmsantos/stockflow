@@ -20,7 +20,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F, Max, Q, Sum
 from django.utils.translation import gettext_lazy as _
 
-from apps.inventory.models import Lot, Location, ProductCost, StockLevel, StockMovement
+from apps.inventory.models import Location, Lot, ProductCost, StockLevel, StockMovement
 
 __all__ = [
     "CAMPOS_DA_LOCALIZACAO",

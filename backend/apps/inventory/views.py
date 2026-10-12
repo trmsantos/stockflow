@@ -1,33 +1,49 @@
-"""ViewSets para o inventário (ADR 0021, fatia 2; ADR 0022).
-
-Nesta fatia: localizações apenas.
+"""ViewSets para o inventário (ADR 0021, fatia 2; ADR 0022; ADR 0024, fatia 4).
 
 Endpoints:
 - GET /api/v1/locations (por position)
 - POST /api/v1/locations
 - PATCH /api/v1/locations/{id}
+- GET /api/v1/stock/summary
+- GET /api/v1/stock/by-location
+- GET /api/v1/stock/by-product
+- GET /api/v1/stock/alerts
 """
 
 from __future__ import annotations
 
-from django.db.models import Max, QuerySet
+from decimal import Decimal
+from uuid import UUID
+
+from django.db.models import F, Max, QuerySet
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import PertenceAoTenant
-from apps.inventory.models import Location
-from apps.inventory.selectors import listar_localizacoes, localizacoes_do_ambito
+from apps.inventory.models import Location, Lot, StockLevel
+from apps.inventory.selectors import (
+    listar_localizacoes,
+    localizacoes_do_ambito,
+    stock_by_location,
+    stock_by_product,
+    stock_summary,
+)
 from apps.inventory.serializers import (
+    AlertSerializer,
     LocalizacaoInSerializer,
     LocalizacaoOutSerializer,
     LocalizacaoPatchInSerializer,
+    StockDetailSerializer,
+    StockSummarySerializer,
 )
 
-__all__ = ["LocalizacaoViewSet"]
+__all__ = ["LocalizacaoViewSet", "StockPanelViewSet"]
 
 # Throttle scope (reutiliza do catalog)
 AMBITO_THROTTLE_CATALOGO = "catalogo"
@@ -125,3 +141,287 @@ class LocalizacaoViewSet(
 
         out_ser = LocalizacaoOutSerializer(localizacao)
         return Response(out_ser.data, status=status.HTTP_200_OK)
+
+
+@extend_schema_view(
+    summary=extend_schema(
+        operation_id="stock_summary",
+        summary="Resumo de stock agregado por produto",
+    ),
+    by_location=extend_schema(
+        operation_id="stock_by_location",
+        summary="Stock por (product, lot) em localização",
+    ),
+    by_product=extend_schema(
+        operation_id="stock_by_product",
+        summary="Stock por (location, lot) desse produto",
+    ),
+    alerts=extend_schema(
+        operation_id="stock_alerts",
+        summary="Alertas de falta, validade a vencer e vencida",
+    ),
+)
+class StockPanelViewSet(viewsets.ViewSet):
+    """Painel de stock: queries read-only ao ledger (ADR 0024)."""
+
+    permission_classes = [IsAuthenticated, PertenceAoTenant]
+    throttle_scope = AMBITO_THROTTLE_CATALOGO
+    page_size = 50
+
+    def get_throttles(self) -> list[BaseThrottle]:
+        """Sem throttle extra em leitura."""
+        return super().get_throttles()
+
+    @extend_schema(responses={200: StockSummarySerializer(many=True)})
+    @action(detail=False, methods=["GET"], url_path="summary")
+    def summary(self, request: Request) -> Response:
+        """Resumo de stock agregado por produto."""
+        location_id = request.query_params.get("location_id")
+
+        if location_id:
+            try:
+                location_id = UUID(location_id)
+            except (ValueError, TypeError):
+                return Response(
+                    {"detail": "Invalid location_id"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        queryset = stock_summary(tenant_id=request.tenant.id, location_id=location_id)
+        items = list(queryset)
+        serializer = StockSummarySerializer(items, many=True)
+
+        return Response(
+            {
+                "items": serializer.data,
+                "total": len(items),
+                "page": 1,
+                "page_size": self.page_size,
+            }
+        )
+
+    @extend_schema(responses={200: StockDetailSerializer(many=True)})
+    @action(detail=False, methods=["GET"], url_path="by-location")
+    def by_location(self, request: Request) -> Response:
+        """Stock por (product, lot) nessa localização."""
+        location_id = request.query_params.get("location_id")
+        search_text = request.query_params.get("search_text", "")
+
+        if not location_id:
+            return Response(
+                {"detail": "location_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            location_id = UUID(location_id)
+        except (ValueError, TypeError):
+            return Response(
+                {"detail": "Invalid location_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        queryset = stock_by_location(
+            tenant_id=request.tenant.id,
+            location_id=location_id,
+            search_text=search_text,
+        )
+        items = list(queryset)
+        serializer = StockDetailSerializer(items, many=True)
+
+        return Response(
+            {
+                "items": serializer.data,
+                "total": len(items),
+                "page": 1,
+                "page_size": self.page_size,
+            }
+        )
+
+    @extend_schema(responses={200: StockDetailSerializer(many=True)})
+    @action(detail=False, methods=["GET"], url_path="by-product")
+    def by_product(self, request: Request) -> Response:
+        """Stock por (location, lot) desse produto."""
+        product_id = request.query_params.get("product_id")
+        search_text = request.query_params.get("search_text", "")
+
+        if not product_id:
+            return Response(
+                {"detail": "product_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            import uuid
+            product_id = uuid.UUID(product_id)
+        except (ValueError, TypeError):
+            return Response(
+                {"detail": "Invalid product_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        queryset = stock_by_product(
+            tenant_id=request.tenant.id,
+            product_id=product_id,
+            search_text=search_text,
+        )
+        items = list(queryset)
+        serializer = StockDetailSerializer(items, many=True)
+
+        return Response(
+            {
+                "items": serializer.data,
+                "total": len(items),
+                "page": 1,
+                "page_size": self.page_size,
+            }
+        )
+
+    @extend_schema(responses={200: AlertSerializer(many=True)})
+    @action(detail=False, methods=["GET"], url_path="alerts")
+    def alerts(self, request: Request) -> Response:
+        """Alertas de falta, validade a vencer e vencida."""
+        severity = request.query_params.get("severity", "")
+        product_id = request.query_params.get("product_id")
+        location_id = request.query_params.get("location_id")
+
+        # Parse UUIDs
+        if product_id:
+            try:
+                product_id = UUID(product_id)
+            except (ValueError, TypeError):
+                return Response(
+                    {"detail": "Invalid product_id"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if location_id:
+            try:
+                location_id = UUID(location_id)
+            except (ValueError, TypeError):
+                return Response(
+                    {"detail": "Invalid location_id"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Construir alertas
+        alerts_data = self._build_alerts(
+            request.tenant.id,
+            severity=severity,
+            product_id=product_id,
+            location_id=location_id,
+        )
+
+        serializer = AlertSerializer(alerts_data, many=True)
+
+        return Response(
+            {
+                "items": serializer.data,
+                "total": len(alerts_data),
+                "page": 1,
+                "page_size": self.page_size,
+            }
+        )
+
+    def _build_alerts(
+        self,
+        tenant_id,
+        severity: str = "",
+        product_id=None,
+        location_id=None,
+    ) -> list:
+        """Construir alertas de falta, validade a vencer e vencida."""
+        now = timezone.now()
+        seven_days = timezone.timedelta(days=7)
+        alerts = []
+
+        # Query 1: Falta de stock
+        shortage_qs = (
+            StockLevel.objects.filter(
+                tenant_id=tenant_id,
+                quantity__gt=Decimal("0"),
+                product__min_quantity__isnull=False,
+                product__min_quantity__gt=0,
+            )
+            .exclude(quantity__gte=F("product__min_quantity"))
+            .select_related("product", "location")
+        )
+
+        if product_id:
+            shortage_qs = shortage_qs.filter(product_id=product_id)
+        if location_id:
+            shortage_qs = shortage_qs.filter(location_id=location_id)
+
+        for level in shortage_qs:
+            if not severity or severity == "critical":
+                alerts.append(
+                    {
+                        "alert_type": "shortage",
+                        "severity": "critical",
+                        "product_id": level.product_id,
+                        "product_name": level.product.short_name,
+                        "location_id": level.location_id,
+                        "location_name": level.location.name,
+                        "lot_code": None,
+                        "expires_at": None,
+                    }
+                )
+
+        # Query 2: Validade a vencer (7 dias)
+        expiring_qs = (
+            Lot.objects.filter(
+                tenant_id=tenant_id,
+                expires_at__isnull=False,
+                expires_at__gte=now,
+                expires_at__lt=now + seven_days,
+            )
+            .select_related("product")
+        )
+
+        if product_id:
+            expiring_qs = expiring_qs.filter(product_id=product_id)
+
+        for lot in expiring_qs:
+            if not severity or severity == "warning":
+                alerts.append(
+                    {
+                        "alert_type": "expiring_soon",
+                        "severity": "warning",
+                        "product_id": lot.product_id,
+                        "product_name": lot.product.short_name,
+                        "location_id": None,
+                        "location_name": None,
+                        "lot_code": lot.code,
+                        "expires_at": lot.expires_at,
+                    }
+                )
+
+        # Query 3: Validade vencida
+        expired_qs = (
+            Lot.objects.filter(
+                tenant_id=tenant_id,
+                expires_at__isnull=False,
+                expires_at__lt=now,
+            )
+            .select_related("product")
+        )
+
+        if product_id:
+            expired_qs = expired_qs.filter(product_id=product_id)
+
+        for lot in expired_qs:
+            if not severity or severity == "critical":
+                alerts.append(
+                    {
+                        "alert_type": "expired",
+                        "severity": "critical",
+                        "product_id": lot.product_id,
+                        "product_name": lot.product.short_name,
+                        "location_id": None,
+                        "location_name": None,
+                        "lot_code": lot.code,
+                        "expires_at": lot.expires_at,
+                    }
+                )
+
+        return alerts
