@@ -21,7 +21,10 @@ from datetime import datetime
 from uuid import UUID
 
 from django.db.models import Count, Prefetch, QuerySet
+from django.utils import timezone
 
+from apps.accounts import api as accounts_api
+from apps.catalog import api as catalog_api
 from apps.purchasing.extracao import (
     LeituraDeDocumento,
     PaginaDoDocumento,
@@ -33,6 +36,8 @@ from apps.purchasing.models import (
     DocumentFile,
     DocumentPage,
     InvoiceDocument,
+    Receipt,
+    ReceiptLine,
     estado_do_documento,
 )
 
@@ -253,3 +258,119 @@ def com_paginas(*, tenant_id: UUID, documento_id: UUID) -> InvoiceDocument | Non
         .prefetch_related(*_COLECCOES)
         .first()
     )
+
+
+# ============================================================================
+# Receção de mercadoria (fatia 2, parte B)
+# ============================================================================
+
+
+
+def recebidas_para_rever(*, tenant_id: UUID, page: int = 1) -> QuerySet:
+    """Receções ordenadas por needs_review primeiro, depois -received_at."""
+    page_size = 50
+    offset = (page - 1) * page_size
+
+    return (
+        Receipt.objects.filter(tenant_id=tenant_id)
+        .order_by("-lines__status", "-received_at")
+        .distinct()
+        .prefetch_related("lines")
+        [offset : offset + page_size]
+    )
+
+
+def resumo_de_recebidas(*, tenant_id: UUID) -> Mapping:
+    """Contagem e datas de receções."""
+
+    today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    needs_review_count = Receipt.objects.filter(
+        tenant_id=tenant_id, confirmed_at__isnull=True
+    ).count()
+
+    needs_review_lines = ReceiptLine.objects.filter(
+        receipt__tenant_id=tenant_id,
+        status="needs_review"
+    ).count()
+
+    confirmed_today = Receipt.objects.filter(
+        tenant_id=tenant_id,
+        confirmed_at__gte=today_start,
+    ).count()
+
+    business_day_starts_at = accounts_api.inicio_do_dia_de_negocio(tenant_id=tenant_id)
+
+    confirmed_since = today_start.replace(
+        hour=business_day_starts_at.hour,
+        minute=business_day_starts_at.minute,
+        second=business_day_starts_at.second,
+    )
+
+    return {
+        "needs_review_count": needs_review_count,
+        "needs_review_lines": needs_review_lines,
+        "confirmed_today_count": confirmed_today,
+        "business_day_starts_at": business_day_starts_at,
+        "confirmed_since": confirmed_since,
+    }
+
+
+def preco_historico(*, tenant_id: UUID, product_id: UUID, linha: ReceiptLine) -> Mapping | None:
+    """Última linha confirmada com mesmo artigo e unidade base, de receção anterior."""
+
+    THRESHOLD_PCT = 10
+
+    if not linha.product_id or not linha.base_per_invoice_unit or linha.quantity_invoiced is None or not linha.line_total:
+        return None
+
+    # Procurar última linha confirmada
+    ultima_linha = (
+        ReceiptLine.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            status="confirmed",
+            kind="goods",
+            base_per_invoice_unit=linha.base_per_invoice_unit,
+            quantity_invoiced__gt=0,
+            line_total__isnull=False,
+        )
+        .exclude(receipt_id=linha.receipt_id)
+        .order_by("-receipt__received_at")
+        .first()
+    )
+
+    if not ultima_linha:
+        return None
+
+    # Calcular preços por unidade base
+    preco_novo = linha.line_total / (linha.quantity_invoiced * linha.base_per_invoice_unit)
+    preco_antigo = ultima_linha.line_total / (ultima_linha.quantity_invoiced * ultima_linha.base_per_invoice_unit)
+
+    if preco_antigo <= 0:
+        return None
+
+    # Calcular percentagem de mudança
+    change_pct_raw = ((preco_novo - preco_antigo) / preco_antigo) * 100
+    change_pct = int(change_pct_raw)
+
+    if abs(change_pct) < THRESHOLD_PCT:
+        return None
+
+    # Buscar informações do produto
+    produtos = catalog_api.produtos_por_id(tenant_id=tenant_id, ids=[product_id])
+    produto = produtos.get(product_id)
+
+    if not produto:
+        return None
+
+    # Calcular preço por unidade de apresentação
+    last_price = preco_antigo * produto.display_factor
+
+    return {
+        "last_price": last_price,
+        "unit_label": produto.display_unit,
+        "change_pct": change_pct,
+        "reference": ultima_linha.receipt.reference or ultima_linha.receipt.doc_number or "",
+        "threshold_pct": THRESHOLD_PCT,
+    }

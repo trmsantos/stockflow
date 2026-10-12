@@ -33,7 +33,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
-from uuid import UUID
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -569,3 +568,300 @@ def _apagar_bytes(relativo: str) -> None:
     quer. Um `FileNotFoundError` aqui transformava uma limpeza numa falha.
     """
     caminho_dentro_do_media(relativo).unlink(missing_ok=True)
+
+
+# ============================================================================
+# Receção de mercadoria (fatia 2, parte B)
+# ============================================================================
+
+
+from django.db import transaction
+
+from apps.catalog import api as catalog_api
+from apps.purchasing.models import Receipt, ReceiptLine
+
+
+class CriacaoDeRececaoJaExiste(Exception):
+    """Receção já existe para este documento."""
+
+    def __init__(self, receipt_id: UUID):
+        self.receipt_id = receipt_id
+        super().__init__()
+
+
+class RececaoConfirmada(Exception):
+    """Receção já foi confirmada."""
+
+    pass
+
+
+class SemLinhasRevistas(Exception):
+    """Receção não tem linhas revistas para confirmar."""
+
+    pass
+
+
+class LocalizacaoInativa(Exception):
+    """Localização não está ativa."""
+
+    pass
+
+
+class ArtigoInativo(Exception):
+    """Artigo não está ativo."""
+
+    pass
+
+
+class ConversaoEmFalta(Exception):
+    """Não conseguiu converter a unidade de fatura."""
+
+    pass
+
+
+class SemArtigo(Exception):
+    """Linha de goods sem artigo."""
+
+    pass
+
+
+class LoteObrigatorio(Exception):
+    """Artigo com track_lots precisa de lote."""
+
+    pass
+
+
+class ValidadeObrigatoria(Exception):
+    """Artigo com expiry_kind precisa de validade."""
+
+    pass
+
+
+def criar_rececao(
+    *,
+    tenant_id: UUID,
+    location_id: UUID,
+    document_id: UUID | None = None,
+    supplier_name: str = "",
+    supplier_nif: str | None = None,
+    doc_number: str | None = None,
+    doc_date = None,
+    customer_name: str = "",
+    customer_nif: str = "",
+    document_total_eur: Decimal | None = None,
+    supplier_id: UUID | None = None,
+    doc_type: str = "",
+    received_at = None,
+) -> Receipt:
+    """Cria uma receção, opcionalmente semeada com linhas de um documento.
+
+    Repetição com o mesmo `document` devolve 200 com a receção existente.
+    """
+    with transaction.atomic():
+        # Verificar se já existe receção para este documento
+        if document_id:
+            try:
+                existing = Receipt.objects.get(tenant_id=tenant_id, document_id=document_id)
+                raise CriacaoDeRececaoJaExiste(existing.id)
+            except Receipt.DoesNotExist:
+                pass
+
+        # Criar receção
+        received_at = received_at or timezone.now()
+
+        receipt = Receipt.objects.create(
+            tenant_id=tenant_id,
+            document_id=document_id,
+            supplier_name=supplier_name,
+            supplier_nif=supplier_nif or "",
+            doc_number=doc_number or "",
+            doc_date=doc_date,
+            customer_name=customer_name,
+            customer_nif=customer_nif,
+            document_total_eur=document_total_eur,
+            supplier_id=supplier_id,
+            doc_type=doc_type,
+            received_at=received_at,
+            location_id=location_id,
+        )
+
+        return receipt
+
+
+def rever_linha(
+    *,
+    receipt_id: UUID,
+    linha_id: UUID,
+    product_id: UUID | None = None,
+    packaging_id: UUID | None = None,
+    base_per_invoice_unit: Decimal | None = None,
+    quantity_received: Decimal | None = None,
+    location_id: UUID | None = None,
+    kind: str = "goods",
+    lot_code: str = "",
+    expires_at = None,
+    skip: bool = False,
+    reviewed_by_id: UUID | None = None,
+    reviewed_by_name: str = "",
+) -> ReceiptLine:
+    """Revê uma linha de receção."""
+    with transaction.atomic():
+        receipt = Receipt.objects.get(pk=receipt_id)
+
+        if receipt.confirmed_at:
+            raise RececaoConfirmada()
+
+        linha = ReceiptLine.objects.get(pk=linha_id, receipt_id=receipt_id)
+
+        # Determinar o status
+        status = "skipped" if skip else "needs_review"
+
+        if kind == "goods":
+            if not product_id:
+                raise SemArtigo()
+
+        # Atualizar a linha
+        linha.product_id = product_id
+        linha.packaging_id = packaging_id
+        linha.base_per_invoice_unit = base_per_invoice_unit
+        linha.quantity_received = quantity_received or linha.quantity_invoiced or Decimal(0)
+        if location_id:
+            linha.location_id = location_id
+        linha.kind = kind
+        linha.lot_code = lot_code.strip().upper() if lot_code else ""
+        linha.expires_at = expires_at
+        linha.status = status
+        linha.reviewed_by_id = reviewed_by_id
+        linha.reviewed_by_name = reviewed_by_name
+        linha.reviewed_at = timezone.now()
+        linha.save()
+
+        return linha
+
+
+def registar_temperatura(
+    *,
+    receipt_id: UUID,
+    conservation: str,
+    celsius: Decimal,
+    measured_by_name: str,
+    measured_at = None,
+) -> Receipt:
+    """Registra temperatura em receção."""
+    measured_at = measured_at or timezone.now()
+
+    receipt = Receipt.objects.get(pk=receipt_id)
+
+    if conservation == "chilled":
+        receipt.chilled_temperature_c = celsius
+        receipt.chilled_measured_at = measured_at
+        receipt.chilled_measured_by_name = measured_by_name
+    elif conservation == "frozen":
+        receipt.frozen_temperature_c = celsius
+        receipt.frozen_measured_at = measured_at
+        receipt.frozen_measured_by_name = measured_by_name
+
+    receipt.save()
+    return receipt
+
+
+def confirmar_rececao(
+    *,
+    receipt_id: UUID,
+    confirmed_by_id: UUID | None = None,
+    confirmed_by_name: str = "",
+) -> Receipt:
+    """Confirma uma receção de mercadoria.
+
+    - Se já confirmada, retorna 200.
+    - Se não há linhas revistas (confirmed/skipped), lança SemLinhasRevistas.
+    - Passa linhas needs_review restantes a skipped.
+    - Chama catalog.api.memorizar_correspondencias para linhas confirmed de goods.
+    """
+    with transaction.atomic():
+        receipt = _bloquear_rececao(receipt_id)
+
+        # Se já confirmada, retorna como está
+        if receipt.confirmed_at:
+            return receipt
+
+        # Verificar se há linhas revistas
+        linhas_revistas = receipt.lines.filter(
+            status__in=["confirmed", "skipped"]
+        ).count()
+
+        if linhas_revistas == 0:
+            raise SemLinhasRevistas()
+
+        # Passar needs_review para skipped
+        receipt.lines.filter(status="needs_review").update(
+            status="skipped",
+            reviewed_by_id=confirmed_by_id,
+            reviewed_by_name=confirmed_by_name,
+            reviewed_at=timezone.now(),
+        )
+
+        # Gerar referência e salvar confirmação
+        doc_type = receipt.doc_type
+        doc_number = receipt.doc_number or receipt.doc_number_normalized or ""
+        reference = f"{doc_type} {doc_number}".strip()
+        if not reference:
+            reference = receipt.supplier_name or f"Receção {receipt.id}"
+
+        receipt.reference = reference[:120]
+        receipt.confirmed_at = timezone.now()
+        receipt.confirmed_by_id = confirmed_by_id
+        receipt.confirmed_by_name = confirmed_by_name
+        receipt.save()
+
+        # Memorizar correspondências do catálogo
+        if receipt.supplier_id:
+            linhas_confirmed = receipt.lines.filter(
+                status="confirmed",
+                kind="goods",
+                product_id__isnull=False,
+                supplier_code__gt="",
+            ).values_list("supplier_code", "description", "product_id", "packaging_id")
+
+            if linhas_confirmed:
+                correspondencias_aprendidas = [
+                    catalog_api.CorrespondenciaAprendida(
+                        code=row[0].strip().upper(),
+                        description_raw=row[1],
+                        product_id=row[2],
+                        packaging_id=row[3],
+                    )
+                    for row in linhas_confirmed
+                ]
+
+                catalog_api.memorizar_correspondencias(
+                    tenant_id=receipt.tenant_id,
+                    supplier_id=receipt.supplier_id,
+                    itens=correspondencias_aprendidas,
+                )
+
+        return receipt
+
+
+def _bloquear_rececao(receipt_id: UUID) -> Receipt:
+    """Lock para evitar corridas na confirmação."""
+    return Receipt.objects.select_for_update().get(pk=receipt_id)
+
+
+def apagar_rascunho(*, receipt_id: UUID) -> None:
+    """Apaga uma receção em status needs_review."""
+    receipt = Receipt.objects.get(pk=receipt_id)
+
+    if receipt.confirmed_at:
+        raise RececaoConfirmada()
+
+    # Disassociar documento
+    if receipt.document_id:
+        receipt.document = None
+        receipt.save()
+
+    # Apagar linhas
+    receipt.lines.all().delete()
+
+    # Apagar receção
+    receipt.delete()

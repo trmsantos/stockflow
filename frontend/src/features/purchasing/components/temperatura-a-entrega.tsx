@@ -27,18 +27,25 @@ const GRAUS = /^-?\d{1,2}$|^-?\d{1,2}[.,]\d$/;
 
 export function TemperaturaAEntrega({
   rececao,
+  conservation,
   aGuardar,
   erroDoServidor,
   aoGuardar,
 }: {
   readonly rececao: Rececao;
+  readonly conservation: "chilled" | "frozen";
   readonly aGuardar: boolean;
   readonly erroDoServidor: string | null;
-  readonly aoGuardar: (celsius: string) => void;
+  readonly aoGuardar: (conservation: "chilled" | "frozen", celsius: string) => void;
 }) {
   const idCampo = useId();
   const idErro = useId();
   const [erro, setErro] = useState<string | null>(null);
+
+  // Procura a última temperatura registada para esta classe
+  const temperaturaRegistada = rececao.temperatures
+    .filter((t) => t.conservation === conservation)
+    .at(-1);
 
   function aoSubmeter(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
@@ -52,7 +59,7 @@ export function TemperaturaAEntrega({
 
     setErro(null);
     // A vírgula decimal é como se escreve em português; o contrato quer ponto.
-    aoGuardar(escrito.replace(",", "."));
+    aoGuardar(conservation, escrito.replace(",", "."));
   }
 
   return (
@@ -67,10 +74,8 @@ export function TemperaturaAEntrega({
           type="text"
           inputMode="decimal"
           autoComplete="off"
-          // O `key` remonta o campo quando o servidor confirma outro valor: o
-          // campo é não controlado, logo não há nada a reconciliar com a cache.
-          key={rececao.temperature_c ?? "sem-temperatura"}
-          defaultValue={rececao.temperature_c ?? ""}
+          key={temperaturaRegistada?.celsius ?? "sem-temperatura"}
+          defaultValue={temperaturaRegistada?.celsius ?? ""}
           placeholder="—"
           data-numeric
           className="h-11 w-24 shrink-0 text-base"
@@ -80,7 +85,7 @@ export function TemperaturaAEntrega({
         <Button type="submit" variant="outline" disabled={aGuardar}>
           {aGuardar ? textos.comuns.aGuardar : textos.temperatura.guardar}
         </Button>
-        {rececao.temperature_c === null || aGuardar ? null : (
+        {temperaturaRegistada === undefined || aGuardar ? null : (
           <span className="flex items-center gap-1 pt-3 text-xs text-muted-foreground">
             <CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />
             {textos.temperatura.registada}

@@ -61,6 +61,7 @@ __all__ = [
     "UserOut",
     "dispensa_declarada",
     "dispensar_ambito",
+    "inicio_do_dia_de_negocio",
     "membership_atual",
     "normalizar_email",
     "opcao_de_tenant",
@@ -400,3 +401,17 @@ def semear_demonstracao(
     from apps.accounts.services import semear_demonstracao as _semear
 
     return _semear(email=email, nome=nome, display_name=display_name)
+
+
+# ---------------------------------------------------------------------------
+# Configuração do estabelecimento
+# ---------------------------------------------------------------------------
+def inicio_do_dia_de_negocio(*, tenant_id: UUID) -> object:
+    """A hora de início do dia de negócio, para o `/receipts/summary`.
+
+    Lê do estabelecimento ativo e devuelve um objeto `time`.
+    """
+    from apps.accounts.models import Tenant
+
+    tenant = Tenant.objects.get(id=tenant_id)
+    return tenant.business_day_starts_at

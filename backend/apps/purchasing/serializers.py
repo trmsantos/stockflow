@@ -62,6 +62,16 @@ __all__ = [
     "LinhaLidaOutSerializer",
     "PaginaOutSerializer",
     "RecusaDeDocumentoOutSerializer",
+    # Receção de mercadoria
+    "CabecalhoInSerializer",
+    "LinhaInSerializer",
+    "LinhaOutSerializer",
+    "RececaoInSerializer",
+    "RececaoOutSerializer",
+    "ResumoDeRececoesOutSerializer",
+    "RevisaoDeLinhaInSerializer",
+    "TemperaturaInSerializer",
+    "TemperaturaRegistadaOutSerializer",
 ]
 
 #: O tipo que o cliente declara é **ignorado**, e a frase que ele recebe diz o
@@ -337,3 +347,232 @@ class RecusaDeDocumentoOutSerializer(serializers.Serializer):
 
     code = serializers.CharField()
     detail = serializers.CharField()
+
+
+# ============================================================================
+# Receção de mercadoria (fatia 2, parte B)
+# ============================================================================
+
+
+class TemperaturaRegistadaOutSerializer(serializers.Serializer):
+    """Temperatura registada em receção."""
+
+    conservation = serializers.ChoiceField(choices=["chilled", "frozen"])
+    celsius = serializers.DecimalField(max_digits=5, decimal_places=1)
+    measured_by = serializers.CharField(max_length=150)
+    measured_at = serializers.DateTimeField()
+
+
+class TemperaturaInSerializer(serializers.Serializer):
+    """Entrada de temperatura."""
+
+    conservation = serializers.ChoiceField(choices=["chilled", "frozen"])
+    celsius = serializers.DecimalField(max_digits=5, decimal_places=1)
+
+
+class LocalizacaoReferenceSerializer(serializers.Serializer):
+    """Referência a uma localização (para LinhaOut)."""
+
+    id = serializers.UUIDField()
+    name = serializers.CharField(max_length=60)
+
+
+class FornecedorReferenceSerializer(serializers.Serializer):
+    """Referência a um fornecedor (para RececaoOut)."""
+
+    name = serializers.CharField(max_length=200)
+    nif = serializers.CharField(max_length=20, allow_blank=True)
+
+
+class EmbalagemReferenceSerializer(serializers.Serializer):
+    """Referência a uma embalagem (para LinhaOut)."""
+
+    id = serializers.UUIDField()
+    label = serializers.CharField(max_length=60)
+    base_quantity = serializers.DecimalField(max_digits=12, decimal_places=3)
+    base_unit = serializers.CharField(max_length=2)
+
+
+class PriceHistorySerializer(serializers.Serializer):
+    """Histórico de preço (para LinhaOut)."""
+
+    last_price = serializers.DecimalField(max_digits=12, decimal_places=4, allow_null=True)
+    unit_label = serializers.CharField(max_length=20, allow_blank=True)
+    change_pct = serializers.IntegerField()
+    reference = serializers.CharField(max_length=120, allow_blank=True)
+    threshold_pct = serializers.IntegerField()
+
+
+class StockQuantitySerializer(serializers.Serializer):
+    """Quantidade em stock após receção."""
+
+    base = serializers.DecimalField(max_digits=12, decimal_places=3)
+    base_unit = serializers.CharField(max_length=2)
+    display = serializers.DecimalField(max_digits=12, decimal_places=3)
+    display_unit = serializers.CharField(max_length=20)
+
+
+class RececaoInSerializer(serializers.Serializer):
+    """Entrada para criar receção."""
+
+    location = serializers.UUIDField()
+    document = serializers.UUIDField(required=False, allow_null=True)
+    supplier_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    supplier_nif = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    doc_number = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    doc_date = serializers.DateField(required=False, allow_null=True)
+    customer_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    customer_nif = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    document_total_eur = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True
+    )
+    supplier = serializers.UUIDField(required=False, allow_null=True)
+    doc_type = serializers.ChoiceField(
+        choices=["FT", "FR", "FS", "NC", "ND", "GR"], required=False
+    )
+    received_at = serializers.DateTimeField(required=False)
+
+
+class CabecalhoInSerializer(serializers.Serializer):
+    """Entrada para PATCH de cabeçalho (zona da pessoa)."""
+
+    supplier = serializers.UUIDField(required=False, allow_null=True)
+    doc_type = serializers.ChoiceField(choices=["FT", "FR", "FS", "NC", "ND", "GR"], required=False)
+    received_at = serializers.DateTimeField(required=False)
+    location = serializers.UUIDField(required=False)
+
+
+class LinhaInSerializer(serializers.Serializer):
+    """Entrada para criar linha de receção (à mão)."""
+
+    description = serializers.CharField(max_length=500)
+    invoice_unit = serializers.CharField(max_length=20)
+    quantity_invoiced = serializers.DecimalField(max_digits=12, decimal_places=3)
+    unit_price = serializers.DecimalField(max_digits=12, decimal_places=4, required=False, allow_null=True)
+    discount_pct = serializers.DecimalField(max_digits=6, decimal_places=3, required=False, allow_null=True)
+    vat_rate = serializers.DecimalField(max_digits=6, decimal_places=3, required=False, allow_null=True)
+    line_total = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    supplier_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    ean = serializers.CharField(max_length=14, required=False, allow_blank=True)
+    variable_weight = serializers.BooleanField(required=False, default=False)
+    kind = serializers.ChoiceField(
+        choices=["goods", "deposit", "charge", "document_ref"], required=False, default="goods"
+    )
+    # Campos de revisão opcionais (zona da pessoa)
+    product = serializers.UUIDField(required=False, allow_null=True)
+    packaging = serializers.UUIDField(required=False, allow_null=True)
+    base_per_invoice_unit = serializers.DecimalField(
+        max_digits=12, decimal_places=3, required=False, allow_null=True
+    )
+    quantity_received = serializers.DecimalField(
+        max_digits=12, decimal_places=3, required=False
+    )
+    location = serializers.UUIDField(required=False)
+    lot_code = serializers.CharField(max_length=40, required=False, allow_blank=True)
+    expires_at = serializers.DateField(required=False, allow_null=True)
+
+
+class RevisaoDeLinhaInSerializer(serializers.Serializer):
+    """Entrada para rever linha."""
+
+    product = serializers.UUIDField(required=False, allow_null=True)
+    packaging = serializers.UUIDField(required=False, allow_null=True)
+    base_per_invoice_unit = serializers.DecimalField(
+        max_digits=12, decimal_places=3, required=False, allow_null=True
+    )
+    quantity_received = serializers.DecimalField(
+        max_digits=12, decimal_places=3, required=False
+    )
+    location = serializers.UUIDField(required=False)
+    kind = serializers.ChoiceField(
+        choices=["goods", "deposit", "charge", "document_ref"], required=False
+    )
+    lot_code = serializers.CharField(max_length=40, required=False, allow_blank=True)
+    expires_at = serializers.DateField(required=False, allow_null=True)
+    skip = serializers.BooleanField(required=False, default=False)
+
+
+class LinhaOutSerializer(serializers.Serializer):
+    """Saída de linha de receção."""
+
+    id = serializers.UUIDField()
+    position = serializers.IntegerField()
+    description = serializers.CharField(max_length=500)
+    product = serializers.UUIDField(allow_null=True)
+    product_name = serializers.CharField(max_length=80, allow_null=True)
+    kind = serializers.ChoiceField(choices=["goods", "deposit", "charge", "document_ref"])
+    status = serializers.ChoiceField(choices=["needs_review", "confirmed", "skipped"])
+    conservation = serializers.ChoiceField(choices=["ambient", "chilled", "frozen"])
+    location = LocalizacaoReferenceSerializer()
+    invoice_unit = serializers.CharField(max_length=20)
+    quantity_invoiced = serializers.DecimalField(max_digits=12, decimal_places=3, allow_null=True)
+    quantity_received = serializers.DecimalField(max_digits=12, decimal_places=3)
+    packaging = EmbalagemReferenceSerializer(allow_null=True)
+    base_per_invoice_unit = serializers.DecimalField(
+        max_digits=12, decimal_places=3, allow_null=True
+    )
+    stock_quantity = StockQuantitySerializer(allow_null=True)
+    variable_weight = serializers.BooleanField()
+    unit_price = serializers.DecimalField(max_digits=12, decimal_places=4, allow_null=True)
+    discount_pct = serializers.DecimalField(max_digits=6, decimal_places=3, allow_null=True)
+    vat_rate = serializers.DecimalField(max_digits=6, decimal_places=3, allow_null=True)
+    line_total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
+    supplier_code = serializers.CharField(max_length=50, allow_blank=True)
+    ean = serializers.CharField(max_length=14, allow_blank=True)
+    price_history = PriceHistorySerializer(allow_null=True)
+    requires_lot = serializers.BooleanField()
+    lot_code = serializers.CharField(max_length=40, allow_blank=True)
+    expires_at = serializers.DateField(allow_null=True)
+    expiry_kind = serializers.CharField(max_length=20, allow_null=True)
+    reviewed_by = serializers.CharField(max_length=150, allow_null=True)
+    reviewed_at = serializers.DateTimeField(allow_null=True)
+    movement = serializers.UUIDField(allow_null=True)
+
+
+class VatBreakdownSerializer(serializers.Serializer):
+    """Breakdown de IVA."""
+
+    rate = serializers.DecimalField(max_digits=6, decimal_places=3)
+    base = serializers.DecimalField(max_digits=12, decimal_places=2)
+    vat = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class RececaoOutSerializer(serializers.Serializer):
+    """Saída de receção."""
+
+    id = serializers.UUIDField()
+    document = serializers.UUIDField(allow_null=True)
+    supplier = FornecedorReferenceSerializer()
+    supplier_id = serializers.UUIDField(allow_null=True)
+    doc_type = serializers.ChoiceField(choices=["FT", "FR", "FS", "NC", "ND", "GR"])
+    doc_number = serializers.CharField(max_length=100, allow_blank=True)
+    doc_date = serializers.DateField(allow_null=True)
+    received_at = serializers.DateTimeField()
+    confirmed_at = serializers.DateTimeField(allow_null=True)
+    confirmed_by = serializers.CharField(max_length=150, allow_null=True)
+    status = serializers.ChoiceField(choices=["needs_review", "confirmed"])
+    lines_to_review = serializers.IntegerField()
+    line_count = serializers.IntegerField()
+    customer_name = serializers.CharField(max_length=200, allow_blank=True)
+    customer_nif = serializers.CharField(max_length=20, allow_blank=True)
+    company_name = serializers.CharField(max_length=200)
+    company_nif = serializers.CharField(max_length=20, allow_blank=True)
+    awaiting_invoice = serializers.BooleanField()
+    document_total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
+    lines_total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
+    vat_breakdown = VatBreakdownSerializer(many=True)
+    temperatures = TemperaturaRegistadaOutSerializer(many=True)
+    cold_chain = serializers.BooleanField()
+    location = LocalizacaoReferenceSerializer()
+    locations = LocalizacaoReferenceSerializer(many=True)
+    reference = serializers.CharField(max_length=120, allow_blank=True)
+
+
+class ResumoDeRececoesOutSerializer(serializers.Serializer):
+    """Resumo de receções."""
+
+    needs_review_count = serializers.IntegerField()
+    needs_review_lines = serializers.IntegerField()
+    confirmed_today_count = serializers.IntegerField()
+    business_day_starts_at = serializers.TimeField()
+    confirmed_since = serializers.DateTimeField()

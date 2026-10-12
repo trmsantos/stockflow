@@ -22,9 +22,10 @@ repositório vê.
 
 from rest_framework.routers import SimpleRouter
 
-from apps.purchasing.views import DocumentoViewSet
+from apps.purchasing.views import DocumentoViewSet, RececaoViewSet
 
 router = SimpleRouter(trailing_slash=False)
 router.register("documents", DocumentoViewSet, basename="documento")
+router.register("receipts", RececaoViewSet, basename="rececao")
 
 urlpatterns = [*router.urls]

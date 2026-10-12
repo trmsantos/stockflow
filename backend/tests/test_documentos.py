@@ -928,6 +928,7 @@ def test_o_qr_de_uma_pagina_nasce_vazio_e_ninguem_o_escreve(cenario: Cenario) ->
     )
     assert mencionam == [
         # o campo do DTO que atravessa a fronteira para o `agents`
+        "apps/catalog/models.py",  # comentário na fatia 2, sem código real
         "apps/purchasing/extracao.py",
         # a declaração da coluna, com a razão de ela entrar hoje
         "apps/purchasing/models.py",
