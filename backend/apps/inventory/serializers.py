@@ -18,6 +18,10 @@ __all__ = [
     "StockSummarySerializer",
     "StockDetailSerializer",
     "AlertSerializer",
+    "WasteSerializer",
+    "AdjustmentSerializer",
+    "TransferSerializer",
+    "StockMovementResponseSerializer",
 ]
 
 
@@ -162,3 +166,119 @@ class AlertSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Data de validade (NULL se sem data)",
     )
+
+
+class WasteSerializer(serializers.Serializer):
+    """Entrada de desperdício (POST /stock/movements/waste)."""
+
+    product_id = serializers.UUIDField(
+        help_text="UUID do produto"
+    )
+    location_id = serializers.UUIDField(
+        help_text="UUID da localização"
+    )
+    quantity = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        min_value=Decimal("0.001"),
+        help_text="Quantidade > 0 (em unidade base)",
+    )
+    lot_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="UUID do lote (obrigatório se product.track_lots=True)",
+    )
+    reason = serializers.ChoiceField(
+        choices=["expired", "spoiled", "prep_loss", "breakage", "other"],
+        help_text="Motivo do desperdício",
+    )
+    reason_detail = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+        help_text="Detalhes opcionais se reason='other'",
+    )
+
+
+class AdjustmentSerializer(serializers.Serializer):
+    """Entrada de ajuste (POST /stock/movements/adjustment)."""
+
+    product_id = serializers.UUIDField(
+        help_text="UUID do produto"
+    )
+    location_id = serializers.UUIDField(
+        help_text="UUID da localização"
+    )
+    quantity = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        help_text="Quantidade ± (positivo = entrada, negativo = saída)",
+    )
+    lot_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="UUID do lote (obrigatório se product.track_lots=True)",
+    )
+    reason = serializers.ChoiceField(
+        choices=["expired", "spoiled", "prep_loss", "breakage", "other"],
+        help_text="Motivo do ajuste",
+    )
+    reason_detail = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+        help_text="Detalhes opcionais se reason='other'",
+    )
+
+    def validate_quantity(self, value):
+        """Quantidade não pode ser zero."""
+        if value == Decimal("0"):
+            raise serializers.ValidationError(
+                _("Quantity cannot be zero.")
+            )
+        return value
+
+
+class TransferSerializer(serializers.Serializer):
+    """Entrada de transferência (POST /stock/movements/transfer)."""
+
+    product_id = serializers.UUIDField(
+        help_text="UUID do produto"
+    )
+    from_location_id = serializers.UUIDField(
+        help_text="UUID da localização de origem"
+    )
+    to_location_id = serializers.UUIDField(
+        help_text="UUID da localização de destino"
+    )
+    quantity = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        min_value=Decimal("0.001"),
+        help_text="Quantidade > 0 (em unidade base)",
+    )
+    lot_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="UUID do lote (obrigatório se product.track_lots=True)",
+    )
+
+
+class StockMovementResponseSerializer(serializers.Serializer):
+    """Resposta de um movimento de stock criado (201)."""
+
+    movement_id = serializers.UUIDField(read_only=True)
+    product_name = serializers.CharField(read_only=True)
+    location_name = serializers.CharField(read_only=True)
+    lot_code = serializers.CharField(read_only=True, allow_null=True)
+    quantity = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        read_only=True,
+    )
+    unit_cost = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        read_only=True,
+    )
+    created_at = serializers.DateTimeField(read_only=True)

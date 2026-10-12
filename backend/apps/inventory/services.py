@@ -9,17 +9,22 @@ Fatia 3: `record_movements` escreve no ledger — movimentos, lotes, níveis e c
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
+from django.utils import timezone
+
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import F, Max, Q, Sum
 from django.utils.translation import gettext_lazy as _
 
+from apps.accounts.models import User
+from apps.catalog.models import Product
 from apps.inventory.models import Location, Lot, ProductCost, StockLevel, StockMovement
 
 __all__ = [
@@ -29,6 +34,10 @@ __all__ = [
     "criar_localizacao",
     "get_or_create_lots",
     "record_movements",
+    "registar_waste",
+    "registar_adjustment",
+    "registar_transfer",
+    "get_fefo_lot",
 ]
 
 logger = logging.getLogger(__name__)
@@ -397,3 +406,381 @@ def record_movements(
             custo.save(update_fields=["unit_cost", "updated_at"])
 
     return movement_ids
+
+
+# === Fatia 5: Movimentos manuais ===
+
+
+def get_fefo_lot(
+    *,
+    tenant_id: UUID,
+    product_id: UUID,
+    location_id: UUID,
+    lot_id: UUID | None = None,
+) -> Lot | None:
+    """Encontra o lote mais antigo (FEFO) para uma saída.
+
+    Se `lot_id` for fornecido, devolve esse lote (validação apenas).
+    Senão, busca pelo critério FEFO: expires_at ASC NULLS LAST, received_at ASC.
+
+    Retorna None se não houver lote com stock > 0.
+    """
+    if lot_id is not None:
+        return Lot.objects.filter(tenant_id=tenant_id, pk=lot_id, product_id=product_id).first()
+
+    # Buscar lotes do produto nesta localização com stock > 0, ordenado por FEFO
+    qs = (
+        Lot.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+        )
+        .select_related("product")
+        .order_by("expires_at", "received_at")  # NULLS LAST é automático em Django com DateTimeField
+    )
+
+    # Filtrar apenas lotes com stock > 0 nesta localização
+    lotes_com_stock = []
+    for lote in qs:
+        nivel = StockLevel.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            location_id=location_id,
+            lot_id=lote.id,
+            quantity__gt=Decimal("0"),
+        ).exists()
+        if nivel:
+            lotes_com_stock.append(lote)
+
+    return lotes_com_stock[0] if lotes_com_stock else None
+
+
+@transaction.atomic
+def registar_waste(
+    *,
+    tenant_id: UUID,
+    product_id: UUID,
+    location_id: UUID,
+    quantity: Decimal,
+    lot_id: UUID | None,
+    reason: str,
+    reason_detail: str | None,
+    user: User,
+) -> UUID:
+    """Registar um movimento de desperdício (waste).
+
+    Cria um StockMovement com type=waste, quantity negativa (saída).
+    Usa FEFO para escolher o lote se não for fornecido.
+
+    Argumentos:
+    - tenant_id, product_id, location_id: identificadores
+    - quantity: Decimal > 0 (será negativo no movimento)
+    - lot_id: UUID ou None (se None, usa FEFO)
+    - reason: um de ['expired', 'spoiled', 'prep_loss', 'breakage', 'other']
+    - reason_detail: opcional, para reason='other'
+    - user: User que cria o movimento
+
+    Retorna: movement_id
+
+    Validações:
+    - quantity > 0
+    - reason obrigatório e em enum
+    - Lote obrigatório se product.track_lots=True
+    - Location deve estar ativa
+    """
+    if quantity <= Decimal("0"):
+        raise ValidationError({"quantity": [_("Quantity must be positive.")]})
+
+    if reason not in dict(StockMovement.REASON_CHOICES):
+        raise ValidationError({"reason": [_("Invalid reason.")]})
+
+    # Validar produto e localização
+    produto = Product.objects.filter(pk=product_id, tenant_id=tenant_id).first()
+    if not produto:
+        raise ValidationError({"product_id": [_("Product not found.")]})
+
+    localizacao = Location.objects.filter(pk=location_id, tenant_id=tenant_id).first()
+    if not localizacao:
+        raise ValidationError({"location_id": [_("Location not found.")]})
+
+    if not localizacao.is_active:
+        raise ValidationError({"location_id": [_("Location is inactive.")]})
+
+    # Buscar lote a usar
+    if lot_id is None:
+        if produto.track_lots:
+            raise ValidationError({"lot_id": [_("Lot is required for tracked products.")]})
+        # Buscar lote sintético
+        lote = Lot.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            code=f"__{product_id}__",
+        ).first()
+        if not lote:
+            raise ValidationError(
+                {"lot_id": [_("Synthetic lot not found. Create stock first.")]}
+            )
+    else:
+        lote = get_fefo_lot(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            location_id=location_id,
+            lot_id=lot_id,
+        )
+        if not lote:
+            raise ValidationError({"lot_id": [_("Lot not found or has no stock.")]})
+
+    # Buscar custo do lote
+    nivel = StockLevel.objects.filter(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        location_id=location_id,
+        lot_id=lote.id,
+    ).first()
+
+    unit_cost = nivel.unit_cost if nivel else Decimal("0")
+
+    # Criar movimento
+    mvt_dto = MovementDTO(
+        product_id=product_id,
+        location_id=location_id,
+        lot_id=lote.id,
+        quantity=-quantity,  # Negativo para saída
+        unit_cost=unit_cost,
+        cost_is_estimate=False,
+        movement_type="waste",
+        occurred_at=timezone.now(),
+        created_by_id=user.id,
+        created_by_name=user.email,
+        reason=reason,
+    )
+
+    movement_ids = record_movements(tenant_id=tenant_id, movements=[mvt_dto])
+    return movement_ids[0] if movement_ids else None
+
+
+@transaction.atomic
+def registar_adjustment(
+    *,
+    tenant_id: UUID,
+    product_id: UUID,
+    location_id: UUID,
+    quantity: Decimal,
+    lot_id: UUID | None,
+    reason: str,
+    reason_detail: str | None,
+    user: User,
+) -> UUID:
+    """Registar um movimento de ajuste (adjustment).
+
+    Cria um StockMovement com type=adjustment, quantidade com sinal conforme correção.
+    Usa FEFO para saídas (quantity < 0).
+
+    Argumentos:
+    - quantity: Decimal ± (positivo = entrada, negativo = saída)
+    - Resto igual a waste
+
+    Retorna: movement_id
+    """
+    if quantity == Decimal("0"):
+        raise ValidationError({"quantity": [_("Quantity cannot be zero.")]})
+
+    if reason not in dict(StockMovement.REASON_CHOICES):
+        raise ValidationError({"reason": [_("Invalid reason.")]})
+
+    # Validar produto e localização
+    produto = Product.objects.filter(pk=product_id, tenant_id=tenant_id).first()
+    if not produto:
+        raise ValidationError({"product_id": [_("Product not found.")]})
+
+    localizacao = Location.objects.filter(pk=location_id, tenant_id=tenant_id).first()
+    if not localizacao:
+        raise ValidationError({"location_id": [_("Location not found.")]})
+
+    if not localizacao.is_active:
+        raise ValidationError({"location_id": [_("Location is inactive.")]})
+
+    # Buscar ou criar lote
+    if lot_id is None:
+        if produto.track_lots:
+            raise ValidationError({"lot_id": [_("Lot is required for tracked products.")]})
+        # Buscar ou criar lote sintético
+        lote, _criado = Lot.objects.get_or_create(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            code=f"__{product_id}__",
+            defaults={"received_at": timezone.now()},
+        )
+    else:
+        lote = Lot.objects.filter(tenant_id=tenant_id, pk=lot_id, product_id=product_id).first()
+        if not lote:
+            raise ValidationError({"lot_id": [_("Lot not found.")]})
+
+    # Para saídas (quantity < 0), usar FEFO; para entradas, usar o lote fornecido
+    if quantity < Decimal("0"):
+        fefo_lote = get_fefo_lot(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            location_id=location_id,
+            lot_id=lote.id if lot_id else None,
+        )
+        if fefo_lote and lot_id is None:
+            lote = fefo_lote
+
+    # Buscar custo
+    nivel = StockLevel.objects.filter(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        location_id=location_id,
+        lot_id=lote.id,
+    ).first()
+
+    unit_cost = nivel.unit_cost if nivel else Decimal("0")
+
+    # Criar movimento
+    mvt_dto = MovementDTO(
+        product_id=product_id,
+        location_id=location_id,
+        lot_id=lote.id,
+        quantity=quantity,
+        unit_cost=unit_cost,
+        cost_is_estimate=False,
+        movement_type="adjustment",
+        occurred_at=timezone.now(),
+        created_by_id=user.id,
+        created_by_name=user.email,
+        reason=reason,
+    )
+
+    movement_ids = record_movements(tenant_id=tenant_id, movements=[mvt_dto])
+    return movement_ids[0] if movement_ids else None
+
+
+@transaction.atomic
+def registar_transfer(
+    *,
+    tenant_id: UUID,
+    product_id: UUID,
+    from_location_id: UUID,
+    to_location_id: UUID,
+    quantity: Decimal,
+    lot_id: UUID | None,
+    user: User,
+) -> tuple[UUID, UUID]:
+    """Registar uma transferência entre localizações (pair atómico).
+
+    Cria dois StockMovements: transfer_out (negativo) e transfer_in (positivo),
+    ambos com o mesmo transfer_id.
+
+    Argumentos:
+    - quantity: Decimal > 0
+    - Resto igual a waste
+
+    Retorna: (transfer_out_id, transfer_in_id)
+
+    Validações:
+    - Localizações devem ser diferentes
+    - Ambas devem estar ativas
+    - Lote obrigatório se product.track_lots=True
+    """
+    if quantity <= Decimal("0"):
+        raise ValidationError({"quantity": [_("Quantity must be positive.")]})
+
+    if from_location_id == to_location_id:
+        raise ValidationError(
+            {"to_location_id": [_("Cannot transfer to the same location.")]}
+        )
+
+    # Validar produto e localizações
+    produto = Product.objects.filter(pk=product_id, tenant_id=tenant_id).first()
+    if not produto:
+        raise ValidationError({"product_id": [_("Product not found.")]})
+
+    from_loc = Location.objects.filter(pk=from_location_id, tenant_id=tenant_id).first()
+    if not from_loc:
+        raise ValidationError({"from_location_id": [_("Location not found.")]})
+
+    to_loc = Location.objects.filter(pk=to_location_id, tenant_id=tenant_id).first()
+    if not to_loc:
+        raise ValidationError({"to_location_id": [_("Location not found.")]})
+
+    if not from_loc.is_active or not to_loc.is_active:
+        raise ValidationError(
+            {"location_id": [_("One or both locations are inactive.")]}
+        )
+
+    # Buscar lote a sair (FEFO)
+    if lot_id is None:
+        if produto.track_lots:
+            raise ValidationError({"lot_id": [_("Lot is required for tracked products.")]})
+        # Buscar lote sintético
+        lote = Lot.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            code=f"__{product_id}__",
+        ).first()
+        if not lote:
+            raise ValidationError(
+                {"lot_id": [_("Synthetic lot not found. Create stock first.")]}
+            )
+    else:
+        lote = get_fefo_lot(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            location_id=from_location_id,
+            lot_id=lot_id,
+        )
+        if not lote:
+            raise ValidationError(
+                {"lot_id": [_("Lot not found or has no stock at source location.")]}
+            )
+
+    # Buscar custo
+    nivel_origem = StockLevel.objects.filter(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        location_id=from_location_id,
+        lot_id=lote.id,
+    ).first()
+
+    unit_cost = nivel_origem.unit_cost if nivel_origem else Decimal("0")
+
+    # Gerar transfer_id compartilhado
+    import uuid
+    transfer_id = uuid.uuid4()
+
+    # Criar dois movimentos atomicamente
+    out_dto = MovementDTO(
+        product_id=product_id,
+        location_id=from_location_id,
+        lot_id=lote.id,
+        quantity=-quantity,  # Negativo para saída
+        unit_cost=unit_cost,
+        cost_is_estimate=False,
+        movement_type="transfer_out",
+        occurred_at=timezone.now(),
+        created_by_id=user.id,
+        created_by_name=user.email,
+        reason=None,
+    )
+
+    in_dto = MovementDTO(
+        product_id=product_id,
+        location_id=to_location_id,
+        lot_id=lote.id,
+        quantity=quantity,  # Positivo para entrada
+        unit_cost=unit_cost,
+        cost_is_estimate=False,
+        movement_type="transfer_in",
+        occurred_at=timezone.now(),
+        created_by_id=user.id,
+        created_by_name=user.email,
+        reason=None,
+    )
+
+    # Gravar ambos os movimentos
+    movement_ids = record_movements(tenant_id=tenant_id, movements=[out_dto, in_dto])
+
+    # Atualizar transfer_id nos dois movimentos (após criação)
+    StockMovement.objects.filter(id__in=movement_ids).update(transfer_id=transfer_id)
+
+    return tuple(movement_ids) if len(movement_ids) == 2 else (movement_ids[0] if movement_ids else None, None)

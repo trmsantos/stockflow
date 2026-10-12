@@ -12,9 +12,11 @@ Endpoints:
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from uuid import UUID
 
+from django.core.exceptions import ValidationError
 from django.db.models import F, Max, QuerySet
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
@@ -25,8 +27,10 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
+logger = logging.getLogger(__name__)
+
 from apps.accounts.api import PertenceAoTenant
-from apps.inventory.models import Location, Lot, StockLevel
+from apps.inventory.models import Location, Lot, StockLevel, StockMovement
 from apps.inventory.selectors import (
     listar_localizacoes,
     localizacoes_do_ambito,
@@ -35,15 +39,24 @@ from apps.inventory.selectors import (
     stock_summary,
 )
 from apps.inventory.serializers import (
+    AdjustmentSerializer,
     AlertSerializer,
     LocalizacaoInSerializer,
     LocalizacaoOutSerializer,
     LocalizacaoPatchInSerializer,
     StockDetailSerializer,
+    StockMovementResponseSerializer,
     StockSummarySerializer,
+    TransferSerializer,
+    WasteSerializer,
+)
+from apps.inventory.services import (
+    registar_adjustment,
+    registar_transfer,
+    registar_waste,
 )
 
-__all__ = ["LocalizacaoViewSet", "StockPanelViewSet"]
+__all__ = ["LocalizacaoViewSet", "StockPanelViewSet", "StockMovementViewSet"]
 
 # Throttle scope (reutiliza do catalog)
 AMBITO_THROTTLE_CATALOGO = "catalogo"
@@ -425,3 +438,193 @@ class StockPanelViewSet(viewsets.ViewSet):
                 )
 
         return alerts
+
+
+@extend_schema_view(
+    waste=extend_schema(
+        operation_id="stock_movements_waste",
+        summary="Registar desperdício",
+        request=WasteSerializer,
+        responses={201: StockMovementResponseSerializer},
+    ),
+    adjustment=extend_schema(
+        operation_id="stock_movements_adjustment",
+        summary="Registar ajuste de stock",
+        request=AdjustmentSerializer,
+        responses={201: StockMovementResponseSerializer},
+    ),
+    transfer=extend_schema(
+        operation_id="stock_movements_transfer",
+        summary="Transferir stock entre localizações",
+        request=TransferSerializer,
+        responses={201: StockMovementResponseSerializer},
+    ),
+)
+class StockMovementViewSet(viewsets.ViewSet):
+    """Endpoints para criar movimentos de stock manuais (desperdício, ajuste, transferência)."""
+
+    permission_classes = [IsAuthenticated, PertenceAoTenant]
+    throttle_scope = AMBITO_THROTTLE_CATALOGO
+
+    @action(detail=False, methods=["POST"], url_path="waste")
+    def waste(self, request: Request) -> Response:
+        """Registar um desperdício (POST /stock/movements/waste)."""
+        serializer = WasteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            movement_id = registar_waste(
+                tenant_id=request.tenant.id,
+                product_id=serializer.validated_data["product_id"],
+                location_id=serializer.validated_data["location_id"],
+                quantity=serializer.validated_data["quantity"],
+                lot_id=serializer.validated_data.get("lot_id"),
+                reason=serializer.validated_data["reason"],
+                reason_detail=serializer.validated_data.get("reason_detail"),
+                user=request.user,
+            )
+
+            # Recuperar movimento criado
+            movimento = StockMovement.objects.get(pk=movement_id)
+            response_data = {
+                "movement_id": movimento.id,
+                "product_name": movimento.product.short_name,
+                "location_name": movimento.location.name,
+                "lot_code": movimento.lot.code if movimento.lot else None,
+                "quantity": abs(movimento.quantity),
+                "unit_cost": movimento.unit_cost,
+                "created_at": movimento.created_at,
+            }
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except ValidationError as e:
+            logger.warning(
+                "waste_rejected",
+                extra={"outcome": "validation_error", "errors": e.detail},
+            )
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(
+                "waste_failed",
+                extra={"outcome": "error", "error": str(e)},
+                exc_info=True,
+            )
+            return Response(
+                {"detail": "Erro ao registar desperdício"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    @action(detail=False, methods=["POST"], url_path="adjustment")
+    def adjustment(self, request: Request) -> Response:
+        """Registar um ajuste de stock (POST /stock/movements/adjustment)."""
+        serializer = AdjustmentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            movement_id = registar_adjustment(
+                tenant_id=request.tenant.id,
+                product_id=serializer.validated_data["product_id"],
+                location_id=serializer.validated_data["location_id"],
+                quantity=serializer.validated_data["quantity"],
+                lot_id=serializer.validated_data.get("lot_id"),
+                reason=serializer.validated_data["reason"],
+                reason_detail=serializer.validated_data.get("reason_detail"),
+                user=request.user,
+            )
+
+            # Recuperar movimento criado
+            movimento = StockMovement.objects.get(pk=movement_id)
+            response_data = {
+                "movement_id": movimento.id,
+                "product_name": movimento.product.short_name,
+                "location_name": movimento.location.name,
+                "lot_code": movimento.lot.code if movimento.lot else None,
+                "quantity": abs(movimento.quantity),
+                "unit_cost": movimento.unit_cost,
+                "created_at": movimento.created_at,
+            }
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except ValidationError as e:
+            logger.warning(
+                "adjustment_rejected",
+                extra={"outcome": "validation_error", "errors": e.detail},
+            )
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(
+                "adjustment_failed",
+                extra={"outcome": "error", "error": str(e)},
+                exc_info=True,
+            )
+            return Response(
+                {"detail": "Erro ao registar ajuste"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    @action(detail=False, methods=["POST"], url_path="transfer")
+    def transfer(self, request: Request) -> Response:
+        """Transferir stock entre localizações (POST /stock/movements/transfer)."""
+        serializer = TransferSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            out_id, in_id = registar_transfer(
+                tenant_id=request.tenant.id,
+                product_id=serializer.validated_data["product_id"],
+                from_location_id=serializer.validated_data["from_location_id"],
+                to_location_id=serializer.validated_data["to_location_id"],
+                quantity=serializer.validated_data["quantity"],
+                lot_id=serializer.validated_data.get("lot_id"),
+                user=request.user,
+            )
+
+            # Recuperar movimentos criados
+            out_movimento = StockMovement.objects.get(pk=out_id)
+            in_movimento = StockMovement.objects.get(pk=in_id)
+
+            response_data = {
+                "transfer_id": out_movimento.transfer_id,
+                "movements": [
+                    {
+                        "movement_id": out_movimento.id,
+                        "type": "transfer_out",
+                        "product_name": out_movimento.product.short_name,
+                        "location_name": out_movimento.location.name,
+                        "lot_code": out_movimento.lot.code if out_movimento.lot else None,
+                        "quantity": abs(out_movimento.quantity),
+                        "unit_cost": out_movimento.unit_cost,
+                    },
+                    {
+                        "movement_id": in_movimento.id,
+                        "type": "transfer_in",
+                        "product_name": in_movimento.product.short_name,
+                        "location_name": in_movimento.location.name,
+                        "lot_code": in_movimento.lot.code if in_movimento.lot else None,
+                        "quantity": in_movimento.quantity,
+                        "unit_cost": in_movimento.unit_cost,
+                    },
+                ],
+                "created_at": out_movimento.created_at,
+            }
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except ValidationError as e:
+            logger.warning(
+                "transfer_rejected",
+                extra={"outcome": "validation_error", "errors": e.detail},
+            )
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(
+                "transfer_failed",
+                extra={"outcome": "error", "error": str(e)},
+                exc_info=True,
+            )
+            return Response(
+                {"detail": "Erro ao registar transferência"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )

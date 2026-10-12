@@ -108,9 +108,11 @@ class StockMovement(TenantModel):
     - `quantity` Decimal(12,3) com sinal — positivo para entrada, negativo para saída
     - `unit_cost` Decimal(12,6) — avaliação de cada unidade, immutável
     - `cost_is_estimate` bool — se o custo é estimado (A, guia sem fatura) ou confirmado (B, com fatura)
-    - `reason` CharField null — justificação livre (waste, adjustment)
+    - `reason` CharField com choices enum (waste, adjustment): expired, spoiled, prep_loss, breakage, other
+    - `reason_detail` TextField null — detalhes adicionais quando reason='other'
     - `reference` CharField(255) null — chave de deduplicação (doc_number_normalized, uuid produção, id contagem)
     - `production_id` UUID null — referência da produção (production_out e production_in partilham este id)
+    - `transfer_id` UUID null — ID do par transfer_out/transfer_in
     - `occurred_at` DateTime — quando o movimento aconteceu
     - `created_by` FK User SET_NULL, `created_by_name` char(150) — quem criou o movimento
 
@@ -128,6 +130,14 @@ class StockMovement(TenantModel):
         ("transfer_in", "Transferência entrada"),
         ("production_out", "Produção saída"),
         ("production_in", "Produção entrada"),
+    ]
+
+    REASON_CHOICES = [
+        ("expired", "Expirado"),
+        ("spoiled", "Estragado"),
+        ("prep_loss", "Perda de preparação"),
+        ("breakage", "Quebra"),
+        ("other", "Outro"),
     ]
 
     product = models.ForeignKey(
@@ -166,13 +176,23 @@ class StockMovement(TenantModel):
         default=False, verbose_name="custo estimado"
     )
     reason = models.CharField(
-        max_length=500, null=True, blank=True, verbose_name="motivo"
+        max_length=20,
+        choices=REASON_CHOICES,
+        null=True,
+        blank=True,
+        verbose_name="motivo",
+    )
+    reason_detail = models.TextField(
+        blank=True, null=True, verbose_name="detalhes do motivo"
     )
     reference = models.CharField(
         max_length=255, null=True, blank=True, verbose_name="referência de documento"
     )
     production_id = models.UUIDField(
         null=True, blank=True, verbose_name="ID da produção"
+    )
+    transfer_id = models.UUIDField(
+        null=True, blank=True, verbose_name="ID da transferência"
     )
     occurred_at = models.DateTimeField(verbose_name="data/hora do movimento")
     created_by = models.ForeignKey(
