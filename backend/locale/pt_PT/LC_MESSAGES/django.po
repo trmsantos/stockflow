@@ -299,3 +299,46 @@ msgstr "Este fornecedor não existe neste estabelecimento."
 
 msgid "{unidade} is a unit of {dimensao} and the base unit of this item is {base}. Choose a display unit of the same dimension."
 msgstr "{unidade} é uma unidade de {dimensao} e a unidade base deste artigo é {base}. Escolha uma unidade de apresentação da mesma dimensão."
+
+# ---------------------------------------------------------------------------
+# Movimentos manuais de ajuste — fatia 5 (apps/inventory/services.py)
+# ---------------------------------------------------------------------------
+
+msgid "Cannot transfer to the same location."
+msgstr "Não pode transferir para a mesma localização."
+
+msgid "Invalid reason."
+msgstr "Motivo inválido."
+
+msgid "Location is inactive."
+msgstr "A localização está inativa."
+
+msgid "Location not found."
+msgstr "Localização não encontrada."
+
+msgid "Lot is required for tracked products."
+msgstr "O lote é obrigatório para artigos rastreados."
+
+msgid "Lot not found or has no stock at source location."
+msgstr "Lote não encontrado ou sem stock na localização de origem."
+
+msgid "Lot not found or has no stock."
+msgstr "Lote não encontrado ou sem stock."
+
+msgid "Lot not found."
+msgstr "Lote não encontrado."
+
+msgid "One or both locations are inactive."
+msgstr "Uma ou ambas as localizações estão inativas."
+
+msgid "Product not found."
+msgstr "Artigo não encontrado."
+
+msgid "Quantity cannot be zero."
+msgstr "A quantidade não pode ser zero."
+
+msgid "Quantity must be positive."
+msgstr "A quantidade tem de ser positiva."
+
+msgid "Synthetic lot not found. Create stock first."
+msgstr "Lote sintético não encontrado. Crie stock primeiro."
