@@ -250,8 +250,12 @@ forbidden_modules = [
     "apps.agents",
     "apps.billing",
     "apps.notifications",
+    "apps.accounts",  # Excepto TYPE_CHECKING
 ]
-ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+ignore_imports = [
+    "apps.** -> apps.*.events",  # DTOs de evento — ver cabeçalho
+    "apps.recipes.** -> apps.accounts.models",  # TYPE_CHECKING para type hints
+]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 

@@ -17,8 +17,13 @@ from uuid import UUID
 
 from django.db import transaction
 
-from apps.inventory.models import Location
-from apps.inventory.services import MovementDTO, get_or_create_lots, record_movements
+from apps.inventory.models import Location, StockLevel
+from apps.inventory.services import (
+    MovementDTO,
+    get_fefo_lot,
+    get_or_create_lots,
+    record_movements,
+)
 
 __all__ = [
     "LocalizacaoResumo",
@@ -28,9 +33,12 @@ __all__ = [
     "CustoMedioDeArtigo",
     "criar_localizacao",
     "localizacoes_por_id",
+    "obter_localizacao",
     "get_or_create_lots",
     "record_movements",
     "MovementDTO",
+    "get_fefo_lot",
+    "get_stock_level",
 ]
 
 
@@ -99,6 +107,43 @@ def localizacoes_por_id(
         )
         for loc in localizacoes
     }
+
+
+def get_stock_level(
+    *, tenant_id: UUID, product_id: UUID, location_id: UUID, lot_id: UUID | None = None
+) -> SaldoDeStock | None:
+    """Obtém o nível de stock para uma chave (product, location, lot)."""
+    nivel = StockLevel.objects.filter(
+        tenant_id=tenant_id,
+        product_id=product_id,
+        location_id=location_id,
+        lot_id=lot_id,
+    ).first()
+    if nivel is None:
+        return None
+    return SaldoDeStock(
+        product_id=nivel.product_id,
+        location_id=nivel.location_id,
+        lot_id=nivel.lot_id,
+        quantity=nivel.quantity,
+        unit_cost=nivel.unit_cost,
+    )
+
+
+def obter_localizacao(
+    *, tenant_id: UUID, location_id: UUID
+) -> LocalizacaoResumo | None:
+    """Obtém uma localização pelo ID. Retorna None se não existe ou não está ativa."""
+    localizacao = Location.objects.filter(
+        tenant_id=tenant_id, id=location_id, is_active=True
+    ).first()
+    if localizacao is None:
+        return None
+    return LocalizacaoResumo(
+        id=localizacao.id,
+        name=localizacao.name,
+        is_active=localizacao.is_active,
+    )
 
 
 @transaction.atomic
