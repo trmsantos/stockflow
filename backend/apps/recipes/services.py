@@ -19,13 +19,13 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from apps.inventory.api import (
-    get_fefo_lot,
+    MovementDTO,
     get_or_create_lots,
     get_stock_level,
     obter_localizacao,
     record_movements,
-    MovementDTO,
 )
+from apps.inventory.models import Lot, StockLevel
 from apps.recipes.models import Recipe
 
 if TYPE_CHECKING:
@@ -38,6 +38,41 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+def _get_fefo_lots_with_stock(
+    *,
+    tenant_id: UUID,
+    product_id: UUID,
+    location_id: UUID,
+) -> list[tuple[Lot, Decimal]]:
+    """Retorna lista de (lote, quantidade disponível) ordenada por FEFO (expires_at, received_at).
+
+    Filtra apenas lotes com stock positivo na localização.
+    """
+
+    qs = (
+        Lot.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+        )
+        .select_related("product")
+        .order_by("expires_at", "received_at")
+    )
+
+    resultado = []
+    for lote in qs:
+        nivel = StockLevel.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            location_id=location_id,
+            lot_id=lote.id,
+            quantity__gt=Decimal("0"),
+        ).first()
+        if nivel:
+            resultado.append((lote, nivel.quantity))
+
+    return resultado
+
+
 @transaction.atomic
 def produzir(
     *,
@@ -45,7 +80,7 @@ def produzir(
     recipe_id: UUID,
     quantity: Decimal,
     location_id: UUID,
-    user: "User",
+    user: User,
 ) -> UUID:
     """Produzir uma receita: consome ingredientes (production_out), cria produto (production_in).
 
@@ -85,19 +120,19 @@ def produzir(
     if receita is None:
         # Pode ser "não existe" ou "está inativa" — ambos são 404
         raise ValidationError(
-            {"recipe_id": [_("Recipe not found or inactive.")]}, code="recipe_not_found"
+            _("Recipe not found or inactive."), code="recipe_not_found"
         )
 
     # Validação 2: Quantidade > 0 (400)
     if quantity <= Decimal("0"):
         raise ValidationError(
-            {"quantity": [_("Quantity must be greater than zero.")]}, code="invalid_quantity"
+            _("Quantity must be greater than zero."), code="invalid_quantity"
         )
 
     # Validação 3: yield_factor > 0 (409 por ser erro de dados)
     if receita.yield_factor <= Decimal("0"):
         raise ValidationError(
-            {"yield_factor": [_("Recipe yield_factor must be greater than zero.")]},
+            _("Recipe yield_factor must be greater than zero."),
             code="invalid_yield_factor",
         )
 
@@ -105,7 +140,7 @@ def produzir(
     localizacao = obter_localizacao(tenant_id=tenant_id, location_id=location_id)
     if localizacao is None:
         raise ValidationError(
-            {"location_id": [_("Location not found or inactive.")]},
+            _("Location not found or inactive."),
             code="location_not_found",
         )
 
@@ -113,7 +148,7 @@ def produzir(
     linhas = list(receita.line_items.all())
     if not linhas:
         raise ValidationError(
-            {"recipe": [_("Recipe has no ingredients.")]},
+            _("Recipe has no ingredients."),
             code="recipe_no_ingredients",
         )
 
@@ -129,71 +164,76 @@ def produzir(
         ingrediente = linha.ingredient_product  # tipo: ignore[assignment]
         qty_a_consumir = linha.quantity_per_base_unit * quantidade_base
 
-        # FEFO: encontra o lote a sair
-        lote_saida = get_fefo_lot(
+        # FEFO: encontra lotes e consome sequencialmente
+        lotes_fefo = _get_fefo_lots_with_stock(
             tenant_id=tenant_id,
             product_id=ingrediente.id,
             location_id=location_id,
         )
 
-        if lote_saida is None:
-            # Sem stock, lança erro 409
+        if not lotes_fefo:
+            # Sem stock nenhum, lança erro 409
             raise ValidationError(
-                {
-                    "ingredients": [
-                        _(
-                            f"Insufficient stock for ingredient '{ingrediente.short_name}': "
-                            f"need {qty_a_consumir} {ingrediente.base_unit}, "
-                            f"but have 0."
-                        )
-                    ]
-                },
+                _(
+                    f"Insufficient stock for ingredient '{ingrediente.short_name}': "
+                    f"need {qty_a_consumir} {ingrediente.base_unit}, "
+                    f"but have 0."
+                ),
                 code="insufficient_stock",
             )
 
-        # Verifica se a quantidade disponível é suficiente
-        nivel = get_stock_level(
-            tenant_id=tenant_id,
-            product_id=ingrediente.id,
-            location_id=location_id,
-            lot_id=lote_saida.id,
-        )
+        # Consumir de cada lote até ter consumido o suficiente
+        restante = qty_a_consumir
+        for lote_saida, qty_disponivel in lotes_fefo:
+            if restante <= Decimal("0"):
+                break
 
-        if nivel is None or nivel.quantity < qty_a_consumir:
-            disponivel = nivel.quantity if nivel else Decimal("0")
-            raise ValidationError(
-                {
-                    "ingredients": [
-                        _(
-                            f"Insufficient stock for ingredient '{ingrediente.short_name}': "
-                            f"need {qty_a_consumir} {ingrediente.base_unit}, "
-                            f"have {disponivel}."
-                        )
-                    ]
-                },
-                code="insufficient_stock",
+            # Quantidade a consumir deste lote
+            qty_consumir_deste_lote = min(restante, qty_disponivel)
+
+            # Buscar o nível atual do lote
+            nivel = get_stock_level(
+                tenant_id=tenant_id,
+                product_id=ingrediente.id,
+                location_id=location_id,
+                lot_id=lote_saida.id,
             )
 
-        # Cria o movimento de saída (quantity negativa)
-        movement_out = MovementDTO(
-            product_id=ingrediente.id,
-            location_id=location_id,
-            lot_id=lote_saida.id,
-            quantity=-qty_a_consumir,  # Negativo = saída
-            unit_cost=nivel.unit_cost,  # Usa o custo do lote que sai (FEFO)
-            cost_is_estimate=False,
-            movement_type="production_out",
-            occurred_at=now,
-            created_by_id=user.id,
-            created_by_name=user.email,
-            production_id=production_id,
-            reference=None,
-            reason=None,
-        )
-        movements.append(movement_out)
+            # Cria o movimento de saída (quantity negativa)
+            movement_out = MovementDTO(
+                product_id=ingrediente.id,
+                location_id=location_id,
+                lot_id=lote_saida.id,
+                quantity=-qty_consumir_deste_lote,  # Negativo = saída
+                unit_cost=nivel.unit_cost,  # Usa o custo do lote que sai (FEFO)
+                cost_is_estimate=False,
+                movement_type="production_out",
+                occurred_at=now,
+                created_by_id=user.id,
+                created_by_name=user.email,
+                production_id=production_id,
+                reference=None,
+                reason=None,
+            )
+            movements.append(movement_out)
 
-        # Acumula para o custo final
-        total_custo_entrada += abs(movement_out.quantity) * movement_out.unit_cost
+            # Acumula para o custo final
+            total_custo_entrada += qty_consumir_deste_lote * movement_out.unit_cost
+
+            restante -= qty_consumir_deste_lote
+
+        # Verifica se consumiu o suficiente
+        if restante > Decimal("0"):
+            # Stock insuficiente
+            stock_total = sum(qty for _, qty in lotes_fefo)
+            raise ValidationError(
+                _(
+                    f"Insufficient stock for ingredient '{ingrediente.short_name}': "
+                    f"need {qty_a_consumir} {ingrediente.base_unit}, "
+                    f"have {stock_total}."
+                ),
+                code="insufficient_stock",
+            )
 
     # Passo 2: Production_in (entrada do produto acabado)
     produto_acabado = receita.product

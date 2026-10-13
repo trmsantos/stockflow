@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import pytest
 from decimal import Decimal
-from django.utils import timezone
-from django.core.exceptions import ValidationError
 
-from apps.accounts.services import criar_tenant, conceder_pertenca
+import pytest
+from django.core.exceptions import ValidationError
+from django.utils import timezone
+
 from apps.accounts.models import Papel, User
+from apps.accounts.services import conceder_pertenca, criar_tenant
 from apps.catalog.models import Product, UnidadeBase
 from apps.inventory.models import Location, Lot, StockLevel, StockMovement
 from apps.recipes.models import Recipe, RecipeLineItem
 from apps.recipes.services import produzir
 from apps.shared.db import tenant_scope
-
 
 CREDENCIAL = "produzir-teste-123"
 
@@ -114,13 +114,24 @@ class TestProducao:
                 expires_at=None,
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=massa,
-                location=loc,
-                lot=lote_massa,
-                quantity=Decimal("1112"),  # Suficiente para 100 pastéis
-                unit_cost=Decimal("0.5"),
+            # Cria o movimento de receipt para que StockLevel seja calculado corretamente
+            from apps.inventory.services import MovementDTO, record_movements
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=massa.id,
+                        location_id=loc.id,
+                        lot_id=lote_massa.id,
+                        quantity=Decimal("1112"),
+                        unit_cost=Decimal("0.5"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             # Setup stock: ovos
@@ -131,13 +142,23 @@ class TestProducao:
                 expires_at=None,
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=ovos,
-                location=loc,
-                lot=lote_ovos,
-                quantity=Decimal("556"),  # Suficiente (100/0.9 * 5 = 555.555...)
-                unit_cost=Decimal("0.1"),
+            # Cria o movimento de receipt para ovos
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=ovos.id,
+                        location_id=loc.id,
+                        lot_id=lote_ovos.id,
+                        quantity=Decimal("556"),
+                        unit_cost=Decimal("0.1"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             # Produz 100 pastéis
@@ -152,22 +173,25 @@ class TestProducao:
             # Verifica production_id
             assert production_id is not None
 
-            # Verifica 2 movimentos (out + in)
+            # Verifica 3 movimentos (2 out + 1 in)
             movimentos = StockMovement.objects.filter(
                 tenant=tenant, production_id=production_id
             ).order_by("movement_type")
-            assert movimentos.count() == 2
+            assert movimentos.count() == 3
 
-            # Verifica production_out
-            out1 = movimentos.filter(product=massa).first()
-            assert out1 is not None
-            assert out1.movement_type == "production_out"
-            assert out1.quantity == -Decimal("111.111")
+            # Verifica production_out de massa
+            # quantidade_base = 100 / 0.9 = 111.111..., qty_massa = 10 * 111.111... = 1111.111...
+            out_massa = movimentos.filter(product=massa).first()
+            assert out_massa is not None
+            assert out_massa.movement_type == "production_out"
+            assert out_massa.quantity == Decimal("-1111.111")
 
-            out2 = movimentos.filter(product=ovos).first()
-            assert out2 is not None
-            assert out2.movement_type == "production_out"
-            assert out2.quantity == Decimal("-555.555")
+            # Verifica production_out de ovos
+            # qty_ovos = 5 * 111.111... = 555.556 (arredondado a 3 casas)
+            out_ovos = movimentos.filter(product=ovos).first()
+            assert out_ovos is not None
+            assert out_ovos.movement_type == "production_out"
+            assert out_ovos.quantity == Decimal("-555.556")
 
             # Verifica production_in
             in_mov = movimentos.filter(product=pasteis).first()
@@ -175,16 +199,18 @@ class TestProducao:
             assert in_mov.movement_type == "production_in"
             assert in_mov.quantity == Decimal("100")
 
-            # Verifica que o stock foi debitado
+            # Verifica que o stock foi debitado corretamente
+            # stock_massa = 1112 - 1111.111 = 0.889
             nivel_massa = StockLevel.objects.get(
                 tenant=tenant, product=massa, location=loc
             )
-            assert nivel_massa.quantity == Decimal("0")
+            assert nivel_massa.quantity == Decimal("0.889")
 
+            # stock_ovos = 556 - 555.556 = 0.444
             nivel_ovos = StockLevel.objects.get(
                 tenant=tenant, product=ovos, location=loc
             )
-            assert nivel_ovos.quantity == Decimal("0")
+            assert nivel_ovos.quantity == Decimal("0.444")
 
             # Verifica que o stock de pastéis foi creditado (com lote sintético)
             nivel_pasteis = StockLevel.objects.get(
@@ -206,8 +232,10 @@ class TestProducao:
         with tenant_scope(tenant.id):
             now = timezone.now()
 
+            from apps.inventory.services import MovementDTO, record_movements
+
             # Setup stock: dois lotes de massa (FEFO)
-            # Lote 1: expira em 5 dias, tem 50kg
+            # Lote 1: expira em 5 dias, tem 500kg
             lote_massa_1 = Lot.objects.create(
                 tenant=tenant,
                 product=massa,
@@ -215,16 +243,25 @@ class TestProducao:
                 expires_at=now + timezone.timedelta(days=5),
                 received_at=now - timezone.timedelta(days=1),
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=massa,
-                location=loc,
-                lot=lote_massa_1,
-                quantity=Decimal("50"),
-                unit_cost=Decimal("0.5"),
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=massa.id,
+                        location_id=loc.id,
+                        lot_id=lote_massa_1.id,
+                        quantity=Decimal("500"),
+                        unit_cost=Decimal("0.5"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
-            # Lote 2: expira em 10 dias, tem 70kg (soma > 111.111 necessários)
+            # Lote 2: expira em 10 dias, tem 700kg (soma > 1111.111 necessários)
             lote_massa_2 = Lot.objects.create(
                 tenant=tenant,
                 product=massa,
@@ -232,13 +269,22 @@ class TestProducao:
                 expires_at=now + timezone.timedelta(days=10),
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=massa,
-                location=loc,
-                lot=lote_massa_2,
-                quantity=Decimal("70"),
-                unit_cost=Decimal("0.4"),
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=massa.id,
+                        location_id=loc.id,
+                        lot_id=lote_massa_2.id,
+                        quantity=Decimal("700"),
+                        unit_cost=Decimal("0.4"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             # Setup stock: ovos (suficiente)
@@ -249,13 +295,22 @@ class TestProducao:
                 expires_at=None,
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=ovos,
-                location=loc,
-                lot=lote_ovos,
-                quantity=Decimal("560"),
-                unit_cost=Decimal("0.1"),
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=ovos.id,
+                        location_id=loc.id,
+                        lot_id=lote_ovos.id,
+                        quantity=Decimal("556"),  # Suficiente (100/0.9 * 5 = 555.555...)
+                        unit_cost=Decimal("0.1"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             # Produz 100 pastéis — consome 111.111 kg de massa
@@ -270,17 +325,19 @@ class TestProducao:
 
             assert production_id is not None
 
-            # Verifica saldos
+            # Verifica saldos FEFO
+            # quantidade_base = 100 / 0.9 = 111.111..., qty_massa = 10 * 111.111... = 1111.111...
+            # FEFO consome lote 1 inteiro (500), depois 1111.111... - 500 = 611.111... do lote 2
             nivel_1 = StockLevel.objects.get(
                 tenant=tenant, product=massa, location=loc, lot=lote_massa_1
             )
-            assert nivel_1.quantity == Decimal("0")  # Lote 1 foi consumido
+            assert nivel_1.quantity == Decimal("0")  # Lote 1 foi consumido inteiro
 
             nivel_2 = StockLevel.objects.get(
                 tenant=tenant, product=massa, location=loc, lot=lote_massa_2
             )
-            # 70 - 61.111 = 8.889
-            assert nivel_2.quantity == Decimal("8.889")
+            # 700 - (1111.111... - 500) = 700 - 611.111... = 88.889
+            assert nivel_2.quantity == Decimal("88.889")
 
     def test_ingrediente_novo_sem_stock_retorna_409(self):
         """Caso 1: Ingrediente novo (sem stock) → 409."""
@@ -289,6 +346,8 @@ class TestProducao:
         )
 
         with tenant_scope(tenant.id):
+            from apps.inventory.services import MovementDTO, record_movements
+
             # NÃO cria stock de massa — vai falhar
 
             # Setup stock: ovos (suficiente)
@@ -300,13 +359,22 @@ class TestProducao:
                 expires_at=None,
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=ovos,
-                location=loc,
-                lot=lote_ovos,
-                quantity=Decimal("560"),
-                unit_cost=Decimal("0.1"),
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=ovos.id,
+                        location_id=loc.id,
+                        lot_id=lote_ovos.id,
+                        quantity=Decimal("560"),
+                        unit_cost=Decimal("0.1"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             # Tenta produzir — massa não tem stock
@@ -331,7 +399,10 @@ class TestProducao:
         with tenant_scope(tenant.id):
             now = timezone.now()
 
-            # Setup stock minimal
+            from apps.inventory.services import MovementDTO, record_movements
+
+            # Setup stock: suficiente para 100 pastéis
+            # quantidade_base = 100 / 0.9 = 111.111..., qty_massa = 10 * 111.111... = 1111.111...
             lote_massa = Lot.objects.create(
                 tenant=tenant,
                 product=massa,
@@ -339,13 +410,22 @@ class TestProducao:
                 expires_at=None,
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=massa,
-                location=loc,
-                lot=lote_massa,
-                quantity=Decimal("200"),
-                unit_cost=Decimal("0.5"),
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=massa.id,
+                        location_id=loc.id,
+                        lot_id=lote_massa.id,
+                        quantity=Decimal("1112"),  # Suficiente para 100 pastéis
+                        unit_cost=Decimal("0.5"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             lote_ovos = Lot.objects.create(
@@ -355,13 +435,22 @@ class TestProducao:
                 expires_at=None,
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=ovos,
-                location=loc,
-                lot=lote_ovos,
-                quantity=Decimal("1000"),
-                unit_cost=Decimal("0.1"),
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=ovos.id,
+                        location_id=loc.id,
+                        lot_id=lote_ovos.id,
+                        quantity=Decimal("556"),  # Suficiente (100/0.9 * 5 = 555.555...)
+                        unit_cost=Decimal("0.1"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             production_id = produzir(
@@ -384,13 +473,16 @@ class TestProducao:
         )
 
         with tenant_scope(tenant.id):
+            from apps.inventory.services import MovementDTO, record_movements
+
             # Muda product_acabado para track_lots=False
             pasteis.track_lots = False
             pasteis.save()
 
             now = timezone.now()
 
-            # Setup stock
+            # Setup stock: suficiente para 100 pastéis
+            # quantidade_base = 100 / 0.9 = 111.111..., qty_massa = 10 * 111.111... = 1111.111...
             lote_massa = Lot.objects.create(
                 tenant=tenant,
                 product=massa,
@@ -398,13 +490,22 @@ class TestProducao:
                 expires_at=None,
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=massa,
-                location=loc,
-                lot=lote_massa,
-                quantity=Decimal("200"),
-                unit_cost=Decimal("0.5"),
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=massa.id,
+                        location_id=loc.id,
+                        lot_id=lote_massa.id,
+                        quantity=Decimal("1112"),  # Suficiente para 100 pastéis
+                        unit_cost=Decimal("0.5"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             lote_ovos = Lot.objects.create(
@@ -414,13 +515,22 @@ class TestProducao:
                 expires_at=None,
                 received_at=now,
             )
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=ovos,
-                location=loc,
-                lot=lote_ovos,
-                quantity=Decimal("1000"),
-                unit_cost=Decimal("0.1"),
+            record_movements(
+                tenant_id=tenant.id,
+                movements=[
+                    MovementDTO(
+                        product_id=ovos.id,
+                        location_id=loc.id,
+                        lot_id=lote_ovos.id,
+                        quantity=Decimal("556"),  # Suficiente (100/0.9 * 5 = 555.555...)
+                        unit_cost=Decimal("0.1"),
+                        cost_is_estimate=False,
+                        movement_type="receipt",
+                        occurred_at=now,
+                        created_by_id=user.id,
+                        created_by_name=user.email,
+                    ),
+                ],
             )
 
             produzir(
