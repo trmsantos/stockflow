@@ -43,6 +43,8 @@ __all__ = [
     "memorizar_correspondencias",
     "normalizar_nif",
     "normalizar_unidade",
+    "produto_por_id",
+    "produto_por_sku",
     "produtos_por_id",
 ]
 
@@ -174,6 +176,44 @@ def fornecedor_por_nif(*, tenant_id: UUID, nif: str) -> FornecedorResumo | None:
             is_active=f.is_active,
         )
     except Supplier.DoesNotExist:
+        return None
+
+
+def produto_por_id(*, tenant_id: UUID, product_id: UUID) -> ProdutoResumo | None:
+    """Artigo pelo ID, ou None."""
+    try:
+        p = Product.objects.get(tenant_id=tenant_id, id=product_id)
+        return ProdutoResumo(
+            id=p.id,
+            short_name=p.short_name,
+            base_unit=p.base_unit,
+            display_unit=p.display_unit,
+            display_factor=p.display_factor,
+            track_lots=p.track_lots,
+            expiry_kind=p.expiry_kind or None,
+            conservation=p.conservation,
+            is_active=p.is_active,
+        )
+    except Product.DoesNotExist:
+        return None
+
+
+def produto_por_sku(*, tenant_id: UUID, sku: str) -> ProdutoResumo | None:
+    """Artigo pelo SKU (insensível à caixa), ou None."""
+    try:
+        p = Product.objects.get(tenant_id=tenant_id, sku__iexact=sku.strip())
+        return ProdutoResumo(
+            id=p.id,
+            short_name=p.short_name,
+            base_unit=p.base_unit,
+            display_unit=p.display_unit,
+            display_factor=p.display_factor,
+            track_lots=p.track_lots,
+            expiry_kind=p.expiry_kind or None,
+            conservation=p.conservation,
+            is_active=p.is_active,
+        )
+    except Product.DoesNotExist:
         return None
 
 

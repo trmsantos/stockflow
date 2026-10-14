@@ -524,16 +524,16 @@ class RevisaoDeLinhaInSerializer(serializers.Serializer):
         product_id = data.get("product")
 
         if kind == "goods" and product_id:
-            from apps.catalog.models import Product
-            try:
-                product = Product.objects.get(pk=product_id)
+            from apps.catalog.api import produto_por_id
+            request = self.context.get('request')
+            if request and hasattr(request, 'tenant'):
+                tenant_id = request.tenant.id
+                produto = produto_por_id(tenant_id=tenant_id, product_id=product_id)
                 # Lot is mandatory if track_lots=True
-                if product.track_lots and not lot_code:
+                if produto and produto.track_lots and not lot_code:
                     raise serializers.ValidationError({
                         "lot_code": [_("Lot code is required for items that track lots.")]
                     })
-            except Product.DoesNotExist:
-                pass  # Validation will be handled elsewhere
 
         # If lot_code is provided, expires_at is mandatory
         if lot_code and not expires_at:

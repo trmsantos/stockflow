@@ -59,6 +59,10 @@ __all__ = [
     "TenantContext",
     "TenantOption",
     "UserOut",
+    "criar_tenant",
+    "criar_usuario",
+    "criar_membership",
+    "obter_usuario_por_papel",
     "dispensa_declarada",
     "dispensar_ambito",
     "inicio_do_dia_de_negocio",
@@ -401,6 +405,61 @@ def semear_demonstracao(
     from apps.accounts.services import semear_demonstracao as _semear
 
     return _semear(email=email, nome=nome, display_name=display_name)
+
+
+# ---------------------------------------------------------------------------
+# Criação de dados para o semeador de demonstração
+# ---------------------------------------------------------------------------
+def criar_tenant(*, name: str, id: UUID | None = None) -> object:
+    """Cria um novo tenant. Consumidor: `apps/demo`."""
+    from apps.accounts.models import Tenant
+
+    return Tenant.objects.create(
+        id=id,
+        name=name,
+        is_demo=True,
+    )
+
+
+def criar_usuario(*, email: str, password: str, is_active: bool = True) -> object:
+    """Cria um novo usuário. Consumidor: `apps/demo`."""
+    from apps.accounts.models import User
+
+    return User.objects.create_user(
+        email=email,
+        password=password,
+        is_active=is_active,
+    )
+
+
+def criar_membership(
+    *,
+    user_id: UUID,
+    tenant_id: UUID,
+    role: str,
+    display_name: str,
+    is_active: bool = True,
+) -> object:
+    """Cria uma membership. Consumidor: `apps/demo`."""
+    from apps.accounts.models import Membership, Tenant, User
+
+    user = User.objects.get(id=user_id)
+    tenant = Tenant.objects.get(id=tenant_id)
+
+    return Membership.objects.create(
+        user=user,
+        tenant=tenant,
+        role=role,
+        display_name=display_name,
+        is_active=is_active,
+    )
+
+
+def obter_usuario_por_papel(*, tenant_id: UUID, role: str) -> object:
+    """Obtém um usuário de um tenant por papel. Consumidor: `apps/demo`."""
+    from apps.accounts.models import User
+
+    return User.objects.get(memberships__tenant_id=tenant_id, memberships__role=role)
 
 
 # ---------------------------------------------------------------------------

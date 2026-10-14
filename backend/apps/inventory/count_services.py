@@ -13,7 +13,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from apps.catalog.models import Product as CatalogProduct
+from apps.catalog.api import produto_por_sku
 from apps.inventory.models import Location, StockCount, StockCountLine, StockLevel
 
 __all__ = [
@@ -58,10 +58,8 @@ def adicionar_linha_contagem(
     if not contagem:
         raise ValidationError({"stock_count": [_("Count not found or already closed.")]})
 
-    # Buscar produto por SKU
-    produto = CatalogProduct.objects.filter(
-        tenant_id=tenant_id, sku__iexact=sku.strip()
-    ).first()
+    # Buscar produto por SKU via API
+    produto = produto_por_sku(tenant_id=tenant_id, sku=sku)
     if not produto:
         raise ValidationError({"sku": [_("Product not found.")]})
 
@@ -69,14 +67,14 @@ def adicionar_linha_contagem(
     quantidade_esperada = StockLevel.objects.filter(
         tenant_id=tenant_id,
         location_id=contagem.location_id,
-        product_id=produto.pk,
+        product_id=produto.id,
     ).aggregate(qty=sum("quantity"))["qty"] or Decimal("0")
 
     # Criar linha
     linha = StockCountLine.objects.create(
         tenant_id=tenant_id,
         stock_count_id=stock_count_id,
-        product_id=produto.pk,
+        product_id=produto.id,
         quantity_expected=quantidade_esperada,
         quantity_counted=quantity_counted,
         zone=zone or "",

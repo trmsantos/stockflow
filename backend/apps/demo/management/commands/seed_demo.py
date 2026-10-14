@@ -23,11 +23,20 @@ from uuid import UUID, uuid4
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.utils import timezone
 
-from apps.accounts.models import Membership, Papel, Tenant, User
-from apps.catalog.models import Conservacao, Product, Supplier, UnidadeBase
-from apps.inventory.models import Location, StockLevel, StockMovement
-from apps.purchasing.models import InvoiceDocument, Receipt, ReceiptLine
+from apps.accounts.api import (
+    criar_membership,
+    criar_tenant,
+    criar_usuario,
+    obter_usuario_por_papel,
+)
+from apps.catalog.api import criar_fornecedor, criar_produto
+from apps.inventory.api import MovementDTO, criar_localizacao, record_movements
+from apps.purchasing.api import adicionar_linha_recepção, criar_receçao
 from apps.shared.db import tenant_scope
+
+# Constantes de papel e unidades (importadas localmente onde necessário)
+_PAPEL_OWNER = "owner"
+_PAPEL_STAFF = "staff"
 
 __all__ = ["Command"]
 
@@ -103,40 +112,36 @@ class Command(BaseCommand):
 
     def _semear_novo(self, *, tenant_id: UUID, nome: str) -> SeedResult:
         """Cria tenant novo, users e todos os dados de teste."""
-        # 1. Criar tenant
-        tenant = Tenant.objects.create(
-            id=tenant_id,
-            name=nome,
-            is_demo=True,
-        )
+        # 1. Criar tenant via API
+        tenant = criar_tenant(name=nome, id=tenant_id)
         self.stdout.write(f"✓ Tenant criado: {tenant.id} ({nome})")
 
-        # 2. Criar users
-        owner = User.objects.create_user(
+        # 2. Criar users via API
+        owner = criar_usuario(
             email="owner@demo.pt",
             password="DemoPassword123!",
             is_active=True,
         )
-        staff = User.objects.create_user(
+        staff = criar_usuario(
             email="staff@demo.pt",
             password="DemoPassword123!",
             is_active=True,
         )
         self.stdout.write("✓ Users criados: owner@demo.pt, staff@demo.pt")
 
-        # 3. Criar memberships
+        # 3. Criar memberships via API
         with tenant_scope(tenant.id):
-            Membership.objects.create(
-                user=owner,
-                tenant=tenant,
-                role=Papel.OWNER,
+            criar_membership(
+                user_id=owner.id,
+                tenant_id=tenant.id,
+                role=_PAPEL_OWNER,
                 display_name="Dono",
                 is_active=True,
             )
-            Membership.objects.create(
-                user=staff,
-                tenant=tenant,
-                role=Papel.STAFF,
+            criar_membership(
+                user_id=staff.id,
+                tenant_id=tenant.id,
+                role=_PAPEL_STAFF,
                 display_name="Colaborador",
                 is_active=True,
             )
@@ -147,14 +152,16 @@ class Command(BaseCommand):
 
     def _semear_existente(self, *, tenant_id: UUID) -> SeedResult:
         """Semeia dados de teste num tenant existente."""
+        from apps.accounts.models import Tenant
+
         try:
             tenant = Tenant.objects.get(id=tenant_id)
         except Tenant.DoesNotExist as erro:
             raise CommandError(f"Tenant {tenant_id} não existe") from erro
 
-        # Pegar users
-        owner_user = User.objects.get(memberships__tenant=tenant, memberships__role=Papel.OWNER)
-        staff_user = User.objects.get(memberships__tenant=tenant, memberships__role=Papel.STAFF)
+        # Pegar users via API
+        owner_user = obter_usuario_por_papel(tenant_id=tenant_id, role=_PAPEL_OWNER)
+        staff_user = obter_usuario_por_papel(tenant_id=tenant_id, role=_PAPEL_STAFF)
 
         with tenant_scope(tenant.id):
             # 5. Semear catálogo: 50 produtos (30 ingredientes, 10 pratos, 10 bebidas)
@@ -192,8 +199,10 @@ class Command(BaseCommand):
     # Semear componentes
     # -----------------------------------------------------------------------
 
-    def _semear_produtos(self, tenant: Tenant) -> list[UUID]:
+    def _semear_produtos(self, tenant) -> list[UUID]:
         """Semeia 50 produtos: 30 ingredientes, 10 pratos, 10 bebidas."""
+        from apps.catalog.models import Conservacao, UnidadeBase
+
         produtos_dados = [
             # Ingredientes (30)
             ("Farinha T65", UnidadeBase.GRAMA, "kg", 1000, "", Conservacao.AMBIENT),
@@ -257,28 +266,23 @@ class Command(BaseCommand):
             # UUID estável para produto
             product_id = UUID(f"a17e0000-0000-4000-8000-{str(idx).zfill(12)}")
 
-            # Verificar se já existe
-            if Product.objects.filter(id=product_id, tenant=tenant).exists():
-                product_ids.append(product_id)
-                continue
-
-            product = Product.objects.create(
-                id=product_id,
-                tenant=tenant,
+            # Criar via API
+            produto = criar_produto(
+                tenant_id=tenant.id,
                 short_name=nome,
                 base_unit=unit_base,
                 display_unit=unit_apres,
                 display_factor=Decimal(str(fator)),
                 track_lots=(expiry != ""),
-                expiry_kind=expiry,
+                expiry_kind=expiry if expiry else None,
                 conservation=conservacao,
-                min_quantity=Decimal("10"),
+                id=product_id,
             )
-            product_ids.append(product.id)
+            product_ids.append(produto.id)
 
         return product_ids
 
-    def _semear_localizacoes(self, tenant: Tenant) -> list[UUID]:
+    def _semear_localizacoes(self, tenant) -> list[UUID]:
         """Semeia 3 localizações: Armazém, Cozinha, Sala."""
         localizacoes = [
             ("Armazém", 0),
@@ -290,22 +294,18 @@ class Command(BaseCommand):
         for idx, (nome, posicao) in enumerate(localizacoes, 1):
             location_id = UUID(f"c0ca0000-0000-4000-8000-{str(idx).zfill(12)}")
 
-            if Location.objects.filter(id=location_id, tenant=tenant).exists():
-                location_ids.append(location_id)
-                continue
-
-            location = Location.objects.create(
-                id=location_id,
-                tenant=tenant,
+            # Criar via API
+            localizacao = criar_localizacao(
+                tenant_id=tenant.id,
                 name=nome,
                 position=posicao,
-                is_active=True,
+                id=location_id,
             )
-            location_ids.append(location.id)
+            location_ids.append(localizacao.id)
 
         return location_ids
 
-    def _semear_fornecedores(self, tenant: Tenant) -> list[UUID]:
+    def _semear_fornecedores(self, tenant) -> list[UUID]:
         """Semeia 3 fornecedores com NIFs válidos."""
         fornecedores = [
             ("Makro Portugal", "500000001"),
@@ -317,26 +317,23 @@ class Command(BaseCommand):
         for idx, (nome, nif) in enumerate(fornecedores, 1):
             supplier_id = UUID(f"f0ff0000-0000-4000-8000-{str(idx).zfill(12)}")
 
-            if Supplier.objects.filter(id=supplier_id, tenant=tenant).exists():
-                supplier_ids.append(supplier_id)
-                continue
-
-            supplier = Supplier.objects.create(
-                id=supplier_id,
-                tenant=tenant,
+            # Criar via API
+            fornecedor = criar_fornecedor(
+                tenant_id=tenant.id,
                 name=nome,
                 nif=nif,
+                id=supplier_id,
             )
-            supplier_ids.append(supplier.id)
+            supplier_ids.append(fornecedor.id)
 
         return supplier_ids
 
     def _semear_movimentos(
         self,
-        tenant: Tenant,
+        tenant,
         product_ids: list[UUID],
         location_ids: list[UUID],
-        user: User,
+        user,
     ) -> list[UUID]:
         """Semeia 10 movimentos de stock (entrada/saída)."""
         movement_ids = []
@@ -345,8 +342,6 @@ class Command(BaseCommand):
         for idx in range(10):
             product_id = product_ids[idx % len(product_ids)]
             location_id = location_ids[idx % len(location_ids)]
-            product = Product.objects.get(id=product_id, tenant=tenant)
-            location = Location.objects.get(id=location_id, tenant=tenant)
 
             movement_type = "receipt" if idx % 2 == 0 else "consumption"
             quantity = Decimal("100" if idx % 2 == 0 else "-50")
@@ -354,75 +349,68 @@ class Command(BaseCommand):
             reference = f"DOC-{idx:04d}" if movement_type == "receipt" else None
             occurred_at = now - timedelta(days=9 - idx)
 
-            movement = StockMovement.objects.create(
-                tenant=tenant,
-                product=product,
-                location=location,
+            # Criar movimento via API
+            movimento = MovementDTO(
+                product_id=product_id,
+                location_id=location_id,
+                lot_id=None,
                 movement_type=movement_type,
                 quantity=quantity,
                 unit_cost=unit_cost,
                 cost_is_estimate=False,
                 reference=reference,
                 occurred_at=occurred_at,
-                created_by=user,
-                created_by_name=user.email,
             )
-            movement_ids.append(movement.id)
 
-            # Criar StockLevel para este (product, location)
-            StockLevel.objects.get_or_create(
-                tenant=tenant,
-                product=product,
-                location=location,
-                lot=None,
-                defaults={
-                    "quantity": quantity,
-                    "unit_cost": unit_cost,
-                },
+            movimentos = record_movements(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                user_name=user.email,
+                movements=[movimento],
             )
+            movement_ids.extend([m.id for m in movimentos])
 
         return movement_ids
 
     def _semear_receções(
         self,
-        tenant: Tenant,
+        tenant,
         product_ids: list[UUID],
         supplier_ids: list[UUID],
-        user: User,
+        user,
     ) -> list[UUID]:
         """Semeia 2 receções: 1 confirmada, 1 em revisão."""
         receipt_ids = []
 
         for receipt_idx in range(2):
-            # Criar documento de fatura
-            doc = InvoiceDocument.objects.create(
-                tenant=tenant,
-                origin="upload",
-            )
-
-            # Criar receção
+            # Criar receção via API
             supplier_id = supplier_ids[receipt_idx % len(supplier_ids)]
-            supplier = Supplier.objects.get(id=supplier_id, tenant=tenant)
+            status = "draft" if receipt_idx == 1 else "confirmed"
 
-            receipt = Receipt.objects.create(
-                tenant=tenant,
-                supplier=supplier,
-                document=doc,
-                status="draft" if receipt_idx == 1 else "confirmed",
+            receçao = criar_receçao(
+                tenant_id=tenant.id,
+                supplier_id=supplier_id,
+                status=status,
             )
-            receipt_ids.append(receipt.id)
+            receipt_ids.append(receçao.id)
 
-            # Adicionar 2-3 linhas por receção
+            # Adicionar 2-3 linhas por receção via API
             for line_idx in range(2 + receipt_idx):
                 product_id = product_ids[(receipt_idx * 2 + line_idx) % len(product_ids)]
-                product = Product.objects.get(id=product_id, tenant=tenant)
 
-                ReceiptLine.objects.create(
-                    receipt=receipt,
-                    product=product,
+                # Obter nome do produto para a descrição
+                from apps.catalog.api import produtos_por_id
+
+                produtos = produtos_por_id(tenant_id=tenant.id, ids=[product_id])
+                nome_produto = produtos[product_id].short_name if product_id in produtos else "Produto"
+
+                adicionar_linha_recepção(
+                    tenant_id=tenant.id,
+                    receipt_id=receçao.id,
+                    product_id=product_id,
                     quantity=Decimal("50") * (line_idx + 1),
                     unit_price=Decimal("1.50") + Decimal(line_idx),
-                    description=f"Linha {line_idx + 1} de {product.short_name}",
+                    description=f"Linha {line_idx + 1} de {nome_produto}",
                 )
 
         return receipt_ids
@@ -433,6 +421,8 @@ class Command(BaseCommand):
 
     def _listar_tenants(self) -> None:
         """Lista todos os tenants de demonstração."""
+        from apps.accounts.models import Membership, Tenant
+
         tenants = Tenant.objects.filter(is_demo=True).order_by("-created_at")
 
         if not tenants.exists():

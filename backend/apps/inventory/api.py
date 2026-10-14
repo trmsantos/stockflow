@@ -39,6 +39,8 @@ __all__ = [
     "MovementDTO",
     "get_fefo_lot",
     "get_stock_level",
+    "movimentos_por_periodo",
+    "movimentos_por_produto",
 ]
 
 
@@ -180,3 +182,35 @@ def criar_localizacao(
         name=loc.name,
         is_active=loc.is_active,
     )
+
+
+def movimentos_por_periodo(
+    *,
+    tenant_id: UUID,
+    year: int,
+    month: int,
+) -> list:
+    """Obtém movimentos de um período específico (QuerySet). Consumidor: `apps/reporting`."""
+    from apps.inventory.models import StockMovement
+
+    return list(StockMovement.objects.filter(
+        tenant_id=tenant_id,
+        occurred_at__year=year,
+        occurred_at__month=month,
+    ))
+
+
+def movimentos_por_produto(
+    *,
+    tenant_id: UUID,
+    product_id: UUID,
+    movement_types: list[str] | None = None,
+) -> list:
+    """Obtém movimentos de um produto, filtrados por tipo. Consumidor: `apps/reporting`."""
+    from apps.inventory.models import StockMovement
+
+    qs = StockMovement.objects.filter(tenant_id=tenant_id, product_id=product_id)
+    if movement_types:
+        qs = qs.filter(movement_type__in=movement_types)
+
+    return list(qs)

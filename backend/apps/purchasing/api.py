@@ -1,35 +1,22 @@
 """A porta do módulo `purchasing` (ARCHITECTURE.md §3).
 
-Único ficheiro deste módulo que outro módulo pode importar. Hoje tem **um**
-consumidor — o `apps/agents/`, pela aresta `agents -> purchasing.api` que o
-import-linter já declara — e expõe exactamente o que ele precisa:
+Único ficheiro deste módulo que outro módulo pode importar. Hoje tem **dois**
+consumidores — o `apps/agents/` e o `apps/demo/` — e expõe:
 
-1. **As páginas de um documento como DTO congelado**, que é a forma em que o
-   `agents` recebe trabalho: *"o `agents` nunca vê um PDF, nunca corre poppler e
-   entra pelo `purchasing.api`, que lhe dá páginas como DTO congelado"* (ADR
-   0020, decisão 6);
-2. **A forma de "o que o modelo leu"** — `LeituraDeDocumento`, `LinhaLida` e o
-   `EstadoDaLeitura` —, que é o vocabulário em que a resposta do modelo chega
-   deste lado;
-3. **O porto da extração**, que é a inversão de dependência que faz o `state` e o
-   `extraction` do `DocumentoOut` existirem sem o `purchasing` importar o
-   `agents`. A razão inteira está no topo de `apps/purchasing/extracao.py`, e é
-   onde deve ser lida antes de alguém mexer nisto.
+1. **As páginas de um documento como DTO congelado** (para `agents`);
+2. **A forma de "o que o modelo leu"** (para `agents`);
+3. **O porto da extração** (para `agents`);
+4. **Funções de criação de documentos e receções** (para `demo`).
 
 Reexportação e não definição: cada nome vive no ficheiro onde pertence
-(`models.py`, `extracao.py`, `selectors.py`) e este é só a porta. Assim não há
-duas versões da mesma coisa, e o que está fora do `__all__` não é público por
-acidente.
-
-**E o `__all__` tem oito nomes porque são oito os que têm consumidor.** O
-`EstadoDoDocumento`, a `OrigemDoDocumento` e os três relógios ficaram de fora
-apesar de parecerem "o contrato do documento": nada fora do `purchasing` os lê, e
-o `services.py` do `accounts` já escreveu a razão por extenso — *"um DTO público
-sem consumidor é um contrato público escrito ao contrário"*. O dia em que um
-módulo precisar de um deles, a subida é uma linha.
+(`models.py`, `extracao.py`, `selectors.py`, `services.py`) e este é só a porta.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal
+from uuid import UUID
 
 from apps.purchasing.extracao import (
     FronteiraDaExtracao,
@@ -51,4 +38,80 @@ __all__ = [
     "fronteira_da_extracao",
     "ligar_fronteira_da_extracao",
     "paginas_do_documento",
+    "criar_documento",
+    "criar_receçao",
+    "adicionar_linha_recepção",
 ]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DocumentoResumo:
+    """Um documento como o demo o vê."""
+
+    id: UUID
+    origin: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReceçaoResumo:
+    """Uma receção como o demo a vê."""
+
+    id: UUID
+    tenant_id: UUID
+    supplier_id: UUID
+
+
+def criar_documento(*, tenant_id: UUID) -> DocumentoResumo:
+    """Cria um documento de fatura. Consumidor: `apps/demo`."""
+    from apps.purchasing.models import InvoiceDocument
+
+    doc = InvoiceDocument.objects.create(
+        tenant_id=tenant_id,
+        origin="upload",
+    )
+    return DocumentoResumo(id=doc.id, origin=doc.origin)
+
+
+def criar_receçao(
+    *, tenant_id: UUID, supplier_id: UUID, document_id: UUID | None = None, status: str = "draft"
+) -> ReceçaoResumo:
+    """Cria uma receção. Consumidor: `apps/demo`."""
+    from apps.purchasing.models import InvoiceDocument, Receipt
+
+    # Se document_id não foi fornecido, criar um novo
+    if document_id is None:
+        doc = InvoiceDocument.objects.create(tenant_id=tenant_id, origin="upload")
+        document_id = doc.id
+    else:
+        doc = InvoiceDocument.objects.get(id=document_id, tenant_id=tenant_id)
+
+    receipt = Receipt.objects.create(
+        tenant_id=tenant_id,
+        supplier_id=supplier_id,
+        document_id=document_id,
+        status=status,
+    )
+    return ReceçaoResumo(id=receipt.id, tenant_id=receipt.tenant_id, supplier_id=receipt.supplier_id)
+
+
+def adicionar_linha_recepção(
+    *,
+    tenant_id: UUID,
+    receipt_id: UUID,
+    product_id: UUID,
+    quantity: Decimal,
+    unit_price: Decimal,
+    description: str = "",
+) -> UUID:
+    """Adiciona uma linha a uma receção. Consumidor: `apps/demo`."""
+    from apps.purchasing.models import Receipt, ReceiptLine
+
+    receipt = Receipt.objects.get(id=receipt_id, tenant_id=tenant_id)
+    linha = ReceiptLine.objects.create(
+        receipt=receipt,
+        product_id=product_id,
+        quantity=quantity,
+        unit_price=unit_price,
+        description=description,
+    )
+    return linha.id

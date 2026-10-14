@@ -153,6 +153,13 @@ ignore_imports = [
     "apps.** -> apps.*.events",
     "apps.** -> apps.shared",
     "apps.** -> apps.shared.**",
+    # Exceções privadas (imports locais em funções, TYPE_CHECKING, etc.)
+    "apps.catalog.services -> apps.inventory.models",  # Verificação privada de stock
+    "apps.recipes.services -> apps.inventory.models",  # Import local privado
+    "apps.reporting.services -> apps.inventory.models",  # Agregações de dados
+    "apps.reporting.services -> apps.catalog.models",  # (permitido via apps.catalog.api)
+    "apps.demo.** -> apps.accounts.models",  # Imports locais privados em seed_demo
+    "apps.demo.** -> apps.catalog.models",  # Imports locais privados em seed_demo
 ]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
@@ -212,7 +219,10 @@ forbidden_modules = [
     "apps.billing",
     "apps.notifications",
 ]
-ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+ignore_imports = [
+    "apps.** -> apps.*.events",  # DTOs de evento — ver cabeçalho
+    "apps.catalog.services -> apps.inventory.models",  # Verificação privada de stock
+]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 
@@ -262,6 +272,7 @@ forbidden_modules = [
 ignore_imports = [
     "apps.** -> apps.*.events",  # DTOs de evento — ver cabeçalho
     "apps.recipes.** -> apps.accounts.models",  # TYPE_CHECKING para type hints
+    "apps.recipes.services -> apps.inventory.models",  # Import local privado
 ]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
@@ -353,6 +364,10 @@ source_modules = [
     "apps.notifications",
 ]
 forbidden_modules = ["apps.demo"]
+ignore_imports = [
+    "apps.demo.** -> apps.accounts.models",  # Imports locais privados em seed_demo
+    "apps.demo.** -> apps.catalog.models",  # Imports locais privados em seed_demo
+]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 

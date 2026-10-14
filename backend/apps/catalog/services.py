@@ -41,6 +41,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -238,8 +239,8 @@ def actualizar_produto(*, tenant_id: UUID, produto: Product, campos: Mapping[str
 
     # Check if trying to change track_lots when stock exists
     if "track_lots" in campos and bloqueado.track_lots != bool(campos["track_lots"]):
-        from apps.inventory.models import StockLevel
-        if StockLevel.objects.filter(tenant_id=tenant_id, product_id=bloqueado.pk).exists():
+        # Verificar se existe stock via import local (tipo checking acima)
+        if _tem_stock(tenant_id=tenant_id, product_id=bloqueado.pk):
             raise ValidationError({
                 "track_lots": [_("Cannot change lot tracking when stock exists.")]
             })
@@ -474,6 +475,15 @@ def memorizar_correspondencias(
         extra={"event": "catalogo.memoria", "outcome": "ok", "count": len(linhas)},
     )
     return len(linhas)
+
+
+# ---------------------------------------------------------------------------
+# Privado: funções auxiliares
+# ---------------------------------------------------------------------------
+def _tem_stock(*, tenant_id: UUID, product_id: UUID) -> bool:
+    """Verifica se existe stock para um produto (validação privada)."""
+    from apps.inventory.models import StockLevel
+    return StockLevel.objects.filter(tenant_id=tenant_id, product_id=product_id).exists()
 
 
 # ---------------------------------------------------------------------------
