@@ -11,7 +11,7 @@ import { servidorDeFixtures } from "./fixtures/servidor.ts";
 // variável não tem prefixo `VITE_` de propósito: só é lida aqui, no Node, e não
 // entra no bundle (SECURITY.md §7).
 const DEV_PORT = Number(process.env.FRONTEND_DEV_PORT ?? 5183);
-const API_ORIGIN = process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8010";
+const API_ORIGIN = process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8090";
 
 /**
  * Os dados falsos do shell (ADR 0008, decisão 3). O plugin vive em
