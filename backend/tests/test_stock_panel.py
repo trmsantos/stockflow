@@ -1,17 +1,17 @@
 """Testes do painel de stock (fatia 4, ADR 0024)."""
 
-import pytest
 from decimal import Decimal
-from django.utils import timezone
+
+import pytest
 from django.test import Client
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.accounts.services import criar_tenant, conceder_pertenca
 from apps.accounts.models import Papel, User
-from apps.inventory.models import Location, Lot, StockLevel
+from apps.accounts.services import conceder_pertenca, criar_tenant
 from apps.catalog.models import Product
+from apps.inventory.models import Location, Lot, StockLevel
 from apps.shared.db import tenant_scope
-
 
 CREDENCIAL = "painel-stock-teste-123"
 

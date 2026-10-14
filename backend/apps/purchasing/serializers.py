@@ -515,6 +515,34 @@ class RevisaoDeLinhaInSerializer(serializers.Serializer):
     expires_at = serializers.DateField(required=False, allow_null=True)
     skip = serializers.BooleanField(required=False, default=False)
 
+    def validate(self, data):
+        """Validações entre campos."""
+        # If kind is "goods" and product is provided, check track_lots requirement
+        kind = data.get("kind", "goods")
+        lot_code = data.get("lot_code", "").strip()
+        expires_at = data.get("expires_at")
+        product_id = data.get("product")
+
+        if kind == "goods" and product_id:
+            from apps.catalog.models import Product
+            try:
+                product = Product.objects.get(pk=product_id)
+                # Lot is mandatory if track_lots=True
+                if product.track_lots and not lot_code:
+                    raise serializers.ValidationError({
+                        "lot_code": [_("Lot code is required for items that track lots.")]
+                    })
+            except Product.DoesNotExist:
+                pass  # Validation will be handled elsewhere
+
+        # If lot_code is provided, expires_at is mandatory
+        if lot_code and not expires_at:
+            raise serializers.ValidationError({
+                "expires_at": [_("Expiry date is required when lot code is provided.")]
+            })
+
+        return data
+
 
 class LinhaOutSerializer(serializers.Serializer):
     """Saída de linha de receção."""

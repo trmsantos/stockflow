@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -26,6 +27,10 @@ from apps.inventory.api import (
 )
 from apps.recipes.models import Recipe
 
+if TYPE_CHECKING:
+    from apps.accounts.models import User
+    from apps.inventory.models import Lot, StockLevel
+
 __all__ = [
     "produzir",
 ]
@@ -38,7 +43,7 @@ def _get_fefo_lots_with_stock(
     tenant_id: UUID,
     product_id: UUID,
     location_id: UUID,
-) -> list[tuple[Lot, Decimal]]:
+) -> list[tuple["Lot", Decimal]]:
     """Retorna lista de (lote, quantidade disponível) ordenada por FEFO (expires_at, received_at).
 
     Filtra apenas lotes com stock positivo na localização.
@@ -75,7 +80,7 @@ def produzir(
     recipe_id: UUID,
     quantity: Decimal,
     location_id: UUID,
-    user: "User",
+    user: User,
 ) -> UUID:
     """Produzir uma receita: consome ingredientes (production_out), cria produto (production_in).
 

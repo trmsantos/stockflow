@@ -22,6 +22,11 @@ __all__ = [
     "AdjustmentSerializer",
     "TransferSerializer",
     "StockMovementResponseSerializer",
+    "StockCountInSerializer",
+    "StockCountOutSerializer",
+    "StockCountLineInSerializer",
+    "StockCountLineOutSerializer",
+    "StockCountClosingSerializer",
 ]
 
 
@@ -282,3 +287,104 @@ class StockMovementResponseSerializer(serializers.Serializer):
         read_only=True,
     )
     created_at = serializers.DateTimeField(read_only=True)
+
+
+class StockCountInSerializer(serializers.Serializer):
+    """Entrada para criar contagem (POST /stock/counts)."""
+
+    location_id = serializers.UUIDField(
+        help_text="UUID da localização"
+    )
+
+
+class StockCountOutSerializer(serializers.Serializer):
+    """Saída de contagem (GET, POST 201)."""
+
+    id = serializers.UUIDField(read_only=True)
+    location_id = serializers.UUIDField(read_only=True)
+    location_name = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(
+        choices=["open", "closed"],
+        read_only=True,
+    )
+    started_at = serializers.DateTimeField(read_only=True)
+    closed_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    created_by_name = serializers.CharField(read_only=True, allow_blank=True)
+    closed_by_name = serializers.CharField(read_only=True, allow_blank=True, allow_null=True)
+    line_count = serializers.IntegerField(read_only=True, allow_null=True)
+    lines_counted = serializers.IntegerField(read_only=True, allow_null=True)
+
+
+class StockCountLineInSerializer(serializers.Serializer):
+    """Entrada para adicionar linha à contagem (POST /stock/counts/{id}/lines)."""
+
+    sku = serializers.CharField(
+        max_length=80,
+        help_text="SKU do produto",
+    )
+    quantity_counted = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        min_value=Decimal("0"),
+        help_text="Quantidade contada (≥ 0)",
+    )
+    unit = serializers.CharField(
+        max_length=20,
+        required=False,
+        allow_blank=True,
+        help_text="Unidade de apresentação (opcional)",
+    )
+    zone = serializers.CharField(
+        max_length=100,
+        required=False,
+        allow_blank=True,
+        help_text="Zona/secção (opcional)",
+    )
+
+
+class StockCountLineOutSerializer(serializers.Serializer):
+    """Saída de linha de contagem (GET /stock/counts/{id}/lines)."""
+
+    id = serializers.UUIDField(read_only=True)
+    product_id = serializers.UUIDField(read_only=True)
+    product_name = serializers.CharField(read_only=True)
+    sku = serializers.CharField(read_only=True)
+    lot_code = serializers.CharField(read_only=True, allow_null=True, allow_blank=True)
+    quantity_expected = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        read_only=True,
+    )
+    quantity_counted = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        read_only=True,
+        allow_null=True,
+    )
+    variance = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        read_only=True,
+        allow_null=True,
+    )
+    zone = serializers.CharField(read_only=True, allow_null=True, allow_blank=True)
+    counted_at = serializers.DateTimeField(read_only=True, allow_null=True)
+
+
+class StockCountClosingSerializer(serializers.Serializer):
+    """Resumo antes de fechar contagem (GET /stock/counts/{id}/closing)."""
+
+    total_lines = serializers.IntegerField(read_only=True)
+    lines_counted = serializers.IntegerField(read_only=True)
+    lines_pending = serializers.IntegerField(read_only=True)
+    total_variance_qty = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        read_only=True,
+    )
+    total_variance_value = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+    can_close = serializers.BooleanField(read_only=True)

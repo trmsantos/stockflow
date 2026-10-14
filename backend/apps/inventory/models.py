@@ -19,7 +19,15 @@ from django.db.models.functions import Lower
 
 from apps.shared.models import TenantModel
 
-__all__ = ["Location", "Lot", "StockMovement", "StockLevel", "ProductCost"]
+__all__ = [
+    "Location",
+    "Lot",
+    "StockMovement",
+    "StockLevel",
+    "ProductCost",
+    "StockCount",
+    "StockCountLine",
+]
 
 
 class Location(TenantModel):
@@ -337,3 +345,131 @@ class ProductCost(TenantModel):
 
     def __str__(self) -> str:
         return f"Custo {self.product} @ {self.location}: {self.unit_cost}"
+
+
+class StockCount(TenantModel):
+    """Uma contagem de stock: lista de artigos a contar numa localização.
+
+    Campos:
+    - `location` FK a `inventory_location` — onde a contagem foi feita
+    - `started_at` DateTime — quando começou
+    - `closed_at` DateTime null — quando foi fechada
+    - `status` CharField em ["open", "closed"] — estado da contagem
+    - `created_by` FK User — quem criou
+    - `closed_by` FK User null — quem fechou
+    """
+
+    STATUSES = [
+        ("open", "Aberta"),
+        ("closed", "Fechada"),
+    ]
+
+    location = models.ForeignKey(
+        "inventory.Location",
+        on_delete=models.RESTRICT,
+        related_name="+",
+        verbose_name="localização",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUSES,
+        default="open",
+        verbose_name="estado",
+    )
+    started_at = models.DateTimeField(auto_now_add=True, verbose_name="iniciada em")
+    closed_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="fechada em"
+    )
+    created_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="+",
+        verbose_name="criada por",
+    )
+    closed_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="fechada por",
+    )
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "contagem de stock"
+        verbose_name_plural = "contagens de stock"
+        indexes = [
+            models.Index(fields=["tenant", "location", "status"], name="inv_count_tenant_loc_status"),
+            models.Index(fields=["tenant", "status"], name="inv_count_tenant_status"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Contagem @ {self.location} ({self.status})"
+
+
+class StockCountLine(TenantModel):
+    """Uma linha da contagem: um artigo/lote com quantidade esperada e contada.
+
+    Campos:
+    - `stock_count` FK a `StockCount`
+    - `product` FK a `catalog_product`
+    - `lot` FK a `inventory_lot` null — lote específico ou None
+    - `quantity_expected` Decimal(12,3) — quantidade em stock no sistema
+    - `quantity_counted` Decimal(12,3) null — quantidade contada (NULL até ser preenchida)
+    - `zone` CharField(100) null — zona/secção (ex.: "frio", "prateleira 1")
+    - `created_at` DateTime — quando foi criada
+    - `counted_at` DateTime null — quando foi contada
+    """
+
+    stock_count = models.ForeignKey(
+        "inventory.StockCount",
+        on_delete=models.CASCADE,
+        related_name="lines",
+        verbose_name="contagem",
+    )
+    product = models.ForeignKey(
+        "catalog.Product",
+        on_delete=models.RESTRICT,
+        related_name="+",
+        verbose_name="artigo",
+    )
+    lot = models.ForeignKey(
+        "inventory.Lot",
+        on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="lote",
+    )
+    quantity_expected = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        verbose_name="quantidade esperada",
+    )
+    quantity_counted = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        verbose_name="quantidade contada",
+    )
+    zone = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        verbose_name="zona",
+    )
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "linha de contagem"
+        verbose_name_plural = "linhas de contagem"
+        indexes = [
+            models.Index(
+                fields=["tenant", "stock_count", "product"],
+                name="inv_countline_tenant_sc_prod",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.product} @ Contagem {self.stock_count.pk}"

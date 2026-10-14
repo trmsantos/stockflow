@@ -10,22 +10,18 @@ Validações principais:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
-from django.db import connection, transaction
+from django.db import connection
 from django.utils import timezone as django_timezone
 
-from decimal import Decimal
-
-from apps.accounts.models import Tenant, User
+from apps.accounts.models import Tenant
 from apps.accounts.services import criar_tenant as criar_tenant_service
 from apps.catalog.models import Product, UnidadeBase
 from apps.inventory.models import Location, Lot, ProductCost, StockLevel, StockMovement
 from apps.inventory.services import MovementDTO, get_or_create_lots, record_movements
-from apps.shared.db import system_scope, tenant_scope
+from apps.shared.db import tenant_scope
 
 
 def criar_produto(tenant: Tenant, nome: str = "Produto Teste") -> Product:

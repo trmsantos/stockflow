@@ -2,16 +2,15 @@
 
 
 import pytest
-from rest_framework.test import APIClient
 from django.test import Client
+from rest_framework.test import APIClient
 
-from apps.accounts.services import criar_tenant, conceder_pertenca
 from apps.accounts.models import Papel, User
-from apps.inventory.models import Location
+from apps.accounts.services import conceder_pertenca, criar_tenant
 from apps.catalog.models import Supplier
+from apps.inventory.models import Location
 from apps.purchasing.models import Receipt
 from apps.shared.db import tenant_scope
-
 
 CREDENCIAL = "trigo-fresco-ao-amanhecer-7"
 

@@ -64,8 +64,9 @@ ALTER ROLE stockflow_app SET idle_in_transaction_session_timeout = '30s';
 SELECT format('ALTER DATABASE %I OWNER TO stockflow_owner', current_database())\gexec
 SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database())\gexec
 SELECT format('GRANT CONNECT ON DATABASE %I TO stockflow_app, stockflow_owner', current_database())\gexec
+ALTER SCHEMA public OWNER TO stockflow_owner;
 
-GRANT USAGE ON SCHEMA public TO stockflow_app;
+GRANT USAGE, CREATE ON SCHEMA public TO stockflow_app;
 
 -- Posse do que já existe (tabelas criadas antes desta ADR pelo superuser).
 -- `%I` é a citação segura de identificador; mudar o dono da tabela arrasta as
@@ -82,6 +83,24 @@ END $$;
 -- filtrado por política nenhuma, logo é um apagar-tudo que atravessa tenants.
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO stockflow_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO stockflow_app;
+
+-- Reexecuta após a posse da BD ter passado para stockflow_owner: garante que
+-- as tabelas criadas pela primeira metade das migrações também têm GRANT.
+-- Sem isto, a migração parcial deixa tabelas com permissões erradas.
+DO $$
+DECLARE t text;
+BEGIN
+    FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+        EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO stockflow_app', t);
+    END LOOP;
+END $$;
+DO $$
+DECLARE s text;
+BEGIN
+    FOR s IN SELECT sequencename FROM pg_sequences WHERE schemaname = 'public' LOOP
+        EXECUTE format('GRANT USAGE, SELECT ON public.%I TO stockflow_app', s);
+    END LOOP;
+END $$;
 
 -- Para as tabelas que as migrações futuras criarem. Indexado pelo role que
 -- CRIA: uma migração corrida por outro role produz tabelas sem GRANT nenhum, e

@@ -461,7 +461,7 @@ def registar_waste(
     lot_id: UUID | None,
     reason: str,
     reason_detail: str | None,
-    user: "User",
+    user: User,
 ) -> UUID:
     """Registar um movimento de desperdício (waste).
 
@@ -561,7 +561,7 @@ def registar_adjustment(
     lot_id: UUID | None,
     reason: str,
     reason_detail: str | None,
-    user: "User",
+    user: User,
 ) -> UUID:
     """Registar um movimento de ajuste (adjustment).
 
@@ -653,7 +653,7 @@ def registar_transfer(
     to_location_id: UUID,
     quantity: Decimal,
     lot_id: UUID | None,
-    user: "User",
+    user: User,
 ) -> tuple[UUID, UUID]:
     """Registar uma transferência entre localizações (pair atómico).
 
@@ -730,7 +730,6 @@ def registar_transfer(
     unit_cost = nivel_origem.unit_cost if nivel_origem else Decimal("0")
 
     # Gerar transfer_id compartilhado
-    import uuid
     transfer_id = uuid.uuid4()
 
     # Criar dois movimentos atomicamente

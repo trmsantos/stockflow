@@ -84,6 +84,7 @@ logger = logging.getLogger(__name__)
 CAMPOS_DO_PRODUTO: frozenset[str] = frozenset(
     {
         "short_name",
+        "sku",
         "display_unit",
         "display_factor",
         "track_lots",
@@ -97,6 +98,7 @@ CAMPOS_DO_PRODUTO: frozenset[str] = frozenset(
 CAMPOS_DO_FORNECEDOR: frozenset[str] = frozenset({"name", "nif", "is_active"})
 
 DETALHE_NOME_DUPLICADO = _("There is already an item with this name in this establishment.")
+DETALHE_SKU_DUPLICADO = _("There is already an item with this SKU in this establishment.")
 DETALHE_ROTULO_DUPLICADO = _("This item already has a packaging with this label.")
 DETALHE_EAN_DUPLICADO = _("Another packaging in this establishment already has this EAN.")
 DETALHE_EAN_INVALIDO = _(
@@ -166,6 +168,7 @@ def criar_produto(
     track_lots: bool = False,
     expiry_kind: str | None = None,
     conservation: str = Conservacao.AMBIENT,
+    sku: str | None = None,
     packaging: EmbalagemNova | None = None,
     id: UUID | None = None,
 ) -> Product:
@@ -188,6 +191,7 @@ def criar_produto(
         display_factor=display_factor,
         expiry_kind=expiry_kind,
         conservation=conservation,
+        sku=sku,
     )
     try:
         with transaction.atomic():
@@ -231,6 +235,15 @@ def actualizar_produto(*, tenant_id: UUID, produto: Product, campos: Mapping[str
     bloqueado = (
         Product.objects.select_for_update().filter(tenant_id=tenant_id, pk=produto.pk).get()
     )
+
+    # Check if trying to change track_lots when stock exists
+    if "track_lots" in campos and bloqueado.track_lots != bool(campos["track_lots"]):
+        from apps.inventory.models import StockLevel
+        if StockLevel.objects.filter(tenant_id=tenant_id, product_id=bloqueado.pk).exists():
+            raise ValidationError({
+                "track_lots": [_("Cannot change lot tracking when stock exists.")]
+            })
+
     validados = _validar_produto(
         tenant_id=tenant_id,
         short_name=str(campos.get("short_name", bloqueado.short_name)),
@@ -239,6 +252,7 @@ def actualizar_produto(*, tenant_id: UUID, produto: Product, campos: Mapping[str
         display_factor=Decimal(str(campos.get("display_factor", bloqueado.display_factor))),
         expiry_kind=_texto_ou_nulo(campos.get("expiry_kind", bloqueado.expiry_kind)),
         conservation=str(campos.get("conservation", bloqueado.conservation)),
+        sku=_texto_ou_nulo(campos.get("sku", bloqueado.sku)),
         excluir_pk=bloqueado.pk,
     )
     for nome, valor in validados.items():
@@ -474,12 +488,14 @@ def _validar_produto(
     display_factor: Decimal,
     expiry_kind: str | None,
     conservation: str,
+    sku: str | None = None,
     excluir_pk: UUID | None = None,
 ) -> dict[str, object]:
     """Os invariantes do artigo, como `ValidationError` por campo. Devolve os campos limpos."""
     erros: dict[str, list[object]] = {}
     nome = short_name.strip()
     apresentacao = display_unit.strip()
+    codigo = (sku or nome).strip()  # SKU defaults to short_name if not provided
     if not nome:
         erros["short_name"] = [DETALHE_OBRIGATORIO]
     elif len(nome) > 80:
@@ -492,6 +508,8 @@ def _validar_produto(
         erros["display_unit"] = [DETALHE_DEMASIADO_LONGO.format(limite=20)]
     if display_factor <= 0:
         erros["display_factor"] = [DETALHE_FACTOR_POSITIVO]
+    if len(codigo) > 80:
+        erros["sku"] = [DETALHE_DEMASIADO_LONGO.format(limite=80)]
     rotulo = expiry_kind or ""
     if rotulo not in ("", *RotuloDeValidade.values):
         erros["expiry_kind"] = [DETALHE_ESCOLHA]
@@ -513,8 +531,15 @@ def _validar_produto(
     if duplicados.exists():
         raise ValidationError({"short_name": [DETALHE_NOME_DUPLICADO]})
 
+    sku_duplicado = Product.objects.filter(tenant_id=tenant_id, sku__iexact=codigo)
+    if excluir_pk is not None:
+        sku_duplicado = sku_duplicado.exclude(pk=excluir_pk)
+    if sku_duplicado.exists():
+        raise ValidationError({"sku": [DETALHE_SKU_DUPLICADO]})
+
     return {
         "short_name": nome,
+        "sku": codigo,
         "base_unit": base_unit,
         "display_unit": apresentacao,
         "display_factor": display_factor,

@@ -60,7 +60,9 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 # `assert` é a forma idiomática de verificar em pytest; S101 só se ignora aqui.
-"tests/**" = ["S101"]
+# E501 é linhas longas (comum em URLs de testes e comentários); F841 é
+# variáveis criadas em code comentado (exemplos de endpoints).
+"tests/**" = ["S101", "E501", "F841"]
 # A camada de settings herda do `base.py` com `from ... import *`: é o mecanismo
 # de composição do Django e não há alternativa que mantenha *todos* os nomes no
 # módulo final (Django lê os atributos do módulo apontado por
@@ -71,6 +73,11 @@ select = [
 "config/settings/dev.py" = ["F403"]
 "config/settings/prod.py" = ["F403"]
 "config/settings/test.py" = ["F403"]
+# O comando seed_demo (ADR 0018) cria um tenant de demonstração com credenciais
+# hardcoded, porque o propósito é semear dados de teste reproduzíveis — não é
+# um serviço de autenticação real. S106 é esperado. E501 é porque há nomes de
+# produtos e funções longos que o comando apenas imprime.
+"apps/demo/management/commands/seed_demo.py" = ["S106", "E501"]
 
 # Tabelas Markdown em docstrings (ADR 0004 — máximo três exceções)
 "apps/catalog/models.py" = ["E501"]

@@ -96,6 +96,12 @@ class Product(TenantModel):
     (`Lower`), porque "Manteiga" e "manteiga" são o mesmo artigo e o segundo
     seria uma duplicação que só se descobre numa contagem.
 
+    ## `sku` e identificador único por tenant
+
+    SKU (Stock Keeping Unit) — um código único por tenant que identifica o artigo
+    de forma canónica. Usado para busca rápida e integração com sistemas externos.
+    Inicialmente populado com `short_name`, mas pode ser editado independentemente.
+
     ## `display_unit` + `display_factor`
 
     A unidade em que o ecrã mostra e o factor para a base: farinha em `g` com
@@ -118,6 +124,9 @@ class Product(TenantModel):
     """
 
     short_name = models.CharField(max_length=80, verbose_name="nome curto")
+    sku = models.CharField(
+        max_length=80, default="", blank=True, verbose_name="SKU (identificador único)"
+    )
     base_unit = models.CharField(
         max_length=2, choices=UnidadeBase.choices, verbose_name="unidade base"
     )
@@ -155,6 +164,9 @@ class Product(TenantModel):
         constraints = [
             models.UniqueConstraint(
                 Lower("short_name"), "tenant", name="catalog_product_short_name_lower_uniq"
+            ),
+            models.UniqueConstraint(
+                Lower("sku"), "tenant", name="catalog_product_sku_lower_uniq"
             ),
             models.CheckConstraint(
                 condition=models.Q(display_factor__gt=0),

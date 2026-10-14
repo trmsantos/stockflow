@@ -11,7 +11,6 @@ Casos de teste:
 from __future__ import annotations
 
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -66,7 +65,7 @@ class TestWasteMovement:
             )
 
             # Criar stock inicial via record_movements
-            from apps.inventory.services import record_movements, MovementDTO
+            from apps.inventory.services import MovementDTO, record_movements
             record_movements(
                 tenant_id=tenant.id,
                 movements=[

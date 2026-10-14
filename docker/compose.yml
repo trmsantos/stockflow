@@ -191,7 +191,7 @@ services:
       REDIS_URL: redis://redis:6379
       DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
       ALLOWED_HOSTS: localhost,127.0.0.1,backend
-      CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
+      CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090},http://127.0.0.1:${PROXY_PORT:-8090},http://localhost:${FRONTEND_DEV_PORT:-5183},http://127.0.0.1:${FRONTEND_DEV_PORT:-5183}
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
