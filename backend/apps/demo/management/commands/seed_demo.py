@@ -93,18 +93,63 @@ class Command(BaseCommand):
 
         try:
             if options["create_tenant"]:
-                tenant_id = uuid4()
-                result = self._semear_novo(
-                    tenant_id=tenant_id,
-                    nome=options["name"],
-                )
+                self._semear_3_tenants_completo()
             else:
                 tenant_id = UUID(options["tenant_id"])
                 result = self._semear_existente(tenant_id=tenant_id)
-
-            self._imprimir_resultado(result)
+                self._imprimir_resultado(result)
         except Exception as erro:
             raise CommandError(f"Erro ao semear: {erro}") from erro
+
+    # -----------------------------------------------------------------------
+    # Semear 3 tenants completos com users compartilhados
+    # -----------------------------------------------------------------------
+
+    def _semear_3_tenants_completo(self) -> None:
+        """Cria 3 tenants com owner, staff e employee com acesso a todos."""
+        # Criar users globais (compartilhados entre tenants)
+        owner = criar_usuario(
+            email="owner@demo.pt",
+            password="DemoPassword123!",
+            is_active=True,
+        )
+        staff = criar_usuario(
+            email="staff@demo.pt",
+            password="DemoPassword123!",
+            is_active=True,
+        )
+        employee = criar_usuario(
+            email="employee@demo.pt",
+            password="DemoPassword123!",
+            is_active=True,
+        )
+        self.stdout.write("✓ Users criados: owner@demo.pt, staff@demo.pt, employee@demo.pt")
+
+        # Criar 3 tenants e adicionar todos os users a cada um
+        tenant_names = ["Loja Chiado", "Loja Amoreiras", "Loja Colombo"]
+        for offset, nome in enumerate(tenant_names):
+            tenant_id = UUID(f"00000000-0000-4000-8000-{offset+1:012d}")
+            result = self._semear_novo_com_offset(tenant_id=tenant_id, nome=nome, offset=offset)
+
+            # Adicionar staff e employee a este tenant
+            with tenant_scope(tenant_id):
+                # Staff já tem papel de staff
+                criar_membership(
+                    user_id=staff.id,
+                    tenant_id=tenant_id,
+                    role=_PAPEL_STAFF,
+                    display_name="Colaborador",
+                    is_active=True,
+                )
+                # Employee é um novo papel
+                criar_membership(
+                    user_id=employee.id,
+                    tenant_id=tenant_id,
+                    role="employee",
+                    display_name="Funcionário",
+                    is_active=True,
+                )
+            self.stdout.write(f"✓ {nome} criado com owner, staff e employee")
 
     # -----------------------------------------------------------------------
     # Semear novo tenant
@@ -112,11 +157,15 @@ class Command(BaseCommand):
 
     def _semear_novo(self, *, tenant_id: UUID, nome: str) -> SeedResult:
         """Cria tenant novo, users e todos os dados de teste."""
+        return self._semear_novo_com_offset(tenant_id=tenant_id, nome=nome, offset=0)
+
+    def _semear_novo_com_offset(self, *, tenant_id: UUID, nome: str, offset: int = 0) -> SeedResult:
+        """Cria tenant novo, users e todos os dados de teste com offset de IDs."""
         # 1. Criar tenant via API
         tenant = criar_tenant(name=nome, id=tenant_id)
         self.stdout.write(f"✓ Tenant criado: {tenant.id} ({nome})")
 
-        # 2. Criar users via API
+        # 2. Criar users via API (reutilizar existentes)
         owner = criar_usuario(
             email="owner@demo.pt",
             password="DemoPassword123!",
@@ -147,25 +196,29 @@ class Command(BaseCommand):
             )
             self.stdout.write("✓ Memberships criados")
 
-        # 4. Semear resto
-        return self._semear_existente(tenant_id=tenant.id)
+        # 4. Semear resto com offset
+        return self._semear_existente_com_offset(tenant_id=tenant.id, offset=offset)
 
     def _semear_existente(self, *, tenant_id: UUID) -> SeedResult:
         """Semeia dados de teste num tenant existente."""
+        return self._semear_existente_com_offset(tenant_id=tenant_id, offset=0)
+
+    def _semear_existente_com_offset(self, *, tenant_id: UUID, offset: int = 0) -> SeedResult:
+        """Semeia dados de teste num tenant existente com offset de IDs."""
         from apps.accounts.models import Tenant
 
-        try:
-            tenant = Tenant.objects.get(id=tenant_id)
-        except Tenant.DoesNotExist as erro:
-            raise CommandError(f"Tenant {tenant_id} não existe") from erro
+        with tenant_scope(tenant_id):
+            try:
+                tenant = Tenant.objects.get(id=tenant_id)
+            except Tenant.DoesNotExist as erro:
+                raise CommandError(f"Tenant {tenant_id} não existe") from erro
 
-        # Pegar users via API
-        owner_user = obter_usuario_por_papel(tenant_id=tenant_id, role=_PAPEL_OWNER)
-        staff_user = obter_usuario_por_papel(tenant_id=tenant_id, role=_PAPEL_STAFF)
+            # Pegar users via API
+            owner_user = obter_usuario_por_papel(tenant_id=tenant_id, role=_PAPEL_OWNER)
+            staff_user = obter_usuario_por_papel(tenant_id=tenant_id, role=_PAPEL_STAFF)
 
-        with tenant_scope(tenant.id):
             # 5. Semear catálogo: 50 produtos (30 ingredientes, 10 pratos, 10 bebidas)
-            product_ids = self._semear_produtos(tenant)
+            product_ids = self._semear_produtos(tenant, offset=offset)
             self.stdout.write(f"✓ {len(product_ids)} produtos criados")
 
             # 6. Semear 3 localizações
@@ -184,22 +237,22 @@ class Command(BaseCommand):
             receipt_ids = self._semear_receções(tenant, product_ids, supplier_ids, owner_user)
             self.stdout.write(f"✓ {len(receipt_ids)} receções criadas")
 
-        return SeedResult(
-            tenant_id=tenant.id,
-            owner_user_id=owner_user.id,
-            staff_user_id=staff_user.id,
-            product_ids=product_ids,
-            location_ids=location_ids,
-            supplier_ids=supplier_ids,
-            receipt_ids=receipt_ids,
-            stock_movement_ids=stock_movement_ids,
-        )
+            return SeedResult(
+                tenant_id=tenant.id,
+                owner_user_id=owner_user.id,
+                staff_user_id=staff_user.id,
+                product_ids=product_ids,
+                location_ids=location_ids,
+                supplier_ids=supplier_ids,
+                receipt_ids=receipt_ids,
+                stock_movement_ids=stock_movement_ids,
+            )
 
     # -----------------------------------------------------------------------
     # Semear componentes
     # -----------------------------------------------------------------------
 
-    def _semear_produtos(self, tenant) -> list[UUID]:
+    def _semear_produtos(self, tenant, offset: int = 0) -> list[UUID]:
         """Semeia 50 produtos: 30 ingredientes, 10 pratos, 10 bebidas."""
         from apps.catalog.models import Conservacao, UnidadeBase
 
@@ -263,10 +316,7 @@ class Command(BaseCommand):
         for idx, (nome, unit_base, unit_apres, fator, expiry, conservacao) in enumerate(
             produtos_dados, 1
         ):
-            # UUID estável para produto
-            product_id = UUID(f"a17e0000-0000-4000-8000-{str(idx).zfill(12)}")
-
-            # Criar via API
+            # Criar via API (sem ID fixo para evitar conflitos)
             produto = criar_produto(
                 tenant_id=tenant.id,
                 short_name=nome,
@@ -276,7 +326,7 @@ class Command(BaseCommand):
                 track_lots=(expiry != ""),
                 expiry_kind=expiry if expiry else None,
                 conservation=conservacao,
-                id=product_id,
+                id=None,  # deixar gerar UUID automaticamente
             )
             product_ids.append(produto.id)
 
@@ -292,14 +342,12 @@ class Command(BaseCommand):
 
         location_ids = []
         for idx, (nome, posicao) in enumerate(localizacoes, 1):
-            location_id = UUID(f"c0ca0000-0000-4000-8000-{str(idx).zfill(12)}")
-
-            # Criar via API
+            # Criar via API (sem ID fixo)
             localizacao = criar_localizacao(
                 tenant_id=tenant.id,
                 name=nome,
                 position=posicao,
-                id=location_id,
+                id=None,
             )
             location_ids.append(localizacao.id)
 
@@ -315,14 +363,12 @@ class Command(BaseCommand):
 
         supplier_ids = []
         for idx, (nome, nif) in enumerate(fornecedores, 1):
-            supplier_id = UUID(f"f0ff0000-0000-4000-8000-{str(idx).zfill(12)}")
-
-            # Criar via API
+            # Criar via API (sem ID fixo)
             fornecedor = criar_fornecedor(
                 tenant_id=tenant.id,
                 name=nome,
                 nif=nif,
-                id=supplier_id,
+                id=None,
             )
             supplier_ids.append(fornecedor.id)
 
@@ -360,15 +406,15 @@ class Command(BaseCommand):
                 cost_is_estimate=False,
                 reference=reference,
                 occurred_at=occurred_at,
+                created_by_id=user.id,
+                created_by_name=user.email,
             )
 
-            movimentos = record_movements(
+            movement_ids_returned = record_movements(
                 tenant_id=tenant.id,
-                user_id=user.id,
-                user_name=user.email,
                 movements=[movimento],
             )
-            movement_ids.extend([m.id for m in movimentos])
+            movement_ids.extend(movement_ids_returned)
 
         return movement_ids
 

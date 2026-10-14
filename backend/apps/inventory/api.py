@@ -156,27 +156,30 @@ def criar_localizacao(
     position: int | None = None,
     id: UUID | None = None,
 ) -> LocalizacaoResumo:
-    """Criar uma localização. Consumidor: `apps/demo`.
+    """Criar uma localização (ou retornar a existente). Consumidor: `apps/demo`.
 
     Se `position` é None, usa o máximo existente + 1.
     """
     from django.db.models import Max
 
-    if position is None:
-        max_pos = (
-            Location.objects.filter(tenant_id=tenant_id).aggregate(
-                max_pos=Max("position")
-            )["max_pos"]
-            or 0
-        )
-        position = max_pos + 1
+    try:
+        loc = Location.objects.get(tenant_id=tenant_id, name__iexact=name)
+    except Location.DoesNotExist:
+        if position is None:
+            max_pos = (
+                Location.objects.filter(tenant_id=tenant_id).aggregate(
+                    max_pos=Max("position")
+                )["max_pos"]
+                or 0
+            )
+            position = max_pos + 1
 
-    loc = Location.objects.create(
-        id=id,
-        tenant_id=tenant_id,
-        name=name,
-        position=position,
-    )
+        loc = Location.objects.create(
+            id=id,
+            tenant_id=tenant_id,
+            name=name,
+            position=position,
+        )
     return LocalizacaoResumo(
         id=loc.id,
         name=loc.name,

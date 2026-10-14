@@ -251,18 +251,22 @@ def criar_produto(
     conservation: str = "ambient",
     id: UUID | None = None,
 ) -> ProdutoResumo:
-    """Criar um artigo. Consumidor: `apps/demo`."""
-    p = Product.objects.create(
-        id=id,
-        tenant_id=tenant_id,
-        short_name=short_name,
-        base_unit=base_unit,
-        display_unit=display_unit,
-        display_factor=display_factor,
-        track_lots=track_lots,
-        expiry_kind=expiry_kind or "",
-        conservation=conservation,
-    )
+    """Criar um artigo (ou retornar o existente). Consumidor: `apps/demo`."""
+    try:
+        p = Product.objects.get(tenant_id=tenant_id, short_name__iexact=short_name)
+    except Product.DoesNotExist:
+        p = Product.objects.create(
+            id=id,
+            tenant_id=tenant_id,
+            short_name=short_name,
+            sku=short_name,
+            base_unit=base_unit,
+            display_unit=display_unit,
+            display_factor=display_factor,
+            track_lots=track_lots,
+            expiry_kind=expiry_kind or "",
+            conservation=conservation,
+        )
     return ProdutoResumo(
         id=p.id,
         short_name=p.short_name,
@@ -312,13 +316,16 @@ def criar_fornecedor(
     nif: str | None = None,
     id: UUID | None = None,
 ) -> FornecedorResumo:
-    """Criar um fornecedor. Consumidor: `apps/demo`."""
-    f = Supplier.objects.create(
-        id=id,
-        tenant_id=tenant_id,
-        name=name,
-        nif=nif or "",
-    )
+    """Criar um fornecedor (ou retornar o existente). Consumidor: `apps/demo`."""
+    try:
+        f = Supplier.objects.get(tenant_id=tenant_id, name__iexact=name)
+    except Supplier.DoesNotExist:
+        f = Supplier.objects.create(
+            id=id,
+            tenant_id=tenant_id,
+            name=name,
+            nif=nif or "",
+        )
     return FornecedorResumo(
         id=f.id,
         name=f.name,

@@ -15,6 +15,9 @@ def main() -> None:
             "Não foi possível importar o Django. Confirma que está instalado e "
             "disponível na PYTHONPATH. Corre `uv sync` e usa `uv run manage.py`."
         ) from exc
+    # Porta default 8090 para runserver
+    if len(sys.argv) > 1 and sys.argv[1] == "runserver" and len(sys.argv) == 2:
+        sys.argv.append("0.0.0.0:8090")
     execute_from_command_line(sys.argv)
 
 

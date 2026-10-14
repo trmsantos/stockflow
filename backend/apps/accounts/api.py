@@ -411,25 +411,34 @@ def semear_demonstracao(
 # Criação de dados para o semeador de demonstração
 # ---------------------------------------------------------------------------
 def criar_tenant(*, name: str, id: UUID | None = None) -> object:
-    """Cria um novo tenant. Consumidor: `apps/demo`."""
-    from apps.accounts.models import Tenant
+    """Cria um novo tenant (ou retorna o existente). Consumidor: `apps/demo`."""
+    from uuid import uuid4
 
-    return Tenant.objects.create(
-        id=id,
-        name=name,
-        is_demo=True,
-    )
+    from apps.accounts.models import Tenant
+    from apps.shared.db import tenant_scope
+
+    tenant_id = id or uuid4()
+    with tenant_scope(tenant_id):
+        tenant, _ = Tenant.objects.get_or_create(
+            id=tenant_id,
+            defaults={"name": name, "is_demo": True},
+        )
+        return tenant
 
 
 def criar_usuario(*, email: str, password: str, is_active: bool = True) -> object:
-    """Cria um novo usuário. Consumidor: `apps/demo`."""
+    """Cria um novo usuário (ou retorna o existente). Consumidor: `apps/demo`."""
     from apps.accounts.models import User
 
-    return User.objects.create_user(
-        email=email,
-        password=password,
-        is_active=is_active,
+    normalized_email = normalizar_email(email)
+    user, created = User.objects.get_or_create(
+        email=normalized_email,
+        defaults={"is_active": is_active},
     )
+    if created:
+        user.set_password(password)
+        user.save()
+    return user
 
 
 def criar_membership(
@@ -440,19 +449,18 @@ def criar_membership(
     display_name: str,
     is_active: bool = True,
 ) -> object:
-    """Cria uma membership. Consumidor: `apps/demo`."""
+    """Cria uma membership (ou retorna a existente). Consumidor: `apps/demo`."""
     from apps.accounts.models import Membership, Tenant, User
 
     user = User.objects.get(id=user_id)
     tenant = Tenant.objects.get(id=tenant_id)
 
-    return Membership.objects.create(
+    membership, _ = Membership.objects.get_or_create(
         user=user,
         tenant=tenant,
-        role=role,
-        display_name=display_name,
-        is_active=is_active,
+        defaults={"role": role, "display_name": display_name, "is_active": is_active},
     )
+    return membership
 
 
 def obter_usuario_por_papel(*, tenant_id: UUID, role: str) -> object:
