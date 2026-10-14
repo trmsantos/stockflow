@@ -16,15 +16,12 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from django.utils import timezone
-
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import F, Max, Q, Sum
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from apps.accounts.models import User
-from apps.catalog.models import Product
 from apps.inventory.models import Location, Lot, ProductCost, StockLevel, StockMovement
 
 __all__ = [
@@ -464,7 +461,7 @@ def registar_waste(
     lot_id: UUID | None,
     reason: str,
     reason_detail: str | None,
-    user: User,
+    user: "User",
 ) -> UUID:
     """Registar um movimento de desperdício (waste).
 
@@ -493,11 +490,7 @@ def registar_waste(
     if reason not in dict(StockMovement.REASON_CHOICES):
         raise ValidationError({"reason": [_("Invalid reason.")]})
 
-    # Validar produto e localização
-    produto = Product.objects.filter(pk=product_id, tenant_id=tenant_id).first()
-    if not produto:
-        raise ValidationError({"product_id": [_("Product not found.")]})
-
+    # Validar localização
     localizacao = Location.objects.filter(pk=location_id, tenant_id=tenant_id).first()
     if not localizacao:
         raise ValidationError({"location_id": [_("Location not found.")]})
@@ -568,7 +561,7 @@ def registar_adjustment(
     lot_id: UUID | None,
     reason: str,
     reason_detail: str | None,
-    user: User,
+    user: "User",
 ) -> UUID:
     """Registar um movimento de ajuste (adjustment).
 
@@ -587,11 +580,7 @@ def registar_adjustment(
     if reason not in dict(StockMovement.REASON_CHOICES):
         raise ValidationError({"reason": [_("Invalid reason.")]})
 
-    # Validar produto e localização
-    produto = Product.objects.filter(pk=product_id, tenant_id=tenant_id).first()
-    if not produto:
-        raise ValidationError({"product_id": [_("Product not found.")]})
-
+    # Validar localização
     localizacao = Location.objects.filter(pk=location_id, tenant_id=tenant_id).first()
     if not localizacao:
         raise ValidationError({"location_id": [_("Location not found.")]})
@@ -664,7 +653,7 @@ def registar_transfer(
     to_location_id: UUID,
     quantity: Decimal,
     lot_id: UUID | None,
-    user: User,
+    user: "User",
 ) -> tuple[UUID, UUID]:
     """Registar uma transferência entre localizações (pair atómico).
 
@@ -690,11 +679,7 @@ def registar_transfer(
             {"to_location_id": [_("Cannot transfer to the same location.")]}
         )
 
-    # Validar produto e localizações
-    produto = Product.objects.filter(pk=product_id, tenant_id=tenant_id).first()
-    if not produto:
-        raise ValidationError({"product_id": [_("Product not found.")]})
-
+    # Validar localizações
     from_loc = Location.objects.filter(pk=from_location_id, tenant_id=tenant_id).first()
     if not from_loc:
         raise ValidationError({"from_location_id": [_("Location not found.")]})

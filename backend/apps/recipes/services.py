@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import uuid
 from decimal import Decimal
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -25,11 +24,7 @@ from apps.inventory.api import (
     obter_localizacao,
     record_movements,
 )
-from apps.inventory.models import Lot, StockLevel
 from apps.recipes.models import Recipe
-
-if TYPE_CHECKING:
-    from apps.accounts.models import User
 
 __all__ = [
     "produzir",
@@ -80,7 +75,7 @@ def produzir(
     recipe_id: UUID,
     quantity: Decimal,
     location_id: UUID,
-    user: User,
+    user: "User",
 ) -> UUID:
     """Produzir uma receita: consome ingredientes (production_out), cria produto (production_in).
 
