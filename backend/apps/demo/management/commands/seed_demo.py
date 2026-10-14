@@ -129,11 +129,34 @@ class Command(BaseCommand):
         tenant_names = ["Loja Chiado", "Loja Amoreiras", "Loja Colombo"]
         for offset, nome in enumerate(tenant_names):
             tenant_id = UUID(f"00000000-0000-4000-8000-{offset+1:012d}")
-            result = self._semear_novo_com_offset(tenant_id=tenant_id, nome=nome, offset=offset)
+
+            # Primeiro tenant: cria owner, segundo e terceiro: reutiliza
+            if offset == 0:
+                result = self._semear_novo_com_offset(tenant_id=tenant_id, nome=nome, offset=offset)
+            else:
+                # Criar tenant vazio e adicionar users manualmente
+                tenant = criar_tenant(name=nome, id=tenant_id)
+
+                with tenant_scope(tenant_id):
+                    # Adicionar owner
+                    criar_membership(
+                        user_id=owner.id,
+                        tenant_id=tenant_id,
+                        role=_PAPEL_OWNER,
+                        display_name="Dono",
+                        is_active=True,
+                    )
+
+                    # Semear dados completos
+                    product_ids = self._semear_produtos(tenant, offset=offset)
+                    location_ids = self._semear_localizacoes(tenant)
+                    supplier_ids = self._semear_fornecedores(tenant)
+                    stock_movement_ids = self._semear_movimentos(tenant, product_ids, location_ids, owner)
+                    receipt_ids = self._semear_receções(tenant, product_ids, supplier_ids, owner)
 
             # Adicionar staff e employee a este tenant
             with tenant_scope(tenant_id):
-                # Staff já tem papel de staff
+                # Staff já tem papel de staff (ou criar se não existir)
                 criar_membership(
                     user_id=staff.id,
                     tenant_id=tenant_id,

@@ -418,12 +418,20 @@ def criar_tenant(*, name: str, id: UUID | None = None) -> object:
     from apps.shared.db import tenant_scope
 
     tenant_id = id or uuid4()
+
+    # Tenta get_or_create DENTRO do tenant_scope, como requerido pela RLS
+    # A migração explica: "criar um tenant é gerar o UUID em Python, abrir
+    # tenant_scope(esse uuid) e inserir — `id = app.tenant_id` é verdade"
     with tenant_scope(tenant_id):
-        tenant, _ = Tenant.objects.get_or_create(
-            id=tenant_id,
-            defaults={"name": name, "is_demo": True},
-        )
-        return tenant
+        try:
+            tenant = Tenant.objects.get(id=tenant_id)
+        except Tenant.DoesNotExist:
+            tenant = Tenant.objects.create(
+                id=tenant_id,
+                name=name,
+                is_demo=True,
+            )
+    return tenant
 
 
 def criar_usuario(*, email: str, password: str, is_active: bool = True) -> object:
