@@ -15,6 +15,7 @@ import { rotaDoPainel } from "./painel";
 import { rotaPublica } from "./publico";
 import { rotaDeFotografar, rotaDeRececao, rotaDeReceber } from "./receber";
 import { rotaRaiz } from "./root";
+import { rotaDeProdutos, rotaCriarProduto, rotaProdutoDetalhe } from "./produtos";
 import { rotaDeStock } from "./stock";
 
 /**
@@ -88,6 +89,7 @@ const arvoreDeRotas = rotaRaiz.addChildren([
     rotaDoPainel,
     rotaDeStock,
     rotaDeArtigo,
+    rotaDeProdutos.addChildren([rotaCriarProduto, rotaProdutoDetalhe]),
     rotaDeReceber,
     rotaDeFotografar,
     rotaDeRececao,
