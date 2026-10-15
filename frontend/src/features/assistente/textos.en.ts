@@ -29,6 +29,13 @@ export const EN: typeof PT = {
     erroAoApagar: "Could not delete the conversation",
   },
 
+  painel: {
+    titulo: "Assistant",
+    descricao: "Ask about this establishment's stock without leaving the screen you are on.",
+    abrirEmPagina: "Open as a full page",
+    fechar: "Close the assistant",
+  },
+
   inicio: {
     titulo: "Ask about your stock",
     corpo:

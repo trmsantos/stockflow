@@ -39,6 +39,18 @@ export const PT = {
     erroAoApagar: "Não foi possível apagar a conversa",
   },
 
+  /**
+   * O painel lateral e o seu lançador (ADR 0027, decisão 10, adenda): o mesmo
+   * assistente, numa gaveta à direita sobre o ecrã onde se está.
+   */
+  painel: {
+    /** O nome do lançador e o título da gaveta: a mesma palavra do menu. */
+    titulo: "Assistente",
+    descricao: "Pergunte sobre o stock deste estabelecimento sem sair do ecrã onde está.",
+    abrirEmPagina: "Abrir em página inteira",
+    fechar: "Fechar o assistente",
+  },
+
   inicio: {
     titulo: "Pergunte sobre o stock",
     corpo:
