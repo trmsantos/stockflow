@@ -172,7 +172,11 @@ def falso(monkeypatch: pytest.MonkeyPatch) -> ClienteFalso:
     """O cliente falso, injectado na fábrica, com o chat configurado."""
     cliente = ClienteFalso()
     monkeypatch.setattr("apps.agents.modelo.cliente", lambda: cliente)
-    with override_settings(AGENTS_CHAT_API_KEY=CHAVE_DE_TESTE, AGENTS_CHAT_MODEL="gpt-5-mini"):
+    # A URL base vem vazia de propósito: o `.env` de quem corre a suite pode
+    # apontar para um fornecedor gratuito, e os testes afirmam a forma da OpenAI.
+    with override_settings(
+        AGENTS_CHAT_API_KEY=CHAVE_DE_TESTE, AGENTS_CHAT_MODEL="gpt-5-mini", AGENTS_CHAT_BASE_URL=""
+    ):
         yield cliente
 
 
@@ -1008,3 +1012,37 @@ def test_com_url_base_o_cliente_vai_para_o_fornecedor_com_max_tokens(
         assert recebido["base_url"] == url
         assert recebido["api_key"] == "chave-de-teste"
         assert modelo._limite_de_tokens(7) == {"max_tokens": 7}
+
+
+def test_a_mensagem_do_assistente_volta_verbatim_com_os_campos_extra_do_fornecedor() -> None:
+    """A Gemini recusa (400) um tool_call que volte sem o seu `thought_signature`."""
+    from types import SimpleNamespace
+
+    from apps.agents.modelo import _ler
+
+    class Mensagem(SimpleNamespace):
+        def model_dump(self, *, exclude_none: bool = False) -> dict[str, Any]:
+            return {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "procurar_artigos", "arguments": "{}"},
+                        "extra_content": {"google": {"thought_signature": "abc"}},
+                    }
+                ],
+            }
+
+    chamada = SimpleNamespace(
+        id="c1", function=SimpleNamespace(name="procurar_artigos", arguments="{}")
+    )
+    mensagem = Mensagem(content=None, tool_calls=[chamada])
+    bruto = SimpleNamespace(
+        choices=[SimpleNamespace(message=mensagem, finish_reason="tool_calls")],
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+    resposta = _ler(bruto, modelo="gemini-3.5-flash-lite", duracao_ms=1)
+    assert resposta.mensagem_verbatim["tool_calls"][0]["extra_content"] == {
+        "google": {"thought_signature": "abc"}
+    }

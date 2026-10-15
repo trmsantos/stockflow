@@ -339,16 +339,24 @@ def _ler(bruto: Any, *, modelo: str, duracao_ms: int) -> RespostaDoModelo:
     except (AttributeError, IndexError, TypeError, ValueError) as exc:
         raise RespostaInvalida(f"{type(exc).__name__} ao ler a resposta do modelo") from exc
 
-    verbatim: dict[str, Any] = {"role": "assistant", "content": texto or None}
-    if chamadas:
-        verbatim["tool_calls"] = [
-            {
-                "id": chamada.id,
-                "type": "function",
-                "function": {"name": chamada.nome, "arguments": chamada.argumentos},
-            }
-            for chamada in chamadas
-        ]
+    # Verbatim a sério: o `model_dump` do SDK guarda campos extra do fornecedor
+    # (a Gemini põe um `thought_signature` em cada tool_call e recusa a volta
+    # sem ele, com 400). A reconstrução por campos fica para os clientes falsos.
+    dump = getattr(mensagem, "model_dump", None)
+    if callable(dump):
+        verbatim: dict[str, Any] = dict(dump(exclude_none=True))
+        verbatim.setdefault("role", "assistant")
+    else:
+        verbatim = {"role": "assistant", "content": texto or None}
+        if chamadas:
+            verbatim["tool_calls"] = [
+                {
+                    "id": chamada.id,
+                    "type": "function",
+                    "function": {"name": chamada.nome, "arguments": chamada.argumentos},
+                }
+                for chamada in chamadas
+            ]
     return RespostaDoModelo(
         texto=texto,
         chamadas=chamadas,
