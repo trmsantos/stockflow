@@ -907,3 +907,38 @@ def test_o_beat_agenda_a_purga_uma_vez_por_dia() -> None:
     assert entrada["task"] == purgar_conversas_expiradas.name == "agents.purgar_conversas_expiradas"
     assert entrada["schedule"].hour == {4}
     assert entrada["options"]["expires"] == 3600
+
+
+# ---------------------------------------------------------------------------
+# Fornecedor OpenAI-compatível por `AGENTS_CHAT_BASE_URL`
+# ---------------------------------------------------------------------------
+def test_sem_url_base_o_cliente_vai_para_a_openai_com_max_completion_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import openai
+
+    from apps.agents import modelo
+
+    recebido: dict[str, object] = {}
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: recebido.update(kwargs) or object())
+    with override_settings(AGENTS_CHAT_API_KEY="chave-de-teste", AGENTS_CHAT_BASE_URL=""):
+        modelo.cliente()
+        assert recebido["base_url"] is None
+        assert modelo._limite_de_tokens(7) == {"max_completion_tokens": 7}
+
+
+def test_com_url_base_o_cliente_vai_para_o_fornecedor_com_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import openai
+
+    from apps.agents import modelo
+
+    recebido: dict[str, object] = {}
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: recebido.update(kwargs) or object())
+    url = "https://exemplo.test/v1"
+    with override_settings(AGENTS_CHAT_API_KEY="chave-de-teste", AGENTS_CHAT_BASE_URL=url):
+        modelo.cliente()
+        assert recebido["base_url"] == url
+        assert recebido["api_key"] == "chave-de-teste"
+        assert modelo._limite_de_tokens(7) == {"max_tokens": 7}

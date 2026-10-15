@@ -671,6 +671,10 @@ AGENTS_EXTRACTION_MODEL = ""
 # de fornecedor é a fábrica `cliente()` de `apps/agents/modelo.py`.
 AGENTS_CHAT_MODEL = optional(env, "AGENTS_CHAT_MODEL", "gpt-5-mini")
 AGENTS_CHAT_API_KEY = optional(env, "AGENTS_CHAT_API_KEY", "")
+# URL base de um fornecedor OpenAI-compatível (Google AI Studio, Groq, GitHub
+# Models…). Vazia = api.openai.com. É o que permite usar um nível gratuito nesta
+# fase sem tocar no código: o SDK é o mesmo, muda o destino.
+AGENTS_CHAT_BASE_URL = optional(env, "AGENTS_CHAT_BASE_URL", "")
 # Na API da OpenAI o parâmetro chama-se `max_completion_tokens`; aqui guarda o
 # nome do `ARCHITECTURE.md` §6 ("cada chamada tem `max_tokens`").
 AGENTS_CHAT_MAX_TOKENS = env.int("AGENTS_CHAT_MAX_TOKENS", default=1024)

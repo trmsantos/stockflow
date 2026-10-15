@@ -153,6 +153,23 @@ def _chave_de_api() -> str:
     return str(getattr(settings, "AGENTS_CHAT_API_KEY", "") or "")
 
 
+def _url_base() -> str:
+    """A URL base de um fornecedor OpenAI-compatível, ou vazia (api.openai.com)."""
+    return str(getattr(settings, "AGENTS_CHAT_BASE_URL", "") or "")
+
+
+def _limite_de_tokens(max_tokens: int) -> dict[str, int]:
+    """O parâmetro que limita a resposta, no nome que o destino conhece.
+
+    A OpenAI retirou `max_tokens` aos modelos recentes a favor de
+    `max_completion_tokens`; os fornecedores compatíveis (Gemini, Groq, GitHub
+    Models) conhecem `max_tokens` e nem todos aceitam o outro. A URL base decide.
+    """
+    if _url_base():
+        return {"max_tokens": max_tokens}
+    return {"max_completion_tokens": max_tokens}
+
+
 def chat_configurado() -> bool:
     """Há modelo **e** chave? É a pergunta do 503 `assistente_indisponivel`."""
     return bool(nome_do_modelo_de_chat()) and bool(_chave_de_api())
@@ -178,6 +195,7 @@ def cliente() -> Any:
 
     return openai.OpenAI(
         api_key=chave,
+        base_url=_url_base() or None,
         timeout=int(getattr(settings, "AGENTS_CHAT_TIMEOUT_S", 30)),
         max_retries=0,
     )
@@ -220,9 +238,10 @@ def conversar(
     `sistema` vai como mensagem `system` e as `mensagens` seguem-se tal como
     vêm — a pergunta é uma mensagem `user` e nunca entra no sistema; os
     resultados das tools são mensagens `tool` com `tool_call_id`, nunca
-    concatenados no prompt (ADR 0027, decisão 5). `max_tokens` é o
-    `max_completion_tokens` da API. `idempotency_key` é `chat:<mensagem>:<i>`,
-    enviada como cabeçalho e logada — é registo nosso.
+    concatenados no prompt (ADR 0027, decisão 5). `max_tokens` vai como
+    `max_completion_tokens` na OpenAI e como `max_tokens` noutro fornecedor
+    (`_limite_de_tokens`). `idempotency_key` é `chat:<mensagem>:<i>`, enviada
+    como cabeçalho e logada — é registo nosso.
 
     O que se loga: modelo, tokens, custo, duração e a chave. O que nunca se
     loga: a chave de API, a pergunta, a resposta.
@@ -241,7 +260,7 @@ def conversar(
             model=modelo,
             messages=[{"role": "system", "content": sistema}, *mensagens],
             tools=list(tools) if tools else openai.NOT_GIVEN,
-            max_completion_tokens=max_tokens,
+            **_limite_de_tokens(max_tokens),
             timeout=timeout,
             extra_headers={"Idempotency-Key": idempotency_key},
         )

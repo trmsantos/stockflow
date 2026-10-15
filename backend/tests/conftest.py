@@ -69,6 +69,7 @@ SETTINGS_ENV_VARS: tuple[str, ...] = (
     # outras: um `.env` com chave a sério na máquina de quem corre a suite não
     # pode ser o que decide se o `POST` responde 202 ou 503.
     "AGENTS_CHAT_API_KEY",
+    "AGENTS_CHAT_BASE_URL",
     "AGENTS_CHAT_DAILY_BUDGET_EUR",
     "AGENTS_CHAT_DAILY_MESSAGES_PER_USER",
     "AGENTS_CHAT_MAX_TOKENS",
