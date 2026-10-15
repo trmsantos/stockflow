@@ -77,6 +77,12 @@ class Command(BaseCommand):
 
     help = "Semeia as lojas de demo: contas, pertenças, catálogo, movimentos e receções"
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # `display_factor` por artigo, para converter o preço de apresentação
+        # (por kg/L) em custo por unidade base (g/mL) — o que o ledger guarda.
+        self._fator_de_apresentacao: dict[UUID, Decimal] = {}
+
     def add_arguments(self, parser: CommandParser) -> None:
         group = parser.add_mutually_exclusive_group(required=True)
         group.add_argument(
@@ -257,6 +263,7 @@ class Command(BaseCommand):
                 id=None,  # deixar gerar UUID automaticamente
             )
             product_ids.append(produto.id)
+            self._fator_de_apresentacao[produto.id] = produto.display_factor
 
         return product_ids
 
@@ -319,7 +326,11 @@ class Command(BaseCommand):
 
             movement_type = "receipt" if idx % 2 == 0 else "consumption"
             quantity = Decimal("100" if idx % 2 == 0 else "-50")
-            unit_cost = Decimal("1.50") if idx % 2 == 0 else Decimal("2.00")
+            # O preço é por unidade de apresentação (1,50 €/kg, 2,00 €/L); o ledger
+            # guarda-o por unidade **base** (g, mL), senão 1,1 kg de farinha valem 1650 €.
+            preco_de_apresentacao = Decimal("1.50") if idx % 2 == 0 else Decimal("2.00")
+            fator = self._fator_de_apresentacao.get(product_id, Decimal("1"))
+            unit_cost = (preco_de_apresentacao / fator).quantize(Decimal("0.000001"))
             reference = f"DOC-{idx:04d}" if movement_type == "receipt" else None
             occurred_at = now - timedelta(days=9 - idx)
 
