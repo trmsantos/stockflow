@@ -4,6 +4,7 @@ import { createRoute, createRouter, lazyRouteComponent } from "@tanstack/react-r
 import { ErroDeEcra, EsqueletoDeEcra, NaoEncontrado } from "@/shell/estados-de-rota";
 
 import { rotaDeAlertas } from "./alertas";
+import { rotaDoAssistente } from "./assistente";
 import { rotaDaApp } from "./app";
 import { rotaDeArtigo } from "./artigo";
 import { rotaDeAtivacao } from "./ativar";
@@ -96,6 +97,7 @@ const arvoreDeRotas = rotaRaiz.addChildren([
     rotaDeContar,
     rotaDeFechoDeContagem,
     rotaDeAlertas,
+    rotaDoAssistente,
     // A única rota da app **sem** entrada no registo de rotas, e por isso a
     // única que o menu não pode nomear nem esconder: definições não respondem a
     // uma pergunta de operação (ADR 0019). Substituiu as três que havia —

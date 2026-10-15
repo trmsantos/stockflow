@@ -43,7 +43,12 @@ export function useArtigos(q = ""): UseQueryResult<Paginated<Produto>> {
     queryKey: queryKeys.list(tenant, RECURSO_PRODUTOS, { q }),
     queryFn: ({ signal }) =>
       apiRequest(CAMINHO_PRODUTOS, paginated(produtoSchema), {
-        query: { q, active: "" },
+        // Sem `active`: todos os artigos. Medido a 2026-10-15 contra o Django:
+        // `?active=` (vazio) é lido como `"".lower() == "true"`, ou seja `False`
+        // — devolvia **só os inactivos**, e esta lista vinha a zero com 50
+        // artigos na base. O parâmetro ausente é o único "sem filtro" que a
+        // view entende.
+        query: { q },
         signal,
       }),
   });

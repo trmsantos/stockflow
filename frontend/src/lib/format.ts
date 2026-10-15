@@ -248,3 +248,16 @@ export function formatTime(value: Date | string): string {
 export function formatDaysAway(days: number): string {
   return relativo.format(days, "day");
 }
+
+/**
+ * `4,2 s` — quanto demorou uma resposta do assistente, a partir de
+ * milissegundos.
+ *
+ * Uma casa decimal, como o tamanho de ficheiro: a segunda casa de uma espera de
+ * vários segundos é precisão falsa, e o que a pessoa compara é "quatro segundos"
+ * contra "vinte". A unidade fica visível, com o espaço inquebrável do resto do
+ * ficheiro.
+ */
+export function formatSeconds(ms: number): string {
+  return `${umaCasa.format(ms / 1000)}${NBSP}s`;
+}
