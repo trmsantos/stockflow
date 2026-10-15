@@ -36,7 +36,7 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
-**Estado atual (2026-10-15):** `main` está **16 commits à frente do `origin/main` sem PR** — o CI
+**Estado atual (2026-10-15):** `main` está **19 commits à frente do `origin/main` sem PR** — o CI
 só corre em PR, logo nada disto passou por ele ainda. Suite do backend: **645 passed** (corrida
 sozinha; dois `pytest` ao mesmo tempo colidem na BD de teste). `ruff check .` tem **4 `DJ001`
 pré-existentes** em `apps/inventory/models.py` (`null=True` em CharField) que exigem ADR + migração
@@ -60,7 +60,7 @@ lojas com `owner@demo.pt` / `manager@demo.pt` / `staff@demo.pt` (`DemoPassword12
 
 **Por decidir / por fazer a seguir:** ligar o Painel (rotas + `summary`); os 4 `DJ001`; validades
 do painel em calendário civil vs dia de negócio no chat (incoerência a nomear ao `domain-expert`);
-abrir o PR para o CI correr sobre os 16 commits.
+abrir o PR para o CI correr sobre os 19 commits.
 
 **Estado histórico (2026-10-08):** repo `trmsantos/stockflow`, privado, na conta pessoal. `main` tem o
 PR #3 mergeado (i18n, definições, temas, demonstração, SMTP); o **PR #4 está aberto** com a fatia 1 da
