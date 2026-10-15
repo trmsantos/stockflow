@@ -51,7 +51,7 @@ fixtures. A 2026-10-15 corrigiram-se os bugs que o 16f2e7e deixou (RLS sem FORCE
 único não parcial, testes) e nasceu o **Increment 2 — chat sobre stock (ADR 0027)**: `/assistente`,
 sete tools só de leitura, 202 + polling, fornecedor OpenAI-compatível gratuito por
 `AGENTS_CHAT_BASE_URL` (o dono escolheu não pagar nesta fase). Para ver uma resposta real falta só a
-chave em `backend/.env` e um worker (`DJANGO_SETTINGS_MODULE=config.settings.dev uv run celery -A config worker -l info --pool=solo`).
+chave em `backend/.env` e um worker (`DJANGO_SETTINGS_MODULE=config.settings.dev uv run celery -A config worker -l info`).
 
 Dev local: `backend/.env` é a única fonte de variáveis (o Django lê-o sozinho; **não** exportar
 `.env.dev`); `uv run manage.py runserver` entra em **8090**; migrações com

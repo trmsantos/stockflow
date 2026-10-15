@@ -246,7 +246,8 @@ def test_login_com_um_estabelecimento_fica_com_ele_ativo(cenario: Cenario) -> No
     # os defaults do registo de rotas, que é código — e a Ana é `owner`, logo vê
     # também o item dos convites. O contrato do item está fixado em
     # `tests/test_menu.py`; aqui afirma-se só que ele chega por este caminho.
-    assert [item["route_id"] for item in corpo["menu"]] == list(RotaDeMenu.values)
+    # Sem o assistente: tem rota mas nenhum papel no registo (ADR 0027 d10, 2.ª adenda).
+    assert [item["route_id"] for item in corpo["menu"]] == [rota for rota in RotaDeMenu.values if rota != RotaDeMenu.ASSISTENTE]
     assert all(item["visivel"] is True for item in corpo["menu"])
     # A sessão nomeia o âmbito — é o que o `TenantMiddleware` vai ler no pedido
     # seguinte, e é a única coisa que o login lhe deixa.
