@@ -274,6 +274,9 @@ def test_as_rotas_restritas_sao_tres_e_as_tres_sao_do_owner() -> None:
     }
     assert restritas == {
         RotaDeMenu.PAINEL: [Papel.OWNER],
+        # Nenhum papel: a rota existe, o menu não a mostra a ninguém (ADR 0027
+        # d10, segunda adenda) — a entrada é o lançador global.
+        RotaDeMenu.ASSISTENTE: [],
     }, (
         "a lista de rotas restritas a um subconjunto de papéis mudou. Esconder "
         "um item que um papel não pode usar é autorização (ADR 0011), logo cada "
@@ -308,6 +311,12 @@ def test_o_contrato_do_item_de_menu_e_a_tupla_da_adr() -> None:
 # ---------------------------------------------------------------------------
 # 2. Sem linhas: o menu é o dos defaults (ADR 0011)
 # ---------------------------------------------------------------------------
+#: O que a projeção por omissão mostra: a união inteira **menos** o assistente,
+#: que tem rota mas nenhum papel no registo (segunda adenda à ADR 0027 d10: a
+#: entrada é o lançador global, não o menu).
+ROTAS_NO_MENU = [rota for rota in RotaDeMenu.values if rota != RotaDeMenu.ASSISTENTE]
+
+
 def test_sem_linhas_o_menu_e_o_dos_defaults(cenario: Cenario) -> None:
     """"Os defaults vivem em código e a linha nasce na primeira escrita."
 
@@ -320,7 +329,7 @@ def test_sem_linhas_o_menu_e_o_dos_defaults(cenario: Cenario) -> None:
 
     menu = _menu_da_sessao(_cliente(cenario.ana, cenario.alfa.id))
 
-    assert [item["route_id"] for item in menu] == list(RotaDeMenu.values)
+    assert [item["route_id"] for item in menu] == ROTAS_NO_MENU
     assert all(item["visivel"] is True for item in menu)
     assert all(item["rotulo"] is None for item in menu), (
         "`rotulo` tem de vir `null` quando o tenant não sobrepôs nada: é o "
@@ -338,7 +347,7 @@ def test_sem_linhas_o_menu_e_o_dos_defaults(cenario: Cenario) -> None:
         "que faz `grupo ?? registo.grupo`, e resolvê-lo no servidor prendia o "
         "tenant a um default que ele nunca escolheu — e numa língua só."
     )
-    assert [item["ordem"] for item in menu] == [10, 15, 20, 25, 30, 40, 50]
+    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 40, 50]
 
 
 def test_sem_estabelecimento_ativo_o_menu_vem_vazio(cenario: Cenario) -> None:
@@ -384,7 +393,11 @@ def test_o_owner_guarda_o_menu_e_a_sessao_passa_a_devolve_lo(cenario: Cenario) -
     assert len(_linhas_no_ambito(cenario.alfa.id)) == len(RotaDeMenu.values)
 
     # E a sessão devolve o mesmo, que é por onde a sidebar o lê (ADR 0011).
-    assert _menu_da_sessao(_cliente(cenario.ana, cenario.alfa.id)) == corpo
+    # Menos o assistente: a configuração guarda-o, mas nenhum papel o vê no menu
+    # (segunda adenda à ADR 0027 d10) — a projeção filtra pelos papéis do registo.
+    assert _menu_da_sessao(_cliente(cenario.ana, cenario.alfa.id)) == [
+        item for item in corpo if item["route_id"] != RotaDeMenu.ASSISTENTE
+    ]
 
 
 def test_um_item_escondido_continua_a_viajar_na_projeccao(cenario: Cenario) -> None:
@@ -754,7 +767,7 @@ def test_uma_linha_de_uma_rota_desconhecida_e_ignorada(cenario: Cenario) -> None
 
     menu = _menu_da_sessao(_cliente(cenario.ana, cenario.alfa.id))
 
-    assert [item["route_id"] for item in menu] == list(RotaDeMenu.values)
+    assert [item["route_id"] for item in menu] == ROTAS_NO_MENU
 
 
 # ---------------------------------------------------------------------------

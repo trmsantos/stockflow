@@ -315,7 +315,6 @@ def test_o_menu_do_demo_e_o_menu_de_qualquer_estabelecimento(ana: User) -> None:
         "inicio",
         "painel",
         "alertas",
-        "assistente",
         "stock",
         "contar",
         "receber",

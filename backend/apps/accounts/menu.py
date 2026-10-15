@@ -226,13 +226,14 @@ _ROTAS: Final[tuple[RotaDoRegisto, ...]] = (
     RotaDoRegisto(
         route_id=RotaDeMenu.ASSISTENTE,
         ordem_default=25,
-        # Os três papéis usam o assistente (ADR 0027, decisão 8, confirmado pelo
-        # dono): as tools de stock lêem o que os endpoints do painel já abrem
-        # aos três, e a única tool restrita (`compras_por_periodo`) é filtrada
-        # pelo papel dentro da tarefa, não pelo menu.
-        papeis=TODOS_OS_PAPEIS,
-        # Escritório: lista de conversas à esquerda e transcrição à direita.
-        # Funciona por deep link no telemóvel e não é rota de campo.
+        # **Nenhum papel**, de propósito: o dono decidiu (2026-10-15, segunda
+        # adenda à ADR 0027 d10) que o assistente não tem entrada no menu — a
+        # entrada é o lançador global (botão fixo em todos os ecrãs, painel
+        # lateral), e a página `/assistente` abre-se de lá ou por URL. A rota
+        # fica no registo porque ele cobre a união `RotaDeMenu` nos dois
+        # sentidos e o registo do cliente exige uma rota por id; o conjunto
+        # vazio é o que diz "existe, mas o menu não a mostra a ninguém".
+        papeis=frozenset(),
         campo=False,
     ),
     RotaDoRegisto(
