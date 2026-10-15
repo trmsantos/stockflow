@@ -27,8 +27,6 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
-logger = logging.getLogger(__name__)
-
 from apps.accounts.api import PertenceAoTenant
 from apps.inventory.models import Location, Lot, StockLevel, StockMovement
 from apps.inventory.selectors import (
@@ -57,6 +55,8 @@ from apps.inventory.services import (
 )
 
 __all__ = ["LocalizacaoViewSet", "StockPanelViewSet", "StockMovementViewSet"]
+
+logger = logging.getLogger(__name__)
 
 # Throttle scope (reutiliza do catalog)
 AMBITO_THROTTLE_CATALOGO = "catalogo"

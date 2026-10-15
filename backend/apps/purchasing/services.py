@@ -885,7 +885,9 @@ def confirmar_rececao(
             )
 
             # 4. Preencher movement_id nas linhas (mesma transação)
-            for (linha, _), movimento_id in zip(movimentos_dtos, movement_ids):
+            # `strict`: o ledger devolve um id por DTO, pela ordem de entrada;
+            # uma lista mais curta era uma linha sem movimento, em silêncio.
+            for (linha, _), movimento_id in zip(movimentos_dtos, movement_ids, strict=True):
                 linha.movement_id = movimento_id
                 linha.save(update_fields=["movement_id", "updated_at"])
 

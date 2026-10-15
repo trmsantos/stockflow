@@ -96,11 +96,16 @@ class Product(TenantModel):
     (`Lower`), porque "Manteiga" e "manteiga" são o mesmo artigo e o segundo
     seria uma duplicação que só se descobre numa contagem.
 
-    ## `sku` e identificador único por tenant
+    ## `sku` é único por tenant, mas só quando existe
 
-    SKU (Stock Keeping Unit) — um código único por tenant que identifica o artigo
-    de forma canónica. Usado para busca rápida e integração com sistemas externos.
-    Inicialmente populado com `short_name`, mas pode ser editado independentemente.
+    SKU (Stock Keeping Unit): um código canónico do artigo, sem caixa (`Lower`)
+    como o nome, para busca rápida e integração com sistemas externos. O serviço
+    preenche-o com o `short_name` quando vem vazio, logo pela API nunca fica em
+    branco — mas a coluna é `""` e não NULL (`DJ001`), e uma unicidade **total**
+    sobre `""` fazia o segundo artigo criado sem SKU no mesmo tenant rebentar na
+    base de dados. A unicidade é por isso **parcial**, `where sku <> ''`, na
+    forma da do `ean` em `ProductPackaging`: em branco em quantos artigos for
+    preciso, único quando existe. Pode ser editado independentemente do nome.
 
     ## `display_unit` + `display_factor`
 
@@ -166,7 +171,10 @@ class Product(TenantModel):
                 Lower("short_name"), "tenant", name="catalog_product_short_name_lower_uniq"
             ),
             models.UniqueConstraint(
-                Lower("sku"), "tenant", name="catalog_product_sku_lower_uniq"
+                Lower("sku"),
+                "tenant",
+                condition=~models.Q(sku=""),
+                name="catalog_product_sku_lower_uniq",
             ),
             models.CheckConstraint(
                 condition=models.Q(display_factor__gt=0),

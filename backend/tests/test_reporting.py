@@ -1,10 +1,25 @@
-"""Testes para o painel/reporting (problema 6)."""
+"""Testes para o painel/reporting (problema 6).
 
+## `tenant_uuid` abre o âmbito e mantém-no aberto
+
+Os testes criam linhas à mão (`Location.objects.create`) e chamam serviços
+que leem tabelas com política de RLS; o guarda do `tests/conftest.py` recusa
+qualquer DML fora de `tenant_scope`. Em vez de cada teste abrir o seu bloco, a
+fixture cria o tenant pelo serviço, concede a pertença dentro do âmbito — a
+forma de `tests/test_stock_panel.py` — e **cede o UUID com o âmbito ainda
+aberto**, pelo que o teste inteiro corre dentro dele. O `tenant_ctx` é o
+próprio `tenant_scope`, reentrante para o mesmo tenant (um savepoint).
+"""
+
+from collections.abc import Iterator
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 from django.utils import timezone
 
+from apps.accounts.models import Papel, User
+from apps.accounts.services import conceder_pertenca, criar_tenant
 from apps.catalog.models import UnidadeBase
 from apps.catalog.services import criar_produto
 from apps.inventory.models import Location, StockMovement
@@ -13,6 +28,27 @@ from apps.reporting.services import (
     projection_report,
     series_report,
 )
+from apps.shared.db import tenant_scope
+
+CREDENCIAL = "reporting-teste-123"
+
+
+@pytest.fixture
+def tenant_uuid(db: None) -> Iterator[UUID]:
+    """O UUID de um tenant com dono, cedido com o âmbito dele aberto."""
+    tenant = criar_tenant(name="Reporting Teste")
+    with tenant_scope(tenant.id):
+        user = User.objects.create_user("dono@reporting.pt", CREDENCIAL)
+        conceder_pertenca(
+            user=user, tenant_id=tenant.id, role=Papel.OWNER, display_name="Dono"
+        )
+        yield tenant.id
+
+
+@pytest.fixture
+def tenant_ctx():
+    """O `tenant_scope`, para os testes que querem o bloco explícito."""
+    return tenant_scope
 
 
 @pytest.mark.django_db

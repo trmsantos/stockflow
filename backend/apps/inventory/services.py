@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Protocol
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -22,6 +23,7 @@ from django.db.models import F, Max, Q, Sum
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from apps.catalog.api import produto_por_id
 from apps.inventory.models import Location, Lot, ProductCost, StockLevel, StockMovement
 
 __all__ = [
@@ -179,6 +181,23 @@ class MovementDTO:
     reference: str | None = None
     production_id: UUID | None = None
     reason: str | None = None
+    #: O par `transfer_out`/`transfer_in` partilha este id, e ele entra **na
+    #: criação**: a tabela é append-only (`REVOKE UPDATE`, ADR 0006), logo
+    #: escrevê-lo depois, com um `update()`, é `permission denied`.
+    transfer_id: UUID | None = None
+
+
+class Autor(Protocol):
+    """Quem assina um movimento manual: o que os serviços leem de `request.user`.
+
+    Um `Protocol` e não o modelo `User`: este módulo não pode importar
+    `apps.accounts.models` (só `api.py` atravessa a fronteira, ARCHITECTURE.md
+    §3), e do utilizador só se guarda o `id` no FK e o `email` em
+    `created_by_name` — a cópia que sobrevive à conta ser apagada.
+    """
+
+    id: UUID
+    email: str
 
 
 @transaction.atomic
@@ -261,6 +280,7 @@ def record_movements(
             reason=mvt_dto.reason,
             reference=mvt_dto.reference,
             production_id=mvt_dto.production_id,
+            transfer_id=mvt_dto.transfer_id,
             occurred_at=mvt_dto.occurred_at,
             created_by_id=mvt_dto.created_by_id,
             created_by_name=mvt_dto.created_by_name,
@@ -366,7 +386,7 @@ def record_movements(
                 by_product_location[key] = []
             by_product_location[key].append(mvt_dto)
 
-    for (product_id, location_id), mvt_list in by_product_location.items():
+    for product_id, location_id in by_product_location:
         # Calcular custo médio ponderado histórico de todas as entradas
         entrada = (
             StockMovement.objects.filter(
@@ -432,7 +452,8 @@ def get_fefo_lot(
             product_id=product_id,
         )
         .select_related("product")
-        .order_by("expires_at", "received_at")  # NULLS LAST é automático em Django com DateTimeField
+        # NULLS LAST é o que o Postgres faz por omissão num ORDER BY ascendente.
+        .order_by("expires_at", "received_at")
     )
 
     # Filtrar apenas lotes com stock > 0 nesta localização
@@ -461,7 +482,7 @@ def registar_waste(
     lot_id: UUID | None,
     reason: str,
     reason_detail: str | None,
-    user: User,
+    user: Autor,
 ) -> UUID:
     """Registar um movimento de desperdício (waste).
 
@@ -497,6 +518,10 @@ def registar_waste(
 
     if not localizacao.is_active:
         raise ValidationError({"location_id": [_("Location is inactive.")]})
+
+    produto = produto_por_id(tenant_id=tenant_id, product_id=product_id)
+    if produto is None:
+        raise ValidationError({"product_id": [_("Product not found.")]})
 
     # Buscar lote a usar
     if lot_id is None:
@@ -561,7 +586,7 @@ def registar_adjustment(
     lot_id: UUID | None,
     reason: str,
     reason_detail: str | None,
-    user: User,
+    user: Autor,
 ) -> UUID:
     """Registar um movimento de ajuste (adjustment).
 
@@ -587,6 +612,10 @@ def registar_adjustment(
 
     if not localizacao.is_active:
         raise ValidationError({"location_id": [_("Location is inactive.")]})
+
+    produto = produto_por_id(tenant_id=tenant_id, product_id=product_id)
+    if produto is None:
+        raise ValidationError({"product_id": [_("Product not found.")]})
 
     # Buscar ou criar lote
     if lot_id is None:
@@ -653,7 +682,7 @@ def registar_transfer(
     to_location_id: UUID,
     quantity: Decimal,
     lot_id: UUID | None,
-    user: User,
+    user: Autor,
 ) -> tuple[UUID, UUID]:
     """Registar uma transferência entre localizações (pair atómico).
 
@@ -692,6 +721,10 @@ def registar_transfer(
         raise ValidationError(
             {"location_id": [_("One or both locations are inactive.")]}
         )
+
+    produto = produto_por_id(tenant_id=tenant_id, product_id=product_id)
+    if produto is None:
+        raise ValidationError({"product_id": [_("Product not found.")]})
 
     # Buscar lote a sair (FEFO)
     if lot_id is None:
@@ -732,7 +765,9 @@ def registar_transfer(
     # Gerar transfer_id compartilhado
     transfer_id = uuid.uuid4()
 
-    # Criar dois movimentos atomicamente
+    # Criar dois movimentos atomicamente, com o mesmo instante e o mesmo
+    # `transfer_id` já na criação: o ledger é append-only e não se corrige depois.
+    agora = timezone.now()
     out_dto = MovementDTO(
         product_id=product_id,
         location_id=from_location_id,
@@ -741,10 +776,11 @@ def registar_transfer(
         unit_cost=unit_cost,
         cost_is_estimate=False,
         movement_type="transfer_out",
-        occurred_at=timezone.now(),
+        occurred_at=agora,
         created_by_id=user.id,
         created_by_name=user.email,
         reason=None,
+        transfer_id=transfer_id,
     )
 
     in_dto = MovementDTO(
@@ -755,16 +791,13 @@ def registar_transfer(
         unit_cost=unit_cost,
         cost_is_estimate=False,
         movement_type="transfer_in",
-        occurred_at=timezone.now(),
+        occurred_at=agora,
         created_by_id=user.id,
         created_by_name=user.email,
         reason=None,
+        transfer_id=transfer_id,
     )
 
     # Gravar ambos os movimentos
-    movement_ids = record_movements(tenant_id=tenant_id, movements=[out_dto, in_dto])
-
-    # Atualizar transfer_id nos dois movimentos (após criação)
-    StockMovement.objects.filter(id__in=movement_ids).update(transfer_id=transfer_id)
-
-    return tuple(movement_ids) if len(movement_ids) == 2 else (movement_ids[0] if movement_ids else None, None)
+    out_id, in_id = record_movements(tenant_id=tenant_id, movements=[out_dto, in_dto])
+    return out_id, in_id

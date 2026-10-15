@@ -13,7 +13,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from django.db import connection
+from django.db import IntegrityError, ProgrammingError, connection
 from django.utils import timezone as django_timezone
 
 from apps.accounts.models import Tenant
@@ -108,8 +108,9 @@ class TestStockMovementAppendOnly:
                 created_by_name="Teste",
             )
 
-        # Tentar atualizar deve falhar no banco de dados
-        with pytest.raises(Exception):  # permission denied
+        # Tentar atualizar deve falhar na base de dados: `permission denied`,
+        # que o Django entrega como ProgrammingError.
+        with pytest.raises(ProgrammingError, match="permission denied"):
             with connection.cursor() as cursor:
                 cursor.execute(
                     "UPDATE inventory_stockmovement SET quantity = %s WHERE id = %s",
@@ -144,8 +145,8 @@ class TestStockMovementAppendOnly:
                 created_by_name="Teste",
             )
 
-        # Tentar deletar deve falhar no banco de dados
-        with pytest.raises(Exception):  # permission denied
+        # Tentar apagar deve falhar na base de dados, pela mesma razão.
+        with pytest.raises(ProgrammingError, match="permission denied"):
             with connection.cursor() as cursor:
                 cursor.execute(
                     "DELETE FROM inventory_stockmovement WHERE id = %s",
@@ -394,7 +395,7 @@ class TestQuantityConstraint:
                 tenant=tenant, name="Loja", position=1
             )
 
-            with pytest.raises(Exception):  # IntegrityError or similar
+            with pytest.raises(IntegrityError):  # a constraint CHECK
                 StockMovement.objects.create(
                     tenant=tenant,
                     product=product,

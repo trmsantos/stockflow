@@ -11,7 +11,6 @@ from uuid import UUID
 
 from django.db.models import (
     Case,
-    CharField,
     DecimalField,
     F,
     Q,
@@ -20,9 +19,8 @@ from django.db.models import (
     Value,
     When,
 )
-from django.utils import timezone
 
-from apps.inventory.models import Location, Lot, StockLevel
+from apps.inventory.models import Location, StockLevel
 
 __all__ = [
     "listar_localizacoes",
@@ -30,7 +28,6 @@ __all__ = [
     "stock_summary",
     "stock_by_location",
     "stock_by_product",
-    "stock_alerts",
 ]
 
 
@@ -125,7 +122,8 @@ def stock_by_product(
 ) -> QuerySet:
     """Saldo por (location, lot) desse produto, ordenado por FEFO.
 
-    Retorna: product_id, product_name, location_id, location_name, lot_code, expires_at, quantity, unit_cost, total_value.
+    Retorna: product_id, product_name, location_id, location_name, lot_code, expires_at,
+    quantity, unit_cost, total_value.
     """
     qs = (
         StockLevel.objects.filter(
@@ -160,110 +158,3 @@ def stock_by_product(
         )
 
     return qs.order_by("lot__expires_at", "lot__received_at")
-
-
-def stock_alerts(
-    *,
-    tenant_id: UUID,
-    severity: str = "",
-    product_id: UUID | None = None,
-    location_id: UUID | None = None,
-) -> QuerySet:
-    """Alertas de falta, validade a vencer e vencida.
-
-    Retorna UNION de três queries com campos comuns:
-    alert_type, severity, product_id, product_name, location_id, location_name, lot_code, expires_at.
-
-    Filtros: severity (critical|warning|info), product_id, location_id (todos AND).
-    """
-    from django.db.models import Value
-
-    now = timezone.now()
-    seven_days = timezone.timedelta(days=7)
-
-    # Query 1: Falta de stock (quantity < min_quantity), severity=critical
-    shortage = (
-        StockLevel.objects.filter(
-            tenant_id=tenant_id,
-            quantity__lt=F("product__min_quantity"),
-            product__min_quantity__isnull=False,
-            product__min_quantity__gt=0,
-        )
-        .select_related("product", "location")
-        .values(
-            "product_id",
-            "product__short_name",
-            "location_id",
-            "location__name",
-        )
-        .annotate(
-            alert_type=Value("shortage", output_field=CharField()),
-            severity=Value("critical", output_field=CharField()),
-            lot_code=Value(None, output_field=CharField()),
-            expires_at=Value(None, output_field=CharField()),
-        )
-    )
-
-    # Query 2: Validade a vencer (7 dias), severity=warning
-    expiring_soon = (
-        Lot.objects.filter(
-            tenant_id=tenant_id,
-            expires_at__isnull=False,
-            expires_at__gte=now,
-            expires_at__lt=now + seven_days,
-        )
-        .select_related("product")
-        .values(
-            "product_id",
-            "product__short_name",
-            "code",
-            "expires_at",
-        )
-        .annotate(
-            alert_type=Value("expiring_soon", output_field=CharField()),
-            severity=Value("warning", output_field=CharField()),
-            location_id=Value(None, output_field=CharField()),
-            location_name=Value(None, output_field=CharField()),
-            lot_code=F("code"),
-        )
-    )
-
-    # Query 3: Validade vencida, severity=critical
-    expired = (
-        Lot.objects.filter(
-            tenant_id=tenant_id,
-            expires_at__isnull=False,
-            expires_at__lt=now,
-        )
-        .select_related("product")
-        .values(
-            "product_id",
-            "product__short_name",
-            "code",
-            "expires_at",
-        )
-        .annotate(
-            alert_type=Value("expired", output_field=CharField()),
-            severity=Value("critical", output_field=CharField()),
-            location_id=Value(None, output_field=CharField()),
-            location_name=Value(None, output_field=CharField()),
-            lot_code=F("code"),
-        )
-    )
-
-    # Combinar as três queries com filtros
-
-    # Aqui vamos usar uma abordagem diferente: construir os alertas manualmente
-    # porque UNION de QuerySets com diferentes campos é complexo
-    # Vamos retornar um QuerySet que permite paginação e filtragem
-
-    # Para agora, retornar um QuerySet vazio que será expandido
-    # A lógica real estará na view
-    alerts = StockLevel.objects.none()
-
-    if product_id:
-        alerts = alerts.filter(product_id=product_id)
-    if location_id:
-        alerts = alerts.filter(location_id=location_id)
-
-    return alerts

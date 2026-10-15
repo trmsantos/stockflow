@@ -11,23 +11,56 @@ Casos de teste:
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-from apps.accounts.models import Membership, Papel, Tenant, User
+from apps.accounts.models import Papel, User
 from apps.accounts.services import conceder_pertenca, criar_tenant
 from apps.catalog.models import Product, UnidadeBase
 from apps.inventory.models import Location, Lot, StockLevel, StockMovement
 from apps.inventory.services import (
+    MovementDTO,
+    record_movements,
     registar_adjustment,
     registar_transfer,
     registar_waste,
 )
 from apps.shared.db import tenant_scope
 
-pytestmark = [pytest.mark.django_db, pytest.mark.sem_ambito_de_rls]
+pytestmark = [pytest.mark.django_db]
+
+
+def _receber(
+    *, tenant_id: UUID, product: Product, location: Location, lote: Lot, user: User,
+    quantidade: Decimal,
+) -> None:
+    """Stock inicial **pelo ledger**, nunca por `StockLevel.objects.create`.
+
+    O nível é a projeção da soma dos movimentos: `record_movements` recalcula-o
+    a partir deles, logo um nível escrito à mão desaparece no primeiro
+    movimento que lhe toca — e era isso que fazia os testes de ajuste esperarem
+    110 e medirem 10.
+    """
+    record_movements(
+        tenant_id=tenant_id,
+        movements=[
+            MovementDTO(
+                product_id=product.id,
+                location_id=location.id,
+                lot_id=lote.id,
+                quantity=quantidade,
+                unit_cost=Decimal("1.50"),
+                cost_is_estimate=False,
+                movement_type="receipt",
+                occurred_at=timezone.now(),
+                created_by_id=user.id,
+                created_by_name=user.email,
+            ),
+        ],
+    )
 
 
 class TestWasteMovement:
@@ -64,24 +97,9 @@ class TestWasteMovement:
                 defaults={"received_at": timezone.now()},
             )
 
-            # Criar stock inicial via record_movements
-            from apps.inventory.services import MovementDTO, record_movements
-            record_movements(
-                tenant_id=tenant.id,
-                movements=[
-                    MovementDTO(
-                        product_id=product.id,
-                        location_id=location.id,
-                        lot_id=lote.id,
-                        quantity=Decimal("100"),
-                        unit_cost=Decimal("1.50"),
-                        cost_is_estimate=False,
-                        movement_type="receipt",
-                        occurred_at=timezone.now(),
-                        created_by_id=user.id,
-                        created_by_name=user.email,
-                    ),
-                ],
+            _receber(
+                tenant_id=tenant.id, product=product, location=location, lote=lote,
+                user=user, quantidade=Decimal("100"),
             )
 
             # Execute
@@ -124,7 +142,6 @@ class TestWasteMovement:
 
             product = Product.objects.create(
                 tenant=tenant,
-                name="Pastel",
                 short_name="Pastel",
                 base_unit=UnidadeBase.UNIDADE,
                 display_unit="un",
@@ -167,7 +184,6 @@ class TestWasteMovement:
 
             product = Product.objects.create(
                 tenant=tenant,
-                name="Pastel",
                 short_name="Pastel",
                 base_unit=UnidadeBase.UNIDADE,
                 display_unit="un",
@@ -204,17 +220,16 @@ class TestAdjustmentMovement:
 
     def test_adjustment_positive_happy_path(self):
         """Teste: ajuste positivo (entrada) criado com sucesso."""
-        with system_scope():
-            tenant = Tenant.objects.create(name="Casa de Testes")
-            user = User.objects.create_user(email="op@test.com")
-            Membership.objects.create(
-                tenant=tenant, user=user, role="staff", status="active"
-            )
+        tenant = criar_tenant(name="Casa de Testes")
+        user = User.objects.create_user(email="op@test.com")
 
         with tenant_scope(tenant.id):
+            conceder_pertenca(
+                user=user, tenant_id=tenant.id, role=Papel.STAFF, display_name="Operário"
+            )
+
             product = Product.objects.create(
                 tenant=tenant,
-                name="Pastel",
                 short_name="Pastel",
                 base_unit=UnidadeBase.UNIDADE,
                 display_unit="un",
@@ -233,13 +248,9 @@ class TestAdjustmentMovement:
                 defaults={"received_at": timezone.now()},
             )
 
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=product,
-                location=location,
-                lot=lote,
-                quantity=Decimal("100"),
-                unit_cost=Decimal("1.50"),
+            _receber(
+                tenant_id=tenant.id, product=product, location=location, lote=lote,
+                user=user, quantidade=Decimal("100"),
             )
 
             movement_id = registar_adjustment(
@@ -269,17 +280,16 @@ class TestAdjustmentMovement:
 
     def test_adjustment_negative_happy_path(self):
         """Teste: ajuste negativo (saída) criado com sucesso."""
-        with system_scope():
-            tenant = Tenant.objects.create(name="Casa de Testes")
-            user = User.objects.create_user(email="op@test.com")
-            Membership.objects.create(
-                tenant=tenant, user=user, role="staff", status="active"
-            )
+        tenant = criar_tenant(name="Casa de Testes")
+        user = User.objects.create_user(email="op@test.com")
 
         with tenant_scope(tenant.id):
+            conceder_pertenca(
+                user=user, tenant_id=tenant.id, role=Papel.STAFF, display_name="Operário"
+            )
+
             product = Product.objects.create(
                 tenant=tenant,
-                name="Pastel",
                 short_name="Pastel",
                 base_unit=UnidadeBase.UNIDADE,
                 display_unit="un",
@@ -298,13 +308,9 @@ class TestAdjustmentMovement:
                 defaults={"received_at": timezone.now()},
             )
 
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=product,
-                location=location,
-                lot=lote,
-                quantity=Decimal("100"),
-                unit_cost=Decimal("1.50"),
+            _receber(
+                tenant_id=tenant.id, product=product, location=location, lote=lote,
+                user=user, quantidade=Decimal("100"),
             )
 
             movement_id = registar_adjustment(
@@ -337,17 +343,16 @@ class TestTransferMovement:
 
     def test_transfer_happy_path(self):
         """Teste: transferência criada atomicamente com transfer_out + transfer_in."""
-        with system_scope():
-            tenant = Tenant.objects.create(name="Casa de Testes")
-            user = User.objects.create_user(email="op@test.com")
-            Membership.objects.create(
-                tenant=tenant, user=user, role="staff", status="active"
-            )
+        tenant = criar_tenant(name="Casa de Testes")
+        user = User.objects.create_user(email="op@test.com")
 
         with tenant_scope(tenant.id):
+            conceder_pertenca(
+                user=user, tenant_id=tenant.id, role=Papel.STAFF, display_name="Operário"
+            )
+
             product = Product.objects.create(
                 tenant=tenant,
-                name="Pastel",
                 short_name="Pastel",
                 base_unit=UnidadeBase.UNIDADE,
                 display_unit="un",
@@ -369,13 +374,9 @@ class TestTransferMovement:
                 defaults={"received_at": timezone.now()},
             )
 
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=product,
-                location=loc_origem,
-                lot=lote,
-                quantity=Decimal("100"),
-                unit_cost=Decimal("1.50"),
+            _receber(
+                tenant_id=tenant.id, product=product, location=loc_origem, lote=lote,
+                user=user, quantidade=Decimal("100"),
             )
 
             out_id, in_id = registar_transfer(
@@ -425,17 +426,16 @@ class TestTransferMovement:
 
     def test_transfer_same_location_rejected(self):
         """Teste: transferência para mesma localização deve ser rejeitada."""
-        with system_scope():
-            tenant = Tenant.objects.create(name="Casa de Testes")
-            user = User.objects.create_user(email="op@test.com")
-            Membership.objects.create(
-                tenant=tenant, user=user, role="staff", status="active"
-            )
+        tenant = criar_tenant(name="Casa de Testes")
+        user = User.objects.create_user(email="op@test.com")
 
         with tenant_scope(tenant.id):
+            conceder_pertenca(
+                user=user, tenant_id=tenant.id, role=Papel.STAFF, display_name="Operário"
+            )
+
             product = Product.objects.create(
                 tenant=tenant,
-                name="Pastel",
                 short_name="Pastel",
                 base_unit=UnidadeBase.UNIDADE,
                 display_unit="un",
@@ -454,13 +454,9 @@ class TestTransferMovement:
                 defaults={"received_at": timezone.now()},
             )
 
-            StockLevel.objects.create(
-                tenant=tenant,
-                product=product,
-                location=loc_origem,
-                lot=lote,
-                quantity=Decimal("100"),
-                unit_cost=Decimal("1.50"),
+            _receber(
+                tenant_id=tenant.id, product=product, location=loc_origem, lote=lote,
+                user=user, quantidade=Decimal("100"),
             )
 
             with pytest.raises(ValidationError):

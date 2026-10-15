@@ -41,7 +41,6 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.core.exceptions import ValidationError

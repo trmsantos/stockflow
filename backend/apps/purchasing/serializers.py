@@ -472,10 +472,18 @@ class LinhaInSerializer(serializers.Serializer):
     description = serializers.CharField(max_length=500)
     invoice_unit = serializers.CharField(max_length=20)
     quantity_invoiced = serializers.DecimalField(max_digits=12, decimal_places=3)
-    unit_price = serializers.DecimalField(max_digits=12, decimal_places=4, required=False, allow_null=True)
-    discount_pct = serializers.DecimalField(max_digits=6, decimal_places=3, required=False, allow_null=True)
-    vat_rate = serializers.DecimalField(max_digits=6, decimal_places=3, required=False, allow_null=True)
-    line_total = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    unit_price = serializers.DecimalField(
+        max_digits=12, decimal_places=4, required=False, allow_null=True
+    )
+    discount_pct = serializers.DecimalField(
+        max_digits=6, decimal_places=3, required=False, allow_null=True
+    )
+    vat_rate = serializers.DecimalField(
+        max_digits=6, decimal_places=3, required=False, allow_null=True
+    )
+    line_total = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True
+    )
     supplier_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
     ean = serializers.CharField(max_length=14, required=False, allow_blank=True)
     variable_weight = serializers.BooleanField(required=False, default=False)
@@ -600,20 +608,30 @@ class RececaoOutSerializer(serializers.Serializer):
         source="receipt.doc_type",
         choices=["FT", "FR", "FS", "NC", "ND", "GR"]
     )
-    doc_number = serializers.CharField(source="receipt.doc_number", max_length=100, allow_blank=True)
+    doc_number = serializers.CharField(
+        source="receipt.doc_number", max_length=100, allow_blank=True
+    )
     doc_date = serializers.DateField(source="receipt.doc_date", allow_null=True)
     received_at = serializers.DateTimeField(source="receipt.received_at")
     confirmed_at = serializers.DateTimeField(source="receipt.confirmed_at", allow_null=True)
-    confirmed_by = serializers.CharField(source="receipt.confirmed_by_name", max_length=150, allow_null=True)
+    confirmed_by = serializers.CharField(
+        source="receipt.confirmed_by_name", max_length=150, allow_null=True
+    )
     status = serializers.SerializerMethodField()
     lines_to_review = serializers.SerializerMethodField()
     line_count = serializers.SerializerMethodField()
-    customer_name = serializers.CharField(source="receipt.customer_name", max_length=200, allow_blank=True)
-    customer_nif = serializers.CharField(source="receipt.customer_nif", max_length=20, allow_blank=True)
+    customer_name = serializers.CharField(
+        source="receipt.customer_name", max_length=200, allow_blank=True
+    )
+    customer_nif = serializers.CharField(
+        source="receipt.customer_nif", max_length=20, allow_blank=True
+    )
     company_name = serializers.SerializerMethodField()
     company_nif = serializers.SerializerMethodField()
     awaiting_invoice = serializers.SerializerMethodField()
-    document_total = serializers.DecimalField(source="receipt.document_total_eur", max_digits=12, decimal_places=2, allow_null=True)
+    document_total = serializers.DecimalField(
+        source="receipt.document_total_eur", max_digits=12, decimal_places=2, allow_null=True
+    )
     lines_total = serializers.SerializerMethodField()
     vat_breakdown = serializers.SerializerMethodField()
     temperatures = serializers.SerializerMethodField()
@@ -635,7 +653,7 @@ class RececaoOutSerializer(serializers.Serializer):
 
     def get_lines_to_review(self, obj):
         """Conta linhas que precisam de revisão."""
-        return sum(1 for l in obj["linhas"] if l["linha"].status == "needs_review")
+        return sum(1 for item in obj["linhas"] if item["linha"].status == "needs_review")
 
     def get_line_count(self, obj):
         """Total de linhas."""

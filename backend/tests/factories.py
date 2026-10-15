@@ -14,6 +14,7 @@ from typing import Any
 from django.utils import timezone
 
 from apps.accounts.models import Invitation, Membership, Papel, Tenant, User
+from apps.accounts.services import criar_tenant
 from apps.catalog.models import (
     Conservacao,
     Product,
@@ -22,10 +23,11 @@ from apps.catalog.models import (
     UnidadeBase,
 )
 from apps.inventory.models import Location, Lot, StockLevel, StockMovement
-from apps.purchasing.models import InvoiceDocument, Receipt, ReceiptLine
+from apps.purchasing.models import InvoiceDocument, OrigemDoDocumento, Receipt, ReceiptLine
 from apps.shared.db import tenant_scope
 
 __all__ = [
+    "CREDENCIAL_POR_OMISSAO",
     "TenantFactory",
     "UserFactory",
     "ProductFactory",
@@ -43,6 +45,12 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+#: A password com que `UserFactory` cria contas quando não lhe dão outra. É
+#: pública para os testes que iniciam sessão pelo endpoint de login a poderem
+#: usar — a forma de `CREDENCIAL` em `tests/test_stock_panel.py`.
+CREDENCIAL_POR_OMISSAO = "TestPassword123"
+
+
 def TenantFactory(
     *,
     name: str = "Demo Resto",
@@ -51,14 +59,20 @@ def TenantFactory(
 ) -> Tenant:
     """Cria um tenant (restaurante, pastelaria, café).
 
+    Pelo serviço, e não por `Tenant(...).save()`: o `accounts_tenant` tem
+    política e a coluna do tenant é o `id` (ADR 0007), logo o `INSERT` só passa
+    dentro do âmbito do próprio tenant — é `criar_tenant` que gera o UUID antes
+    de inserir e abre esse âmbito. A configuração que o serviço não aceita
+    (`is_demo` e o resto) escreve-se a seguir, dentro do mesmo âmbito.
+
     Por omissão é marcado como demonstração.
     """
-    tenant = Tenant(
-        name=name,
-        is_demo=is_demo,
-        **kwargs,
-    )
-    tenant.save()
+    tenant = criar_tenant(name=name)
+    configuracao = {"is_demo": is_demo, **kwargs}
+    with tenant_scope(tenant.id):
+        for campo, valor in configuracao.items():
+            setattr(tenant, campo, valor)
+        tenant.save(update_fields=[*configuracao, "updated_at"])
     return tenant
 
 
@@ -69,12 +83,9 @@ def UserFactory(
     is_active: bool = True,
     **kwargs: Any,
 ) -> User:
-    """Cria um utilizador.
-
-    Password por omissão não é definida (conta sem password).
-    """
+    """Cria um utilizador, com `CREDENCIAL_POR_OMISSAO` se não lhe derem password."""
     if password is None:
-        password = "TestPassword123"  # noqa: S105
+        password = CREDENCIAL_POR_OMISSAO
     user = User.objects.create_user(
         email=email,
         password=password,
@@ -326,14 +337,14 @@ def StockMovementFactory(
 def InvoiceDocumentFactory(
     *,
     tenant: Tenant,
-    origin: str = "upload",
+    source: str = OrigemDoDocumento.UPLOAD,
     **kwargs: Any,
 ) -> InvoiceDocument:
-    """Cria um documento de fatura."""
+    """Cria um documento de fatura. `source` é a origem (`upload` ou `capture`)."""
     with tenant_scope(tenant.id):
         doc = InvoiceDocument.objects.create(
             tenant=tenant,
-            origin=origin,
+            source=source,
             **kwargs,
         )
     return doc
@@ -344,17 +355,26 @@ def ReceiptFactory(
     tenant: Tenant,
     supplier: Supplier,
     document: InvoiceDocument | None = None,
+    location: Location | None = None,
     **kwargs: Any,
 ) -> Receipt:
-    """Cria uma receção (rascunho de compra)."""
+    """Cria uma receção (rascunho de compra), recebida agora salvo indicação.
+
+    A localização é obrigatória no modelo (é onde a mercadoria entra): sem uma,
+    cria-se a de omissão da `LocationFactory`.
+    """
     if document is None:
         document = InvoiceDocumentFactory(tenant=tenant)
+    if location is None:
+        location = LocationFactory(tenant=tenant)
+    kwargs.setdefault("received_at", timezone.now())
 
     with tenant_scope(tenant.id):
         receipt = Receipt.objects.create(
             tenant=tenant,
             supplier=supplier,
             document=document,
+            location=location,
             **kwargs,
         )
     return receipt

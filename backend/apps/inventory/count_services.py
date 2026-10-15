@@ -10,11 +10,13 @@ from uuid import UUID
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from apps.catalog.api import produto_por_sku
 from apps.inventory.models import Location, StockCount, StockCountLine, StockLevel
+from apps.inventory.services import MovementDTO, record_movements
 
 __all__ = [
     "abrir_contagem",
@@ -25,7 +27,9 @@ __all__ = [
 
 
 @transaction.atomic
-def abrir_contagem(*, tenant_id: UUID, location_id: UUID, user_id: UUID | None = None) -> StockCount:
+def abrir_contagem(
+    *, tenant_id: UUID, location_id: UUID, user_id: UUID | None = None
+) -> StockCount:
     """Abre uma nova contagem em uma localização."""
     # Verificar se localização existe
     location = Location.objects.filter(tenant_id=tenant_id, pk=location_id).first()
@@ -68,7 +72,7 @@ def adicionar_linha_contagem(
         tenant_id=tenant_id,
         location_id=contagem.location_id,
         product_id=produto.id,
-    ).aggregate(qty=sum("quantity"))["qty"] or Decimal("0")
+    ).aggregate(qty=Sum("quantity"))["qty"] or Decimal("0")
 
     # Criar linha
     linha = StockCountLine.objects.create(
@@ -126,8 +130,27 @@ def resumo_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> dict:
 
 
 @transaction.atomic
-def fechar_contagem(*, tenant_id: UUID, stock_count_id: UUID, user_id: UUID | None = None) -> StockCount:
-    """Fecha a contagem e cria movimentos de ajuste."""
+def fechar_contagem(
+    *,
+    tenant_id: UUID,
+    stock_count_id: UUID,
+    user_id: UUID | None = None,
+    user_name: str = "",
+) -> StockCount:
+    """Fecha a contagem e grava no ledger um `adjustment` por cada diferença.
+
+    O stock é um ledger (CLAUDE.md): a diferença entre o contado e o esperado
+    nunca se escreve no `StockLevel` — vai a `record_movements`, que cria o
+    `StockMovement` e recalcula o nível a partir da soma dos movimentos. Todas
+    as diferenças de uma contagem entram numa única chamada, logo numa única
+    transação com o fecho: ou a contagem fecha com os ajustes todos, ou não
+    fecha.
+
+    O custo do ajuste é o do nível que existe para `(artigo, localização,
+    lote)`, ou zero se não houver nível — a forma de `registar_adjustment`.
+    `user_name` é a cópia do nome de quem fechou que fica no movimento, para
+    sobreviver à conta ser apagada (`created_by_name`).
+    """
     contagem = StockCount.objects.filter(
         tenant_id=tenant_id, pk=stock_count_id, status="open"
     ).first()
@@ -141,30 +164,40 @@ def fechar_contagem(*, tenant_id: UUID, stock_count_id: UUID, user_id: UUID | No
             "stock_count": [_("Cannot close: some lines are not yet counted.")]
         })
 
-    # Criar movimentos de ajuste para variâncias
-    from apps.inventory.services import record_movement
-    linhas = StockCountLine.objects.filter(stock_count_id=stock_count_id)
+    agora = timezone.now()
+    ajustes: list[MovementDTO] = []
+    linhas = StockCountLine.objects.filter(tenant_id=tenant_id, stock_count_id=stock_count_id)
     for linha in linhas:
-        if linha.quantity_counted != linha.quantity_expected:
-            variancia = linha.quantity_counted - linha.quantity_expected
-            if variancia != 0:
-                # Criar movimento de ajuste (ledger)
-                record_movement(
-                    tenant_id=tenant_id,
-                    product_id=linha.product_id,
-                    location_id=contagem.location_id,
-                    lot_id=linha.lot_id,
-                    movement_type="adjustment",
-                    quantity=variancia,
-                    reason="other",
-                    reason_detail=f"Contagem #{stock_count_id}",
-                    reference=str(stock_count_id),
-                    created_by_id=user_id,
-                )
+        variancia = linha.quantity_counted - linha.quantity_expected
+        if variancia == 0:
+            continue
+        nivel = StockLevel.objects.filter(
+            tenant_id=tenant_id,
+            product_id=linha.product_id,
+            location_id=contagem.location_id,
+            lot_id=linha.lot_id,
+        ).first()
+        ajustes.append(
+            MovementDTO(
+                product_id=linha.product_id,
+                location_id=contagem.location_id,
+                lot_id=linha.lot_id,
+                quantity=variancia,
+                unit_cost=nivel.unit_cost if nivel else Decimal("0"),
+                cost_is_estimate=False,
+                movement_type="adjustment",
+                occurred_at=agora,
+                created_by_id=user_id,
+                created_by_name=user_name,
+                reference=str(stock_count_id),
+                reason="other",
+            )
+        )
+    record_movements(tenant_id=tenant_id, movements=ajustes)
 
     # Marcar contagem como fechada
     contagem.status = "closed"
-    contagem.closed_at = timezone.now()
+    contagem.closed_at = agora
     contagem.closed_by_id = user_id
     contagem.save(update_fields=["status", "closed_at", "closed_by", "updated_at"])
 

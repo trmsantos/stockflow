@@ -54,7 +54,13 @@ __all__ = [
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ProdutoResumo:
-    """Um artigo como os outros módulos o veem."""
+    """Um artigo como os outros módulos o veem.
+
+    O `sku` é o código canónico por tenant (único sem caixa quando existe —
+    ver `Product`), e é por ele que as contagens e o `reporting` nomeiam o
+    artigo. Tem default porque o helper do semeador, mais abaixo, constrói o
+    resumo sem o ler.
+    """
 
     id: UUID
     short_name: str
@@ -65,6 +71,7 @@ class ProdutoResumo:
     expiry_kind: str | None
     conservation: str
     is_active: bool
+    sku: str = ""
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -127,6 +134,7 @@ def produtos_por_id(
             expiry_kind=p.expiry_kind or None,
             conservation=p.conservation,
             is_active=p.is_active,
+            sku=p.sku,
         )
         for p in artigos
     }
@@ -193,6 +201,7 @@ def produto_por_id(*, tenant_id: UUID, product_id: UUID) -> ProdutoResumo | None
             expiry_kind=p.expiry_kind or None,
             conservation=p.conservation,
             is_active=p.is_active,
+            sku=p.sku,
         )
     except Product.DoesNotExist:
         return None
@@ -212,6 +221,7 @@ def produto_por_sku(*, tenant_id: UUID, sku: str) -> ProdutoResumo | None:
             expiry_kind=p.expiry_kind or None,
             conservation=p.conservation,
             is_active=p.is_active,
+            sku=p.sku,
         )
     except Product.DoesNotExist:
         return None

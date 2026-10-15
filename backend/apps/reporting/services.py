@@ -5,14 +5,15 @@ Agregações de dados financeiros e operacionais.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from django.db.models import Count, DecimalField, F, Q, Sum
-from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
+from django.db.models import DecimalField, Sum
 
 from apps.catalog.api import produtos_por_id
-from apps.inventory.api import MovimentoResumo
+from apps.inventory.api import movimentos_por_periodo, movimentos_por_produto
 
 __all__ = [
     "monthly_report",
@@ -27,8 +28,6 @@ def monthly_report(
     month: str,  # YYYY-MM
 ) -> dict:
     """Relatório mensal: revenue, COGS, payroll, items por dia."""
-    from apps.inventory.api import movimentos_por_periodo
-
     try:
         year, month_num = map(int, month.split("-"))
     except (ValueError, IndexError):
@@ -53,9 +52,6 @@ def monthly_report(
     payroll = Decimal("0")
 
     # Items por dia (agregar manualmente)
-    from collections import defaultdict
-    from datetime import date
-
     daily_data = defaultdict(lambda: {"revenue": Decimal("0"), "cogs": Decimal("0"), "count": 0})
     for m in movements:
         day = m.occurred_at.date()
@@ -92,10 +88,6 @@ def series_report(
     month: str,  # YYYY-MM
 ) -> dict:
     """Série temporal de receita vs COGS."""
-    from collections import defaultdict
-
-    from apps.inventory.api import movimentos_por_periodo
-
     try:
         year, month_num = map(int, month.split("-"))
     except (ValueError, IndexError):
@@ -115,7 +107,7 @@ def series_report(
             period = m.occurred_at.date()
         elif granularity == "week":
             # Retornar a data de início da semana (segunda-feira)
-            period = m.occurred_at.date() - __import__('datetime').timedelta(days=m.occurred_at.weekday())
+            period = m.occurred_at.date() - timedelta(days=m.occurred_at.weekday())
         else:  # month
             # Retornar o primeiro dia do mês
             period = m.occurred_at.date().replace(day=1)
@@ -145,16 +137,19 @@ def series_report(
 
 def projection_report(*, tenant_id: UUID) -> dict:
     """Projeção de stock vs movimento real."""
-    from apps.catalog.api import produtos_por_id
-    from apps.inventory.api import movimentos_por_produto
+    # Imports locais e **visíveis**: os dois atravessam a fronteira de módulos
+    # (ARCHITECTURE.md §3) e estão na lista `ignore_imports` do
+    # `pyproject.toml`, com a razão ao lado. A versão anterior escondia o do
+    # catálogo num `__import__` por string, que é a mesma aresta sem nenhum
+    # gate a vê-la.
+    from apps.catalog.models import Product
     from apps.inventory.models import StockLevel
 
     # Obter stock levels esperados vs movimentos reais por SKU
     # Primeiro, obter todos os IDs de produtos ativos
-    products_qs = __import__('apps.catalog.models', fromlist=['Product']).Product.objects.filter(
-        tenant_id=tenant_id, is_active=True
+    product_ids = list(
+        Product.objects.filter(tenant_id=tenant_id, is_active=True).values_list("id", flat=True)
     )
-    product_ids = [p.id for p in products_qs]
 
     if not product_ids:
         return {"items": []}

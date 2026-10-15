@@ -8,8 +8,20 @@ Verifica que cada endpoint do Increment 1 retorna dados reais:
 - Painel: tenants e resumo de stock
 
 Requisitos de RLS:
-- user1 não vê dados de user2/tenant2 (403, não 404)
+- user1 não vê dados de user2/tenant2 (404, não 403 — CLAUDE.md)
 - Sem autenticação retorna 401
+
+## As fixtures abrem o âmbito, e é por isso que existem
+
+Todas as tabelas de dados de um tenant têm política de RLS, e o guarda do
+`tests/conftest.py` levanta `LeituraSemAmbito` a qualquer DML fora de
+`tenant_scope` — foi ele que apanhou a primeira versão destas fixtures, que
+criavam o tenant e a pertença à mão e sem âmbito. A forma da casa é a de
+`tests/test_stock_panel.py`: o tenant nasce pelo serviço, a pertença concede-se
+por `conceder_pertenca` dentro de `tenant_scope(tenant.id)`, e a sessão
+inicia-se pelo endpoint de login, que é o que escreve o estabelecimento activo
+na sessão (ADR 0007). Um `force_login` não o faz, e um cliente assim
+autenticado leva 403 em todos os endpoints com âmbito.
 """
 
 from __future__ import annotations
@@ -18,13 +30,16 @@ from decimal import Decimal
 
 import pytest
 from django.test import Client
+from django.utils import timezone
 
-from apps.accounts.models import Membership, Papel
+from apps.accounts.models import Papel
+from apps.accounts.services import conceder_pertenca
 from apps.catalog.models import Product
 from apps.inventory.models import StockLevel
-from apps.purchasing.models import InvoiceDocument, Receipt
+from apps.purchasing.models import InvoiceDocument, OrigemDoDocumento, Receipt
 from apps.shared.db import tenant_scope
 from tests.factories import (
+    CREDENCIAL_POR_OMISSAO,
     LocationFactory,
     ProductFactory,
     StockLevelFactory,
@@ -37,6 +52,22 @@ from tests.factories import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+def _iniciar_sessao(email: str) -> Client:
+    """Um cliente com sessão iniciada pelo endpoint de login.
+
+    Com uma pertença só, o login põe esse estabelecimento como activo na
+    sessão (ADR 0007) — é o que o `TenantMiddleware` lê para abrir o âmbito.
+    """
+    cliente = Client()
+    resposta = cliente.post(
+        "/api/v1/auth/login",
+        {"email": email, "password": CREDENCIAL_POR_OMISSAO},
+        content_type="application/json",
+    )
+    assert resposta.status_code == 200, resposta.content
+    return cliente
 
 
 @pytest.fixture
@@ -60,70 +91,48 @@ def tenant2(db):
 @pytest.fixture
 def user1(db):
     """Primeiro utilizador (dono de tenant1)."""
-    user = UserFactory(email="user1@demo.pt")
-    # Adicionar ao User.tenant_ids
-    user.tenant_ids = []
-    user.save()
-    return user
+    return UserFactory(email="user1@demo.pt")
 
 
 @pytest.fixture
 def user2(db):
     """Segundo utilizador (dono de tenant2, isolamento)."""
-    user = UserFactory(email="user2@demo.pt")
-    user.tenant_ids = []
-    user.save()
-    return user
+    return UserFactory(email="user2@demo.pt")
 
 
 @pytest.fixture
 def membership1(db, user1, tenant1):
-    """Membro de tenant1."""
-    membership = Membership.objects.create(
-        user=user1,
-        tenant=tenant1,
-        role=Papel.OWNER,
-        display_name="Dono",
-        is_active=True,
-    )
-    # Atualizar tenant_ids
-    user1.tenant_ids = [tenant1.id]
-    user1.save()
-    return membership
+    """Pertença de user1 a tenant1, pelo serviço e dentro do âmbito.
+
+    `accounts_membership` tem política: a escrita só passa dentro de
+    `tenant_scope(tenant1.id)`. E é `conceder_pertenca` que espelha o
+    `tenant_ids` do utilizador (ADR 0007) — não se escreve à mão.
+    """
+    with tenant_scope(tenant1.id):
+        return conceder_pertenca(
+            user=user1, tenant_id=tenant1.id, role=Papel.OWNER, display_name="Dono"
+        )
 
 
 @pytest.fixture
 def membership2(db, user2, tenant2):
-    """Membro de tenant2."""
-    membership = Membership.objects.create(
-        user=user2,
-        tenant=tenant2,
-        role=Papel.OWNER,
-        display_name="Dono",
-        is_active=True,
-    )
-    # Atualizar tenant_ids
-    user2.tenant_ids = [tenant2.id]
-    user2.save()
-    return membership
+    """Pertença de user2 a tenant2, como a de cima."""
+    with tenant_scope(tenant2.id):
+        return conceder_pertenca(
+            user=user2, tenant_id=tenant2.id, role=Papel.OWNER, display_name="Dono"
+        )
 
 
 @pytest.fixture
-def client1(client_anon, user1, membership1):
-    """Cliente autenticado como user1 em tenant1."""
-    client = client_anon
-    client.force_login(user1)
-    # Simular que a sessão tem tenant_id
-    client.get("/")  # Trigger TenantMiddleware para verificar
-    return client
+def client1(user1, membership1):
+    """Cliente com sessão iniciada como user1; tenant1 é o estabelecimento activo."""
+    return _iniciar_sessao(user1.email)
 
 
 @pytest.fixture
-def client2(client_anon, user2, membership2):
-    """Cliente autenticado como user2 em tenant2."""
-    client = client_anon
-    client.force_login(user2)
-    return client
+def client2(user2, membership2):
+    """Cliente com sessão iniciada como user2; tenant2 é o estabelecimento activo."""
+    return _iniciar_sessao(user2.email)
 
 
 @pytest.fixture
@@ -284,21 +293,27 @@ class TestEndpointRecepcao:
         """GET /api/v1/recepcoes retorna lista com status paginado."""
         with tenant_scope(tenant1.id):
             supplier = SupplierFactory(tenant=tenant1)
-            doc = InvoiceDocument.objects.create(tenant=tenant1, origin="upload")
+            armazem = LocationFactory(tenant=tenant1)
+            doc = InvoiceDocument.objects.create(tenant=tenant1, source=OrigemDoDocumento.UPLOAD)
 
-            # Criar 2 receções
+            # Duas receções: uma por rever e uma confirmada. O estado não é
+            # coluna — é `confirmed_at` a NULL ou não (ADR 0022).
             Receipt.objects.create(
                 tenant=tenant1,
                 supplier=supplier,
                 document=doc,
-                status="draft",
+                location=armazem,
+                received_at=timezone.now(),
             )
-            doc2 = InvoiceDocument.objects.create(tenant=tenant1, origin="upload")
+            doc2 = InvoiceDocument.objects.create(tenant=tenant1, source=OrigemDoDocumento.UPLOAD)
             Receipt.objects.create(
                 tenant=tenant1,
                 supplier=supplier,
                 document=doc2,
-                status="confirmed",
+                location=armazem,
+                received_at=timezone.now(),
+                confirmed_at=timezone.now(),
+                confirmed_by_name="Dono",
             )
 
         # response = client1.get("/api/v1/recepcoes/")
@@ -514,28 +529,28 @@ class TestFiltros:
             for i in range(3):
                 ProductFactory(tenant=tenant2, short_name=f"T2-{i}")
 
-        # No banco: 8 produtos no total (5 + 3)
-        # user1 em tenant1 deve ver só 5
-        # user2 em tenant2 deve ver só 3
+        # Na base de dados há 8 artigos (5 + 3), mas nenhum âmbito os vê todos:
+        # a política devolve os do tenant activo e zero dos outros, mesmo
+        # quando a query pede os do outro tenant pelo nome. É o que faz de
+        # `Product.objects.count()` fora de âmbito um teste que não mede nada
+        # — e o guarda do conftest recusa-o.
+        with tenant_scope(tenant1.id):
+            assert Product.objects.count() == 5
+            assert Product.objects.filter(tenant=tenant2).count() == 0
 
-        all_count = Product.objects.count()
-        assert all_count == 8
-
-        t1_count = Product.objects.filter(tenant=tenant1).count()
-        assert t1_count == 5
-
-        t2_count = Product.objects.filter(tenant=tenant2).count()
-        assert t2_count == 3
+        with tenant_scope(tenant2.id):
+            assert Product.objects.count() == 3
+            assert Product.objects.filter(tenant=tenant1).count() == 0
 
     def test_produtos_ativos_vs_inativos(self, db, tenant1, user1, membership1):
         """is_active filtra produtos."""
         with tenant_scope(tenant1.id):
             active = ProductFactory(tenant=tenant1, short_name="Ativo", is_active=True)
-            inactive = ProductFactory(tenant=tenant1, short_name="Inativo", is_active=False)
+            ProductFactory(tenant=tenant1, short_name="Inativo", is_active=False)
 
-        active_count = Product.objects.filter(tenant=tenant1, is_active=True).count()
-        assert active_count == 1
-        assert active_count == Product.objects.filter(pk=active.id).count()
+            ativos = Product.objects.filter(tenant=tenant1, is_active=True)
+            assert ativos.count() == 1
+            assert ativos.get().pk == active.pk
 
 
 # ---------------------------------------------------------------------------

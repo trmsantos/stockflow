@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import uuid
 from decimal import Decimal
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -19,9 +18,9 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from apps.inventory.api import (
+    Autor,
     LoteResumo,
     MovementDTO,
-    get_fefo_lot,
     get_or_create_lots,
     get_stock_level,
     obter_localizacao,
@@ -46,7 +45,7 @@ def _get_fefo_lots_with_stock(
 
     Filtra apenas lotes com stock positivo na localização, usando APIs.
     """
-    from apps.inventory.models import Lot, StockLevel
+    from apps.inventory.models import Lot
 
     qs = (
         Lot.objects.filter(
@@ -84,7 +83,7 @@ def produzir(
     recipe_id: UUID,
     quantity: Decimal,
     location_id: UUID,
-    user: "apps.accounts.models.User",
+    user: Autor,
 ) -> UUID:
     """Produzir uma receita: consome ingredientes (production_out), cria produto (production_in).
 

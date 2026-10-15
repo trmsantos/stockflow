@@ -19,6 +19,7 @@ from django.db import transaction
 
 from apps.inventory.models import Location, StockLevel
 from apps.inventory.services import (
+    Autor,
     MovementDTO,
     get_fefo_lot,
     get_or_create_lots,
@@ -26,6 +27,7 @@ from apps.inventory.services import (
 )
 
 __all__ = [
+    "Autor",
     "LocalizacaoResumo",
     "LoteResumo",
     "MovimentoResumo",

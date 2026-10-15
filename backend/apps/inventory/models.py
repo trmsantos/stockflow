@@ -66,7 +66,8 @@ class Lot(TenantModel):
     Representado por um triplo único: tenant, product (FK) e code (char 150).
     Campos:
     - `product` FK a `catalog_product`
-    - `code` char(150) — o lote impresso na embalagem ou gerado (se track_lots=False, um lote sintético '__<product_id>__')
+    - `code` char(150) — o lote impresso na embalagem ou gerado (se track_lots=False,
+      um lote sintético '__<product_id>__')
     - `expires_at` DateTime null — data da validade, nulável
     - `received_at` DateTime — marca do primeiro movimento que o criou, imutável
 
@@ -115,11 +116,15 @@ class StockMovement(TenantModel):
       transfer_out, transfer_in, production_out, production_in
     - `quantity` Decimal(12,3) com sinal — positivo para entrada, negativo para saída
     - `unit_cost` Decimal(12,6) — avaliação de cada unidade, immutável
-    - `cost_is_estimate` bool — se o custo é estimado (A, guia sem fatura) ou confirmado (B, com fatura)
-    - `reason` CharField com choices enum (waste, adjustment): expired, spoiled, prep_loss, breakage, other
+    - `cost_is_estimate` bool — se o custo é estimado (A, guia sem fatura) ou
+      confirmado (B, com fatura)
+    - `reason` CharField com choices enum (waste, adjustment): expired, spoiled,
+      prep_loss, breakage, other
     - `reason_detail` TextField null — detalhes adicionais quando reason='other'
-    - `reference` CharField(255) null — chave de deduplicação (doc_number_normalized, uuid produção, id contagem)
-    - `production_id` UUID null — referência da produção (production_out e production_in partilham este id)
+    - `reference` CharField(255) null — chave de deduplicação (doc_number_normalized,
+      uuid produção, id contagem)
+    - `production_id` UUID null — referência da produção (production_out e
+      production_in partilham este id)
     - `transfer_id` UUID null — ID do par transfer_out/transfer_in
     - `occurred_at` DateTime — quando o movimento aconteceu
     - `created_by` FK User SET_NULL, `created_by_name` char(150) — quem criou o movimento
@@ -400,7 +405,9 @@ class StockCount(TenantModel):
         verbose_name = "contagem de stock"
         verbose_name_plural = "contagens de stock"
         indexes = [
-            models.Index(fields=["tenant", "location", "status"], name="inv_count_tenant_loc_status"),
+            models.Index(
+                fields=["tenant", "location", "status"], name="inv_count_tenant_loc_status"
+            ),
             models.Index(fields=["tenant", "status"], name="inv_count_tenant_status"),
         ]
 

@@ -3,7 +3,8 @@
 Rotas:
 - /locations — CRUD de localizações
 - /stock/summary, /stock/by-location, /stock/by-product, /stock/alerts — painel read-only
-- /stock/movements/waste, /stock/movements/adjustment, /stock/movements/transfer — movimentos manuais
+- /stock/movements/waste, /stock/movements/adjustment, /stock/movements/transfer —
+  movimentos manuais
 
 Sem `app_name`: estas entram no `include((api_v1_patterns, "api"))` do `config/urls.py`.
 `trailing_slash=False` e `SimpleRouter`.

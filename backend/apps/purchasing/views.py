@@ -65,7 +65,7 @@ from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import PertenceAoTenant, membership_atual, utilizador_atual
 from apps.purchasing.ficheiros import caminho_dentro_do_media
-from apps.purchasing.models import InvoiceDocument
+from apps.purchasing.models import InvoiceDocument, Receipt, ReceiptLine
 from apps.purchasing.selectors import (
     com_paginas,
     compor,
@@ -73,23 +73,40 @@ from apps.purchasing.selectors import (
     documentos_do_ambito,
     documentos_visiveis,
     pagina_por_posicao,
+    preco_historico,
+    resumo_de_recebidas,
 )
 from apps.purchasing.serializers import (
+    CabecalhoInSerializer,
     DocumentoInSerializer,
     DocumentoOutSerializer,
     FicheiroDeDocumentoInSerializer,
+    LinhaInSerializer,
+    LinhaOutSerializer,
+    RececaoInSerializer,
+    RececaoOutSerializer,
     RecusaDeDocumentoOutSerializer,
+    ResumoDeRececoesOutSerializer,
+    RevisaoDeLinhaInSerializer,
+    TemperaturaInSerializer,
 )
 from apps.purchasing.services import (
     CODIGO_DOCUMENTO_DESCARTADO,
     CODIGO_DOCUMENTO_FECHADO,
     CODIGO_DOCUMENTO_SEM_PAGINAS,
     CODIGO_PAGINAS_EXCEDIDAS,
+    CriacaoDeRececaoJaExiste,
     RecusaDeDocumento,
+    SemLinhasRevistas,
     anexar_ficheiro,
+    apagar_rascunho,
+    confirmar_rececao,
     criar_documento,
+    criar_rececao,
     descartar_documento,
     fechar_documento,
+    registar_temperatura,
+    rever_linha,
 )
 
 __all__ = ["STATUS_DA_RECUSA_DE_DOCUMENTO", "DocumentoViewSet"]
@@ -448,36 +465,13 @@ def _resposta_de_recusa(recusa: RecusaDeDocumento) -> Response:
 # Receção de mercadoria (fatia 2, parte B)
 # ============================================================================
 
-from apps.purchasing.models import Receipt, ReceiptLine
-from apps.purchasing.selectors import (
-    preco_historico,
-    resumo_de_recebidas,
-)
-from apps.purchasing.serializers import (
-    CabecalhoInSerializer,
-    LinhaInSerializer,
-    LinhaOutSerializer,
-    RececaoInSerializer,
-    RececaoOutSerializer,
-    ResumoDeRececoesOutSerializer,
-    RevisaoDeLinhaInSerializer,
-    TemperaturaInSerializer,
-)
-from apps.purchasing.services import (
-    CriacaoDeRececaoJaExiste,
-    SemLinhasRevistas,
-    apagar_rascunho,
-    confirmar_rececao,
-    criar_rececao,
-    registar_temperatura,
-    rever_linha,
-)
-
 
 @extend_schema_view(
     list=extend_schema(
         parameters=[
-            OpenApiParameter("estado", OpenApiTypes.STR, OpenApiTypes.STR, required=False),
+            # O terceiro argumento é o `location`; com `OpenApiTypes.STR` no lugar
+            # dele o `spectacular` morria a serializar o enum para YAML.
+            OpenApiParameter("estado", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False),
         ]
     ),
 )
@@ -609,7 +603,7 @@ class RececaoViewSet(viewsets.ModelViewSet):
         # GET
         linhas = receipt.lines.all()
         serializer = LinhaOutSerializer(
-            [self._compor_linha(l) for l in linhas], many=True
+            [self._compor_linha(item) for item in linhas], many=True
         )
         return Response({
             "count": linhas.count(),
@@ -630,13 +624,12 @@ class RececaoViewSet(viewsets.ModelViewSet):
         try:
             linha = ReceiptLine.objects.get(pk=linha_id, receipt_id=receipt.id)
         except ReceiptLine.DoesNotExist:
-            raise Http404
+            raise Http404 from None
 
         serializer = RevisaoDeLinhaInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         # Rever linha
-        membership = membership_atual(request)
         linha = rever_linha(
             receipt_id=receipt.id,
             linha_id=linha.id,
@@ -710,8 +703,11 @@ class RececaoViewSet(viewsets.ModelViewSet):
         receipt = Receipt.objects.prefetch_related("lines").get(pk=receipt.id)
 
         # Buscar dados relacionados
-        product_ids = [l.product_id for l in receipt.lines.all() if l.product_id]
-        location_ids = [receipt.location_id] + [l.location_id for l in receipt.lines.all() if l.location_id]
+        linhas = list(receipt.lines.all())
+        product_ids = [item.product_id for item in linhas if item.product_id]
+        location_ids = [receipt.location_id] + [
+            item.location_id for item in linhas if item.location_id
+        ]
 
         produtos = catalog_api.produtos_por_id(tenant_id=receipt.tenant_id, ids=product_ids)
         locais = inventory_api.localizacoes_por_id(tenant_id=receipt.tenant_id, ids=location_ids)
@@ -721,7 +717,7 @@ class RececaoViewSet(viewsets.ModelViewSet):
             "receipt": receipt,
             "produtos": produtos,
             "locais": locais,
-            "linhas": [self._compor_linha(l, produtos, locais) for l in receipt.lines.all()],
+            "linhas": [self._compor_linha(item, produtos, locais) for item in linhas],
         }
 
         return dados
@@ -753,7 +749,8 @@ class RececaoViewSet(viewsets.ModelViewSet):
 
         # Stock quantity
         stock_quantity = None
-        if linha.kind == "goods" and produto and linha.base_per_invoice_unit and linha.quantity_received:
+        tem_quantidade = bool(linha.base_per_invoice_unit and linha.quantity_received)
+        if linha.kind == "goods" and produto and tem_quantidade:
             base_qty = linha.quantity_received * linha.base_per_invoice_unit
             display_qty = base_qty / produto.display_factor if produto.display_factor else base_qty
             stock_quantity = {
