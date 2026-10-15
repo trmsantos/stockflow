@@ -1,45 +1,50 @@
-"""A fronteira do modelo: a única função deste repositório que falaria com um LLM.
+"""A fronteira do modelo: o único ficheiro deste repositório que fala com um LLM.
 
-E hoje não fala com nenhum. **Zero chaves de API, zero rede, zero cliente HTTP** —
-ligar a extração a sério é configuração (um nome de modelo, uma credencial) mais
-um prompt, e nenhuma das duas coisas existe. Em vez de fingir, esta fronteira
-levanta uma excepção que diz exactamente o que falta, e a tarefa grava a tentativa
-com `status=erro` e a razão legível.
+Desde 2026-10-15 (ADR 0027) **fala com um**: a fábrica `cliente()` constrói o
+`openai.OpenAI` e `conversar()` faz uma chamada de chat com tools. É a única
+linha que sabe o fornecedor — trocar de fornecedor é esta fábrica e uma função,
+não uma reescrita. E só o **worker** a chama: o processo web recusa 503 antes de
+criar linha nenhuma quando falta o modelo ou a chave, e nunca abre socket nenhum.
 
-É isso que torna a fatia 1 completa e testável: todo o resto do caminho — o
-documento, as páginas, a linha da tentativa, o custo, o estado derivado, o painel
-só de leitura — corre de ponta a ponta, e o que fica em aberto é uma função com
-um nome.
+`ler_documento` **não muda de comportamento**: continua a levantar, porque o que
+lhe falta não é o cliente — é o prompt e o corpo. A mensagem do
+`ClienteDoModeloInexistente` diz-o.
 
-## As duas recusas, que são situações diferentes
+## As recusas, que são situações diferentes
 
-* `ModeloNaoConfigurado` — `settings.AGENTS_EXTRACTION_MODEL` está vazio. É o
-  estado de omissão do projecto, e a frase diz o que configurar;
-* `ClienteDoModeloInexistente` — há nome de modelo mas não há cliente que o
-  chame. Levanta porque é uma configuração que promete uma capacidade que o
-  código não tem, e falhar com uma frase é melhor do que devolver um documento
-  vazio que parece uma fatura ilegível.
+* `ModeloNaoConfigurado` — não há nome de modelo, ou (no chat) não há chave. É
+  o estado de omissão do projecto, e a frase diz o que configurar;
+* `ClienteDoModeloInexistente` — há nome de modelo de extração e o cliente
+  existe, mas a extração não tem prompt nem corpo. Levanta porque é uma
+  configuração que promete uma capacidade que o código não tem;
+* `TempoEsgotado` — o fornecedor não respondeu dentro de `timeout`;
+* `RespostaInvalida` — a resposta não tem a forma que se lê (sem `choices`,
+  sem `usage`).
 
-As duas descendem de `ErroDoModelo`, que é o que a tarefa apanha — um `except`
-sobre a base deixa acrescentar uma terceira recusa sem tocar na tarefa.
+Todas descendem de `ErroDoModelo`, que é o que a tarefa apanha. Um `except`
+sobre a base deixa acrescentar uma recusa sem tocar na tarefa.
 
-## O que esta função **nunca** pode fazer, no dia em que falar com um modelo
+## O que esta fronteira **nunca** faz
 
-1. **devolver instruções.** O que ela devolve é dados não confiáveis, e o chamador
-   grava-os verbatim num `JSONField` que nunca é comparado num `if` (SECURITY.md
-   §6);
-2. **escolher um artigo, uma unidade ou uma localização.** Nada de extraído
-   escolhe uma entidade do catálogo — isso é a revisão humana, que é obrigatória
-   (CLAUDE.md);
-3. **receber o conteúdo da página sem o marcar como não confiável** no prompt
-   (ARCHITECTURE.md §6).
+1. **devolver instruções.** O que devolve é dados não confiáveis: texto e
+   pedidos de tools, verbatim, que o chamador valida contra um schema antes de
+   fazer o que quer que seja (SECURITY.md §6);
+2. **escolher um artigo, uma unidade ou uma localização** na extração — isso é a
+   revisão humana (CLAUDE.md);
+3. **receber conteúdo do tenant sem o marcar como não confiável** no prompt
+   (ARCHITECTURE.md §6) — o prompt de sistema é de quem chama, e é ele que o
+   diz;
+4. **logar a chave, a pergunta ou a resposta.** O que se loga por chamada é
+   modelo, tokens, custo, duração e a chave de idempotência (ADR 0027, d7).
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from django.conf import settings
@@ -48,51 +53,269 @@ from apps.purchasing.api import PaginaDoDocumento
 
 __all__ = [
     "VERSAO_DO_PROMPT",
+    "ChamadaATool",
     "ClienteDoModeloInexistente",
     "ErroDoModelo",
     "ModeloNaoConfigurado",
     "RespostaDoModelo",
+    "RespostaInvalida",
+    "TempoEsgotado",
+    "chat_configurado",
+    "cliente",
+    "conversar",
+    "custo_em_euros",
     "ler_documento",
     "nome_do_modelo",
+    "nome_do_modelo_de_chat",
 ]
 
-#: A versão do prompt que produziu uma resposta, gravada em cada linha de
-#: extração. `0-sem-prompt` porque não há prompt nenhum: a coluna existe para o
-#: dia em que a resposta de um modelo tiver de ser atribuída a uma versão, e um
-#: valor vazio tornava indistinguível "não havia prompt" de "ninguém preencheu".
+logger = logging.getLogger(__name__)
+
+#: A versão do prompt da **extração**, gravada em cada linha de extração.
+#: `0-sem-prompt` porque não há prompt nenhum (ver `ler_documento`).
 VERSAO_DO_PROMPT = "0-sem-prompt"
+
+#: Um milhão: a unidade da tabela de preços.
+_MILHAO = Decimal("1000000")
+_SEIS_CASAS = Decimal("0.000001")
 
 
 class ErroDoModelo(RuntimeError):
-    """A chamada ao modelo não aconteceu. A tarefa grava a razão e não rebenta."""
+    """A chamada ao modelo não aconteceu ou não serviu. A tarefa grava a razão."""
 
 
 class ModeloNaoConfigurado(ErroDoModelo):
-    """Não há nome de modelo em `settings.AGENTS_EXTRACTION_MODEL`."""
+    """Não há nome de modelo — ou, no chat, não há chave de API."""
 
 
 class ClienteDoModeloInexistente(ErroDoModelo):
-    """Há nome de modelo e não há cliente que o chame."""
+    """Há nome de modelo de extração e não há prompt nem corpo que o chame."""
+
+
+class TempoEsgotado(ErroDoModelo):
+    """O fornecedor não respondeu dentro do `timeout` da chamada."""
+
+
+class RespostaInvalida(ErroDoModelo):
+    """A resposta do fornecedor não tem a forma que se lê."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ChamadaATool:
+    """Um pedido de tool, verbatim: o id do fornecedor, o nome e os argumentos em JSON.
+
+    Os três são texto não confiável. O nome só vale depois de encontrado no
+    registo, e os argumentos só depois de validados pelo schema da tool.
+    """
+
+    id: str
+    nome: str
+    argumentos: str
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class RespostaDoModelo:
-    """O que uma chamada devolve: o payload verbatim e o que ela custou.
+    """O que uma chamada devolve: o conteúdo verbatim e o que ela custou.
 
-    `payload` é um `dict` tal como veio, e é a única coisa deste repositório que
-    se guarda sem a ter lido. O resto são métricas da chamada, que o
-    `ARCHITECTURE.md` §6 exige ("custo em tokens logado").
+    Na extração `payload` é o JSON tal como veio. No chat são `texto`, as
+    `chamadas` a tools e `mensagem_verbatim` — a mensagem do assistente na forma
+    exacta que a chamada seguinte tem de receber de volta, já em `dict` e com
+    nomes nossos, para o SDK não atravessar a fronteira. `motivo_de_paragem` é o
+    `finish_reason` do fornecedor: `stop`, `tool_calls`, `length`.
+
+    O resto são métricas da chamada, que o `ARCHITECTURE.md` §6 exige.
     """
 
     payload: dict[str, Any] = field(default_factory=dict)
+    texto: str = ""
+    chamadas: tuple[ChamadaATool, ...] = ()
+    mensagem_verbatim: dict[str, Any] = field(default_factory=dict)
+    motivo_de_paragem: str = ""
+    modelo: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     cost_eur: Decimal = Decimal("0")
+    duracao_ms: int = 0
 
 
 def nome_do_modelo() -> str:
-    """O modelo configurado, ou string vazia. Uma leitura, num sítio."""
+    """O modelo de extração configurado, ou string vazia. Uma leitura, num sítio."""
     return str(getattr(settings, "AGENTS_EXTRACTION_MODEL", "") or "")
+
+
+def nome_do_modelo_de_chat() -> str:
+    """O modelo do chat configurado, ou string vazia."""
+    return str(getattr(settings, "AGENTS_CHAT_MODEL", "") or "")
+
+
+def _chave_de_api() -> str:
+    """A chave, lida no momento da chamada e nunca guardada em módulo nenhum."""
+    return str(getattr(settings, "AGENTS_CHAT_API_KEY", "") or "")
+
+
+def chat_configurado() -> bool:
+    """Há modelo **e** chave? É a pergunta do 503 `assistente_indisponivel`."""
+    return bool(nome_do_modelo_de_chat()) and bool(_chave_de_api())
+
+
+def cliente() -> Any:
+    """A fábrica do cliente: a única linha que sabe o fornecedor.
+
+    `max_retries=0` porque nenhuma recusa melhora com o tempo e uma retentativa
+    paga duas vezes (ADR 0027, decisão 9); o `timeout` é por chamada e vem das
+    settings. Os testes substituem esta função por uma que devolve um cliente
+    falso — nenhum teste fala com a rede.
+
+    Import no corpo: o SDK só é carregado no processo que o usa, que é o worker.
+    """
+    chave = _chave_de_api()
+    if not chave:
+        raise ModeloNaoConfigurado(
+            "não há chave de API para o assistente: a definição AGENTS_CHAT_API_KEY "
+            "está vazia. Só o worker a recebe, pelo ambiente (ADR 0027)."
+        )
+    import openai
+
+    return openai.OpenAI(
+        api_key=chave,
+        timeout=int(getattr(settings, "AGENTS_CHAT_TIMEOUT_S", 30)),
+        max_retries=0,
+    )
+
+
+def custo_em_euros(*, modelo: str, input_tokens: int, output_tokens: int) -> Decimal:
+    """Os euros de uma chamada, pela tabela de preços. Tokens são a verdade.
+
+    Um modelo fora da tabela custa 0 e deixa um aviso: o teto diário em euros
+    não o trava, e é por isso que o aviso existe em vez de um `KeyError`.
+    """
+    tabela: Mapping[str, Mapping[str, Decimal]] = getattr(
+        settings, "AGENTS_MODEL_PRICES_EUR_PER_MTOKEN", {}
+    )
+    precos = tabela.get(modelo)
+    if precos is None:
+        logger.warning(
+            "modelo sem preço na tabela; custo gravado a zero",
+            extra={"event": "chat_custo", "outcome": "sem_preco"},
+        )
+        return Decimal("0")
+    custo = (
+        Decimal(input_tokens) * Decimal(precos["input"])
+        + Decimal(output_tokens) * Decimal(precos["output"])
+    ) / _MILHAO
+    return custo.quantize(_SEIS_CASAS, rounding=ROUND_HALF_UP)
+
+
+def conversar(
+    *,
+    sistema: str,
+    mensagens: Sequence[Mapping[str, Any]],
+    tools: Sequence[Mapping[str, Any]],
+    max_tokens: int,
+    timeout: int,
+    idempotency_key: str,
+) -> RespostaDoModelo:
+    """Uma chamada de chat com tools. Devolve texto e/ou pedidos de tools, verbatim.
+
+    `sistema` vai como mensagem `system` e as `mensagens` seguem-se tal como
+    vêm — a pergunta é uma mensagem `user` e nunca entra no sistema; os
+    resultados das tools são mensagens `tool` com `tool_call_id`, nunca
+    concatenados no prompt (ADR 0027, decisão 5). `max_tokens` é o
+    `max_completion_tokens` da API. `idempotency_key` é `chat:<mensagem>:<i>`,
+    enviada como cabeçalho e logada — é registo nosso.
+
+    O que se loga: modelo, tokens, custo, duração e a chave. O que nunca se
+    loga: a chave de API, a pergunta, a resposta.
+    """
+    modelo = nome_do_modelo_de_chat()
+    if not modelo:
+        raise ModeloNaoConfigurado(
+            "não há modelo de chat configurado: a definição AGENTS_CHAT_MODEL está vazia."
+        )
+    api = cliente()
+    import openai
+
+    comecou = time.monotonic()
+    try:
+        bruto = api.chat.completions.create(
+            model=modelo,
+            messages=[{"role": "system", "content": sistema}, *mensagens],
+            tools=list(tools) if tools else openai.NOT_GIVEN,
+            max_completion_tokens=max_tokens,
+            timeout=timeout,
+            extra_headers={"Idempotency-Key": idempotency_key},
+        )
+    except openai.APITimeoutError as exc:
+        raise TempoEsgotado(f"o modelo não respondeu em {timeout} s") from exc
+    except openai.OpenAIError as exc:
+        # Só a classe: a mensagem de um erro do fornecedor pode citar o corpo do
+        # pedido, e o corpo tem a pergunta.
+        raise ErroDoModelo(f"{type(exc).__name__} ao chamar o modelo") from exc
+    duracao_ms = int((time.monotonic() - comecou) * 1000)
+
+    resposta = _ler(bruto, modelo=modelo, duracao_ms=duracao_ms)
+    logger.info(
+        "chamada ao modelo de chat",
+        extra={
+            "event": "chat_chamada",
+            "outcome": resposta.motivo_de_paragem or "sem_motivo",
+            "duration_ms": duracao_ms,
+            "count": resposta.input_tokens + resposta.output_tokens,
+            "event_id": idempotency_key,
+        },
+    )
+    return resposta
+
+
+def _ler(bruto: Any, *, modelo: str, duracao_ms: int) -> RespostaDoModelo:
+    """A resposta do SDK em nomes nossos. Lê atributos, não tipos.
+
+    Por atributos e não por `isinstance` do SDK: é o que deixa um cliente falso
+    devolver objectos simples nos testes, e é o que faz esta função ser a única
+    que muda se o SDK mudar a forma.
+    """
+    try:
+        escolha = bruto.choices[0]
+        mensagem = escolha.message
+        motivo = str(escolha.finish_reason or "")
+        texto = str(mensagem.content or "")
+        chamadas = tuple(
+            ChamadaATool(
+                id=str(chamada.id),
+                nome=str(chamada.function.name),
+                argumentos=str(chamada.function.arguments or "{}"),
+            )
+            for chamada in (mensagem.tool_calls or ())
+        )
+        uso = bruto.usage
+        input_tokens = int(uso.prompt_tokens or 0) if uso is not None else 0
+        output_tokens = int(uso.completion_tokens or 0) if uso is not None else 0
+    except (AttributeError, IndexError, TypeError, ValueError) as exc:
+        raise RespostaInvalida(f"{type(exc).__name__} ao ler a resposta do modelo") from exc
+
+    verbatim: dict[str, Any] = {"role": "assistant", "content": texto or None}
+    if chamadas:
+        verbatim["tool_calls"] = [
+            {
+                "id": chamada.id,
+                "type": "function",
+                "function": {"name": chamada.nome, "arguments": chamada.argumentos},
+            }
+            for chamada in chamadas
+        ]
+    return RespostaDoModelo(
+        texto=texto,
+        chamadas=chamadas,
+        mensagem_verbatim=verbatim,
+        motivo_de_paragem=motivo,
+        modelo=modelo,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_eur=custo_em_euros(
+            modelo=modelo, input_tokens=input_tokens, output_tokens=output_tokens
+        ),
+        duracao_ms=duracao_ms,
+    )
 
 
 def ler_documento(*, paginas: Sequence[PaginaDoDocumento]) -> RespostaDoModelo:
@@ -100,8 +323,10 @@ def ler_documento(*, paginas: Sequence[PaginaDoDocumento]) -> RespostaDoModelo:
 
     As páginas chegam como DTO congelado do `purchasing.api` (ADR 0020, decisão
     6), já ordenadas. A assinatura é a que um cliente a sério usaria, e é
-    deliberado: no dia em que houver modelo, o que muda é o corpo desta função e
-    mais nada — nem a tarefa, nem os serviços, nem o contrato.
+    deliberado: no dia em que houver prompt, o que muda é o corpo desta função e
+    mais nada — nem a tarefa, nem os serviços, nem o contrato. O cliente já
+    existe (`cliente()`, ADR 0027); o que falta é o prompt e a leitura da
+    resposta, e ligar a extração ao modelo está fora de âmbito dessa ADR.
     """
     modelo = nome_do_modelo()
     if not modelo:
@@ -112,8 +337,8 @@ def ler_documento(*, paginas: Sequence[PaginaDoDocumento]) -> RespostaDoModelo:
             "tentativa gravada e à espera de revisão à mão."
         )
     raise ClienteDoModeloInexistente(
-        f"o modelo {modelo!r} está configurado mas este projecto não tem "
-        "cliente nenhum que o chame: a extração a sério é uma credencial, um "
-        "prompt e o corpo desta função — ver o docstring de "
-        "apps/agents/modelo.py."
+        f"o modelo {modelo!r} está configurado mas a extração não tem cliente "
+        "nenhum ligado: a fábrica `cliente()` existe desde a ADR 0027 e serve o "
+        "chat; ligar a extração a sério é um prompt e o corpo desta função — "
+        "ver o docstring de apps/agents/modelo.py."
     )

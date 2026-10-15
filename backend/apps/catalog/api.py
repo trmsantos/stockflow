@@ -26,6 +26,8 @@ from apps.catalog.models import (
     Supplier,
     SupplierProductCode,
 )
+from apps.catalog.selectors import procurar_fornecedores as _procurar_fornecedores
+from apps.catalog.selectors import procurar_produtos as _procurar_produtos
 
 __all__ = [
     "Correspondencia",
@@ -43,6 +45,8 @@ __all__ = [
     "memorizar_correspondencias",
     "normalizar_nif",
     "normalizar_unidade",
+    "procurar_artigos",
+    "procurar_fornecedores",
     "produto_por_id",
     "produto_por_sku",
     "produtos_por_id",
@@ -72,6 +76,31 @@ class ProdutoResumo:
     conservation: str
     is_active: bool
     sku: str = ""
+    #: O mínimo do artigo, na unidade base; `0` é "sem mínimo" (ADR 0027,
+    #: decisão 6). Default pela razão do `sku`: o semeador constrói o resumo
+    #: sem o ler.
+    min_quantity: Decimal = Decimal("0")
+
+
+def _resumo_do_produto(p: Product) -> ProdutoResumo:
+    """O `ProdutoResumo` de uma linha. Uma construção, em vez de cinco cópias."""
+    return ProdutoResumo(
+        id=p.id,
+        short_name=p.short_name,
+        base_unit=p.base_unit,
+        display_unit=p.display_unit,
+        display_factor=p.display_factor,
+        track_lots=p.track_lots,
+        expiry_kind=p.expiry_kind or None,
+        conservation=p.conservation,
+        is_active=p.is_active,
+        sku=p.sku,
+        min_quantity=p.min_quantity,
+    )
+
+
+def _resumo_do_fornecedor(f: Supplier) -> FornecedorResumo:
+    return FornecedorResumo(id=f.id, name=f.name, nif=f.nif, is_active=f.is_active)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -123,21 +152,28 @@ def produtos_por_id(
 ) -> Mapping[UUID, ProdutoResumo]:
     """Artigos pelo ID, num mapa."""
     artigos = Product.objects.filter(tenant_id=tenant_id, id__in=ids)
-    return {
-        p.id: ProdutoResumo(
-            id=p.id,
-            short_name=p.short_name,
-            base_unit=p.base_unit,
-            display_unit=p.display_unit,
-            display_factor=p.display_factor,
-            track_lots=p.track_lots,
-            expiry_kind=p.expiry_kind or None,
-            conservation=p.conservation,
-            is_active=p.is_active,
-            sku=p.sku,
-        )
-        for p in artigos
-    }
+    return {p.id: _resumo_do_produto(p) for p in artigos}
+
+
+def procurar_artigos(*, tenant_id: UUID, q: str, limite: int = 10) -> tuple[ProdutoResumo, ...]:
+    """A procura do assistente (ADR 0027, decisão 6): nome ou SKU, por tokens.
+
+    Activos primeiro e inactivos marcados (`is_active`), nunca escondidos. O
+    limite é cortado a 20 no selector.
+    """
+    return tuple(
+        _resumo_do_produto(p) for p in _procurar_produtos(tenant_id=tenant_id, q=q, limite=limite)
+    )
+
+
+def procurar_fornecedores(
+    *, tenant_id: UUID, q: str, limite: int = 10
+) -> tuple[FornecedorResumo, ...]:
+    """A procura de fornecedores do assistente: nome por tokens, NIF exacto."""
+    return tuple(
+        _resumo_do_fornecedor(f)
+        for f in _procurar_fornecedores(tenant_id=tenant_id, q=q, limite=limite)
+    )
 
 
 def embalagens_por_id(
@@ -190,19 +226,7 @@ def fornecedor_por_nif(*, tenant_id: UUID, nif: str) -> FornecedorResumo | None:
 def produto_por_id(*, tenant_id: UUID, product_id: UUID) -> ProdutoResumo | None:
     """Artigo pelo ID, ou None."""
     try:
-        p = Product.objects.get(tenant_id=tenant_id, id=product_id)
-        return ProdutoResumo(
-            id=p.id,
-            short_name=p.short_name,
-            base_unit=p.base_unit,
-            display_unit=p.display_unit,
-            display_factor=p.display_factor,
-            track_lots=p.track_lots,
-            expiry_kind=p.expiry_kind or None,
-            conservation=p.conservation,
-            is_active=p.is_active,
-            sku=p.sku,
-        )
+        return _resumo_do_produto(Product.objects.get(tenant_id=tenant_id, id=product_id))
     except Product.DoesNotExist:
         return None
 
@@ -210,19 +234,7 @@ def produto_por_id(*, tenant_id: UUID, product_id: UUID) -> ProdutoResumo | None
 def produto_por_sku(*, tenant_id: UUID, sku: str) -> ProdutoResumo | None:
     """Artigo pelo SKU (insensível à caixa), ou None."""
     try:
-        p = Product.objects.get(tenant_id=tenant_id, sku__iexact=sku.strip())
-        return ProdutoResumo(
-            id=p.id,
-            short_name=p.short_name,
-            base_unit=p.base_unit,
-            display_unit=p.display_unit,
-            display_factor=p.display_factor,
-            track_lots=p.track_lots,
-            expiry_kind=p.expiry_kind or None,
-            conservation=p.conservation,
-            is_active=p.is_active,
-            sku=p.sku,
-        )
+        return _resumo_do_produto(Product.objects.get(tenant_id=tenant_id, sku__iexact=sku.strip()))
     except Product.DoesNotExist:
         return None
 

@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from django.db.models import Count, Prefetch, QuerySet
@@ -45,6 +47,7 @@ __all__ = [
     "DocumentoCompleto",
     "com_paginas",
     "compor",
+    "compras_confirmadas",
     "compor_muitos",
     "documentos_do_ambito",
     "documentos_visiveis",
@@ -373,4 +376,108 @@ def preco_historico(*, tenant_id: UUID, product_id: UUID, linha: ReceiptLine) ->
         "change_pct": change_pct,
         "reference": ultima_linha.receipt.reference or ultima_linha.receipt.doc_number or "",
         "threshold_pct": THRESHOLD_PCT,
+    }
+
+
+# ---------------------------------------------------------------------------
+# As compras confirmadas de um período (ADR 0027, decisão 6; ADR 0013, decisão 8)
+# ---------------------------------------------------------------------------
+#: Os tipos de documento que **subtraem** (nota de crédito) e os que não trazem
+#: preço (guia de remessa: `line_total` a NULL conta 0 e o documento é contado à
+#: parte). A nota de débito soma como uma fatura.
+DOC_TIPO_QUE_SUBTRAI = "NC"
+DOC_TIPO_SEM_PRECO = "GR"
+
+
+def compras_confirmadas(
+    *,
+    tenant_id: UUID,
+    desde: datetime,
+    ate: datetime,
+    supplier_id: UUID | None = None,
+    product_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Σ `line_total` das linhas confirmadas de mercadoria recebidas em `[desde, ate)`.
+
+    Agrega por **`received_at`** e não por `doc_date` (ADR 0013, decisão 8): o
+    que interessa ao custo do mês é quando a mercadoria entrou, e a resposta diz
+    "recebido entre X e Y". Só receções com `confirmed_at`, só linhas
+    `confirmed` e só `kind=goods` — vasilhame e encargos ficam fora (ADR 0021,
+    decisão 6 e adenda). O `line_total` é **sem IVA** e líquido de desconto, que
+    é o que uma fatura portuguesa imprime por linha; quem lê recebe
+    `iva_incluido: false` para não somar o que não está lá.
+
+    `NC` subtrai, `ND` soma, `GR` não tem preço: conta 0 e devolve o número de
+    documentos sem preço, para a resposta não dizer "gastou 0 €" numa semana em
+    que entraram três guias. Uma linha de outro tipo sem `line_total` conta em
+    `linhas_sem_custo`.
+    """
+    linhas = (
+        ReceiptLine.objects.filter(
+            tenant_id=tenant_id,
+            receipt__tenant_id=tenant_id,
+            receipt__confirmed_at__isnull=False,
+            receipt__received_at__gte=desde,
+            receipt__received_at__lt=ate,
+            status="confirmed",
+            kind="goods",
+        )
+        .select_related("receipt")
+        .order_by("receipt__received_at", "receipt_id", "position")
+    )
+    if supplier_id is not None:
+        linhas = linhas.filter(receipt__supplier_id=supplier_id)
+    if product_id is not None:
+        linhas = linhas.filter(product_id=product_id)
+
+    total = Decimal("0")
+    por_fornecedor: dict[UUID | None, Decimal] = {}
+    por_artigo: dict[UUID | None, Decimal] = {}
+    documentos: set[UUID] = set()
+    documentos_sem_preco: set[UUID] = set()
+    linhas_sem_custo = 0
+    for linha in linhas:
+        rececao = linha.receipt
+        documentos.add(rececao.id)
+        if rececao.doc_type == DOC_TIPO_SEM_PRECO:
+            documentos_sem_preco.add(rececao.id)
+            valor = Decimal("0")
+        elif linha.line_total is None:
+            linhas_sem_custo += 1
+            valor = Decimal("0")
+        elif rececao.doc_type == DOC_TIPO_QUE_SUBTRAI:
+            valor = -linha.line_total
+        else:
+            valor = linha.line_total
+        total += valor
+        por_fornecedor[rececao.supplier_id] = por_fornecedor.get(rececao.supplier_id, 0) + valor
+        por_artigo[linha.product_id] = por_artigo.get(linha.product_id, 0) + valor
+
+    fornecedores = catalog_api.fornecedores_por_id(
+        tenant_id=tenant_id, ids=[i for i in por_fornecedor if i is not None]
+    )
+    produtos = catalog_api.produtos_por_id(
+        tenant_id=tenant_id, ids=[i for i in por_artigo if i is not None]
+    )
+    return {
+        "total_eur": total,
+        "por_fornecedor": [
+            {
+                "supplier_id": sid,
+                "supplier_name": fornecedores[sid].name if sid in fornecedores else "",
+                "total_eur": valor,
+            }
+            for sid, valor in sorted(por_fornecedor.items(), key=lambda par: -par[1])
+        ],
+        "por_artigo": [
+            {
+                "product_id": pid,
+                "product_name": produtos[pid].short_name if pid in produtos else "",
+                "total_eur": valor,
+            }
+            for pid, valor in sorted(por_artigo.items(), key=lambda par: -par[1])
+        ],
+        "documentos": len(documentos),
+        "documentos_sem_preco": len(documentos_sem_preco),
+        "linhas_sem_custo": linhas_sem_custo,
     }

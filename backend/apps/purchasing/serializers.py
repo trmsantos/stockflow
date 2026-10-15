@@ -39,6 +39,7 @@ from decimal import Decimal
 
 from django.core.files.uploadedfile import UploadedFile
 from django.utils.translation import gettext_lazy as _
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.purchasing.ficheiros import (
@@ -640,6 +641,7 @@ class RececaoOutSerializer(serializers.Serializer):
     locations = serializers.SerializerMethodField()
     reference = serializers.CharField(source="receipt.reference", max_length=120, allow_blank=True)
 
+    @extend_schema_field(FornecedorReferenceSerializer)
     def get_supplier(self, obj):
         """Extrai supplier do receipt."""
         return {
@@ -647,30 +649,39 @@ class RececaoOutSerializer(serializers.Serializer):
             "nif": obj["receipt"].supplier_nif,
         }
 
+    @extend_schema_field(serializers.ChoiceField(choices=["needs_review", "confirmed"]))
     def get_status(self, obj):
         """Determina status da receção."""
         return "confirmed" if obj["receipt"].confirmed_at else "needs_review"
 
+    @extend_schema_field(serializers.IntegerField())
     def get_lines_to_review(self, obj):
         """Conta linhas que precisam de revisão."""
         return sum(1 for item in obj["linhas"] if item["linha"].status == "needs_review")
 
+    @extend_schema_field(serializers.IntegerField())
     def get_line_count(self, obj):
         """Total de linhas."""
         return len(obj["linhas"])
 
+    @extend_schema_field(serializers.CharField(allow_blank=True))
     def get_company_name(self, obj):
         """Nome da empresa (tenant)."""
         return obj["receipt"].tenant.name if obj["receipt"].tenant else ""
 
+    @extend_schema_field(serializers.CharField(allow_blank=True))
     def get_company_nif(self, obj):
         """NIF da empresa (tenant)."""
         return ""
 
+    @extend_schema_field(serializers.BooleanField())
     def get_awaiting_invoice(self, obj):
         """Retorna True se está a aguardar fatura."""
         return obj["receipt"].document_id is not None and obj["receipt"].confirmed_at is None
 
+    @extend_schema_field(
+        serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
+    )
     def get_lines_total(self, obj):
         """Soma dos totais das linhas."""
         total = Decimal(0)
@@ -679,6 +690,7 @@ class RececaoOutSerializer(serializers.Serializer):
                 total += linha_data["linha"].line_total
         return total if total else None
 
+    @extend_schema_field(VatBreakdownSerializer(many=True))
     def get_vat_breakdown(self, obj):
         """Breakdown de IVA."""
         # Agrupar linhas por taxa de IVA
@@ -703,6 +715,7 @@ class RececaoOutSerializer(serializers.Serializer):
             for rate, value in sorted(vat_map.items())
         ]
 
+    @extend_schema_field(TemperaturaRegistadaOutSerializer(many=True))
     def get_temperatures(self, obj):
         """Temperaturas registadas."""
         temps = []
@@ -723,6 +736,7 @@ class RececaoOutSerializer(serializers.Serializer):
             })
         return temps
 
+    @extend_schema_field(serializers.BooleanField())
     def get_cold_chain(self, obj):
         """Retorna True se há registos de temperatura."""
         receipt = obj["receipt"]
@@ -731,6 +745,7 @@ class RececaoOutSerializer(serializers.Serializer):
             receipt.frozen_temperature_c is not None
         )
 
+    @extend_schema_field(LocalizacaoReferenceSerializer(allow_null=True))
     def get_location(self, obj):
         """Localização principal da receção."""
         locais = obj["locais"]
@@ -743,6 +758,7 @@ class RececaoOutSerializer(serializers.Serializer):
             }
         return None
 
+    @extend_schema_field(LocalizacaoReferenceSerializer(many=True))
     def get_locations(self, obj):
         """Todas as localizações usadas."""
         locais = obj["locais"]

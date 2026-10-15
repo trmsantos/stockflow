@@ -15,6 +15,7 @@ Reexportação e não definição: cada nome vive no ficheiro onde pertence
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -27,9 +28,13 @@ from apps.purchasing.extracao import (
     ligar_fronteira_da_extracao,
 )
 from apps.purchasing.models import EstadoDaLeitura
+from apps.purchasing.selectors import compras_confirmadas as _compras_confirmadas
 from apps.purchasing.selectors import paginas_do_documento
 
 __all__ = [
+    "ComprasPorArtigo",
+    "ComprasPorFornecedor",
+    "ComprasResumo",
     "EstadoDaLeitura",
     "FronteiraDaExtracao",
     "LeituraDeDocumento",
@@ -38,6 +43,7 @@ __all__ = [
     "fronteira_da_extracao",
     "ligar_fronteira_da_extracao",
     "paginas_do_documento",
+    "compras_confirmadas",
     "criar_documento",
     "criar_receçao",
     "adicionar_linha_recepção",
@@ -59,6 +65,63 @@ class ReceçaoResumo:
     id: UUID
     tenant_id: UUID
     supplier_id: UUID
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ComprasPorFornecedor:
+    """O total comprado a um fornecedor no período. `None` é "sem fornecedor"."""
+
+    supplier_id: UUID | None
+    supplier_name: str
+    total_eur: Decimal
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ComprasPorArtigo:
+    """O total comprado de um artigo no período. `None` é "linha sem artigo"."""
+
+    product_id: UUID | None
+    product_name: str
+    total_eur: Decimal
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ComprasResumo:
+    """As compras confirmadas de um período, agregadas por `received_at` (ADR 0027).
+
+    `total_eur` é **sem IVA**, líquido de desconto, com as notas de crédito a
+    subtrair. `documentos_sem_preco` são as guias de remessa, que contam 0 e
+    ficam contadas para a resposta não dizer "gastou 0 €".
+    """
+
+    total_eur: Decimal
+    por_fornecedor: tuple[ComprasPorFornecedor, ...]
+    por_artigo: tuple[ComprasPorArtigo, ...]
+    documentos: int
+    documentos_sem_preco: int
+    linhas_sem_custo: int
+
+
+def compras_confirmadas(
+    *,
+    tenant_id: UUID,
+    desde: datetime,
+    ate: datetime,
+    supplier_id: UUID | None = None,
+    product_id: UUID | None = None,
+) -> ComprasResumo:
+    """As compras confirmadas recebidas em `[desde, ate)`. Consumidor: `apps/agents`."""
+    dados = _compras_confirmadas(
+        tenant_id=tenant_id, desde=desde, ate=ate, supplier_id=supplier_id, product_id=product_id
+    )
+    return ComprasResumo(
+        total_eur=dados["total_eur"],
+        por_fornecedor=tuple(ComprasPorFornecedor(**f) for f in dados["por_fornecedor"]),
+        por_artigo=tuple(ComprasPorArtigo(**p) for p in dados["por_artigo"]),
+        documentos=dados["documentos"],
+        documentos_sem_preco=dados["documentos_sem_preco"],
+        linhas_sem_custo=dados["linhas_sem_custo"],
+    )
 
 
 def criar_documento(*, tenant_id: UUID) -> DocumentoResumo:

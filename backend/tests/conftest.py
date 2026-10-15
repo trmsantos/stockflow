@@ -65,6 +65,17 @@ APP_ROLE = "stockflow_app"
 #: variável nova na camada de settings entra aqui — senão volta a haver um
 #: teste que passa ou falha em função da máquina.
 SETTINGS_ENV_VARS: tuple[str, ...] = (
+    # As do assistente (ADR 0027). A chave vai aqui pela mesma razão das
+    # outras: um `.env` com chave a sério na máquina de quem corre a suite não
+    # pode ser o que decide se o `POST` responde 202 ou 503.
+    "AGENTS_CHAT_API_KEY",
+    "AGENTS_CHAT_DAILY_BUDGET_EUR",
+    "AGENTS_CHAT_DAILY_MESSAGES_PER_USER",
+    "AGENTS_CHAT_MAX_TOKENS",
+    "AGENTS_CHAT_MAX_TOOL_ITERATIONS",
+    "AGENTS_CHAT_MODEL",
+    "AGENTS_CHAT_RETENTION_DAYS",
+    "AGENTS_CHAT_TIMEOUT_S",
     "ALLOWED_HOSTS",
     "API_DOCS_ENABLED",
     "CACHE_URL",

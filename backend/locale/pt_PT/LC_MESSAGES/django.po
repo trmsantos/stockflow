@@ -388,3 +388,18 @@ msgstr "Receita não encontrada ou inativa."
 
 msgid "Recipe yield_factor must be greater than zero."
 msgstr "O factor de rendimento da receita tem de ser maior que zero."
+
+# ---------------------------------------------------------------------------
+# As recusas do assistente (ADR 0027, decisão 4): `apps/agents/services.py`.
+# ---------------------------------------------------------------------------
+msgid "The assistant is not configured on this server."
+msgstr "O assistente não está configurado neste servidor."
+
+msgid "The assistant's daily limit has been reached. Try again tomorrow."
+msgstr "O limite diário do assistente foi atingido. Tenta de novo amanhã."
+
+msgid "The assistant is still answering the previous question in this conversation."
+msgstr "O assistente ainda está a responder à pergunta anterior desta conversa."
+
+msgid "This conversation has reached its limit of questions. Start a new one."
+msgstr "Esta conversa chegou ao limite de perguntas. Começa uma nova."

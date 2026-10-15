@@ -43,7 +43,7 @@ from django.http import HttpRequest
 
 from apps.accounts.models import Papel, UserManager
 from apps.accounts.permissions import PertenceAoTenant, TemPapel
-from apps.accounts.selectors import membership_no_ambito
+from apps.accounts.selectors import membership_no_ambito, tenants_dos_utilizadores_ativos
 from apps.shared.db import TenantScopeConflict, current_tenant
 
 if TYPE_CHECKING:
@@ -71,6 +71,7 @@ __all__ = [
     "opcao_de_tenant",
     "semear_demonstracao",
     "tenant_scope_exempt",
+    "tenants_dos_utilizadores_ativos",
     "utilizador_atual",
 ]
 

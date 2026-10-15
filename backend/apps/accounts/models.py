@@ -898,6 +898,11 @@ class RotaDeMenu(models.TextChoices):
     INICIO = "inicio", "Início"
     PAINEL = "painel", "Painel de gestão"
     ALERTAS = "alertas", "Alertas"
+    #: O chat sobre stock (ADR 0027, decisão 10). Entrou a 2026-10-15 pela
+    #: ordem da ADR 0009: o id primeiro aqui, o `pnpm gen:api` leva-o ao
+    #: `types.ts`, e o `Record<RotaId, …>` do shell não compila até a rota
+    #: `/assistente` existir na árvore e no registo do cliente.
+    ASSISTENTE = "assistente", "Assistente"
     STOCK = "stock", "Stock"
     CONTAR = "contar", "Contar"
     RECEBER = "receber", "Receber"

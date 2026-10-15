@@ -4,6 +4,74 @@
  */
 
 export interface paths {
+    "/api/v1/assistant/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * As conversas de quem pede, mais recentes primeiro
+         * @description As conversas de uma pessoa com o assistente, num estabelecimento.
+         */
+        get: operations["assistente_conversas_listar"];
+        put?: never;
+        /**
+         * Abrir uma conversa com a primeira pergunta
+         * @description Cria a conversa **e** faz a primeira pergunta: não existe conversa vazia. Responde 202 com a conversa e o turno `pendente`; a resposta chega por polling do `GET` da conversa. 503 `assistente_indisponivel` sem modelo ou chave; 429 `teto_diario_atingido` nos dois tetos diários.
+         */
+        post: operations["assistente_perguntar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Uma conversa com os turnos — o alvo do polling
+         * @description As conversas de uma pessoa com o assistente, num estabelecimento.
+         */
+        get: operations["assistente_conversa"];
+        put?: never;
+        post?: never;
+        /**
+         * Apagar uma conversa minha
+         * @description As conversas de uma pessoa com o assistente, num estabelecimento.
+         */
+        delete: operations["assistente_conversa_apagar"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/conversations/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A pergunta seguinte numa conversa
+         * @description 202 com o turno `pendente`. 409 `resposta_pendente` enquanto o turno anterior não acabar; 409 `conversa_cheia` ao trigésimo turno.
+         */
+        post: operations["assistente_perguntar_na_conversa"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/ativar": {
         parameters: {
             query?: never;
@@ -528,6 +596,51 @@ export interface paths {
         patch: operations["estabelecimento_guardar"];
         trace?: never;
     };
+    "/api/v1/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Localizações do estabelecimento (por posição)
+         * @description Lista paginada de localizações, ordenadas por posição.
+         */
+        get: operations["localizacoes_listar"];
+        put?: never;
+        /**
+         * Criar uma localização
+         * @description Criar uma localização.
+         */
+        post: operations["localizacoes_criar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/locations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Localizações do inventário. */
+        put: operations["locations_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Atualizar localização
+         * @description PATCH uma localização.
+         */
+        patch: operations["localizacoes_atualizar"];
+        trace?: never;
+    };
     "/api/v1/menu": {
         parameters: {
             query?: never;
@@ -570,10 +683,462 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/products": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Artigos do estabelecimento
+         * @description Lista paginada de artigos.
+         */
+        get: operations["produtos_listar"];
+        put?: never;
+        /**
+         * Criar um artigo com embalagem opcional
+         * @description Criar um artigo com embalagem opcional aninhada.
+         */
+        post: operations["produtos_criar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/products/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Artigos do catálogo. */
+        put: operations["products_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Atualizar artigo (sem base_unit, sem min_quantity)
+         * @description PATCH um artigo.
+         */
+        patch: operations["produtos_atualizar"];
+        trace?: never;
+    };
+    "/api/v1/products/{id}/packagings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Embalagens de um artigo
+         * @description GET /products/{id}/packagings — embalagens do artigo.
+         */
+        get: operations["produto_embalagens_listar"];
+        put?: never;
+        /**
+         * Criar embalagem de um artigo
+         * @description POST /products/{id}/packagings — criar embalagem.
+         */
+        post: operations["produto_embalagem_criar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/receipts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description GET /receipts — lista paginada. */
+        get: operations["receipts_list"];
+        put?: never;
+        /** @description POST /receipts — cria receção. */
+        post: operations["receipts_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/receipts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description GET /receipts/{id} — retorna uma receção com estrutura completa. */
+        get: operations["receipts_retrieve"];
+        /** @description ViewSet para receções de mercadoria. */
+        put: operations["receipts_update"];
+        post?: never;
+        /** @description DELETE /receipts/{id} — apaga rascunho. */
+        delete: operations["receipts_destroy"];
+        options?: never;
+        head?: never;
+        /** @description PATCH /receipts/{id} — atualiza cabeçalho. */
+        patch: operations["receipts_partial_update"];
+        trace?: never;
+    };
+    "/api/v1/receipts/{id}/confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description POST /receipts/{id}/confirmation — confirma receção. */
+        post: operations["receipts_confirmation_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/receipts/{id}/lines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description GET/POST /receipts/{id}/lines — lista/cria linhas. */
+        get: operations["receipts_lines_retrieve"];
+        put?: never;
+        /** @description GET/POST /receipts/{id}/lines — lista/cria linhas. */
+        post: operations["receipts_lines_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/receipts/{id}/lines/{linha_id}/confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description POST /receipts/{id}/lines/{linha}/confirmation — revê linha. */
+        post: operations["receipts_lines_confirmation_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/receipts/{id}/temperature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description POST /receipts/{id}/temperature — registra temperatura. */
+        post: operations["receipts_temperature_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/receipts/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description GET /receipts/summary — resumo de receções. */
+        get: operations["receipts_summary_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Alertas de falta, validade a vencer e vencida
+         * @description Alertas de falta, validade a vencer e vencida.
+         */
+        get: operations["stock_alerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/by-location": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stock por (product, lot) em localização
+         * @description Stock por (product, lot) nessa localização.
+         */
+        get: operations["stock_by_location"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/by-product": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stock por (location, lot) desse produto
+         * @description Stock por (location, lot) desse produto.
+         */
+        get: operations["stock_by_product"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/movements/adjustment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Registar ajuste de stock
+         * @description Registar um ajuste de stock (POST /stock/movements/adjustment).
+         */
+        post: operations["stock_movements_adjustment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/movements/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transferir stock entre localizações
+         * @description Transferir stock entre localizações (POST /stock/movements/transfer).
+         */
+        post: operations["stock_movements_transfer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/movements/waste": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Registar desperdício
+         * @description Registar um desperdício (POST /stock/movements/waste).
+         */
+        post: operations["stock_movements_waste"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resumo de stock agregado por produto
+         * @description Resumo de stock agregado por produto.
+         */
+        get: operations["stock_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suppliers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fornecedores do estabelecimento
+         * @description Lista paginada de fornecedores.
+         */
+        get: operations["fornecedores_listar"];
+        put?: never;
+        /**
+         * Criar um fornecedor
+         * @description Criar um fornecedor.
+         */
+        post: operations["fornecedores_criar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suppliers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Fornecedores do catálogo. */
+        put: operations["suppliers_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Atualizar fornecedor
+         * @description PATCH um fornecedor.
+         */
+        patch: operations["fornecedores_atualizar"];
+        trace?: never;
+    };
+    "/api/v1/suppliers/{id}/product-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Códigos de um fornecedor (memória)
+         * @description GET /suppliers/{id}/product-codes — memória do fornecedor.
+         */
+        get: operations["fornecedor_codigos_listar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Entrada de ajuste (POST /stock/movements/adjustment). */
+        AdjustmentRequest: {
+            /**
+             * Format: uuid
+             * @description UUID da localização
+             */
+            location_id: string;
+            /**
+             * Format: uuid
+             * @description UUID do lote (obrigatório se product.track_lots=True)
+             */
+            lot_id?: string | null;
+            /**
+             * Format: uuid
+             * @description UUID do produto
+             */
+            product_id: string;
+            /**
+             * Format: decimal
+             * @description Quantidade ± (positivo = entrada, negativo = saída)
+             */
+            quantity: string;
+            /**
+             * @description Motivo do ajuste
+             *
+             *     * `expired` - expired
+             *     * `spoiled` - spoiled
+             *     * `prep_loss` - prep_loss
+             *     * `breakage` - breakage
+             *     * `other` - other
+             */
+            reason: components["schemas"]["ReasonEnum"];
+            /** @description Detalhes opcionais se reason='other' */
+            reason_detail?: string;
+        };
+        /** @description Alerta de stock (falta, validade a vencer, vencida) (fatia 4). */
+        Alert: {
+            /** @description shortage|expiring_soon|expired */
+            readonly alert_type?: string;
+            /**
+             * Format: date-time
+             * @description Data de validade (NULL se sem data)
+             */
+            readonly expires_at?: string | null;
+            /** Format: uuid */
+            readonly location_id?: string | null;
+            readonly location_name?: string | null;
+            readonly lot_code?: string | null;
+            /** Format: uuid */
+            readonly product_id?: string;
+            readonly product_name?: string;
+            /** @description critical|warning|info */
+            readonly severity?: string;
+        };
         /**
          * @description O corpo do `POST /auth/ativar`: o fragmento do link e, talvez, a password.
          *
@@ -618,6 +1183,69 @@ export interface components {
         AtivacaoInRequest: {
             fragmento: string;
             password?: string;
+        };
+        /**
+         * @description * `g` - grama
+         *     * `ml` - mililitro
+         *     * `un` - unidade
+         * @enum {string}
+         */
+        BaseUnitEnum: "g" | "ml" | "un";
+        /** @enum {unknown} */
+        BlankEnum: "";
+        /** @description Entrada para PATCH de cabeçalho (zona da pessoa). */
+        CabecalhoIn: {
+            doc_type?: components["schemas"]["DocTypeEnum"];
+            /** Format: uuid */
+            location?: string;
+            /** Format: date-time */
+            received_at?: string;
+            /** Format: uuid */
+            supplier?: string | null;
+        };
+        /** @description Entrada para PATCH de cabeçalho (zona da pessoa). */
+        CabecalhoInRequest: {
+            doc_type?: components["schemas"]["DocTypeEnum"];
+            /** Format: uuid */
+            location?: string;
+            /** Format: date-time */
+            received_at?: string;
+            /** Format: uuid */
+            supplier?: string | null;
+        };
+        /**
+         * @description * `ambient` - ambiente
+         *     * `chilled` - refrigerado
+         *     * `frozen` - congelado
+         * @enum {string}
+         */
+        ConservacaoEnum: "ambient" | "chilled" | "frozen";
+        /**
+         * @description * `chilled` - chilled
+         *     * `frozen` - frozen
+         * @enum {string}
+         */
+        ConservacaoMedidaEnum: "chilled" | "frozen";
+        /** @description A conversa inteira, com os turnos por posição (≤ 30). */
+        ConversaOut: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_message_at: string;
+            messages: components["schemas"]["MensagemOut"][];
+            title: string;
+        };
+        /** @description Uma linha da lista de conversas: sem os turnos, que vêm no detalhe. */
+        ConversaResumoOut: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_message_at: string;
+            title: string;
         };
         /**
          * @description A resposta de `criar` e de `reenviar`: o convite **e** o segredo, uma vez.
@@ -708,6 +1336,16 @@ export interface components {
          */
         ConviteOutEstadoEnum: "pendente" | "expirado" | "aceite" | "revogado";
         /**
+         * @description * `FT` - FT
+         *     * `FR` - FR
+         *     * `FS` - FS
+         *     * `NC` - NC
+         *     * `ND` - ND
+         *     * `GR` - GR
+         * @enum {string}
+         */
+        DocTypeEnum: "FT" | "FR" | "FS" | "NC" | "ND" | "GR";
+        /**
          * @description O corpo do `POST /documents`: um ficheiro, ou nada.
          *
          *     **Nada** é o slot que o QR nomeia (ADR 0020, decisão 2): o desktop cria o
@@ -763,6 +1401,36 @@ export interface components {
             source: components["schemas"]["OrigemDoDocumentoEnum"];
             state: components["schemas"]["EstadoDoDocumentoEnum"];
         };
+        /** @description Embalagem nova (aninhada em `ProdutoInSerializer`). */
+        EmbalagemIn: {
+            /**
+             * Format: decimal
+             * @description Unidades base por embalagem
+             */
+            base_quantity: string;
+            /**
+             * @description 8, 12, 13 ou 14 dígitos com dígito de controlo
+             * @default
+             */
+            ean: string | null;
+            /** @description Rótulo único por artigo (sem caixa) */
+            label: string;
+        };
+        /** @description Embalagem nova (aninhada em `ProdutoInSerializer`). */
+        EmbalagemInRequest: {
+            /**
+             * Format: decimal
+             * @description Unidades base por embalagem
+             */
+            base_quantity: string;
+            /**
+             * @description 8, 12, 13 ou 14 dígitos com dígito de controlo
+             * @default
+             */
+            ean: string | null;
+            /** @description Rótulo único por artigo (sem caixa) */
+            label: string;
+        };
         /**
          * @description O corpo de uma recusa: `code` estável para ramificar, `detail` para ler.
          *
@@ -782,6 +1450,16 @@ export interface components {
             code: string;
             detail: string;
         };
+        /**
+         * @description * `teto_de_iteracoes` - o modelo chamou tools demasiadas vezes
+         *     * `teto_de_custo` - o orçamento diário do estabelecimento esgotou-se
+         *     * `tempo_esgotado` - o modelo não respondeu a tempo
+         *     * `resposta_invalida` - a resposta do modelo não se lê
+         *     * `erro_do_modelo` - o fornecedor do modelo recusou a chamada
+         *     * `pertenca_revogada` - quem perguntou já não pertence ao estabelecimento
+         * @enum {string}
+         */
+        ErrorCodeEnum: "teto_de_iteracoes" | "teto_de_custo" | "tempo_esgotado" | "resposta_invalida" | "erro_do_modelo" | "pertenca_revogada";
         /**
          * @description O corpo do `PATCH /estabelecimento`: os três campos configuráveis.
          *
@@ -851,6 +1529,14 @@ export interface components {
          */
         EstadoDaLeituraEnum: "pendente" | "lido" | "ilegivel" | "erro";
         /**
+         * @description * `pendente` - à espera de um worker
+         *     * `a_responder` - o modelo está a responder
+         *     * `respondida` - respondida
+         *     * `erro` - a resposta falhou
+         * @enum {string}
+         */
+        EstadoDaMensagemEnum: "pendente" | "a_responder" | "respondida" | "erro";
+        /**
          * @description * `aguarda_captura` - slot aberto, à espera da primeira página
          *     * `expirado` - o slot expirou sem página nenhuma
          *     * `a_normalizar` - há páginas e a imagem ainda não está pronta
@@ -862,6 +1548,13 @@ export interface components {
          * @enum {string}
          */
         EstadoDoDocumentoEnum: "aguarda_captura" | "expirado" | "a_normalizar" | "a_extrair" | "lido" | "ilegivel" | "erro" | "descartado";
+        /**
+         * @description * `` - Sem rótulo
+         *     * `use_by` - consumir até
+         *     * `best_before` - consumir de preferência antes de
+         * @enum {string}
+         */
+        ExpiryKindEnum: "use_by" | "best_before";
         /**
          * @description O que o modelo leu, num painel **só de leitura**.
          *
@@ -927,6 +1620,51 @@ export interface components {
             position: number;
             /** Format: date-time */
             received_at: string;
+        };
+        /** @description Fornecedor novo. */
+        FornecedorIn: {
+            /** @description Nome único por tenant (sem caixa) */
+            name: string;
+            /**
+             * @description 9 dígitos com dígito de controlo
+             * @default
+             */
+            nif: string | null;
+        };
+        /** @description Fornecedor novo. */
+        FornecedorInRequest: {
+            /** @description Nome único por tenant (sem caixa) */
+            name: string;
+            /**
+             * @description 9 dígitos com dígito de controlo
+             * @default
+             */
+            nif: string | null;
+        };
+        /** @description Fornecedor lido (GET, POST 201). */
+        FornecedorOut: {
+            /** Format: uuid */
+            readonly id?: string;
+            readonly is_active?: boolean;
+            readonly name?: string;
+            readonly nif?: string;
+        };
+        /** @description Fornecedor PATCH. */
+        FornecedorPatchIn: {
+            is_active?: boolean;
+            name?: string;
+            nif?: string | null;
+        };
+        /** @description Fornecedor PATCH. */
+        FornecedorPatchInRequest: {
+            is_active?: boolean;
+            name?: string;
+            nif?: string | null;
+        };
+        /** @description Referência a um fornecedor (para RececaoOut). */
+        FornecedorReference: {
+            name: string;
+            nif: string;
         };
         /**
          * @description Uma linha do corpo do `PUT /menu`: o que o tenant decidiu sobre uma rota.
@@ -996,6 +1734,12 @@ export interface components {
             visivel: boolean;
         };
         /**
+         * @description * `pt-pt` - Português (Portugal)
+         *     * `en` - English
+         * @enum {string}
+         */
+        LanguageEnum: "pt-pt" | "en";
+        /**
          * @description Uma linha **como o modelo a leu**. Texto não confiável, já validado.
          *
          *     Chega aqui depois de o `agents` a ter validado contra o seu schema à escrita
@@ -1023,6 +1767,46 @@ export interface components {
             /** Format: decimal */
             vat_rate: string | null;
         };
+        /** @description Localização nova. */
+        LocalizacaoIn: {
+            /** @description Nome único por tenant (sem caixa) */
+            name: string;
+            /** @description Posição (ordem). Default: fim da lista */
+            position?: number | null;
+        };
+        /** @description Localização nova. */
+        LocalizacaoInRequest: {
+            /** @description Nome único por tenant (sem caixa) */
+            name: string;
+            /** @description Posição (ordem). Default: fim da lista */
+            position?: number | null;
+        };
+        /** @description Localização lida (GET, POST 201, PATCH 200). */
+        LocalizacaoOut: {
+            /** Format: uuid */
+            readonly id?: string;
+            readonly is_active?: boolean;
+            readonly name?: string;
+            readonly position?: number;
+        };
+        /** @description Localização PATCH. */
+        LocalizacaoPatchIn: {
+            is_active?: boolean;
+            name?: string;
+            position?: number;
+        };
+        /** @description Localização PATCH. */
+        LocalizacaoPatchInRequest: {
+            is_active?: boolean;
+            name?: string;
+            position?: number;
+        };
+        /** @description Referência a uma localização (para LinhaOut). */
+        LocalizacaoReference: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         /**
          * @description O corpo do `POST /auth/login`: um email e uma password, e nada mais.
          *
@@ -1043,6 +1827,39 @@ export interface components {
             email: string;
             password: string;
         };
+        /**
+         * @description Um turno, como o `GET` da conversa o serve — o alvo do polling.
+         *
+         *     `status` e `error_code` vêm das propriedades **derivadas** do modelo: um
+         *     turno parado há mais de dois minutos lê-se `erro/tempo_esgotado` sem
+         *     ninguém o escrever (ADR 0027, decisão 3). Campos normais com `source` e não
+         *     `SerializerMethodField`, pela razão medida no `purchasing`: um campo de
+         *     método sai opcional no `types.ts`, e estes o servidor manda sempre.
+         */
+        MensagemOut: {
+            answer: string;
+            asked_by_name: string;
+            /** Format: decimal */
+            cost_eur: string;
+            error_code: (components["schemas"]["ErrorCodeEnum"] | components["schemas"]["NullEnum"]) | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** Format: uuid */
+            id: string;
+            input_tokens: number;
+            language: components["schemas"]["LanguageEnum"];
+            model: string;
+            output_tokens: number;
+            position: number;
+            question: string;
+            role_at_time: components["schemas"]["PapelEnum"];
+            /** Format: date-time */
+            started_at: string | null;
+            status: components["schemas"]["EstadoDaMensagemEnum"];
+            tool_calls: components["schemas"]["ToolCallOut"][];
+        };
+        /** @enum {unknown} */
+        NullEnum: null;
         /**
          * @description * `upload` - ficheiro enviado
          *     * `capture` - fotografado no telemóvel
@@ -1067,6 +1884,21 @@ export interface components {
             normalized: boolean;
             position: number;
             width: number | null;
+        };
+        PaginatedConversaResumoOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["ConversaResumoOut"][];
         };
         PaginatedConviteOutList: {
             /** @example 123 */
@@ -1098,6 +1930,66 @@ export interface components {
             previous?: string | null;
             results: components["schemas"]["DocumentoOut"][];
         };
+        PaginatedFornecedorOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["FornecedorOut"][];
+        };
+        PaginatedLocalizacaoOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["LocalizacaoOut"][];
+        };
+        PaginatedProdutoOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["ProdutoOut"][];
+        };
+        PaginatedRececaoOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["RececaoOut"][];
+        };
         /**
          * @description * `owner` - dono
          *     * `manager` - gerente
@@ -1105,6 +1997,15 @@ export interface components {
          * @enum {string}
          */
         PapelEnum: "owner" | "manager" | "staff";
+        /**
+         * @description O corpo dos dois `POST`: a pergunta, e mais nada.
+         *
+         *     `max_length=2000` é a coluna. `trim_whitespace` é o default do `CharField`
+         *     e é o que se quer: uma pergunta só de espaços é um 400, não uma chamada paga.
+         */
+        PerguntaInRequest: {
+            question: string;
+        };
         /**
          * @description O corpo do `PATCH /auth/preferencias`: o tema que esta pessoa prefere.
          *
@@ -1125,6 +2026,260 @@ export interface components {
         PreferenciasInRequest: {
             tema: components["schemas"]["TemaEnum"];
         };
+        /** @description Produto novo com embalagem opcional aninhada. */
+        ProdutoIn: {
+            /**
+             * @description g, ml ou un
+             *
+             *     * `g` - grama
+             *     * `ml` - mililitro
+             *     * `un` - unidade
+             */
+            base_unit: components["schemas"]["BaseUnitEnum"];
+            /**
+             * @description ambient, chilled ou frozen
+             *
+             *     * `ambient` - ambiente
+             *     * `chilled` - refrigerado
+             *     * `frozen` - congelado
+             * @default ambient
+             */
+            conservation: components["schemas"]["ConservacaoEnum"];
+            /**
+             * Format: decimal
+             * @description Unidades base por unidade de apresentação
+             */
+            display_factor: string;
+            /** @description Unidade de apresentação (p.ex. kg) */
+            display_unit: string;
+            /**
+             * @description use_by ou best_before
+             *
+             *     * `` - Sem rótulo
+             *     * `use_by` - consumir até
+             *     * `best_before` - consumir de preferência antes de
+             * @default
+             */
+            expiry_kind: (components["schemas"]["ExpiryKindEnum"] | components["schemas"]["BlankEnum"] | components["schemas"]["NullEnum"]) | null;
+            /** @description Primeira embalagem (opcional) */
+            packaging?: components["schemas"]["EmbalagemIn"] | null;
+            /** @description Nome único por tenant (sem caixa) */
+            short_name: string;
+            /** @description SKU único por tenant (código de referência) */
+            sku?: string;
+            /**
+             * @description Se exige lote
+             * @default false
+             */
+            track_lots: boolean;
+        };
+        /** @description Produto novo com embalagem opcional aninhada. */
+        ProdutoInRequest: {
+            /**
+             * @description g, ml ou un
+             *
+             *     * `g` - grama
+             *     * `ml` - mililitro
+             *     * `un` - unidade
+             */
+            base_unit: components["schemas"]["BaseUnitEnum"];
+            /**
+             * @description ambient, chilled ou frozen
+             *
+             *     * `ambient` - ambiente
+             *     * `chilled` - refrigerado
+             *     * `frozen` - congelado
+             * @default ambient
+             */
+            conservation: components["schemas"]["ConservacaoEnum"];
+            /**
+             * Format: decimal
+             * @description Unidades base por unidade de apresentação
+             */
+            display_factor: string;
+            /** @description Unidade de apresentação (p.ex. kg) */
+            display_unit: string;
+            /**
+             * @description use_by ou best_before
+             *
+             *     * `` - Sem rótulo
+             *     * `use_by` - consumir até
+             *     * `best_before` - consumir de preferência antes de
+             * @default
+             */
+            expiry_kind: (components["schemas"]["ExpiryKindEnum"] | components["schemas"]["BlankEnum"] | components["schemas"]["NullEnum"]) | null;
+            /** @description Primeira embalagem (opcional) */
+            packaging?: components["schemas"]["EmbalagemInRequest"] | null;
+            /** @description Nome único por tenant (sem caixa) */
+            short_name: string;
+            /** @description SKU único por tenant (código de referência) */
+            sku?: string;
+            /**
+             * @description Se exige lote
+             * @default false
+             */
+            track_lots: boolean;
+        };
+        /** @description Produto lido (GET, POST 201, PATCH 200). */
+        ProdutoOut: {
+            readonly base_unit?: string;
+            readonly conservation?: string;
+            /** Format: date-time */
+            readonly created_at?: string;
+            /** Format: decimal */
+            readonly display_factor?: string;
+            readonly display_unit?: string;
+            readonly expiry_kind?: string;
+            /** Format: uuid */
+            readonly id?: string;
+            readonly is_active?: boolean;
+            /** Format: decimal */
+            readonly min_quantity?: string;
+            readonly short_name?: string;
+            readonly sku?: string;
+            readonly track_lots?: boolean;
+        };
+        /** @description Produto PATCH: só os campos editáveis (sem base_unit, sem min_quantity). */
+        ProdutoPatchIn: {
+            conservation?: components["schemas"]["ConservacaoEnum"];
+            /** Format: decimal */
+            display_factor?: string;
+            display_unit?: string;
+            expiry_kind?: (components["schemas"]["ExpiryKindEnum"] | components["schemas"]["BlankEnum"] | components["schemas"]["NullEnum"]) | null;
+            is_active?: boolean;
+            short_name?: string;
+            sku?: string;
+            track_lots?: boolean;
+        };
+        /** @description Produto PATCH: só os campos editáveis (sem base_unit, sem min_quantity). */
+        ProdutoPatchInRequest: {
+            conservation?: components["schemas"]["ConservacaoEnum"];
+            /** Format: decimal */
+            display_factor?: string;
+            display_unit?: string;
+            expiry_kind?: (components["schemas"]["ExpiryKindEnum"] | components["schemas"]["BlankEnum"] | components["schemas"]["NullEnum"]) | null;
+            is_active?: boolean;
+            short_name?: string;
+            sku?: string;
+            track_lots?: boolean;
+        };
+        /**
+         * @description * `expired` - expired
+         *     * `spoiled` - spoiled
+         *     * `prep_loss` - prep_loss
+         *     * `breakage` - breakage
+         *     * `other` - other
+         * @enum {string}
+         */
+        ReasonEnum: "expired" | "spoiled" | "prep_loss" | "breakage" | "other";
+        /** @description Entrada para criar receção. */
+        RececaoIn: {
+            customer_name?: string;
+            customer_nif?: string;
+            /** Format: date */
+            doc_date?: string | null;
+            doc_number?: string;
+            doc_type?: components["schemas"]["DocTypeEnum"];
+            /** Format: uuid */
+            document?: string | null;
+            /** Format: decimal */
+            document_total_eur?: string | null;
+            /** Format: uuid */
+            location: string;
+            /** Format: date-time */
+            received_at?: string;
+            /** Format: uuid */
+            supplier?: string | null;
+            supplier_name?: string;
+            supplier_nif?: string;
+        };
+        /** @description Entrada para criar receção. */
+        RececaoInRequest: {
+            customer_name?: string;
+            customer_nif?: string;
+            /** Format: date */
+            doc_date?: string | null;
+            doc_number?: string;
+            doc_type?: components["schemas"]["DocTypeEnum"];
+            /** Format: uuid */
+            document?: string | null;
+            /** Format: decimal */
+            document_total_eur?: string | null;
+            /** Format: uuid */
+            location: string;
+            /** Format: date-time */
+            received_at?: string;
+            /** Format: uuid */
+            supplier?: string | null;
+            supplier_name?: string;
+            supplier_nif?: string;
+        };
+        /** @description Saída de receção. */
+        RececaoOut: {
+            readonly awaiting_invoice?: boolean;
+            readonly cold_chain?: boolean;
+            readonly company_name?: string;
+            readonly company_nif?: string;
+            /** Format: date-time */
+            confirmed_at: string | null;
+            confirmed_by: string | null;
+            customer_name: string;
+            customer_nif: string;
+            /** Format: date */
+            doc_date: string | null;
+            doc_number: string;
+            doc_type: components["schemas"]["DocTypeEnum"];
+            /** Format: uuid */
+            document: string | null;
+            /** Format: decimal */
+            document_total: string | null;
+            /** Format: uuid */
+            id: string;
+            readonly line_count?: number;
+            readonly lines_to_review?: number;
+            /** Format: decimal */
+            readonly lines_total?: string | null;
+            readonly location?: components["schemas"]["LocalizacaoReference"] | null;
+            readonly locations?: components["schemas"]["LocalizacaoReference"][];
+            /** Format: date-time */
+            received_at: string;
+            reference: string;
+            readonly status?: components["schemas"]["RececaoOutStatusEnum"];
+            readonly supplier?: components["schemas"]["FornecedorReference"];
+            /** Format: uuid */
+            supplier_id: string | null;
+            readonly temperatures?: components["schemas"]["TemperaturaRegistadaOut"][];
+            readonly vat_breakdown?: components["schemas"]["VatBreakdown"][];
+        };
+        /** @description Saída de receção. */
+        RececaoOutRequest: {
+            /** Format: date-time */
+            confirmed_at: string | null;
+            confirmed_by: string | null;
+            customer_name: string;
+            customer_nif: string;
+            /** Format: date */
+            doc_date: string | null;
+            doc_number: string;
+            doc_type: components["schemas"]["DocTypeEnum"];
+            /** Format: uuid */
+            document: string | null;
+            /** Format: decimal */
+            document_total: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            received_at: string;
+            reference: string;
+            /** Format: uuid */
+            supplier_id: string | null;
+        };
+        /**
+         * @description * `needs_review` - needs_review
+         *     * `confirmed` - confirmed
+         * @enum {string}
+         */
+        RececaoOutStatusEnum: "needs_review" | "confirmed";
         /**
          * @description O corpo de uma recusa: `code` estável para ramificar, `detail` para ler.
          *
@@ -1144,6 +2299,11 @@ export interface components {
          *     cada resposta estão nos docstrings do `views.py`.
          */
         RecusaDeDocumentoOut: {
+            code: string;
+            detail: string;
+        };
+        /** @description O corpo de uma recusa: `code` da lista fechada e `detail` traduzido. */
+        RecusaDoAssistenteOut: {
             code: string;
             detail: string;
         };
@@ -1189,12 +2349,13 @@ export interface components {
          * @description * `inicio` - Início
          *     * `painel` - Painel de gestão
          *     * `alertas` - Alertas
+         *     * `assistente` - Assistente
          *     * `stock` - Stock
          *     * `contar` - Contar
          *     * `receber` - Receber
          * @enum {string}
          */
-        RotaIdEnum: "inicio" | "painel" | "alertas" | "stock" | "contar" | "receber";
+        RotaIdEnum: "inicio" | "painel" | "alertas" | "assistente" | "stock" | "contar" | "receber";
         /**
          * @description A resposta dos cinco endpoints de autenticação. Sempre esta forma.
          *
@@ -1221,6 +2382,71 @@ export interface components {
          * @enum {string}
          */
         SessaoOutEstadoEnum: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa";
+        /** @description Detalhe de stock por (product, lot) ou (location, lot) (fatia 4). */
+        StockDetail: {
+            /**
+             * Format: date-time
+             * @description Data de validade (NULL se sem data)
+             */
+            readonly expires_at?: string | null;
+            /** Format: uuid */
+            readonly location_id?: string | null;
+            readonly location_name?: string | null;
+            readonly lot_code?: string | null;
+            /** Format: uuid */
+            readonly product_id?: string;
+            readonly product_name?: string;
+            /**
+             * Format: decimal
+             * @description Quantidade em unidade base
+             */
+            readonly quantity?: string;
+            /**
+             * Format: double
+             * @description Quantidade × custo unitário.
+             */
+            readonly total_value?: number | null;
+            /**
+             * Format: decimal
+             * @description Custo unitário (NULL se zero)
+             */
+            readonly unit_cost?: string | null;
+        };
+        /** @description Resposta de um movimento de stock criado (201). */
+        StockMovementResponse: {
+            /** Format: date-time */
+            readonly created_at?: string;
+            readonly location_name?: string;
+            readonly lot_code?: string | null;
+            /** Format: uuid */
+            readonly movement_id?: string;
+            readonly product_name?: string;
+            /** Format: decimal */
+            readonly quantity?: string;
+            /** Format: decimal */
+            readonly unit_cost?: string;
+        };
+        /** @description Resumo de stock agregado por produto (painel, fatia 4). */
+        StockSummary: {
+            /** Format: uuid */
+            readonly product_id?: string;
+            readonly product_name?: string;
+            /**
+             * Format: decimal
+             * @description Quantidade total em unidade base
+             */
+            readonly quantity?: string;
+            /**
+             * Format: double
+             * @description Quantidade × custo unitário.
+             */
+            readonly total_value?: number | null;
+            /**
+             * Format: decimal
+             * @description Custo unitário (NULL se zero)
+             */
+            readonly unit_cost?: string | null;
+        };
         /**
          * @description * `escuro` - Escuro
          *     * `meio_termo` - Meio termo
@@ -1228,6 +2454,15 @@ export interface components {
          * @enum {string}
          */
         TemaEnum: "escuro" | "meio_termo" | "claro";
+        /** @description Temperatura registada em receção. */
+        TemperaturaRegistadaOut: {
+            /** Format: decimal */
+            celsius: string;
+            conservation: components["schemas"]["ConservacaoMedidaEnum"];
+            /** Format: date-time */
+            measured_at: string;
+            measured_by: string;
+        };
         /**
          * @description O corpo do `POST /auth/tenant-ativo`: o estabelecimento a activar.
          *
@@ -1273,6 +2508,45 @@ export interface components {
             nome: string;
             papel: components["schemas"]["PapelEnum"];
         };
+        /** @description Uma entrada do rasto, já revalidada à leitura (`chamadas_validadas`). */
+        ToolCallOut: {
+            args: {
+                [key: string]: unknown;
+            };
+            ms: number;
+            name: string;
+            ok: boolean;
+            rows: number;
+            truncated: boolean;
+        };
+        /** @description Entrada de transferência (POST /stock/movements/transfer). */
+        TransferRequest: {
+            /**
+             * Format: uuid
+             * @description UUID da localização de origem
+             */
+            from_location_id: string;
+            /**
+             * Format: uuid
+             * @description UUID do lote (obrigatório se product.track_lots=True)
+             */
+            lot_id?: string | null;
+            /**
+             * Format: uuid
+             * @description UUID do produto
+             */
+            product_id: string;
+            /**
+             * Format: decimal
+             * @description Quantidade > 0 (em unidade base)
+             */
+            quantity: string;
+            /**
+             * Format: uuid
+             * @description UUID da localização de destino
+             */
+            to_location_id: string;
+        };
         /**
          * @description Quem está autenticado: id e email, e mais nada.
          *
@@ -1294,12 +2568,56 @@ export interface components {
             id: string;
             tema: components["schemas"]["TemaEnum"];
         };
+        /** @description Breakdown de IVA. */
+        VatBreakdown: {
+            /** Format: decimal */
+            base: string;
+            /** Format: decimal */
+            rate: string;
+            /** Format: decimal */
+            vat: string;
+        };
         /**
          * @description * `normal` - Regime normal
          *     * `isento_art_53` - Isento (art. 53.º)
          * @enum {string}
          */
         VatRegimeEnum: "normal" | "isento_art_53";
+        /** @description Entrada de desperdício (POST /stock/movements/waste). */
+        WasteRequest: {
+            /**
+             * Format: uuid
+             * @description UUID da localização
+             */
+            location_id: string;
+            /**
+             * Format: uuid
+             * @description UUID do lote (obrigatório se product.track_lots=True)
+             */
+            lot_id?: string | null;
+            /**
+             * Format: uuid
+             * @description UUID do produto
+             */
+            product_id: string;
+            /**
+             * Format: decimal
+             * @description Quantidade > 0 (em unidade base)
+             */
+            quantity: string;
+            /**
+             * @description Motivo do desperdício
+             *
+             *     * `expired` - expired
+             *     * `spoiled` - spoiled
+             *     * `prep_loss` - prep_loss
+             *     * `breakage` - breakage
+             *     * `other` - other
+             */
+            reason: components["schemas"]["ReasonEnum"];
+            /** @description Detalhes opcionais se reason='other' */
+            reason_detail?: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -1309,6 +2627,170 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    assistente_conversas_listar: {
+        parameters: {
+            query?: {
+                /** @description A page number within the paginated result set. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedConversaResumoOutList"];
+                };
+            };
+        };
+    };
+    assistente_perguntar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PerguntaInRequest"];
+                "multipart/form-data": components["schemas"]["PerguntaInRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversaOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoAssistenteOut"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoAssistenteOut"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoAssistenteOut"];
+                };
+            };
+        };
+    };
+    assistente_conversa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this conversa. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversaOut"];
+                };
+            };
+        };
+    };
+    assistente_conversa_apagar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this conversa. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No response body */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    assistente_perguntar_na_conversa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this conversa. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PerguntaInRequest"];
+                "multipart/form-data": components["schemas"]["PerguntaInRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MensagemOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoAssistenteOut"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoAssistenteOut"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoAssistenteOut"];
+                };
+            };
+        };
+    };
     auth_ativar: {
         parameters: {
             query?: never;
@@ -1858,6 +3340,101 @@ export interface operations {
             };
         };
     };
+    localizacoes_listar: {
+        parameters: {
+            query?: {
+                /** @description A page number within the paginated result set. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedLocalizacaoOutList"];
+                };
+            };
+        };
+    };
+    localizacoes_criar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalizacaoInRequest"];
+                "multipart/form-data": components["schemas"]["LocalizacaoInRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalizacaoIn"];
+                };
+            };
+        };
+    };
+    locations_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this localização. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalizacaoOut"];
+                };
+            };
+        };
+    };
+    localizacoes_atualizar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this localização. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["LocalizacaoPatchInRequest"];
+                "multipart/form-data": components["schemas"]["LocalizacaoPatchInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalizacaoPatchIn"];
+                };
+            };
+        };
+    };
     menu_guardar: {
         parameters: {
             query?: never;
@@ -1896,6 +3473,712 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RotaDeMenuOut"][];
+                };
+            };
+        };
+    };
+    produtos_listar: {
+        parameters: {
+            query?: {
+                /** @description Filtrar por estado (true/false/null) */
+                active?: boolean;
+                /** @description A page number within the paginated result set. */
+                page?: number;
+                /** @description Procurar por nome curto */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedProdutoOutList"];
+                };
+            };
+        };
+    };
+    produtos_criar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProdutoInRequest"];
+                "multipart/form-data": components["schemas"]["ProdutoInRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProdutoIn"];
+                };
+            };
+        };
+    };
+    products_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this artigo. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProdutoOut"];
+                };
+            };
+        };
+    };
+    produtos_atualizar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this artigo. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ProdutoPatchInRequest"];
+                "multipart/form-data": components["schemas"]["ProdutoPatchInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProdutoPatchIn"];
+                };
+            };
+        };
+    };
+    produto_embalagens_listar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this artigo. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProdutoOut"];
+                };
+            };
+        };
+    };
+    produto_embalagem_criar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this artigo. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProdutoOut"];
+                };
+            };
+        };
+    };
+    receipts_list: {
+        parameters: {
+            query?: {
+                estado?: string;
+                /** @description A page number within the paginated result set. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedRececaoOutList"];
+                };
+            };
+        };
+    };
+    receipts_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RececaoInRequest"];
+                "multipart/form-data": components["schemas"]["RececaoInRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoIn"];
+                };
+            };
+        };
+    };
+    receipts_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    receipts_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RececaoOutRequest"];
+                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    receipts_destroy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No response body */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    receipts_partial_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CabecalhoInRequest"];
+                "multipart/form-data": components["schemas"]["CabecalhoInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CabecalhoIn"];
+                };
+            };
+        };
+    };
+    receipts_confirmation_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RececaoOutRequest"];
+                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    receipts_lines_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    receipts_lines_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RececaoOutRequest"];
+                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    receipts_lines_confirmation_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+                linha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RececaoOutRequest"];
+                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    receipts_temperature_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receção de mercadoria. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RececaoOutRequest"];
+                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    receipts_summary_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    stock_alerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Alert"][];
+                };
+            };
+        };
+    };
+    stock_by_location: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockDetail"][];
+                };
+            };
+        };
+    };
+    stock_by_product: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockDetail"][];
+                };
+            };
+        };
+    };
+    stock_movements_adjustment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdjustmentRequest"];
+                "multipart/form-data": components["schemas"]["AdjustmentRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockMovementResponse"];
+                };
+            };
+        };
+    };
+    stock_movements_transfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferRequest"];
+                "multipart/form-data": components["schemas"]["TransferRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockMovementResponse"];
+                };
+            };
+        };
+    };
+    stock_movements_waste: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WasteRequest"];
+                "multipart/form-data": components["schemas"]["WasteRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockMovementResponse"];
+                };
+            };
+        };
+    };
+    stock_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockSummary"][];
+                };
+            };
+        };
+    };
+    fornecedores_listar: {
+        parameters: {
+            query?: {
+                /** @description Filtrar por estado */
+                active?: boolean;
+                /** @description A page number within the paginated result set. */
+                page?: number;
+                /** @description Procurar por nome */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedFornecedorOutList"];
+                };
+            };
+        };
+    };
+    fornecedores_criar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FornecedorInRequest"];
+                "multipart/form-data": components["schemas"]["FornecedorInRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FornecedorIn"];
+                };
+            };
+        };
+    };
+    suppliers_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this fornecedor. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FornecedorOut"];
+                };
+            };
+        };
+    };
+    fornecedores_atualizar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this fornecedor. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["FornecedorPatchInRequest"];
+                "multipart/form-data": components["schemas"]["FornecedorPatchInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FornecedorPatchIn"];
+                };
+            };
+        };
+    };
+    fornecedor_codigos_listar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this fornecedor. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FornecedorOut"];
                 };
             };
         };

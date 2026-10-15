@@ -38,6 +38,10 @@ api_v1_patterns = [
     path("", include("apps.catalog.urls")),
     # Inventário: localizações (ADR 0021, fatia 2). O ledger vem na fatia 3.
     path("", include("apps.inventory.urls")),
+    # O assistente (ADR 0027): `/assistant/conversations`. Com âmbito, como
+    # tudo o que não declara o contrário; as três rotas entram no lado com
+    # âmbito da lista fechada do `tests/test_rls_isolation.py`.
+    path("", include("apps.agents.urls")),
 ]
 
 if settings.API_DOCS_ENABLED:

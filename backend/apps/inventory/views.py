@@ -13,12 +13,10 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
-from django.db.models import F, Max, QuerySet
-from django.utils import timezone
+from django.db.models import Max, QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -28,10 +26,11 @@ from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import PertenceAoTenant
-from apps.inventory.models import Location, Lot, StockLevel, StockMovement
+from apps.inventory.models import Location, StockMovement
 from apps.inventory.selectors import (
     listar_localizacoes,
     localizacoes_do_ambito,
+    stock_alerts,
     stock_by_location,
     stock_by_product,
     stock_summary,
@@ -317,9 +316,8 @@ class StockPanelViewSet(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # Construir alertas
-        alerts_data = self._build_alerts(
-            request.tenant.id,
+        alerts_data = stock_alerts(
+            tenant_id=request.tenant.id,
             severity=severity,
             product_id=product_id,
             location_id=location_id,
@@ -335,109 +333,6 @@ class StockPanelViewSet(viewsets.ViewSet):
                 "page_size": self.page_size,
             }
         )
-
-    def _build_alerts(
-        self,
-        tenant_id,
-        severity: str = "",
-        product_id=None,
-        location_id=None,
-    ) -> list:
-        """Construir alertas de falta, validade a vencer e vencida."""
-        now = timezone.now()
-        seven_days = timezone.timedelta(days=7)
-        alerts = []
-
-        # Query 1: Falta de stock
-        shortage_qs = (
-            StockLevel.objects.filter(
-                tenant_id=tenant_id,
-                quantity__gt=Decimal("0"),
-                product__min_quantity__isnull=False,
-                product__min_quantity__gt=0,
-            )
-            .exclude(quantity__gte=F("product__min_quantity"))
-            .select_related("product", "location")
-        )
-
-        if product_id:
-            shortage_qs = shortage_qs.filter(product_id=product_id)
-        if location_id:
-            shortage_qs = shortage_qs.filter(location_id=location_id)
-
-        for level in shortage_qs:
-            if not severity or severity == "critical":
-                alerts.append(
-                    {
-                        "alert_type": "shortage",
-                        "severity": "critical",
-                        "product_id": level.product_id,
-                        "product_name": level.product.short_name,
-                        "location_id": level.location_id,
-                        "location_name": level.location.name,
-                        "lot_code": None,
-                        "expires_at": None,
-                    }
-                )
-
-        # Query 2: Validade a vencer (7 dias)
-        expiring_qs = (
-            Lot.objects.filter(
-                tenant_id=tenant_id,
-                expires_at__isnull=False,
-                expires_at__gte=now,
-                expires_at__lt=now + seven_days,
-            )
-            .select_related("product")
-        )
-
-        if product_id:
-            expiring_qs = expiring_qs.filter(product_id=product_id)
-
-        for lot in expiring_qs:
-            if not severity or severity == "warning":
-                alerts.append(
-                    {
-                        "alert_type": "expiring_soon",
-                        "severity": "warning",
-                        "product_id": lot.product_id,
-                        "product_name": lot.product.short_name,
-                        "location_id": None,
-                        "location_name": None,
-                        "lot_code": lot.code,
-                        "expires_at": lot.expires_at,
-                    }
-                )
-
-        # Query 3: Validade vencida
-        expired_qs = (
-            Lot.objects.filter(
-                tenant_id=tenant_id,
-                expires_at__isnull=False,
-                expires_at__lt=now,
-            )
-            .select_related("product")
-        )
-
-        if product_id:
-            expired_qs = expired_qs.filter(product_id=product_id)
-
-        for lot in expired_qs:
-            if not severity or severity == "critical":
-                alerts.append(
-                    {
-                        "alert_type": "expired",
-                        "severity": "critical",
-                        "product_id": lot.product_id,
-                        "product_name": lot.product.short_name,
-                        "location_id": None,
-                        "location_name": None,
-                        "lot_code": lot.code,
-                        "expires_at": lot.expires_at,
-                    }
-                )
-
-        return alerts
 
 
 @extend_schema_view(

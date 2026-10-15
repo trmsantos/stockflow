@@ -224,6 +224,18 @@ _ROTAS: Final[tuple[RotaDoRegisto, ...]] = (
         campo=False,
     ),
     RotaDoRegisto(
+        route_id=RotaDeMenu.ASSISTENTE,
+        ordem_default=25,
+        # Os três papéis usam o assistente (ADR 0027, decisão 8, confirmado pelo
+        # dono): as tools de stock lêem o que os endpoints do painel já abrem
+        # aos três, e a única tool restrita (`compras_por_periodo`) é filtrada
+        # pelo papel dentro da tarefa, não pelo menu.
+        papeis=TODOS_OS_PAPEIS,
+        # Escritório: lista de conversas à esquerda e transcrição à direita.
+        # Funciona por deep link no telemóvel e não é rota de campo.
+        campo=False,
+    ),
+    RotaDoRegisto(
         route_id=RotaDeMenu.STOCK,
         ordem_default=30,
         papeis=TODOS_OS_PAPEIS,

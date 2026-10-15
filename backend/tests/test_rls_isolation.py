@@ -799,6 +799,12 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
     # porque é o resolver que o middleware consulta — normalizá-lo aqui era
     # escrever uma segunda versão da verdade neste teste.
     assert com_ambito == [
+        # As três rotas do assistente (ADR 0027, decisão 4). Com âmbito, que é o
+        # default: a conversa é lida e escrita dentro do estabelecimento da
+        # sessão, e a tarefa que responde abre o seu próprio `tenant_scope`.
+        "api/v1/^assistant/conversations$",
+        "api/v1/^assistant/conversations/(?P<pk>[^/.]+)$",
+        "api/v1/^assistant/conversations/(?P<pk>[^/.]+)/messages$",
         "api/v1/^convites$",
         "api/v1/^convites/(?P<pk>[^/.]+)/reenviar$",
         "api/v1/^convites/(?P<pk>[^/.]+)/revogar$",

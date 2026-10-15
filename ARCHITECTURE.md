@@ -139,11 +139,12 @@ livre — `apps.notifications` a importar `apps.inventory.api` dá `BROKEN` e ex
    `tenant_id` é argumento obrigatório e o corpo corre dentro de `tenant_scope`. A dispensa é
    explícita (a base `SystemTask`, com `tenant_scope_exempt`) e só a podem ter duas coisas: o cron
    que itera tenants e o consumidor da outbox, que lê a linha sob `system_scope()` e reentra em
-   `tenant_scope(row.tenant_id)` antes de tocar em mais nada. **Das duas, existe uma** — a do
-   consumidor. O cron que itera tenants não existe e não é esquecimento: teria de ler o
-   `accounts_tenant`, cuja política não tem o disjunto `app.scope`, logo dentro de `system_scope()`
-   devolve zero linhas sem erro. Dar-lho é uma decisão de ADR, porque alarga o alcance do âmbito de
-   sistema, que hoje é uma tabela só.
+   `tenant_scope(row.tenant_id)` antes de tocar em mais nada. **Existem as duas** desde a ADR 0027
+   (purga das conversas do assistente), e o cron **não lê o `accounts_tenant`**: a política dessa
+   tabela não tem o disjunto `app.scope`, logo dentro de `system_scope()` devolve zero linhas sem
+   erro, e dar-lho alargava o alcance do âmbito de sistema. O cron descobre os tenants pelo
+   `accounts_user.tenant_ids` (`unnest` sobre os utilizadores ativos, ADR 0007) e reentra em
+   `tenant_scope(tenant_id)` por cada um — o âmbito de sistema continua a alcançar uma tabela só.
 10. Um worker Celery lê a `outbox`, publica o evento aos `handlers.py` subscritos, marca como
    processado — a marca commita **na mesma transação** que os handlers. Handlers são idempotentes
    (chave: `event_id`), porque a reentrega existe: um handler que levante desfaz os irmãos que
@@ -199,7 +200,7 @@ utilizador revê linha a linha → `purchasing.confirm_receipt` → `inventory.a
 
 **Alertas**: tarefa periódica lê `StockLevel`/`Lot` → `notifications` envia digest diário por tenant.
 
-Dependências permitidas (import-linter): `agents → purchasing.api, catalog.api` · `purchasing → inventory.api, catalog.api`
+Dependências permitidas (import-linter): `agents → purchasing.api, catalog.api, inventory.api` · `purchasing → inventory.api, catalog.api`
 · `recipes → inventory.api, catalog.api` · `inventory → catalog.api` · todos → `accounts.api, shared` e `<m>.events`
 de qualquer módulo · `shared → nada` (nem `accounts.api`). Nada mais.
 

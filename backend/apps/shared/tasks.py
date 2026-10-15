@@ -31,18 +31,21 @@ própria, a `SystemTask`, e declara-se assim:
     @shared_task(name="…", base=SystemTask)
     def ...
 
-A ADR 0005 nomeia **duas** coisas que a podem ter. Hoje existe uma:
+A ADR 0005 nomeia **duas** coisas que a podem ter, e desde 2026-10-15 existem as
+duas:
 
 * **o consumidor da outbox** (`shared.consumir_outbox`, aqui em baixo), que lê a
   linha sob `system_scope()` e reentra em `tenant_scope(row.tenant_id)` antes de
   tocar em mais nada;
-* **o cron que itera tenants**, que **não existe** — e não por esquecimento. Ele
-  teria de ler a lista de estabelecimentos, e a política do `accounts_tenant`
-  compara `id` contra `app.tenant_id` sem o disjunto `app.scope`: dentro de
+* **o cron que itera tenants** (`agents.purgar_conversas_expiradas`, ADR 0027),
+  que **não lê o `accounts_tenant`** — e não por esquecimento. A política dessa
+  tabela compara `id` contra `app.tenant_id` sem o disjunto `app.scope`: dentro de
   `system_scope()` essa leitura devolve **zero linhas sem erro**, que é o defeito
-  silencioso que a ADR 0007 existe para evitar. Dar-lhe o disjunto de sistema é
-  uma decisão de ADR — alarga o alcance do âmbito de sistema, que hoje é uma
-  tabela só — e não se toma ao lado de uma entrada de `beat`.
+  silencioso que a ADR 0007 existe para evitar. Dar-lhe o disjunto de sistema
+  alargava o alcance do âmbito de sistema, que continua a ser uma tabela só, e o
+  dono recusou-o. O cron descobre os tenants pelo `accounts_user.tenant_ids` (a
+  tabela sem política, o único bit legível fora de âmbito — ADR 0007), fecha o
+  bloco e enfileira uma `TenantTask` por tenant.
 
 Uma tarefa dispensada **não** tem âmbito nenhum: se toca em dados de um tenant,
 abre `tenant_scope` ela mesma.

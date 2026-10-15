@@ -481,6 +481,12 @@ class RececaoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, PertenceAoTenant]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "rececoes"
+    # `none()` ao nível da classe, como o `LocalizacaoViewSet`: é daqui que o
+    # drf-spectacular deriva o tipo do `pk` do caminho — o `get_queryset` lê o
+    # `request.tenant`, que não existe na geração do schema, e sem isto o `id`
+    # saía como "string" com um warning que o `--fail-on-warn` transforma em
+    # exit 1. Nunca é usado para servir pedidos: o `get_queryset` sobrepõe-se.
+    queryset = Receipt.objects.none()
 
     def get_queryset(self) -> QuerySet:
         """Filtrado por tenant."""
@@ -610,6 +616,11 @@ class RececaoViewSet(viewsets.ModelViewSet):
             "results": serializer.data
         })
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("linha_id", OpenApiTypes.UUID, OpenApiParameter.PATH, required=True),
+        ]
+    )
     @action(detail=True, methods=["post"], url_path=r"lines/(?P<linha_id>[^/.]+)/confirmation")
     def line_confirmation(self, request, pk=None, linha_id=None):
         """POST /receipts/{id}/lines/{linha}/confirmation — revê linha."""

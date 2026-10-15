@@ -224,6 +224,10 @@ def test_o_enum_tem_exatamente_os_ids_do_registo_do_shell() -> None:
         "inicio",
         "painel",
         "alertas",
+        # O assistente (ADR 0027, decisão 10), a 2026-10-15: o sétimo id a
+        # atravessar as duas pontas pela ordem da ADR 0009 — primeiro aqui,
+        # depois o `gen:api`, e o `Record` do shell não compila até ter a rota.
+        "assistente",
         "stock",
         "contar",
         "receber",
@@ -334,7 +338,7 @@ def test_sem_linhas_o_menu_e_o_dos_defaults(cenario: Cenario) -> None:
         "que faz `grupo ?? registo.grupo`, e resolvê-lo no servidor prendia o "
         "tenant a um default que ele nunca escolheu — e numa língua só."
     )
-    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 40, 50]
+    assert [item["ordem"] for item in menu] == [10, 15, 20, 25, 30, 40, 50]
 
 
 def test_sem_estabelecimento_ativo_o_menu_vem_vazio(cenario: Cenario) -> None:
@@ -366,6 +370,7 @@ def test_o_owner_guarda_o_menu_e_a_sessao_passa_a_devolve_lo(cenario: Cenario) -
         _item(RotaDeMenu.INICIO, grupo="Gestão", ordem=30),
         _item(RotaDeMenu.PAINEL, grupo="Gestão", ordem=35),
         _item(RotaDeMenu.ALERTAS, grupo="Gestão", ordem=40),
+        _item(RotaDeMenu.ASSISTENTE, grupo="Gestão", ordem=45),
         _item(RotaDeMenu.STOCK, grupo="Gestão", ordem=50, visivel=False),
     ]
 

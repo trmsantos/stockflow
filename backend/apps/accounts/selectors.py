@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from django.db.models import QuerySet
+from django.db.models import F, Func, QuerySet, UUIDField
 
 from apps.accounts.menu import ItemDeMenu, rota_do_registo
 from apps.accounts.models import (
@@ -31,6 +31,7 @@ from apps.accounts.models import (
     Membership,
     RotaDeMenu,
     TenantMenuItem,
+    User,
 )
 
 __all__ = [
@@ -39,7 +40,34 @@ __all__ = [
     "itens_de_menu_do_ambito",
     "membership_no_ambito",
     "projeccao_de_menu",
+    "tenants_dos_utilizadores_ativos",
 ]
+
+
+def tenants_dos_utilizadores_ativos() -> tuple[UUID, ...]:
+    """Os ids de tenant que algum utilizador activo pode tentar, sem âmbito.
+
+    É a quinta leitura deste ficheiro e a única que corre **fora** de qualquer
+    âmbito, e pode: lê o `accounts_user.tenant_ids`, que é o único bit legível
+    fora de âmbito (ADR 0007), e nada mais. É o caminho que o
+    `_revogar_demonstracoes_anteriores` já percorre, agora para a purga das
+    conversas do assistente (ADR 0027, decisão 2): o cron que itera tenants não
+    lê o `accounts_tenant` — a política dessa tabela não tem o disjunto de
+    sistema, e dar-lho foi recusado pelo dono — descobre-os por aqui.
+
+    `unnest` em SQL e `DISTINCT` na base de dados, em vez de achatar listas em
+    Python: o número de utilizadores cresce com os clientes e o que se quer é
+    uma lista de ids, uma vez por dia. Um tenant sem nenhum utilizador activo
+    não aparece — e também não tem conversas de ninguém.
+    """
+    ids = (
+        User.objects.filter(is_active=True)
+        .annotate(tenant=Func(F("tenant_ids"), function="unnest", output_field=UUIDField()))
+        .values_list("tenant", flat=True)
+        .distinct()
+        .order_by("tenant")
+    )
+    return tuple(ids)
 
 
 def membership_no_ambito(*, user_id: UUID, tenant_id: UUID) -> Membership | None:
