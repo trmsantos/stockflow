@@ -508,9 +508,13 @@ class RececaoViewSet(viewsets.ModelViewSet):
         return Response(output.data)
 
     def list(self, request, *args, **kwargs):
-        """GET /receipts — lista paginada."""
+        """GET /receipts — lista paginada na forma do DRF (`count`, `results`).
+
+        Cada receção vai **composta** (`_compor_rececao`), como no `retrieve`:
+        o `RececaoOutSerializer` lê `receipt.*` de um dicionário e não de um
+        `Receipt` — passar-lhe as linhas cruas era o 500 que o ecrã Receber via.
+        """
         estado = request.query_params.get("estado", None)
-        page = int(request.query_params.get("page", 1))
 
         queryset = self.get_queryset()
 
@@ -518,18 +522,20 @@ class RececaoViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(confirmed_at__isnull=True)
         elif estado == "hoje":
             from django.utils import timezone
+
             today = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
             queryset = queryset.filter(confirmed_at__gte=today)
 
-        # Ordenação
         queryset = queryset.order_by("-received_at")
 
-        # Paginação
-        page_size = 50
-        offset = (page - 1) * page_size
-        items = queryset[offset : offset + page_size]
-
-        serializer = self.get_serializer(items, many=True)
+        pagina = self.paginate_queryset(queryset)
+        itens = pagina if pagina is not None else list(queryset)
+        compostos = [self._compor_rececao(receipt) for receipt in itens]
+        serializer = RececaoOutSerializer(
+            compostos, many=True, context=self.get_serializer_context()
+        )
+        if pagina is not None:
+            return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
