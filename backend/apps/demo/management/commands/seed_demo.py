@@ -1,15 +1,22 @@
-"""`manage.py seed_demo` — semear dados de teste para Increment 1.
+"""`manage.py seed_demo` — dados de desenvolvimento para o frontend real.
 
-Cria um tenant, utilizadores, 50 produtos, localizações, 10 movimentos de stock,
-2 receções (1 confirmada, 1 em revisão) com dados reais para validar endpoints.
+Três lojas, com as mesmas três contas em todas — uma por papel — e, em cada
+loja, 50 produtos, 3 localizações, 3 fornecedores, 10 movimentos de stock e
+2 receções (1 confirmada, 1 em revisão).
 
 Uso:
-    uv run manage.py seed_demo --create-tenant                 # Cria tenant novo
-    uv run manage.py seed_demo --tenant-id <uuid>              # Usa tenant existente
-    uv run manage.py seed_demo --list                          # Lista tenants e seus IDs
+    uv run manage.py seed_demo --create-tenant        # as três lojas e as contas
+    uv run manage.py seed_demo --tenant-id <uuid>     # só os dados, num tenant existente
+    uv run manage.py seed_demo --list                 # as lojas das contas de demo
 
-Determinismo: os UUIDs, nomes e quantidades são fixos para reprodutibilidade.
-Idempotência: não cria duplicados (procura por tenant_id primeiro).
+Contas (password `DemoPassword123!`, ou a de `--password` ao criar): owner@demo.pt (dono), manager@demo.pt
+(gerente), staff@demo.pt (colaborador).
+
+Idempotente nas lojas, contas, pertenças, produtos, localizações e fornecedores:
+os UUIDs das lojas são fixos, as pertenças passam pelo `conceder_pertenca` (que
+também espelha `User.tenant_ids` — sem isso o login não encontra a loja) e o
+catálogo é procurado pelo nome antes de ser criado. Os movimentos e as receções
+são um ledger e acrescentam-se a cada execução.
 """
 
 from __future__ import annotations
@@ -18,12 +25,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.utils import timezone
 
 from apps.accounts.api import (
+    Papel,
     criar_membership,
     criar_tenant,
     criar_usuario,
@@ -34,11 +42,20 @@ from apps.inventory.api import MovementDTO, criar_localizacao, record_movements
 from apps.purchasing.api import adicionar_linha_recepção, criar_receçao
 from apps.shared.db import tenant_scope
 
-# Constantes de papel e unidades (importadas localmente onde necessário)
-_PAPEL_OWNER = "owner"
-_PAPEL_STAFF = "staff"
-
 __all__ = ["Command"]
+
+#: (email, papel, nome exibido). As mesmas contas em todas as lojas.
+CONTAS_DE_DEMO: tuple[tuple[str, str, str], ...] = (
+    ("owner@demo.pt", Papel.OWNER, "Dono"),
+    ("manager@demo.pt", Papel.MANAGER, "Gerente"),
+    ("staff@demo.pt", Papel.STAFF, "Colaborador"),
+)
+
+LOJAS_DE_DEMO = ("Loja Chiado", "Loja Amoreiras", "Loja Colombo")
+
+
+def _id_da_loja(indice: int) -> UUID:
+    return UUID(f"00000000-0000-4000-8000-{indice + 1:012d}")
 
 
 @dataclass
@@ -56,178 +73,79 @@ class SeedResult:
 
 
 class Command(BaseCommand):
-    """Django command para semear dados de teste."""
+    """Django command para semear dados de desenvolvimento."""
 
-    help = "Semeia dados de teste: tenant, users, produtos, movimentos, receções"
+    help = "Semeia as lojas de demo: contas, pertenças, catálogo, movimentos e receções"
 
     def add_arguments(self, parser: CommandParser) -> None:
-        """Argumentos do comando."""
         group = parser.add_mutually_exclusive_group(required=True)
         group.add_argument(
             "--create-tenant",
             action="store_true",
-            help="Cria um tenant novo com UUID gerado aleatoriamente",
+            help="Cria (ou reutiliza) as três lojas de demo com as três contas",
         )
         group.add_argument(
             "--tenant-id",
             type=str,
-            help="Usa um tenant existente (passa o UUID)",
+            help="Semeia só os dados num tenant existente (passa o UUID)",
         )
         group.add_argument(
             "--list",
             action="store_true",
-            help="Lista todos os tenants de demonstração",
+            help="Lista as lojas a que as contas de demo pertencem",
         )
-
         parser.add_argument(
-            "--name",
-            default="Demo Resto",
-            help="Nome do tenant (só com --create-tenant). Padrão: 'Demo Resto'",
+            "--password",
+            default="DemoPassword123!",
+            help="Password das contas de demo quando são criadas (default: DemoPassword123!)",
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        """Handler principal do comando."""
         if options["list"]:
             self._listar_tenants()
             return
 
         try:
             if options["create_tenant"]:
-                self._semear_3_tenants_completo()
+                self._semear_lojas(password=options["password"])
             else:
-                tenant_id = UUID(options["tenant_id"])
-                result = self._semear_existente(tenant_id=tenant_id)
+                result = self._semear_existente(tenant_id=UUID(options["tenant_id"]))
                 self._imprimir_resultado(result)
         except Exception as erro:
             raise CommandError(f"Erro ao semear: {erro}") from erro
 
     # -----------------------------------------------------------------------
-    # Semear 3 tenants completos com users compartilhados
+    # As três lojas, com as mesmas contas
     # -----------------------------------------------------------------------
 
-    def _semear_3_tenants_completo(self) -> None:
-        """Cria 3 tenants com owner, staff e employee com acesso a todos."""
-        # Criar users globais (compartilhados entre tenants)
-        owner = criar_usuario(
-            email="owner@demo.pt",
-            password="DemoPassword123!",
-            is_active=True,
-        )
-        staff = criar_usuario(
-            email="staff@demo.pt",
-            password="DemoPassword123!",
-            is_active=True,
-        )
-        employee = criar_usuario(
-            email="employee@demo.pt",
-            password="DemoPassword123!",
-            is_active=True,
-        )
-        self.stdout.write("✓ Users criados: owner@demo.pt, staff@demo.pt, employee@demo.pt")
+    def _semear_lojas(self, *, password: str) -> None:
+        utilizadores = [
+            (criar_usuario(email=email, password=password), papel, nome)
+            for email, papel, nome in CONTAS_DE_DEMO
+        ]
+        self.stdout.write("✓ Contas: " + ", ".join(email for email, _, _ in CONTAS_DE_DEMO))
 
-        # Criar 3 tenants e adicionar todos os users a cada um
-        tenant_names = ["Loja Chiado", "Loja Amoreiras", "Loja Colombo"]
-        for offset, nome in enumerate(tenant_names):
-            tenant_id = UUID(f"00000000-0000-4000-8000-{offset+1:012d}")
-
-            # Primeiro tenant: cria owner, segundo e terceiro: reutiliza
-            if offset == 0:
-                result = self._semear_novo_com_offset(tenant_id=tenant_id, nome=nome, offset=offset)
-            else:
-                # Criar tenant vazio e adicionar users manualmente
-                tenant = criar_tenant(name=nome, id=tenant_id)
-
-                with tenant_scope(tenant_id):
-                    # Adicionar owner
+        for indice, nome_da_loja in enumerate(LOJAS_DE_DEMO):
+            tenant = criar_tenant(name=nome_da_loja, id=_id_da_loja(indice))
+            # Dentro do âmbito da loja: é a política de `accounts_membership` que
+            # o exige, e o `conceder_pertenca` recusa escrever fora dele.
+            with tenant_scope(tenant.id):
+                for user, papel, display_name in utilizadores:
                     criar_membership(
-                        user_id=owner.id,
-                        tenant_id=tenant_id,
-                        role=_PAPEL_OWNER,
-                        display_name="Dono",
-                        is_active=True,
+                        user_id=user.id,
+                        tenant_id=tenant.id,
+                        role=papel,
+                        display_name=display_name,
                     )
-
-                    # Semear dados completos
-                    product_ids = self._semear_produtos(tenant, offset=offset)
-                    location_ids = self._semear_localizacoes(tenant)
-                    supplier_ids = self._semear_fornecedores(tenant)
-                    stock_movement_ids = self._semear_movimentos(tenant, product_ids, location_ids, owner)
-                    receipt_ids = self._semear_receções(tenant, product_ids, supplier_ids, owner)
-
-            # Adicionar staff e employee a este tenant
-            with tenant_scope(tenant_id):
-                # Staff já tem papel de staff (ou criar se não existir)
-                criar_membership(
-                    user_id=staff.id,
-                    tenant_id=tenant_id,
-                    role=_PAPEL_STAFF,
-                    display_name="Colaborador",
-                    is_active=True,
-                )
-                # Employee é um novo papel
-                criar_membership(
-                    user_id=employee.id,
-                    tenant_id=tenant_id,
-                    role="employee",
-                    display_name="Funcionário",
-                    is_active=True,
-                )
-            self.stdout.write(f"✓ {nome} criado com owner, staff e employee")
-
-    # -----------------------------------------------------------------------
-    # Semear novo tenant
-    # -----------------------------------------------------------------------
-
-    def _semear_novo(self, *, tenant_id: UUID, nome: str) -> SeedResult:
-        """Cria tenant novo, users e todos os dados de teste."""
-        return self._semear_novo_com_offset(tenant_id=tenant_id, nome=nome, offset=0)
-
-    def _semear_novo_com_offset(self, *, tenant_id: UUID, nome: str, offset: int = 0) -> SeedResult:
-        """Cria tenant novo, users e todos os dados de teste com offset de IDs."""
-        # 1. Criar tenant via API
-        tenant = criar_tenant(name=nome, id=tenant_id)
-        self.stdout.write(f"✓ Tenant criado: {tenant.id} ({nome})")
-
-        # 2. Criar users via API (reutilizar existentes)
-        owner = criar_usuario(
-            email="owner@demo.pt",
-            password="DemoPassword123!",
-            is_active=True,
-        )
-        staff = criar_usuario(
-            email="staff@demo.pt",
-            password="DemoPassword123!",
-            is_active=True,
-        )
-        self.stdout.write("✓ Users criados: owner@demo.pt, staff@demo.pt")
-
-        # 3. Criar memberships via API
-        with tenant_scope(tenant.id):
-            criar_membership(
-                user_id=owner.id,
-                tenant_id=tenant.id,
-                role=_PAPEL_OWNER,
-                display_name="Dono",
-                is_active=True,
+            result = self._semear_existente(tenant_id=tenant.id)
+            self.stdout.write(
+                f"✓ {nome_da_loja} ({tenant.id}): {len(result.product_ids)} produtos, "
+                f"{len(result.location_ids)} localizações, {len(result.supplier_ids)} fornecedores, "
+                f"+{len(result.stock_movement_ids)} movimentos, +{len(result.receipt_ids)} receções"
             )
-            criar_membership(
-                user_id=staff.id,
-                tenant_id=tenant.id,
-                role=_PAPEL_STAFF,
-                display_name="Colaborador",
-                is_active=True,
-            )
-            self.stdout.write("✓ Memberships criados")
-
-        # 4. Semear resto com offset
-        return self._semear_existente_com_offset(tenant_id=tenant.id, offset=offset)
 
     def _semear_existente(self, *, tenant_id: UUID) -> SeedResult:
-        """Semeia dados de teste num tenant existente."""
-        return self._semear_existente_com_offset(tenant_id=tenant_id, offset=0)
-
-    def _semear_existente_com_offset(self, *, tenant_id: UUID, offset: int = 0) -> SeedResult:
-        """Semeia dados de teste num tenant existente com offset de IDs."""
+        """Semeia os dados num tenant que já tem dono e colaborador."""
         from apps.accounts.models import Tenant
 
         with tenant_scope(tenant_id):
@@ -236,29 +154,18 @@ class Command(BaseCommand):
             except Tenant.DoesNotExist as erro:
                 raise CommandError(f"Tenant {tenant_id} não existe") from erro
 
-            # Pegar users via API
-            owner_user = obter_usuario_por_papel(tenant_id=tenant_id, role=_PAPEL_OWNER)
-            staff_user = obter_usuario_por_papel(tenant_id=tenant_id, role=_PAPEL_STAFF)
+            owner_user = obter_usuario_por_papel(tenant_id=tenant_id, role=Papel.OWNER)
+            staff_user = obter_usuario_por_papel(tenant_id=tenant_id, role=Papel.STAFF)
 
-            # 5. Semear catálogo: 50 produtos (30 ingredientes, 10 pratos, 10 bebidas)
-            product_ids = self._semear_produtos(tenant, offset=offset)
-            self.stdout.write(f"✓ {len(product_ids)} produtos criados")
-
-            # 6. Semear 3 localizações
+            product_ids = self._semear_produtos(tenant)
             location_ids = self._semear_localizacoes(tenant)
-            self.stdout.write(f"✓ {len(location_ids)} localizações criadas")
-
-            # 7. Semear 3 fornecedores
             supplier_ids = self._semear_fornecedores(tenant)
-            self.stdout.write(f"✓ {len(supplier_ids)} fornecedores criados")
-
-            # 8. Semear 10 movimentos de stock (entrada/saída)
-            stock_movement_ids = self._semear_movimentos(tenant, product_ids, location_ids, owner_user)
-            self.stdout.write(f"✓ {len(stock_movement_ids)} movimentos criados")
-
-            # 9. Semear 2 receções (1 confirmada, 1 em revisão)
-            receipt_ids = self._semear_receções(tenant, product_ids, supplier_ids, owner_user)
-            self.stdout.write(f"✓ {len(receipt_ids)} receções criadas")
+            stock_movement_ids = self._semear_movimentos(
+                tenant, product_ids, location_ids, owner_user
+            )
+            receipt_ids = self._semear_receções(
+                tenant, product_ids, supplier_ids, location_ids, owner_user
+            )
 
             return SeedResult(
                 tenant_id=tenant.id,
@@ -275,7 +182,7 @@ class Command(BaseCommand):
     # Semear componentes
     # -----------------------------------------------------------------------
 
-    def _semear_produtos(self, tenant, offset: int = 0) -> list[UUID]:
+    def _semear_produtos(self, tenant) -> list[UUID]:
         """Semeia 50 produtos: 30 ingredientes, 10 pratos, 10 bebidas."""
         from apps.catalog.models import Conservacao, UnidadeBase
 
@@ -336,9 +243,7 @@ class Command(BaseCommand):
         ]
 
         product_ids = []
-        for idx, (nome, unit_base, unit_apres, fator, expiry, conservacao) in enumerate(
-            produtos_dados, 1
-        ):
+        for nome, unit_base, unit_apres, fator, expiry, conservacao in produtos_dados:
             # Criar via API (sem ID fixo para evitar conflitos)
             produto = criar_produto(
                 tenant_id=tenant.id,
@@ -364,7 +269,7 @@ class Command(BaseCommand):
         ]
 
         location_ids = []
-        for idx, (nome, posicao) in enumerate(localizacoes, 1):
+        for nome, posicao in localizacoes:
             # Criar via API (sem ID fixo)
             localizacao = criar_localizacao(
                 tenant_id=tenant.id,
@@ -385,7 +290,7 @@ class Command(BaseCommand):
         ]
 
         supplier_ids = []
-        for idx, (nome, nif) in enumerate(fornecedores, 1):
+        for nome, nif in fornecedores:
             # Criar via API (sem ID fixo)
             fornecedor = criar_fornecedor(
                 tenant_id=tenant.id,
@@ -446,6 +351,7 @@ class Command(BaseCommand):
         tenant,
         product_ids: list[UUID],
         supplier_ids: list[UUID],
+        location_ids: list[UUID],
         user,
     ) -> list[UUID]:
         """Semeia 2 receções: 1 confirmada, 1 em revisão."""
@@ -459,6 +365,7 @@ class Command(BaseCommand):
             receçao = criar_receçao(
                 tenant_id=tenant.id,
                 supplier_id=supplier_id,
+                location_id=location_ids[0],
                 status=status,
             )
             receipt_ids.append(receçao.id)
@@ -489,23 +396,31 @@ class Command(BaseCommand):
     # -----------------------------------------------------------------------
 
     def _listar_tenants(self) -> None:
-        """Lista todos os tenants de demonstração."""
-        from apps.accounts.models import Membership, Tenant
+        """As lojas das contas de demo, cada uma lida dentro do seu âmbito."""
+        from apps.accounts.models import Membership, Tenant, User
 
-        tenants = Tenant.objects.filter(is_demo=True).order_by("-created_at")
+        vistos: set[UUID] = set()
+        for email, _, _ in CONTAS_DE_DEMO:
+            try:
+                user = User.objects.get_by_natural_key(email)
+            except User.DoesNotExist:
+                continue
+            for tenant_id in user.tenant_ids:
+                if tenant_id in vistos:
+                    continue
+                vistos.add(tenant_id)
+                with tenant_scope(tenant_id):
+                    tenant = Tenant.objects.get(pk=tenant_id)
+                    emails = ", ".join(
+                        Membership.objects.filter(tenant=tenant, is_active=True)
+                        .order_by("role")
+                        .values_list("user__email", flat=True)
+                    )
+                self.stdout.write(f"  {tenant.id}  {tenant.name}")
+                self.stdout.write(f"    Pertenças: {emails}")
 
-        if not tenants.exists():
-            self.stdout.write("Nenhum tenant de demonstração encontrado.")
-            return
-
-        self.stdout.write(self.style.WARNING("Tenants de demonstração:"))
-        for tenant in tenants:
-            memberships = Membership.objects.filter(tenant=tenant, is_active=True).select_related(
-                "user"
-            )
-            emails = ", ".join(m.user.email for m in memberships)
-            self.stdout.write(f"  {tenant.id}  {tenant.name}")
-            self.stdout.write(f"    Memberships: {emails}")
+        if not vistos:
+            self.stdout.write("Nenhuma loja de demo encontrada.")
 
     def _imprimir_resultado(self, result: SeedResult) -> None:
         """Imprime o resultado da semeação."""

@@ -408,67 +408,52 @@ def semear_demonstracao(
 
 
 # ---------------------------------------------------------------------------
-# Criação de dados para o semeador de demonstração
+# Criação de dados para o semeador (`apps/demo`)
 # ---------------------------------------------------------------------------
 def criar_tenant(*, name: str, id: UUID | None = None) -> object:
-    """Cria um novo tenant (ou retorna o existente). Consumidor: `apps/demo`."""
+    """Cria um tenant com UUID conhecido, ou devolve o que já existe com esse UUID.
+
+    O `id` fixo é o que torna o `seed_demo` idempotente. A inserção corre dentro
+    do âmbito do próprio tenant: a política do `accounts_tenant` compara `id`
+    com `app.tenant_id` também nas escritas (ADR 0007). Consumidor: `apps/demo`.
+    """
     from uuid import uuid4
 
     from apps.accounts.models import Tenant
     from apps.shared.db import tenant_scope
 
     tenant_id = id or uuid4()
-
-    # Tenta get_or_create DENTRO do tenant_scope, como requerido pela RLS
-    # A migração explica: "criar um tenant é gerar o UUID em Python, abrir
-    # tenant_scope(esse uuid) e inserir — `id = app.tenant_id` é verdade"
     with tenant_scope(tenant_id):
-        try:
-            tenant = Tenant.objects.get(id=tenant_id)
-        except Tenant.DoesNotExist:
-            tenant = Tenant.objects.create(
-                id=tenant_id,
-                name=name,
-                is_demo=True,
-            )
+        tenant, _ = Tenant.objects.get_or_create(id=tenant_id, defaults={"name": name})
     return tenant
 
 
-def criar_usuario(*, email: str, password: str, is_active: bool = True) -> object:
-    """Cria um novo usuário (ou retorna o existente). Consumidor: `apps/demo`."""
+def criar_usuario(*, email: str, password: str) -> object:
+    """Devolve a conta com este email, criando-a com a password dada se não existir.
+
+    A password de uma conta existente não se toca — a mesma regra de
+    `criar_tenant_com_dono`. Consumidor: `apps/demo`.
+    """
     from apps.accounts.models import User
 
-    normalized_email = normalizar_email(email)
-    user, created = User.objects.get_or_create(
-        email=normalized_email,
-        defaults={"is_active": is_active},
-    )
-    if created:
-        user.set_password(password)
-        user.save()
-    return user
+    try:
+        return User.objects.get_by_natural_key(email)
+    except User.DoesNotExist:
+        return User.objects.create_user(email, password)
 
 
-def criar_membership(
-    *,
-    user_id: UUID,
-    tenant_id: UUID,
-    role: str,
-    display_name: str,
-    is_active: bool = True,
-) -> object:
-    """Cria uma membership (ou retorna a existente). Consumidor: `apps/demo`."""
-    from apps.accounts.models import Membership, Tenant, User
+def criar_membership(*, user_id: UUID, tenant_id: UUID, role: str, display_name: str) -> object:
+    """Concede a pertença pelo serviço oficial, que também espelha `User.tenant_ids`.
 
-    user = User.objects.get(id=user_id)
-    tenant = Tenant.objects.get(id=tenant_id)
+    Tem de ser chamado dentro de `tenant_scope(tenant_id)`. Sem o espelho o
+    login não encontra o estabelecimento: é o `tenant_ids` que dá os candidatos
+    que a política depois confirma. Consumidor: `apps/demo`.
+    """
+    from apps.accounts.models import User
+    from apps.accounts.services import conceder_pertenca
 
-    membership, _ = Membership.objects.get_or_create(
-        user=user,
-        tenant=tenant,
-        defaults={"role": role, "display_name": display_name, "is_active": is_active},
-    )
-    return membership
+    user = User.objects.get(pk=user_id)
+    return conceder_pertenca(user=user, tenant_id=tenant_id, role=role, display_name=display_name)
 
 
 def obter_usuario_por_papel(*, tenant_id: UUID, role: str) -> object:

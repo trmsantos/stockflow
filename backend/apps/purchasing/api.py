@@ -63,53 +63,45 @@ class ReceçaoResumo:
 
 def criar_documento(*, tenant_id: UUID) -> DocumentoResumo:
     """Cria um documento de fatura. Consumidor: `apps/demo`."""
-    from apps.purchasing.models import InvoiceDocument
+    from apps.purchasing.models import InvoiceDocument, OrigemDoDocumento
 
-    doc = InvoiceDocument.objects.create(
-        tenant_id=tenant_id,
-        origin="upload",
-    )
-    return DocumentoResumo(id=doc.id, origin=doc.origin)
+    doc = InvoiceDocument.objects.create(tenant_id=tenant_id, source=OrigemDoDocumento.UPLOAD)
+    return DocumentoResumo(id=doc.id, origin=doc.source)
 
 
 def criar_receçao(
-    *, tenant_id: UUID, supplier_id: UUID, document_id: UUID | None = None, status: str = "draft"
+    *,
+    tenant_id: UUID,
+    supplier_id: UUID,
+    location_id: UUID,
+    document_id: UUID | None = None,
+    status: str = "draft",
 ) -> ReceçaoResumo:
-    """Cria uma receção. Consumidor: `apps/demo`."""
+    """Cria uma receção com cabeçalho mínimo. Consumidor: `apps/demo`.
+
+    Só por ids: fornecedor e localização são de outros módulos e a fronteira
+    (import-linter) não deixa importar os modelos deles — a FK valida a existência.
+    """
     from django.utils import timezone
 
-    from apps.accounts.models import Tenant
-    from apps.catalog.models import Supplier
-    from apps.inventory.models import Location
     from apps.purchasing.models import InvoiceDocument, OrigemDoDocumento, Receipt
 
-    tenant = Tenant.objects.get(id=tenant_id)
-    supplier = Supplier.objects.get(id=supplier_id, tenant_id=tenant_id)
-
-    # Usar ou criar localização padrão
-    location = Location.objects.filter(tenant_id=tenant_id).first()
-    if not location:
-        location = Location.objects.create(
-            tenant_id=tenant_id,
-            name="Armazém",
-            position=0,
-        )
-
-    # Se document_id não foi fornecido, criar um novo
     if document_id is None:
         doc = InvoiceDocument.objects.create(tenant_id=tenant_id, source=OrigemDoDocumento.UPLOAD)
         document_id = doc.id
 
     receipt = Receipt.objects.create(
-        tenant=tenant,
-        supplier=supplier,
+        tenant_id=tenant_id,
+        supplier_id=supplier_id,
         document_id=document_id,
         doc_type="FT",
         received_at=timezone.now(),
-        location=location,
+        location_id=location_id,
         confirmed_at=timezone.now() if status == "confirmed" else None,
     )
-    return ReceçaoResumo(id=receipt.id, tenant_id=receipt.tenant_id, supplier_id=receipt.supplier_id)
+    return ReceçaoResumo(
+        id=receipt.id, tenant_id=receipt.tenant_id, supplier_id=receipt.supplier_id
+    )
 
 
 def adicionar_linha_recepção(
@@ -122,12 +114,9 @@ def adicionar_linha_recepção(
     description: str = "",
 ) -> UUID:
     """Adiciona uma linha a uma receção. Consumidor: `apps/demo`."""
-    from apps.catalog.models import Product
-    from apps.inventory.models import Location
     from apps.purchasing.models import Receipt, ReceiptLine
 
     receipt = Receipt.objects.get(id=receipt_id, tenant_id=tenant_id)
-    location = receipt.location or Location.objects.filter(tenant_id=tenant_id).first()
 
     linha = ReceiptLine.objects.create(
         tenant_id=tenant_id,
@@ -138,7 +127,7 @@ def adicionar_linha_recepção(
         quantity_invoiced=quantity,
         unit_price=unit_price,
         quantity_received=quantity,
-        location=location,
+        location_id=receipt.location_id,
         kind="goods",
         product_id=product_id,
     )
