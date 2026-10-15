@@ -480,9 +480,24 @@ def responder(*, tenant_id: UUID, mensagem_id: UUID, request_id: str | None = No
         if resposta.chamadas:
             mensagens.append(resposta.mensagem_verbatim)
             for chamada in resposta.chamadas:
-                resultado = tools.executar(
-                    nome=chamada.nome, argumentos=chamada.argumentos, contexto=contexto
-                )
+                try:
+                    resultado = tools.executar(
+                        nome=chamada.nome, argumentos=chamada.argumentos, contexto=contexto
+                    )
+                except Exception:
+                    # Sem isto o turno ficava `a_responder` até ao tempo esgotado
+                    # derivado. O traceback vai para o log do worker; a linha
+                    # leva só o nome da tool, nunca os argumentos.
+                    logger.exception(
+                        "tool do assistente levantou",
+                        extra={"event": "chat_tool", "outcome": "excecao", "tool": chamada.nome},
+                    )
+                    _fechar_turno_com_erro(
+                        mensagem,
+                        codigo=CodigoDeErroDaMensagem.ERRO_DO_MODELO,
+                        razao=f"a ferramenta {chamada.nome} falhou",
+                    )
+                    return _registar(mensagem, request_id, "erro")
                 _gravar_tool(mensagem, resultado)
                 mensagens.append(
                     {"role": "tool", "tool_call_id": chamada.id, "content": resultado.conteudo}

@@ -170,9 +170,31 @@ def _limite_de_tokens(max_tokens: int) -> dict[str, int]:
     return {"max_completion_tokens": max_tokens}
 
 
+def _modelo_tem_preco(modelo: str) -> bool:
+    """O modelo está na tabela de preços, ou o fornecedor é por URL base (gratuito)?
+
+    Sem URL base o destino é a OpenAI, que cobra: um modelo sem preço custaria
+    0 € na tabela e o teto diário em euros nunca disparava (revisão de
+    segurança de 2026-10-15). Falha-se fechado. Com URL base aceita-se o 0 €:
+    é o nível gratuito que o dono escolheu, e o teto de mensagens por pessoa
+    continua a valer.
+    """
+    if _url_base():
+        return True
+    tabela: Mapping[str, object] = getattr(settings, "AGENTS_MODEL_PRICES_EUR_PER_MTOKEN", {})
+    return modelo in tabela
+
+
 def chat_configurado() -> bool:
-    """Há modelo **e** chave? É a pergunta do 503 `assistente_indisponivel`."""
-    return bool(nome_do_modelo_de_chat()) and bool(_chave_de_api())
+    """Há modelo, com preço conhecido ou fornecedor gratuito? É o 503 `assistente_indisponivel`.
+
+    A chave **não** entra aqui: só o worker a tem (ADR 0027, decisão 7), e o
+    processo web não pode exigir um segredo que não deve possuir. Se faltar ao
+    worker, `cliente()` levanta `ModeloNaoConfigurado` e o turno fecha com
+    `erro_do_modelo`.
+    """
+    modelo = nome_do_modelo_de_chat()
+    return bool(modelo) and _modelo_tem_preco(modelo)
 
 
 def cliente() -> Any:
@@ -250,6 +272,11 @@ def conversar(
     if not modelo:
         raise ModeloNaoConfigurado(
             "não há modelo de chat configurado: a definição AGENTS_CHAT_MODEL está vazia."
+        )
+    if not _modelo_tem_preco(modelo):
+        raise ModeloNaoConfigurado(
+            f"o modelo {modelo!r} não está em AGENTS_MODEL_PRICES_EUR_PER_MTOKEN e o "
+            "destino é a OpenAI, que cobra: sem preço o teto diário não trava."
         )
     api = cliente()
     import openai
