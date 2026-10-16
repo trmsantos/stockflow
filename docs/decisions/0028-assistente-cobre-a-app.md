@@ -12,7 +12,7 @@ dados, permissões de quem pergunta e nunca `system_scope`, tetos diários, lín
 polling, nenhuma escrita no ledger. Esta fatia acrescenta **duas camadas**: ler tudo o que a app
 sabe, e navegar/ajudar. A terceira — tarefas com confirmação humana — é a fatia seguinte.
 
-**Decisão 1 — Leitura total: treze tools novas, cada uma sobre um `api.py`.** O que o assistente
+**Decisão 1 — Leitura total: doze tools novas, cada uma sobre um `api.py`.** O que o assistente
 sabe é o que as portas expõem; nada lê modelos de outro módulo. Papéis seguem o padrão da 0027:
 tudo o que é **euros ou compras** é `owner|manager`; o resto, os três papéis.
 
