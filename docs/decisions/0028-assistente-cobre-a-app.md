@@ -1,6 +1,6 @@
 # ADR 0028 — O assistente cobre a app: leitura total, navegação e ajuda (sem escritas)
 
-**Estado:** proposta a aprovar pelo dono (2026-10-16). Escrita pelo agente principal depois de três
+**Estado:** aprovada pelo dono a 2026-10-16, com os defaults abaixo. Escrita pelo agente principal depois de três
 tentativas do `architect` encravarem por limite de API; emendada com o levantamento que o primeiro
 `architect` entregou depois (factos verificados sobre o `reporting` e os search params do cliente).
 
@@ -115,6 +115,9 @@ Os ecrãs Contar e Produção **não têm endpoints hoje** (servidos por fixture
 assistente lê as tabelas pelas portas na mesma — é a primeira vez que esses dados saem do
 backend, e expõe o atraso desses ecrãs.
 
-**Perguntas para o dono.** (1) `staff` vê a equipa (nomes e papéis)? (2) `staff` vê receitas com
-custo por dose, ou só a ficha técnica? (3) manual de ajuda em pt-PT e en, ou só pt-PT nesta fase?
-(4) a fatia "Ligar o Painel" (ADR 0013) entra logo a seguir a esta, para o assistente passar a ter os números do mês?
+**Respostas do dono (2026-10-16).** (1) O `staff` vê a equipa — nomes e papéis, sem emails. (2) O
+`staff` vê só a ficha técnica das receitas; o custo por dose é `owner|manager`. (3) Manual de ajuda em
+pt-PT **e** en. (4) A fatia "Ligar o Painel" (ADR 0013) entra logo a seguir a esta. **Pedido de UI
+na mesma aprovação:** no fio de conversa não se distingue bem quem pergunta e quem responde — a
+fatia inclui o redesenho do turno (pergunta e resposta com identidade visual própria: rótulo,
+alinhamento, fundo, ícone do assistente), dentro do DESIGN.md.
