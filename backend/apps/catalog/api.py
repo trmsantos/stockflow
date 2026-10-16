@@ -26,16 +26,21 @@ from apps.catalog.models import (
     Supplier,
     SupplierProductCode,
 )
+from apps.catalog.selectors import codigos_do_produto as _codigos_do_produto
+from apps.catalog.selectors import embalagens_do_produto as _embalagens_do_produto
 from apps.catalog.selectors import procurar_fornecedores as _procurar_fornecedores
 from apps.catalog.selectors import procurar_produtos as _procurar_produtos
 
 __all__ = [
+    "CodigoDeFornecedorResumo",
     "Correspondencia",
     "CorrespondenciaAprendida",
     "EmbalagemResumo",
     "FornecedorResumo",
     "ProdutoResumo",
+    "codigos_por_artigo",
     "correspondencias",
+    "embalagens_por_artigo",
     "criar_embalagem",
     "criar_fornecedor",
     "criar_produto",
@@ -125,6 +130,22 @@ class FornecedorResumo:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class CodigoDeFornecedorResumo:
+    """Como **um** fornecedor nomeia um artigo: o código e a descrição que imprime.
+
+    É a memória da ADR 0021 lida pelo artigo e não pelo fornecedor, que é a
+    direcção que a ficha do artigo precisa ("a Makro chama-lhe 7734, FARINHA T65
+    SACO 25KG"). Sem NIF: a ficha de um artigo não é sítio para o número de
+    contribuinte de ninguém.
+    """
+
+    supplier_id: UUID
+    supplier_name: str
+    code: str
+    description_raw: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Correspondencia:
     """Um match (fornecedor, código) → artigo, lido na memória."""
 
@@ -173,6 +194,40 @@ def procurar_fornecedores(
     return tuple(
         _resumo_do_fornecedor(f)
         for f in _procurar_fornecedores(tenant_id=tenant_id, q=q, limite=limite)
+    )
+
+
+def embalagens_por_artigo(*, tenant_id: UUID, product_id: UUID) -> tuple[EmbalagemResumo, ...]:
+    """As embalagens de um artigo, pela ordem em que foram criadas (ADR 0028).
+
+    "Saco de 25 kg", "caixa de 12" — é o que permite ao assistente responder
+    "em que embalagens é que isto vem" sem o modelo ter de converter nada: a
+    `base_quantity` vem na unidade base e quem lê apresenta-a.
+    """
+    return tuple(
+        EmbalagemResumo(
+            id=e.id,
+            product_id=e.product_id,
+            label=e.label,
+            base_quantity=e.base_quantity,
+            ean=e.ean,
+        )
+        for e in _embalagens_do_produto(tenant_id=tenant_id, product_id=product_id)
+    )
+
+
+def codigos_por_artigo(
+    *, tenant_id: UUID, product_id: UUID, limite: int = 20
+) -> tuple[CodigoDeFornecedorResumo, ...]:
+    """Os códigos de fornecedor aprendidos para um artigo (ADR 0028)."""
+    return tuple(
+        CodigoDeFornecedorResumo(
+            supplier_id=linha.supplier_id,
+            supplier_name=linha.supplier.name,
+            code=linha.code,
+            description_raw=linha.description_raw,
+        )
+        for linha in _codigos_do_produto(tenant_id=tenant_id, product_id=product_id)[:limite]
     )
 
 

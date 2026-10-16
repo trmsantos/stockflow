@@ -22,6 +22,7 @@ from apps.catalog.models import Product, ProductPackaging, Supplier, SupplierPro
 
 __all__ = [
     "codigos_do_fornecedor",
+    "codigos_do_produto",
     "embalagens_do_ambito",
     "embalagens_do_produto",
     "fornecedores_do_ambito",
@@ -161,3 +162,18 @@ def codigos_do_fornecedor(
     if codes is not None:
         linhas = linhas.filter(code__in=list(codes))
     return linhas.order_by("code", "id")
+
+
+def codigos_do_produto(*, tenant_id: UUID, product_id: UUID) -> QuerySet[SupplierProductCode]:
+    """A memória **pelo artigo**: que fornecedores o nomeiam e com que código.
+
+    O irmão do `codigos_do_fornecedor`, do outro lado da mesma tabela: aquele
+    responde "que artigo é este código da Makro", este responde "como é que os
+    meus fornecedores chamam a este artigo", que é o que a ficha do artigo
+    mostra. O `select_related("supplier")` serve o nome do fornecedor por linha.
+    """
+    return (
+        SupplierProductCode.objects.filter(tenant_id=tenant_id, product_id=product_id)
+        .select_related("supplier")
+        .order_by("supplier__name", "code")
+    )

@@ -200,7 +200,7 @@ utilizador revê linha a linha → `purchasing.confirm_receipt` → `inventory.a
 
 **Alertas**: tarefa periódica lê `StockLevel`/`Lot` → `notifications` envia digest diário por tenant.
 
-Dependências permitidas (import-linter): `agents → purchasing.api, catalog.api, inventory.api` · `purchasing → inventory.api, catalog.api`
+Dependências permitidas (import-linter): `agents → purchasing.api, catalog.api, inventory.api, recipes.api` · `purchasing → inventory.api, catalog.api`
 · `recipes → inventory.api, catalog.api` · `inventory → catalog.api` · todos → `accounts.api, shared` e `<m>.events`
 de qualquer módulo · `shared → nada` (nem `accounts.api`). Nada mais.
 

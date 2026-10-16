@@ -21,6 +21,7 @@ e pela resposta do `PUT /menu`.
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from django.db.models import F, Func, QuerySet, UUIDField
@@ -30,6 +31,7 @@ from apps.accounts.models import (
     Invitation,
     Membership,
     RotaDeMenu,
+    Tenant,
     TenantMenuItem,
     User,
 )
@@ -37,9 +39,12 @@ from apps.accounts.models import (
 __all__ = [
     "convite_por_token_hash",
     "convites_do_ambito",
+    "convites_pendentes_do_ambito",
     "itens_de_menu_do_ambito",
     "membership_no_ambito",
+    "membros_do_ambito",
     "projeccao_de_menu",
+    "tenant_do_ambito",
     "tenants_dos_utilizadores_ativos",
 ]
 
@@ -254,3 +259,37 @@ def projeccao_de_menu(*, tenant_id: UUID, papel: str | None = None) -> tuple[Ite
             )
         )
     return tuple(sorted(itens, key=lambda item: (item.ordem, item.route_id)))
+
+
+def membros_do_ambito(*, tenant_id: UUID) -> QuerySet[Membership]:
+    """As pertenças deste estabelecimento, activas primeiro, por nome.
+
+    Com `select_related("user")` porque quem lê precisa do email **de alguns**
+    (só o dono o vê, ADR 0028) e de saber quem é cada um para marcar o "és tu".
+    Uma pertença inactiva continua aqui: é o que permite dizer "três activos e
+    um desactivado" em vez de fazer a pessoa desaparecer.
+    """
+    return (
+        Membership.objects.filter(tenant_id=tenant_id)
+        .select_related("user")
+        .order_by("-is_active", "display_name", "id")
+    )
+
+
+def convites_pendentes_do_ambito(*, tenant_id: UUID, agora: datetime) -> list[Invitation]:
+    """Os convites por aceitar e ainda dentro do prazo, mais recentes primeiro.
+
+    "Pendente" é a derivação do `EstadoDoConvite`: nem aceite, nem revogado,
+    nem expirado. Faz-se no `WHERE` e não em Python porque os três timestamps
+    são colunas e um convite expirado não é um convite por tratar.
+    """
+    return list(
+        convites_do_ambito(tenant_id=tenant_id).filter(
+            accepted_at__isnull=True, revoked_at__isnull=True, expires_at__gt=agora
+        )
+    )
+
+
+def tenant_do_ambito(*, tenant_id: UUID) -> Tenant | None:
+    """O estabelecimento activo, ou `None` se a política não o devolver."""
+    return Tenant.objects.filter(pk=tenant_id).first()

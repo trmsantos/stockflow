@@ -16,9 +16,10 @@ from decimal import Decimal
 from uuid import UUID
 
 from django.db import transaction
+from django.db.models import Count, Q
 
 from apps.inventory import selectors
-from apps.inventory.models import Location, StockLevel
+from apps.inventory.models import Location, StockCountLine, StockLevel
 from apps.inventory.services import (
     Autor,
     MovementDTO,
@@ -28,9 +29,25 @@ from apps.inventory.services import (
 )
 
 __all__ = [
+    "AlertaResumo",
     "ArtigoAbaixoDoMinimo",
     "Autor",
+    "ContagemDetalhe",
+    "ContagemResumo",
+    "CustoPorLocalizacao",
+    "DesperdicioPorArtigo",
+    "IngredienteProduzido",
+    "LinhaDeContagem",
     "LocalizacaoResumo",
+    "ProducaoResumo",
+    "ResumoDeAlertas",
+    "ResumoDeDesperdicio",
+    "contagem_por_id",
+    "custos_medios_por_artigo",
+    "desperdicio_recente",
+    "listar_contagens",
+    "producoes_por_periodo",
+    "resumo_de_alertas",
     "LoteAVencer",
     "LoteResumo",
     "MovimentoResumido",
@@ -419,3 +436,406 @@ def movimentos_por_produto(
         qs = qs.filter(movement_type__in=movement_types)
 
     return list(qs)
+
+
+# ===========================================================================
+# As leituras da ADR 0028: contagens, alertas, desperdício, produções, CMP.
+# DTOs congelados, quantidades na unidade **base** com `display_unit` e
+# `display_factor` ao lado. Nenhum modelo atravessa a porta.
+# ===========================================================================
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContagemResumo:
+    """Uma contagem como a lista a mostra: onde, quando, em que estado e quanto falta."""
+
+    id: UUID
+    location_id: UUID
+    location_name: str
+    #: `open` ou `closed`. É a coluna, não uma derivação.
+    status: str
+    started_at: datetime
+    closed_at: datetime | None
+    created_by_name: str
+    closed_by_name: str
+    n_linhas: int
+    n_contadas: int
+    n_por_contar: int
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LinhaDeContagem:
+    """Uma linha de contagem: o que o sistema esperava e o que a pessoa contou.
+
+    `quantity_counted` a `None` é **por contar** e nunca zero: zero é "contei e
+    não havia nada", que é uma diferença e não uma pendência.
+
+    `unit_cost` é o do `(artigo, localização, lote)` — com o lote, que é a
+    correcção da ADR 0028 — e serve para valorizar a diferença. Quem lê só o
+    mostra a quem pode ver euros.
+    """
+
+    id: UUID
+    product_id: UUID
+    product_name: str
+    sku: str
+    base_unit: str
+    display_unit: str
+    display_factor: Decimal
+    lot_id: UUID | None
+    #: `None` quando não há lote **ou** quando o lote é sintético (`__…__`).
+    lot_code: str | None
+    zone: str
+    quantity_expected: Decimal
+    quantity_counted: Decimal | None
+    unit_cost: Decimal
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ContagemDetalhe:
+    """Uma contagem inteira: o resumo, as linhas e os ajustes que o fecho gravou."""
+
+    resumo: ContagemResumo
+    linhas: tuple[LinhaDeContagem, ...]
+    truncado: bool
+    #: Quantos `adjustment` o fecho gravou, o seu valor e quando. Zero numa
+    #: contagem aberta: ela ainda não mexeu no stock.
+    ajustes: int
+    ajustes_eur: Decimal
+    ajustes_em: datetime | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class AlertaResumo:
+    """Uma linha de alerta, já com o tipo e a gravidade que o painel usa."""
+
+    tipo: str
+    gravidade: str
+    product_id: UUID
+    product_name: str
+    sku: str
+    base_unit: str
+    display_unit: str
+    display_factor: Decimal
+    lot_code: str | None
+    expires_on: date | None
+    dias: int | None
+    saldo: Decimal | None
+    min_quantity: Decimal | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DesperdicioPorArtigo:
+    """Σ dos `waste` de um artigo por motivo no período, com o valor gravado."""
+
+    product_id: UUID
+    product_name: str
+    sku: str
+    base_unit: str
+    display_unit: str
+    display_factor: Decimal
+    reason: str
+    n: int
+    #: Positiva: é o que **se perdeu**, e o sinal do ledger já foi lido.
+    quantidade: Decimal
+    valor_eur: Decimal
+    linhas_sem_custo: int
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ResumoDeDesperdicio:
+    """O desperdício de um período: as linhas, o total e se a lista cortou."""
+
+    desde: datetime
+    ate: datetime
+    linhas: tuple[DesperdicioPorArtigo, ...]
+    total_eur: Decimal
+    truncado: bool
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ResumoDeAlertas:
+    """O que o ecrã Alertas calcula, pela porta: falta, validade e desperdício."""
+
+    falta: tuple[AlertaResumo, ...]
+    validade: tuple[AlertaResumo, ...]
+    desperdicio: ResumoDeDesperdicio | None
+    truncado: bool
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class IngredienteProduzido:
+    """Um ingrediente que saiu numa produção (`production_out`)."""
+
+    product_id: UUID
+    product_name: str
+    base_unit: str
+    display_unit: str
+    display_factor: Decimal
+    quantidade: Decimal
+    unit_cost: Decimal
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ProducaoResumo:
+    """Uma produção: o par `production_out`/`production_in` do mesmo `production_id`."""
+
+    production_id: UUID
+    occurred_at: datetime
+    location_name: str
+    created_by_name: str
+    product_id: UUID | None
+    product_name: str
+    base_unit: str
+    display_unit: str
+    display_factor: Decimal
+    quantidade: Decimal
+    #: O custo real daquela produção, gravado no momento (ADR 0026, decisão 2).
+    unit_cost: Decimal
+    ingredientes: tuple[IngredienteProduzido, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CustoPorLocalizacao:
+    """O custo médio ponderado de um artigo numa localização. Zero é desconhecido."""
+
+    location_id: UUID
+    location_name: str
+    unit_cost: Decimal
+
+
+#: A janela de validade dos alertas: sete dias, como no painel.
+DIAS_DE_VALIDADE = selectors.DIAS_DE_VALIDADE_DO_PAINEL
+
+
+def _gravidade_da_validade(lote: LoteAVencer, *, hoje: date) -> str:
+    """Vencido com "consumir até" é crítico; o resto é aviso ou informação."""
+    dias = (lote.expires_on - hoje).days
+    if dias < 0:
+        return "critico" if lote.expiry_kind == "use_by" else "aviso"
+    if dias == 0:
+        return "aviso" if lote.expiry_kind == "use_by" else "info"
+    return "info"
+
+
+def _resumo_de_contagem(
+    contagem: object, *, linhas: list[StockCountLine] | None = None
+) -> ContagemResumo:
+    """O `ContagemResumo` de uma linha, com as contagens de linhas já feitas."""
+    if linhas is None:
+        agregado = StockCountLine.objects.filter(
+            tenant_id=contagem.tenant_id, stock_count_id=contagem.id
+        ).aggregate(
+            total=Count("id"), contadas=Count("id", filter=Q(quantity_counted__isnull=False))
+        )
+        total = agregado["total"] or 0
+        contadas = agregado["contadas"] or 0
+    else:
+        total = len(linhas)
+        contadas = sum(1 for linha in linhas if linha.quantity_counted is not None)
+    return ContagemResumo(
+        id=contagem.id,
+        location_id=contagem.location_id,
+        location_name=contagem.location.name,
+        status=contagem.status,
+        started_at=contagem.started_at,
+        closed_at=contagem.closed_at,
+        created_by_name=getattr(contagem.created_by, "email", "") or "",
+        closed_by_name=getattr(contagem.closed_by, "email", "") or "",
+        n_linhas=total,
+        n_contadas=contadas,
+        n_por_contar=total - contadas,
+    )
+
+
+def listar_contagens(
+    *, tenant_id: UUID, estado: str = "", limite: int = 20
+) -> tuple[tuple[ContagemResumo, ...], bool]:
+    """As contagens por estado (`open`/`closed`), e se a lista cortou."""
+    contagens = selectors.listar_contagens(tenant_id=tenant_id, estado=estado, limite=limite)
+    truncado = len(contagens) > limite
+    return tuple(_resumo_de_contagem(c) for c in contagens[:limite]), truncado
+
+
+def contagem_por_id(
+    *, tenant_id: UUID, stock_count_id: UUID, limite: int = 60
+) -> ContagemDetalhe | None:
+    """Uma contagem com as suas linhas, ou `None` se não existir neste tenant."""
+    contagem = selectors.contagens_do_ambito(tenant_id=tenant_id).filter(pk=stock_count_id).first()
+    if contagem is None:
+        return None
+    linhas = selectors.linhas_da_contagem(tenant_id=tenant_id, stock_count_id=stock_count_id)
+    custos = selectors.custos_dos_niveis(
+        tenant_id=tenant_id,
+        location_id=contagem.location_id,
+        chaves=[(linha.product_id, linha.lot_id) for linha in linhas],
+    )
+    ajustes = selectors.ajustes_da_contagem(tenant_id=tenant_id, stock_count_id=stock_count_id)
+    return ContagemDetalhe(
+        resumo=_resumo_de_contagem(contagem, linhas=linhas),
+        linhas=tuple(
+            LinhaDeContagem(
+                id=linha.id,
+                product_id=linha.product_id,
+                product_name=linha.product.short_name,
+                sku=linha.product.sku,
+                base_unit=linha.product.base_unit,
+                display_unit=linha.product.display_unit,
+                display_factor=linha.product.display_factor,
+                lot_id=linha.lot_id,
+                lot_code=(
+                    None
+                    if linha.lot is None or selectors.e_lote_sintetico(linha.lot.code)
+                    else linha.lot.code
+                ),
+                zone=linha.zone or "",
+                quantity_expected=linha.quantity_expected,
+                quantity_counted=linha.quantity_counted,
+                unit_cost=custos.get((linha.product_id, linha.lot_id), Decimal("0")),
+            )
+            for linha in linhas[:limite]
+        ),
+        truncado=len(linhas) > limite,
+        ajustes=ajustes["n"],
+        ajustes_eur=ajustes["valor_eur"],
+        ajustes_em=ajustes["ultimo_em"],
+    )
+
+
+def desperdicio_recente(
+    *, tenant_id: UUID, desde: datetime, ate: datetime, limite: int = 30
+) -> ResumoDeDesperdicio:
+    """Σ dos `waste` de `[desde, ate)` por artigo e motivo. Sem limiar."""
+    linhas = selectors.desperdicio_por_artigo_e_motivo(
+        tenant_id=tenant_id, desde=desde, ate=ate, limite=limite
+    )
+    truncado = len(linhas) > limite
+    itens = tuple(DesperdicioPorArtigo(**linha) for linha in linhas[:limite])
+    return ResumoDeDesperdicio(
+        desde=desde,
+        ate=ate,
+        linhas=itens,
+        total_eur=sum((item.valor_eur for item in itens), Decimal("0")),
+        truncado=truncado,
+    )
+
+
+def resumo_de_alertas(
+    *,
+    tenant_id: UUID,
+    hoje: date,
+    tipo: str = "todos",
+    gravidade: str = "",
+    desperdicio_desde: datetime | None = None,
+    desperdicio_ate: datetime | None = None,
+    limite: int = 30,
+) -> ResumoDeAlertas:
+    """O que o ecrã Alertas calcula, pela porta (ADR 0028).
+
+    `hoje` é o dia **civil**: as validades são a data impressa na embalagem e
+    não se deslocam pelo relógio do negócio. O desperdício é o outro lado — os
+    `waste` de um período de dias **de negócio**, que quem chama delimita.
+    """
+    falta: tuple[AlertaResumo, ...] = ()
+    validade: tuple[AlertaResumo, ...] = ()
+    truncado = False
+    if tipo in ("falta", "todos"):
+        linhas, cortou = artigos_abaixo_do_minimo(tenant_id=tenant_id, limite=limite)
+        truncado = truncado or cortou
+        falta = tuple(
+            AlertaResumo(
+                tipo="falta",
+                gravidade="critico" if linha.estado == selectors.SEM_STOCK else "aviso",
+                product_id=linha.product_id,
+                product_name=linha.product_name,
+                sku=linha.sku,
+                base_unit=linha.base_unit,
+                display_unit=linha.display_unit,
+                display_factor=linha.display_factor,
+                lot_code=None,
+                expires_on=None,
+                dias=None,
+                saldo=linha.saldo,
+                min_quantity=linha.min_quantity,
+            )
+            for linha in linhas
+        )
+    if tipo in ("validade", "todos"):
+        lotes, cortou = lotes_a_vencer(
+            tenant_id=tenant_id, hoje=hoje, dias=DIAS_DE_VALIDADE, limite=limite
+        )
+        truncado = truncado or cortou
+        validade = tuple(
+            AlertaResumo(
+                tipo="validade",
+                gravidade=_gravidade_da_validade(lote, hoje=hoje),
+                product_id=lote.product_id,
+                product_name=lote.product_name,
+                sku=lote.sku,
+                base_unit=lote.base_unit,
+                display_unit=lote.display_unit,
+                display_factor=lote.display_factor,
+                lot_code=lote.lot_code,
+                expires_on=lote.expires_on,
+                dias=(lote.expires_on - hoje).days,
+                saldo=lote.saldo,
+                min_quantity=None,
+            )
+            for lote in lotes
+        )
+    desperdicio = None
+    if tipo in ("desperdicio", "todos") and desperdicio_desde and desperdicio_ate:
+        desperdicio = desperdicio_recente(
+            tenant_id=tenant_id, desde=desperdicio_desde, ate=desperdicio_ate, limite=limite
+        )
+        truncado = truncado or desperdicio.truncado
+    if gravidade:
+        falta = tuple(linha for linha in falta if linha.gravidade == gravidade)
+        validade = tuple(linha for linha in validade if linha.gravidade == gravidade)
+    return ResumoDeAlertas(
+        falta=falta, validade=validade, desperdicio=desperdicio, truncado=truncado
+    )
+
+
+def producoes_por_periodo(
+    *, tenant_id: UUID, desde: datetime, ate: datetime, limite: int = 20
+) -> tuple[tuple[ProducaoResumo, ...], bool]:
+    """As produções de `[desde, ate)`, uma por `production_id`, e se cortou."""
+    linhas = selectors.producoes_por_periodo(
+        tenant_id=tenant_id, desde=desde, ate=ate, limite=limite
+    )
+    truncado = len(linhas) > limite
+    return (
+        tuple(
+            ProducaoResumo(
+                production_id=linha["production_id"],
+                occurred_at=linha["occurred_at"],
+                location_name=linha["location_name"],
+                created_by_name=linha["created_by_name"],
+                product_id=linha["product_id"],
+                product_name=linha["product_name"],
+                base_unit=linha["base_unit"],
+                display_unit=linha["display_unit"],
+                display_factor=linha["display_factor"],
+                quantidade=linha["quantidade"],
+                unit_cost=linha["unit_cost"],
+                ingredientes=tuple(
+                    IngredienteProduzido(**ingrediente) for ingrediente in linha["ingredientes"]
+                ),
+            )
+            for linha in linhas[:limite]
+        ),
+        truncado,
+    )
+
+
+def custos_medios_por_artigo(
+    *, tenant_id: UUID, product_id: UUID
+) -> tuple[CustoPorLocalizacao, ...]:
+    """O CMP de um artigo por localização. Zero é "preço desconhecido" (ADR 0024)."""
+    return tuple(
+        CustoPorLocalizacao(
+            location_id=linha["location_id"],
+            location_name=linha["location_name"],
+            unit_cost=linha["unit_cost"],
+        )
+        for linha in selectors.custos_medios_do_artigo(tenant_id=tenant_id, product_id=product_id)
+    )

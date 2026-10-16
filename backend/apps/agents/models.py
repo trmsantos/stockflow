@@ -50,6 +50,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
+from apps.agents.navegacao import Acao, acoes_do_turno
 from apps.agents.rasto import chamadas_validas
 from apps.shared.models import TenantModel
 
@@ -477,3 +478,16 @@ class ChatMessage(TenantModel):
     def chamadas_validadas(self) -> list[dict[str, Any]]:
         """O `tool_calls` revalidado à leitura: só as entradas com a forma certa."""
         return chamadas_validas(self.tool_calls)
+
+    @property
+    def acoes_derivadas(self) -> tuple[Acao, ...]:
+        """Os botões deste turno, derivados do rasto e do papel de quem perguntou.
+
+        **Não é uma coluna** (ADR 0028, decisão 4): deriva-se à leitura das
+        tools que o turno chamou, pelo mapa fechado do `navegacao.py`, como o
+        `estado_derivado` deriva do relógio. O modelo não pede rotas nem
+        escreve URLs — não há URL vinda dele para injectar —, e o papel usado é
+        o `role_at_time`, que é o que a resposta já respeitou: um botão para um
+        ecrã que o papel não vê acabaria em 403.
+        """
+        return acoes_do_turno(chamadas=self.chamadas_validadas, papel=self.role_at_time)

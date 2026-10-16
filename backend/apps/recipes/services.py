@@ -84,6 +84,7 @@ def produzir(
     quantity: Decimal,
     location_id: UUID,
     user: Autor,
+    user_name: str = "",
 ) -> UUID:
     """Produzir uma receita: consome ingredientes (production_out), cria produto (production_in).
 
@@ -102,6 +103,17 @@ def produzir(
     Argumentos:
     - tenant_id, recipe_id, quantity, location_id: IDs
     - user: User que cria a produção
+    - user_name: o **nome exibido** da pertença, que fica no `created_by_name`
+
+    ## Porque é que o `created_by_name` deixou de ser o email (ADR 0028)
+
+    O `created_by_name` é a cópia de quem assinou que sobrevive à conta ser
+    apagada, e aparece em cada linha do histórico de um artigo — que os três
+    papéis lêem. Gravar lá o email punha o endereço de cada pessoa à vista de
+    toda a gente que abrisse um movimento, e um email não é o nome de ninguém
+    *neste* estabelecimento: o nome é o `display_name` da pertença (ADR 0007).
+    `user_name` tem default vazio porque o `Autor` é um `Protocol` com `id` e
+    `email` e não conhece pertenças; quem chama tem o `membership` e passa-o.
 
     Retorna: production_id (UUID partilhada por production_out e production_in)
 
@@ -213,7 +225,7 @@ def produzir(
                 movement_type="production_out",
                 occurred_at=now,
                 created_by_id=user.id,
-                created_by_name=user.email,
+                created_by_name=user_name,
                 production_id=production_id,
                 reference=None,
                 reason=None,
@@ -277,7 +289,7 @@ def produzir(
         movement_type="production_in",
         occurred_at=now,
         created_by_id=user.id,
-        created_by_name=user.email,
+        created_by_name=user_name,
         production_id=production_id,
         reference=None,
         reason=None,

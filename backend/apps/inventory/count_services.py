@@ -16,6 +16,7 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.catalog.api import produto_por_sku
 from apps.inventory.models import Location, StockCount, StockCountLine, StockLevel
+from apps.inventory.selectors import custos_dos_niveis
 from apps.inventory.services import MovementDTO, record_movements
 
 __all__ = [
@@ -87,19 +88,34 @@ def adicionar_linha_contagem(
 
 
 def resumo_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> dict:
-    """Retorna resumo da contagem antes de fechar."""
+    """Retorna resumo da contagem antes de fechar.
+
+    O custo com que se valoriza a diferença é o do `(artigo, localização,
+    **lote**)` — com o lote, e é essa a correcção da ADR 0028. Até 2026-10-16
+    lia-se o `.first()` de `(artigo, localização)` sem lote: numa localização
+    com dois lotes do mesmo artigo a diferença de um era valorizada pelo custo
+    do outro, em silêncio e sempre pelo lote que a base devolvesse primeiro. É
+    também o custo que o `fechar_contagem` grava no `adjustment`, logo o número
+    que esta função mostra e o que vai para o ledger passam a ser o mesmo.
+    """
     contagem = StockCount.objects.filter(
         tenant_id=tenant_id, pk=stock_count_id
     ).first()
     if not contagem:
         raise ValidationError({"stock_count": [_("Count not found.")]})
 
-    linhas = StockCountLine.objects.filter(
-        tenant_id=tenant_id, stock_count_id=stock_count_id
+    linhas = list(
+        StockCountLine.objects.filter(tenant_id=tenant_id, stock_count_id=stock_count_id)
     )
-    total = linhas.count()
-    contadas = linhas.filter(quantity_counted__isnull=False).count()
+    total = len(linhas)
+    contadas = sum(1 for linha in linhas if linha.quantity_counted is not None)
     pendentes = total - contadas
+
+    custos = custos_dos_niveis(
+        tenant_id=tenant_id,
+        location_id=contagem.location_id,
+        chaves=[(linha.product_id, linha.lot_id) for linha in linhas],
+    )
 
     # Calcular variâncias
     total_var_qty = Decimal("0")
@@ -108,14 +124,9 @@ def resumo_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> dict:
         if linha.quantity_counted is not None:
             variancia_qty = linha.quantity_counted - linha.quantity_expected
             total_var_qty += variancia_qty
-            # Obter custo unitário
-            stock_level = StockLevel.objects.filter(
-                tenant_id=tenant_id,
-                product_id=linha.product_id,
-                location_id=contagem.location_id,
-            ).first()
-            if stock_level:
-                total_var_value += variancia_qty * stock_level.unit_cost
+            total_var_value += variancia_qty * custos.get(
+                (linha.product_id, linha.lot_id), Decimal("0")
+            )
 
     can_close = pendentes == 0
 

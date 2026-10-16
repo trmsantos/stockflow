@@ -427,7 +427,14 @@ def responder(*, tenant_id: UUID, mensagem_id: UUID, request_id: str | None = No
     agora = timezone.now()
     inicio_do_dia = inicio_do_dia_de_negocio(tenant_id=tenant_id)
     contexto = tools.contexto_para(
-        tenant_id=tenant_id, papel=mensagem.role_at_time, agora=agora, inicio_do_dia=inicio_do_dia
+        tenant_id=tenant_id,
+        papel=mensagem.role_at_time,
+        agora=agora,
+        inicio_do_dia=inicio_do_dia,
+        # A língua do turno decide que manual a `ajuda_sobre` lê, e quem
+        # pergunta decide o "és tu" da equipa (ADR 0028).
+        lingua=mensagem.language,
+        user_id=mensagem.asked_by_id,
     )
     sistema = prompt_de_sistema(
         estabelecimento=opcao.name,

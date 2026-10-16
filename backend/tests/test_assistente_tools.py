@@ -14,6 +14,8 @@ As regras, uma a uma, estão no briefing da feature e no topo de
 from __future__ import annotations
 
 import json
+import pathlib
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -24,16 +26,34 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.utils import timezone
 
-from apps.accounts.models import Tenant
-from apps.accounts.services import criar_tenant
-from apps.agents import tools
-from apps.catalog.models import Product, Supplier, UnidadeBase
-from apps.inventory.models import Location, Lot, StockLevel, StockMovement
+from apps.accounts.models import Papel, Tenant, User
+from apps.accounts.services import conceder_pertenca, criar_tenant, revogar_pertenca
+from apps.agents import navegacao, tools
+from apps.catalog.models import (
+    Product,
+    ProductPackaging,
+    Supplier,
+    SupplierProductCode,
+    UnidadeBase,
+)
+from apps.inventory.models import (
+    Location,
+    Lot,
+    ProductCost,
+    StockCount,
+    StockCountLine,
+    StockLevel,
+    StockMovement,
+)
 from apps.purchasing.models import Receipt, ReceiptLine
+from apps.recipes.models import Recipe, RecipeLineItem
 from apps.shared.db import tenant_scope
+from tests.factories import InvitationFactory
 
 LISBOA = ZoneInfo("Europe/Lisbon")
 INICIO_DO_DIA = time(4, 0)
+#: Longa e sem palavra de dicionário: o `User.objects.create_user` valida-a.
+CREDENCIAL_DE_TESTE = "farinha-fina-ao-amanhecer-9"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -181,14 +201,34 @@ def _rececao(
     return rececao
 
 
-def _contexto(tenant: Tenant, *, hoje: date | None = None, papel: str = "owner") -> tools.ContextoDaTool:
-    agora = timezone.now()
+def _contexto(
+    tenant: Tenant,
+    *,
+    hoje: date | None = None,
+    hoje_civil: date | None = None,
+    papel: str = "owner",
+    lingua: str = "pt-pt",
+    user_id: UUID | None = None,
+    agora: datetime | None = None,
+) -> tools.ContextoDaTool:
+    """O contexto de um turno, com os **dois** dias à mão.
+
+    `hoje` é o dia de negócio (às 02:00 ainda é ontem) e decide movimentos,
+    totais, receções e desperdício; `hoje_civil` é a data do calendário e decide
+    **só** validades (ADR 0028). Separá-los aqui é o que permite medir a
+    fronteira das 00:00–04:00, onde até 2026-10-16 os dois divergiam em
+    silêncio.
+    """
+    agora = agora or timezone.now()
     return tools.ContextoDaTool(
         tenant_id=tenant.id,
         papel=papel,
         agora=agora,
         hoje=hoje or tools.dia_de_negocio(agora, INICIO_DO_DIA),
         inicio_do_dia=INICIO_DO_DIA,
+        hoje_civil=hoje_civil or hoje or timezone.localdate(agora),
+        lingua=lingua,
+        user_id=user_id,
     )
 
 
@@ -713,9 +753,12 @@ def test_saldo_exige_product_id_e_distingue_nunca_entrou(loja: Loja) -> None:
     assert entrou["total"]["texto"] == "0 kg"
 
 
+SO_EUROS = ("compras_por_periodo", "historico_de_precos")
+
+
 def test_o_staff_nao_tem_compras_e_o_despachante_recusa(loja: Loja) -> None:
     assert [t.nome for t in tools.tools_para("staff")] == [
-        n for n in tools.nomes_das_tools() if n != "compras_por_periodo"
+        n for n in tools.nomes_das_tools() if n not in SO_EUROS
     ]
     assert [t.nome for t in tools.tools_para("manager")] == list(tools.nomes_das_tools())
     assert [t["function"]["name"] for t in tools.definicoes_para("owner")] == list(
@@ -761,3 +804,1166 @@ def test_os_schemas_das_tools_sao_json_schema_fechado() -> None:
         assert parametros["type"] == "object"
         assert parametros["additionalProperties"] is False, tool.nome
         assert definicao["function"]["description"]
+
+
+# ===========================================================================
+# ADR 0028 — as doze leituras novas e a ajuda, regra a regra
+# ===========================================================================
+def _rececao_rica(
+    tenant: Tenant,
+    local: Location,
+    *,
+    doc_type: str = "FT",
+    received_at: datetime | None = None,
+    confirmada: bool = False,
+    fornecedor: Supplier | None = None,
+    doc_number: str = "",
+    total_do_documento: str | None = None,
+    chilled: str | None = None,
+    frozen: str | None = None,
+    confirmada_por: str = "",
+    linhas: tuple[dict[str, Any], ...] = (),
+) -> Receipt:
+    """Uma receção com linhas campo a campo, para medir pendências e preços."""
+    quando = received_at or timezone.now()
+    with tenant_scope(tenant.id):
+        rececao = Receipt.objects.create(
+            tenant=tenant,
+            supplier=fornecedor,
+            doc_type=doc_type,
+            doc_number=doc_number,
+            received_at=quando,
+            location=local,
+            confirmed_at=quando if confirmada else None,
+            confirmed_by_name=confirmada_por,
+            document_total_eur=(
+                Decimal(total_do_documento) if total_do_documento is not None else None
+            ),
+            chilled_temperature_c=Decimal(chilled) if chilled is not None else None,
+            frozen_temperature_c=Decimal(frozen) if frozen is not None else None,
+        )
+        for posicao, linha in enumerate(linhas, start=1):
+            campos: dict[str, Any] = {
+                "position": posicao,
+                "description": linha.get("descricao", ""),
+                "kind": linha.get("kind", "goods"),
+                "status": linha.get("status", "confirmed"),
+                "product": linha.get("produto"),
+                "location": local,
+                "invoice_unit": linha.get("invoice_unit", ""),
+                "lot_code": linha.get("lote", ""),
+                "expires_at": linha.get("validade"),
+            }
+            for nome in (
+                "quantity_invoiced",
+                "base_per_invoice_unit",
+                "unit_price",
+                "line_total",
+            ):
+                if linha.get(nome) is not None:
+                    campos[nome] = Decimal(linha[nome])
+            campos["quantity_received"] = Decimal(linha.get("quantity_received", "1"))
+            ReceiptLine.objects.create(tenant=tenant, receipt=rececao, **campos)
+    return rececao
+
+
+# ---------------------------------------------------------------------------
+# Receções: o que é "por rever", o dia de negócio, as pendências, os euros
+# ---------------------------------------------------------------------------
+def test_por_rever_e_confirmed_at_nulo_e_nao_tem_linhas_por_rever(loja: Loja) -> None:
+    """A pendência de uma linha e a de um documento são coisas diferentes.
+
+    Um documento confirmado com uma linha `needs_review` já entrou no stock; um
+    documento por confirmar com todas as linhas revistas **não** entrou. "Por
+    rever" é a segunda coisa, e é `confirmed_at IS NULL`.
+    """
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    confirmada = _rececao_rica(
+        loja.tenant,
+        loja.loja,
+        confirmada=True,
+        linhas=({"produto": farinha, "status": "needs_review", "line_total": "10.00"},),
+    )
+    aberta = _rececao_rica(
+        loja.tenant,
+        loja.loja,
+        confirmada=False,
+        linhas=({"produto": farinha, "status": "confirmed", "line_total": "10.00"},),
+    )
+
+    dados, _ = _executar(_contexto(loja.tenant), "rececoes", estado="por_rever")
+
+    assert [linha["rececao_id"] for linha in dados["linhas"]] == [str(aberta.id)]
+    assert dados["linhas"][0]["estado"] == "por_rever"
+    assert "nada destas linhas entrou no stock" in dados["nota"]
+    assert confirmada.id
+
+
+def test_rececoes_de_hoje_sao_o_dia_de_negocio_e_nao_a_meia_noite(loja: Loja) -> None:
+    """A mesma fronteira que o `RececaoViewSet.list(estado=hoje)` passou a usar.
+
+    O que se afirma não é um número escolhido aqui: é que a tool devolve
+    exactamente as receções confirmadas a partir do `inicio_do_dia_de_negocio`
+    do módulo — o selector partilhado. Até 2026-10-16 a view filtrava desde a
+    meia-noite e o rótulo prometia o dia de negócio.
+    """
+    from apps.purchasing.selectors import inicio_do_dia_de_negocio
+
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    agora = _em_lisboa(date(2026, 10, 15), time(10, 0))
+    de_madrugada = _rececao_rica(
+        loja.tenant,
+        loja.loja,
+        confirmada=True,
+        received_at=_em_lisboa(date(2026, 10, 15), time(1, 0)),
+        linhas=({"produto": farinha, "line_total": "10.00"},),
+    )
+    depois_de_abrir = _rececao_rica(
+        loja.tenant,
+        loja.loja,
+        confirmada=True,
+        received_at=_em_lisboa(date(2026, 10, 15), time(5, 0)),
+        linhas=({"produto": farinha, "line_total": "20.00"},),
+    )
+
+    contexto = _contexto(loja.tenant, agora=agora)
+    dados, _ = _executar(contexto, "rececoes", estado="hoje")
+
+    with tenant_scope(loja.tenant.id):
+        fronteira = inicio_do_dia_de_negocio(tenant_id=loja.tenant.id, agora=agora)
+        esperadas = {
+            str(r.id)
+            for r in Receipt.objects.filter(confirmed_at__gte=fronteira)
+        }
+    assert {linha["rececao_id"] for linha in dados["linhas"]} == esperadas
+    assert [linha["rececao_id"] for linha in dados["linhas"]] == [str(depois_de_abrir.id)]
+    assert de_madrugada.id
+
+
+def test_as_pendencias_de_uma_rececao_sao_derivadas_e_a_skipped_nao_conta(
+    loja: Loja,
+) -> None:
+    sem_nada = _produto(loja.tenant, "Desconhecido", track_lots=False)
+    com_lote = _produto(loja.tenant, "Leite", expiry_kind="use_by", track_lots=True)
+    with tenant_scope(loja.tenant.id):
+        com_lote.conservation = "chilled"
+        com_lote.save(update_fields=["conservation"])
+    rececao = _rececao_rica(
+        loja.tenant,
+        loja.loja,
+        linhas=(
+            {"produto": None, "descricao": "ARTIGO NOVO", "status": "needs_review"},
+            {"produto": com_lote, "status": "needs_review"},
+            {"produto": sem_nada, "status": "skipped"},
+        ),
+    )
+
+    dados, _ = _executar(_contexto(loja.tenant), "rececao", id=rececao.id)
+
+    pendencias = dados["pendencias"]
+    assert pendencias["sem_artigo"] == 1
+    assert pendencias["sem_lote"] == 1
+    assert pendencias["sem_validade"] == 1
+    assert pendencias["temperaturas_em_falta"] == ["refrigerado"]
+    assert pendencias["total"] == 4
+    assert dados["linhas_por_estado"] == {"por rever": 2, "de fora": 1}
+    assert [linha["estado"] for linha in dados["linhas"]] == [
+        "por rever",
+        "por rever",
+        "de fora",
+    ]
+    assert dados["linhas"][0]["ligada_a_artigo"] is False
+
+
+def test_uma_rececao_so_de_ambiente_nunca_pede_temperatura(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    rececao = _rececao_rica(
+        loja.tenant, loja.loja, linhas=({"produto": farinha, "line_total": "10.00"},)
+    )
+
+    dados, _ = _executar(_contexto(loja.tenant), "rececao", id=rececao.id)
+
+    assert dados["pendencias"]["temperaturas_em_falta"] == []
+    assert dados["pendencias"]["total"] == 0
+
+
+def test_o_staff_nao_ve_precos_de_uma_rececao_e_o_nif_nunca_sai(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    with tenant_scope(loja.tenant.id):
+        makro = Supplier.objects.create(tenant=loja.tenant, name="Makro", nif="500123456")
+    rececao = _rececao_rica(
+        loja.tenant,
+        loja.loja,
+        fornecedor=makro,
+        confirmada=True,
+        total_do_documento="123.45",
+        linhas=(
+            {
+                "produto": farinha,
+                "unit_price": "0.0008",
+                "line_total": "41.20",
+                "quantity_received": "25000",
+            },
+        ),
+    )
+
+    do_dono, dono_bruto = _executar(_contexto(loja.tenant), "rececao", id=rececao.id)
+    do_staff, staff_bruto = _executar(
+        _contexto(loja.tenant, papel="staff"), "rececao", id=rececao.id
+    )
+
+    assert do_dono["total_do_documento"] == "€ 123,45"
+    assert do_dono["linhas"][0]["preco_unitario"] == "€ 0,00"
+    assert do_dono["linhas"][0]["total_da_linha"] == "€ 41,20"
+    assert do_dono["euros_visiveis"] is True
+
+    assert "total_do_documento" not in do_staff
+    assert "preco_unitario" not in do_staff["linhas"][0]
+    assert "total_da_linha" not in do_staff["linhas"][0]
+    assert do_staff["euros_visiveis"] is False
+    assert do_staff["linhas"][0]["recebido"] == "25 kg", "a quantidade continua lá"
+
+    for conteudo in (dono_bruto.conteudo, staff_bruto.conteudo):
+        assert "500123456" not in conteudo, "um NIF não é resposta de assistente"
+        assert "nif" not in conteudo.lower()
+
+
+def test_uma_rececao_de_outro_estabelecimento_nao_existe(loja: Loja) -> None:
+    dados, resultado = _executar(_contexto(loja.tenant), "rececao", id=uuid4())
+    assert resultado.ok is False and dados == {"erro": "rececao_nao_encontrada"}
+
+
+# ---------------------------------------------------------------------------
+# Histórico de preços: quantidade faturada, GR fora, notas contadas, ponderada
+# ---------------------------------------------------------------------------
+def test_o_preco_e_pela_quantidade_faturada_e_nao_pela_recebida(loja: Loja) -> None:
+    """Numa receção parcial o que se pagou foi o que veio na fatura.
+
+    Dez sacos faturados a 8,00 € dão 0,80 €/kg. Com a quantidade **recebida**
+    (cinco sacos) davam 1,60 €/kg — o quilo a dobrar por causa de uma falta.
+    """
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    with tenant_scope(loja.tenant.id):
+        makro = Supplier.objects.create(tenant=loja.tenant, name="Makro", nif="500123456")
+    _rececao_rica(
+        loja.tenant,
+        loja.loja,
+        fornecedor=makro,
+        confirmada=True,
+        received_at=_em_lisboa(date(2026, 10, 10), time(9, 0)),
+        linhas=(
+            {
+                "produto": farinha,
+                "invoice_unit": "saco",
+                "quantity_invoiced": "10",
+                "base_per_invoice_unit": "1000",
+                "line_total": "8.00",
+                "quantity_received": "5000",
+            },
+        ),
+    )
+
+    dados, _ = _executar(
+        _contexto(loja.tenant, agora=_em_lisboa(date(2026, 10, 15), time(10, 0))),
+        "historico_de_precos",
+        product_id=farinha.id,
+    )
+
+    assert dados["ultimo"] == "€ 0,80 / kg"
+    assert dados["preco_por"] == "kg" and dados["iva_incluido"] is False
+    assert dados["linhas"][0]["media"] == "€ 0,80 / kg"
+
+
+def test_a_media_do_mes_e_ponderada_pela_quantidade_e_nao_a_media_dos_precos(
+    loja: Loja,
+) -> None:
+    """Três sacos a 0,80 e um a 1,20 custaram 0,90 — não 1,00."""
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    with tenant_scope(loja.tenant.id):
+        makro = Supplier.objects.create(tenant=loja.tenant, name="Makro", nif="500123456")
+    for quantidade, total, dia in (("3", "2.40", 5), ("1", "1.20", 6)):
+        _rececao_rica(
+            loja.tenant,
+            loja.loja,
+            fornecedor=makro,
+            confirmada=True,
+            received_at=_em_lisboa(date(2026, 10, dia), time(9, 0)),
+            linhas=(
+                {
+                    "produto": farinha,
+                    "invoice_unit": "saco",
+                    "quantity_invoiced": quantidade,
+                    "base_per_invoice_unit": "1000",
+                    "line_total": total,
+                    "quantity_received": Decimal(quantidade) * 1000,
+                },
+            ),
+        )
+
+    dados, _ = _executar(
+        _contexto(loja.tenant, agora=_em_lisboa(date(2026, 10, 15), time(10, 0))),
+        "historico_de_precos",
+        product_id=farinha.id,
+    )
+
+    assert len(dados["linhas"]) == 1, "mesmo fornecedor, mesmo mês de negócio"
+    linha = dados["linhas"][0]
+    assert linha["media"] == "€ 0,90 / kg", "ponderada; a média dos preços dava 1,00"
+    assert linha["minimo"] == "€ 0,80 / kg" and linha["maximo"] == "€ 1,20 / kg"
+    assert linha["compras"] == 2
+    assert dados["ultimo"] == "€ 1,20 / kg" and dados["anterior"] == "€ 0,80 / kg"
+    assert dados["variacao"] == "+50,0 %"
+    assert "ponderada pela quantidade" in dados["nota"]
+
+
+def test_a_guia_de_remessa_fica_fora_e_as_notas_ficam_contadas(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    with tenant_scope(loja.tenant.id):
+        makro = Supplier.objects.create(tenant=loja.tenant, name="Makro", nif="500123456")
+    comum = {
+        "produto": farinha,
+        "invoice_unit": "saco",
+        "quantity_invoiced": "1",
+        "base_per_invoice_unit": "1000",
+        "quantity_received": "1000",
+    }
+    for doc_type, total in (("FT", "0.80"), ("GR", "99.00"), ("NC", "5.00"), ("ND", "3.00")):
+        _rececao_rica(
+            loja.tenant,
+            loja.loja,
+            doc_type=doc_type,
+            fornecedor=makro,
+            confirmada=True,
+            received_at=_em_lisboa(date(2026, 10, 10), time(9, 0)),
+            linhas=({**comum, "line_total": total},),
+        )
+
+    dados, _ = _executar(
+        _contexto(loja.tenant, agora=_em_lisboa(date(2026, 10, 15), time(10, 0))),
+        "historico_de_precos",
+        product_id=farinha.id,
+    )
+
+    assert dados["linhas"][0]["compras"] == 1, "só a fatura"
+    assert dados["ultimo"] == "€ 0,80 / kg"
+    assert dados["notas_ignoradas"] == 2, "a NC e a ND contam-se, não se escondem"
+    assert "crédito ou débito" in dados["nota_das_notas"]
+
+
+def test_o_historico_de_precos_nao_e_oferecido_a_um_colaborador(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    dados, resultado = _executar(
+        _contexto(loja.tenant, papel="staff"), "historico_de_precos", product_id=farinha.id
+    )
+    assert resultado.ok is False and dados == {"erro": "tool_nao_disponivel"}
+    assert "historico_de_precos" not in [t.nome for t in tools.tools_para("staff")]
+
+
+# ---------------------------------------------------------------------------
+# Contagens: a diferença com sinal, o custo do lote certo, o fecho pelo ledger
+# ---------------------------------------------------------------------------
+def _contagem_de_stock(
+    tenant: Tenant,
+    local: Location,
+    *,
+    estado: str = "open",
+    linhas: tuple[dict[str, Any], ...] = (),
+) -> StockCount:
+    with tenant_scope(tenant.id):
+        contagem = StockCount.objects.create(tenant=tenant, location=local, status=estado)
+        if estado == "closed":
+            StockCount.objects.filter(pk=contagem.id).update(closed_at=timezone.now())
+            contagem.refresh_from_db()
+        for linha in linhas:
+            StockCountLine.objects.create(
+                tenant=tenant,
+                stock_count=contagem,
+                product=linha["produto"],
+                lot=linha.get("lote"),
+                zone=linha.get("zona"),
+                quantity_expected=Decimal(linha["esperado"]),
+                quantity_counted=(
+                    Decimal(linha["contado"]) if linha.get("contado") is not None else None
+                ),
+            )
+    return contagem
+
+
+def test_a_diferenca_de_contagem_tem_sinal_e_o_euro_e_o_do_lote_contado(
+    loja: Loja,
+) -> None:
+    """O custo é o do `(artigo, localização, **lote**)`, e é a correcção da 0028.
+
+    Com dois lotes do mesmo artigo na mesma localização, a valorização sem o
+    lote apanhava o custo do outro — em silêncio, e sempre pelo lote que a base
+    devolvesse primeiro.
+    """
+    farinha = _produto(loja.tenant, "Farinha", track_lots=True)
+    barato = _lote(loja.tenant, farinha, "BARATO", validade=None)
+    caro = _lote(loja.tenant, farinha, "CARO", validade=None)
+    _nivel(loja.tenant, farinha, loja.loja, "1000", lote=barato, custo="0.001")
+    _nivel(loja.tenant, farinha, loja.loja, "1000", lote=caro, custo="0.005")
+    contagem = _contagem_de_stock(
+        loja.tenant,
+        loja.loja,
+        linhas=(
+            {"produto": farinha, "lote": caro, "esperado": "1000", "contado": "800"},
+            {"produto": farinha, "lote": barato, "esperado": "1000", "contado": "1000"},
+        ),
+    )
+
+    dados, _ = _executar(_contexto(loja.tenant), "contagem", id=contagem.id)
+
+    por_lote = {linha["lote"]: linha for linha in dados["linhas"]}
+    assert por_lote["CARO"]["diferenca"] == {"texto": "−0,2 kg, falta", "sentido": "falta"}
+    assert por_lote["CARO"]["valor_da_diferenca"] == "€ 1,00", (
+        "200 g × 0,005 €/g do lote CARO; com o do BARATO dava € 0,20"
+    )
+    assert por_lote["BARATO"]["diferenca"]["sentido"] == "confere"
+    assert por_lote["BARATO"]["valor_da_diferenca"] == "€ 0,00", (
+        "uma linha que confere vale zero euros, e isso é um facto, não um número parcial"
+    )
+    assert dados["ajustes"]["n"] == 0
+    assert "ainda não mexeu no stock" in dados["nota"]
+
+
+def test_uma_contagem_fechada_vale_o_que_o_ajuste_gravou(loja: Loja) -> None:
+    """O número que a resposta dá é o do ledger, não o custo de hoje (ADR 0014)."""
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    _nivel(loja.tenant, farinha, loja.loja, "800", custo="0.009")
+    contagem = _contagem_de_stock(
+        loja.tenant,
+        loja.loja,
+        estado="closed",
+        linhas=({"produto": farinha, "esperado": "1000", "contado": "800"},),
+    )
+    with tenant_scope(loja.tenant.id):
+        StockMovement.objects.create(
+            tenant=loja.tenant,
+            product=farinha,
+            location=loja.loja,
+            movement_type="adjustment",
+            quantity=Decimal("-200"),
+            unit_cost=Decimal("0.004"),
+            occurred_at=timezone.now(),
+            reference=str(contagem.id),
+            created_by_name="Ana",
+        )
+
+    dados, _ = _executar(_contexto(loja.tenant), "contagem", id=contagem.id)
+
+    assert dados["estado"] == "fechada"
+    assert dados["ajustes"]["n"] == 1
+    assert dados["ajustes"]["valor"] == "€ 0,80", "200 g × 0,004 €/g do movimento"
+    assert dados["linhas"][0]["valor_da_diferenca"] == "€ 1,80", (
+        "a linha mostra o custo actual do nível; o fecho é o do ledger"
+    )
+    assert "ajustes gravados no ledger" in dados["nota"]
+
+
+def test_um_colaborador_ve_a_diferenca_e_nao_o_valor(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    _nivel(loja.tenant, farinha, loja.loja, "800", custo="0.005")
+    contagem = _contagem_de_stock(
+        loja.tenant,
+        loja.loja,
+        linhas=({"produto": farinha, "esperado": "1000", "contado": "800"},),
+    )
+
+    dados, _ = _executar(
+        _contexto(loja.tenant, papel="staff"), "contagem", id=contagem.id
+    )
+
+    assert dados["linhas"][0]["diferenca"]["texto"] == "−0,2 kg, falta"
+    assert "valor_da_diferenca" not in dados["linhas"][0]
+    assert "valor" not in dados["ajustes"]
+    assert dados["euros_visiveis"] is False
+
+
+def test_por_contar_nao_e_zero_e_as_contagens_listam_se_por_estado(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    aberta = _contagem_de_stock(
+        loja.tenant,
+        loja.loja,
+        linhas=(
+            {"produto": farinha, "esperado": "1000", "contado": None, "zona": "frio"},
+            {"produto": farinha, "esperado": "500", "contado": "0"},
+        ),
+    )
+    fechada = _contagem_de_stock(
+        loja.tenant,
+        loja.armazem,
+        estado="closed",
+        linhas=({"produto": farinha, "esperado": "100", "contado": "100"},),
+    )
+
+    abertas, _ = _executar(_contexto(loja.tenant), "contagens", estado="abertas")
+    fechadas, _ = _executar(_contexto(loja.tenant), "contagens", estado="fechadas")
+    detalhe, _ = _executar(_contexto(loja.tenant), "contagem", id=aberta.id)
+
+    assert [linha["contagem_id"] for linha in abertas["linhas"]] == [str(aberta.id)]
+    assert abertas["linhas"][0]["n_por_contar"] == 1
+    assert abertas["linhas"][0]["n_contadas"] == 1
+    assert [linha["contagem_id"] for linha in fechadas["linhas"]] == [str(fechada.id)]
+    por_estado = {linha["estado"] for linha in detalhe["linhas"]}
+    assert por_estado == {"por_contar", "contada"}
+    por_contar = next(
+        linha for linha in detalhe["linhas"] if linha["estado"] == "por_contar"
+    )
+    assert por_contar["contado"] is None and por_contar["zona"] == "frio"
+    contada = next(linha for linha in detalhe["linhas"] if linha["estado"] == "contada")
+    assert contada["contado"] == "0 kg" and contada["diferenca"]["sentido"] == "falta"
+
+
+def test_uma_contagem_de_outro_estabelecimento_nao_existe(loja: Loja) -> None:
+    dados, resultado = _executar(_contexto(loja.tenant), "contagem", id=uuid4())
+    assert resultado.ok is False and dados == {"erro": "contagem_nao_encontrada"}
+
+
+# ---------------------------------------------------------------------------
+# Alertas: validade em calendário civil, lote sem saldo fora, desperdício do dia
+# ---------------------------------------------------------------------------
+def test_a_uma_da_manha_do_dia_seguinte_o_lote_ja_esta_vencido(loja: Loja) -> None:
+    """A validade é a data da embalagem e não se desloca pelo relógio do negócio.
+
+    À 01:00 do dia 15 o dia de **negócio** ainda é 14 — e até 2026-10-16 era
+    por ele que as validades se mediam, logo um lote com validade a 14 lia-se
+    "vence hoje" quando a ASAE já o considerava expirado.
+    """
+    leite = _produto(loja.tenant, "Leite", expiry_kind="use_by", display_unit="L")
+    lote = _lote(loja.tenant, leite, "L1", validade=date(2026, 10, 14))
+    _nivel(loja.tenant, leite, loja.loja, "1000", lote=lote)
+    contexto = _contexto(loja.tenant, agora=_em_lisboa(date(2026, 10, 15), time(1, 0)))
+
+    assert contexto.hoje == date(2026, 10, 14), "o dia de negócio ainda é ontem"
+    assert contexto.hoje_civil == date(2026, 10, 15)
+
+    validades, _ = _executar(contexto, "lotes_a_vencer")
+    alertas, _ = _executar(contexto, "alertas", tipo="validade")
+
+    assert validades["linhas"][0]["estado"] == "vencido"
+    assert validades["linhas"][0]["dias"] == -1
+    assert alertas["hoje"] == "2026-10-15"
+    assert alertas["linhas"][0]["estado"] == "vencido"
+    assert alertas["linhas"][0]["gravidade"] == "critico"
+
+
+def test_um_lote_sem_saldo_nao_entra_nos_alertas(loja: Loja) -> None:
+    hoje = date(2026, 10, 14)
+    leite = _produto(loja.tenant, "Leite", expiry_kind="use_by")
+    vazio = _lote(loja.tenant, leite, "VAZIO", validade=hoje)
+    cheio = _lote(loja.tenant, leite, "CHEIO", validade=hoje)
+    _nivel(loja.tenant, leite, loja.loja, "0", lote=vazio)
+    _nivel(loja.tenant, leite, loja.loja, "500", lote=cheio)
+
+    dados, _ = _executar(
+        _contexto(loja.tenant, hoje=hoje, hoje_civil=hoje), "alertas", tipo="validade"
+    )
+
+    assert [linha["lote"] for linha in dados["linhas"]] == ["CHEIO"]
+
+
+def test_o_desperdicio_dos_alertas_e_so_waste_e_so_do_dia_de_negocio(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    hoje = date(2026, 10, 14)
+    # Dentro: o dia de negócio 14 vai das 04:00 do dia 14 às 04:00 do dia 15.
+    _movimento(
+        loja.tenant,
+        farinha,
+        loja.loja,
+        "waste",
+        "-500",
+        quando=_em_lisboa(hoje, time(5, 0)),
+        custo="0.002",
+    )
+    _movimento(
+        loja.tenant,
+        farinha,
+        loja.loja,
+        "waste",
+        "-250",
+        quando=_em_lisboa(hoje + timedelta(days=1), time(1, 0)),
+        custo="0.002",
+    )
+    # Fora: ontem, e um consumo de hoje que não é perda.
+    _movimento(
+        loja.tenant,
+        farinha,
+        loja.loja,
+        "waste",
+        "-9000",
+        quando=_em_lisboa(hoje - timedelta(days=1), time(10, 0)),
+        custo="0.002",
+    )
+    _movimento(
+        loja.tenant,
+        farinha,
+        loja.loja,
+        "consumption",
+        "-9000",
+        quando=_em_lisboa(hoje, time(10, 0)),
+        custo="0.002",
+    )
+
+    dados, _ = _executar(
+        _contexto(loja.tenant, hoje=hoje, hoje_civil=hoje), "alertas", tipo="desperdicio"
+    )
+
+    desperdicio = dados["desperdicio"]
+    assert desperdicio["dia_de_negocio"] == "2026-10-14"
+    assert desperdicio["desde"].startswith("2026-10-14T04:00")
+    assert desperdicio["ate"].startswith("2026-10-15T04:00")
+    assert len(desperdicio["itens"]) == 1
+    assert desperdicio["itens"][0]["quantidade"] == "0,75 kg", "positiva: perdeu-se"
+    assert desperdicio["itens"][0]["valor"] == "€ 1,50"
+    assert desperdicio["total"] == "€ 1,50"
+
+    do_staff, _ = _executar(
+        _contexto(loja.tenant, hoje=hoje, hoje_civil=hoje, papel="staff"),
+        "alertas",
+        tipo="desperdicio",
+    )
+    assert "valor" not in do_staff["desperdicio"]["itens"][0]
+    assert do_staff["desperdicio"]["itens"][0]["quantidade"] == "0,75 kg"
+
+
+def test_os_alertas_sem_nada_dizem_que_nao_ha_e_nunca_um_numero(loja: Loja) -> None:
+    dados, _ = _executar(_contexto(loja.tenant), "alertas")
+    assert dados["linhas"] == [] and dados["nota"] == "não há alertas abertos"
+
+
+# ---------------------------------------------------------------------------
+# Artigo, receitas e produções
+# ---------------------------------------------------------------------------
+def _ficha(
+    tenant: Tenant,
+    acabado: Product,
+    *,
+    yield_factor: str = "1",
+    ativa: bool = True,
+    ingredientes: tuple[tuple[Product, str], ...] = (),
+) -> Recipe:
+    with tenant_scope(tenant.id):
+        receita = Recipe.objects.create(
+            tenant=tenant,
+            product=acabado,
+            is_active=ativa,
+            yield_factor=Decimal(yield_factor),
+        )
+        for ingrediente, quantidade in ingredientes:
+            RecipeLineItem.objects.create(
+                tenant=tenant,
+                recipe=receita,
+                ingredient_product=ingrediente,
+                quantity_per_base_unit=Decimal(quantidade),
+            )
+    return receita
+
+
+def _producao(
+    tenant: Tenant,
+    local: Location,
+    *,
+    acabado: Product,
+    quantidade: str,
+    custo: str,
+    por: str,
+    ingredientes: tuple[tuple[Product, str], ...] = (),
+    quando: datetime | None = None,
+) -> UUID:
+    producao_id = uuid4()
+    instante = quando or timezone.now()
+    with tenant_scope(tenant.id):
+        for ingrediente, saiu in ingredientes:
+            StockMovement.objects.create(
+                tenant=tenant,
+                product=ingrediente,
+                location=local,
+                movement_type="production_out",
+                quantity=Decimal(saiu),
+                unit_cost=Decimal("0"),
+                occurred_at=instante,
+                production_id=producao_id,
+                created_by_name=por,
+            )
+        StockMovement.objects.create(
+            tenant=tenant,
+            product=acabado,
+            location=local,
+            movement_type="production_in",
+            quantity=Decimal(quantidade),
+            unit_cost=Decimal(custo),
+            occurred_at=instante,
+            production_id=producao_id,
+            created_by_name=por,
+        )
+    return producao_id
+
+
+def test_a_ficha_e_por_apresentacao_do_acabado_e_o_consumo_real_divide_pelo_rendimento(
+    loja: Loja,
+) -> None:
+    """Dois números diferentes, e a confusão entre eles é o erro clássico.
+
+    A lista escreve 0,9 kg de farinha por quilo de massa; com 80 % de
+    rendimento, o que sai do stock para um quilo de massa sair é 1,125 kg.
+    """
+    massa = _produto(loja.tenant, "Massa", track_lots=False)
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    receita = _ficha(
+        loja.tenant, massa, yield_factor="0.8", ingredientes=((farinha, "0.9"),)
+    )
+
+    dados, _ = _executar(_contexto(loja.tenant), "receita", id=receita.id)
+
+    assert dados["por"] == "1 kg de Massa"
+    assert dados["rendimento"] == "80 %"
+    assert dados["linhas"][0]["na_lista"] == "0,9 kg"
+    assert dados["linhas"][0]["consumo_real"] == "1,125 kg"
+    assert "a dividir pelo rendimento" in dados["nota"]
+
+
+def test_o_custo_da_receita_e_so_de_quem_ve_euros(loja: Loja) -> None:
+    massa = _produto(loja.tenant, "Massa", track_lots=False)
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    receita = _ficha(loja.tenant, massa, ingredientes=((farinha, "0.5"),))
+    with tenant_scope(loja.tenant.id):
+        ProductCost.objects.create(
+            tenant=loja.tenant,
+            product=farinha,
+            location=loja.loja,
+            unit_cost=Decimal("0.002"),
+        )
+
+    do_dono, _ = _executar(_contexto(loja.tenant), "receita", id=receita.id)
+    do_staff, _ = _executar(
+        _contexto(loja.tenant, papel="staff"), "receita", id=receita.id
+    )
+
+    assert do_dono["custos"][0]["custo_teorico"] == "€ 1,00", "0,5 g/g × 0,002 €/g × 1000"
+    assert do_dono["euros_visiveis"] is True
+    assert do_staff["custos"] == [] and do_staff["euros_visiveis"] is False
+    assert do_staff["linhas"][0]["na_lista"] == "0,5 kg", "a ficha técnica é de todos"
+
+
+def test_que_receitas_usam_farinha_responde_se_pelo_ingrediente(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    acucar = _produto(loja.tenant, "Açúcar", track_lots=False)
+    pao = _produto(loja.tenant, "Pão", track_lots=False)
+    bolo = _produto(loja.tenant, "Bolo", track_lots=False)
+    gelado = _produto(loja.tenant, "Gelado", track_lots=False)
+    _ficha(loja.tenant, pao, ingredientes=((farinha, "0.6"),))
+    _ficha(loja.tenant, bolo, ingredientes=((farinha, "0.3"), (acucar, "0.2")))
+    _ficha(loja.tenant, gelado, ingredientes=((acucar, "0.4"),))
+    antiga = _ficha(
+        loja.tenant, _produto(loja.tenant, "Broa", track_lots=False),
+        ativa=False,
+        ingredientes=((farinha, "0.9"),),
+    )
+    contexto = _contexto(loja.tenant)
+
+    com_farinha, _ = _executar(contexto, "receitas", ingrediente_id=farinha.id)
+    com_inativas, _ = _executar(
+        contexto, "receitas", ingrediente_id=farinha.id, incluir_inativas=True
+    )
+    por_nome, _ = _executar(contexto, "receitas", q="bolo")
+
+    assert sorted(linha["artigo"] for linha in com_farinha["linhas"]) == ["Bolo", "Pão"]
+    assert sorted(linha["artigo"] for linha in com_inativas["linhas"]) == [
+        "Bolo",
+        "Broa",
+        "Pão",
+    ]
+    assert {linha["artigo"]: linha["ativa"] for linha in com_inativas["linhas"]}["Broa"] is False
+    assert [linha["artigo"] for linha in por_nome["linhas"]] == ["Bolo"]
+    assert antiga.id
+
+
+def test_a_ficha_do_artigo_junta_embalagens_codigos_e_receitas(loja: Loja) -> None:
+    farinha = _produto(loja.tenant, "Farinha T65", sku="FAR65", minimo="20000")
+    pao = _produto(loja.tenant, "Pão", track_lots=False)
+    _ficha(loja.tenant, pao, ingredientes=((farinha, "0.6"),))
+    with tenant_scope(loja.tenant.id):
+        makro = Supplier.objects.create(tenant=loja.tenant, name="Makro", nif="500123456")
+        ProductPackaging.objects.create(
+            tenant=loja.tenant,
+            product=farinha,
+            label="Saco de 25 kg",
+            base_quantity=Decimal("25000"),
+        )
+        SupplierProductCode.objects.create(
+            tenant=loja.tenant,
+            supplier=makro,
+            product=farinha,
+            code="7734",
+            description_raw="FARINHA T65 SACO 25KG",
+            learned_at=timezone.now(),
+        )
+        ProductCost.objects.create(
+            tenant=loja.tenant,
+            product=farinha,
+            location=loja.loja,
+            unit_cost=Decimal("0.0008"),
+        )
+    _nivel(loja.tenant, farinha, loja.loja, "12500", custo="0.0008")
+
+    dados, bruto = _executar(_contexto(loja.tenant), "artigo", id=farinha.id)
+
+    assert dados["artigo"]["nome"] == "Farinha T65"
+    assert dados["unidades"] == "conta-se em g, mostra-se em kg; 1 kg = 1000 g"
+    assert dados["minimo"] == "20 kg" and dados["saldo_total"] == "12,5 kg"
+    assert dados["embalagens"] == [
+        {"rotulo": "Saco de 25 kg", "contem": "25 kg", "ean": None}
+    ]
+    assert dados["codigos_de_fornecedor"] == [
+        {
+            "fornecedor": "Makro",
+            "codigo": "7734",
+            "descricao_na_fatura": "FARINHA T65 SACO 25KG",
+        }
+    ]
+    assert dados["usado_em_receitas"] == 1
+    assert dados["e_produzido_por_receita"] is None
+    assert dados["custo_medio_por_localizacao"][0]["custo_medio"] == "€ 0,00"
+    assert "500123456" not in bruto.conteudo
+
+    do_staff, _ = _executar(_contexto(loja.tenant, papel="staff"), "artigo", id=farinha.id)
+    assert "custo_medio" not in do_staff["custo_medio_por_localizacao"][0]
+    assert do_staff["saldo_total"] == "12,5 kg"
+
+
+def test_producoes_recentes_nao_mostram_o_email_de_quem_produziu_a_um_colaborador(
+    loja: Loja,
+) -> None:
+    """`created_by_name` de linhas antigas é o email: só o dono o vê (ADR 0028)."""
+    massa = _produto(loja.tenant, "Massa", track_lots=False)
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    hoje = date(2026, 10, 14)
+    _producao(
+        loja.tenant,
+        loja.loja,
+        acabado=massa,
+        quantidade="2000",
+        custo="0.003",
+        por="ana@alfa.pt",
+        ingredientes=((farinha, "-1800"),),
+        quando=_em_lisboa(hoje, time(9, 0)),
+    )
+    # Fora da janela: há oito dias de negócio.
+    _producao(
+        loja.tenant,
+        loja.loja,
+        acabado=massa,
+        quantidade="99000",
+        custo="0.003",
+        por="ana@alfa.pt",
+        quando=_em_lisboa(hoje - timedelta(days=8), time(9, 0)),
+    )
+
+    do_dono, _ = _executar(
+        _contexto(loja.tenant, hoje=hoje), "producoes_recentes", dias=7
+    )
+    do_staff, _ = _executar(
+        _contexto(loja.tenant, hoje=hoje, papel="staff"), "producoes_recentes", dias=7
+    )
+
+    assert len(do_dono["linhas"]) == 1
+    assert do_dono["linhas"][0]["por"] == "ana@alfa.pt"
+    assert do_dono["linhas"][0]["produzido"] == "2 kg"
+    assert do_dono["linhas"][0]["custo_total"] == "€ 6,00"
+    assert do_dono["linhas"][0]["ingredientes"] == [
+        {"artigo": "Farinha", "consumido": "1,8 kg"}
+    ]
+    assert do_staff["linhas"][0]["por"] == "", "um email não é o nome de ninguém aqui"
+    assert "custo_total" not in do_staff["linhas"][0]
+    assert do_staff["linhas"][0]["produzido"] == "2 kg"
+
+
+# ---------------------------------------------------------------------------
+# Equipa e estabelecimento: o que nunca sai
+# ---------------------------------------------------------------------------
+def test_a_equipa_tem_nomes_e_papeis_para_todos_e_emails_so_para_o_dono(
+    loja: Loja,
+) -> None:
+    """Resposta do dono a 2026-10-16: o colaborador vê a equipa, sem emails."""
+    ana = User.objects.create_user("ana@gama.pt", CREDENCIAL_DE_TESTE)
+    bruno = User.objects.create_user("bruno@gama.pt", CREDENCIAL_DE_TESTE)
+    antiga = User.objects.create_user("antiga@gama.pt", CREDENCIAL_DE_TESTE)
+    with tenant_scope(loja.tenant.id):
+        conceder_pertenca(
+            user=ana, tenant_id=loja.tenant.id, role=Papel.OWNER, display_name="Ana"
+        )
+        conceder_pertenca(
+            user=bruno, tenant_id=loja.tenant.id, role=Papel.MANAGER, display_name="Bruno"
+        )
+        conceder_pertenca(
+            user=antiga, tenant_id=loja.tenant.id, role=Papel.STAFF, display_name="Antiga"
+        )
+        revogar_pertenca(user=antiga, tenant_id=loja.tenant.id)
+        InvitationFactory(
+            tenant=loja.tenant, email="novo@gama.pt", role=Papel.STAFF, display_name="Novo"
+        )
+
+    do_dono, dono_bruto = _executar(
+        _contexto(loja.tenant, papel="owner", user_id=ana.id), "equipa"
+    )
+    do_staff, staff_bruto = _executar(
+        _contexto(loja.tenant, papel="staff", user_id=bruno.id), "equipa"
+    )
+
+    assert {linha["nome"]: linha["papel"] for linha in do_dono["linhas"]} == {
+        "Ana": "dono",
+        "Bruno": "gerente",
+    }
+    assert do_dono["n"] == 2 and do_dono["n_inativos"] == 1
+    assert next(linha for linha in do_dono["linhas"] if linha["nome"] == "Ana")["es_tu"]
+    assert sorted(linha["email"] for linha in do_dono["linhas"]) == [
+        "ana@gama.pt",
+        "bruno@gama.pt",
+    ]
+    assert do_dono["convites"][0]["email"] == "novo@gama.pt"
+
+    assert [linha["nome"] for linha in do_staff["linhas"]] == ["Ana", "Bruno"]
+    assert all("email" not in linha for linha in do_staff["linhas"])
+    assert do_staff["emails_visiveis"] is False
+    assert do_staff["convites_pendentes"] == 1
+    assert "convites" not in do_staff, "o número sim, os endereços não"
+    assert "os emails da equipa só o dono" in do_staff["nota"]
+
+    assert "ana@gama.pt" in dono_bruto.conteudo
+    assert "@gama.pt" not in staff_bruto.conteudo
+    for conteudo in (dono_bruto.conteudo, staff_bruto.conteudo):
+        assert str(ana.id) not in conteudo, "um id de conta é uma chave para fora daqui"
+
+
+def test_o_estabelecimento_diz_o_relogio_e_o_iva_e_nunca_um_nif_ou_um_user_id(
+    loja: Loja,
+) -> None:
+    ana = User.objects.create_user("ana2@gama.pt", CREDENCIAL_DE_TESTE)
+    with tenant_scope(loja.tenant.id):
+        conceder_pertenca(
+            user=ana, tenant_id=loja.tenant.id, role=Papel.OWNER, display_name="Ana"
+        )
+
+    dados, bruto = _executar(
+        _contexto(loja.tenant, hoje=date(2026, 10, 14), user_id=ana.id), "estabelecimento"
+    )
+
+    assert dados["nome"] == "Padaria Gama"
+    assert dados["dia_de_negocio_comeca_as"] == "04:00"
+    assert dados["dia_de_negocio_de_hoje"] == "2026-10-14"
+    assert "IVA das compras é dedutível" in dados["regime_de_iva"]
+    assert dados["n_localizacoes"] == 3
+    assert [linha["nome"] for linha in dados["linhas"]] == ["Loja", "Armazém", "Cozinha"]
+    assert "nif" not in bruto.conteudo.lower()
+    assert "user_id" not in bruto.conteudo
+    assert str(ana.id) not in bruto.conteudo
+
+
+# ---------------------------------------------------------------------------
+# A ajuda e o mapa de navegação
+# ---------------------------------------------------------------------------
+def test_cada_tema_de_ajuda_existe_nas_duas_linguas_e_e_o_que_a_tool_devolve(
+    loja: Loja,
+) -> None:
+    assert len(navegacao.indice_de_temas()) == 12
+    for tema in navegacao.indice_de_temas():
+        for lingua in navegacao.LINGUAS_DA_AJUDA:
+            texto = navegacao.texto_de_ajuda(tema=tema, lingua=lingua)
+            assert texto, f"falta o tema {tema} em {lingua}"
+            assert texto.startswith("# "), tema
+
+    em_portugues, _ = _executar(_contexto(loja.tenant), "ajuda_sobre", tema="contar")
+    em_ingles, _ = _executar(
+        _contexto(loja.tenant, lingua="en"), "ajuda_sobre", tema="contar"
+    )
+
+    assert em_portugues["lingua"] == "pt-pt" and em_ingles["lingua"] == "en"
+    assert em_portugues["manual"] != em_ingles["manual"]
+    assert len(em_portugues["manual"]) > tools.TEXTO_MAXIMO, (
+        "o manual é texto nosso: o corte a 120 caracteres defende-nos do texto do tenant"
+    )
+    assert em_portugues["manual"] == navegacao.texto_de_ajuda(tema="contar", lingua="pt-pt")
+    assert "não registes nada" in em_portugues["nota"]
+
+    _, invalido = _executar(_contexto(loja.tenant), "ajuda_sobre", tema="../../etc/passwd")
+    assert invalido.ok is False and "argumentos_invalidos" in invalido.conteudo
+
+
+def test_uma_lingua_desconhecida_cai_no_portugues(loja: Loja) -> None:
+    dados, _ = _executar(
+        _contexto(loja.tenant, lingua="de"), "ajuda_sobre", tema="receber"
+    )
+    assert dados["lingua"] == "pt-pt"
+    assert dados["manual"] == navegacao.texto_de_ajuda(tema="receber", lingua="pt-pt")
+
+
+#: As rotas que os temas de ajuda podem citar, com o id do registo de cada uma.
+_ROTA_DO_CAMINHO = {
+    "/": "inicio",
+    "/painel": "painel",
+    "/alertas": "alertas",
+    "/assistente": "assistente",
+    "/stock": "stock",
+    "/stock/<artigo>": "artigo",
+    "/contar": "contar",
+    "/receber": "receber",
+    "/receber/<id>": "rececao",
+    "/definicoes": "definicoes",
+}
+
+
+def test_a_ajuda_so_cita_rotas_que_existem_no_registo() -> None:
+    """Quem muda um ecrã muda o tema — e é este teste que o lembra."""
+    raiz = pathlib.Path(tools.__file__).resolve().parent / "ajuda"
+    citadas = 0
+    for ficheiro in sorted(raiz.rglob("*.md")):
+        for citacao in re.findall(r"`(/[^`]*)`", ficheiro.read_text(encoding="utf-8")):
+            caminho, _, procura = citacao.partition("?")
+            rota = _ROTA_DO_CAMINHO.get(caminho)
+            assert rota is not None, f"{ficheiro.name} cita {citacao}, que não é uma rota"
+            assert rota in navegacao.ROTAS
+            citadas += 1
+            for par in filter(None, procura.split("&")):
+                nome, _, valor = par.partition("=")
+                assert nome in navegacao.PARAMETROS_POR_ROTA[rota], (
+                    f"{ficheiro.name} cita {citacao}: a rota {rota} não aceita {nome}"
+                )
+                valores = navegacao.VALORES_POR_PARAMETRO.get(nome)
+                if valores is not None and valor != "...":
+                    assert valor in valores, f"{ficheiro.name}: {nome}={valor} não existe"
+    assert citadas > 20, "os temas citam ecrãs; um manual sem rotas não orienta ninguém"
+
+
+#: Argumentos plausíveis por tool, para percorrer o mapa inteiro de uma vez.
+_ARGS_DE_EXEMPLO: dict[str, dict[str, Any]] = {
+    "procurar_artigos": {"q": "farinha", "limite": 10},
+    "procurar_fornecedores": {"q": "makro", "limite": 10},
+    "saldo_de_artigo": {"product_id": "0c5a2a2e-0000-4000-8000-000000000001"},
+    "artigos_abaixo_do_minimo": {"limite": 50},
+    "lotes_a_vencer": {"dias": 7, "limite": 50},
+    "movimentos_de_artigo": {"product_id": "0c5a2a2e-0000-4000-8000-000000000001"},
+    "compras_por_periodo": {"desde": "2026-10-01", "ate": "2026-10-14"},
+    "rececoes": {"estado": "por_rever", "limite": 10},
+    "rececao": {"id": "0c5a2a2e-0000-4000-8000-000000000002"},
+    "historico_de_precos": {"product_id": "0c5a2a2e-0000-4000-8000-000000000001"},
+    "contagens": {"estado": "abertas", "limite": 10},
+    "contagem": {"id": "0c5a2a2e-0000-4000-8000-000000000003"},
+    "alertas": {"tipo": "todos"},
+    "artigo": {"id": "0c5a2a2e-0000-4000-8000-000000000001"},
+    "receitas": {"q": "", "limite": 10},
+    "receita": {"id": "0c5a2a2e-0000-4000-8000-000000000004"},
+    "producoes_recentes": {"dias": 7, "limite": 10},
+    "equipa": {},
+    "estabelecimento": {},
+    "ajuda_sobre": {"tema": "perdas-ajustes-transferencias"},
+}
+
+
+def _chamada(nome: str, args: dict[str, Any], *, ok: bool = True) -> dict[str, Any]:
+    return {"name": nome, "args": args, "rows": 1, "truncated": False, "ok": ok, "ms": 1}
+
+
+def test_o_mapa_de_navegacao_so_produz_rotas_e_parametros_que_existem() -> None:
+    """Nenhuma acção nomeia um ecrã ou um parâmetro que a árvore não tenha.
+
+    Não há URL vinda do modelo para injectar: o que o mapa recebe são os
+    argumentos **já revalidados** e o que devolve é um id de rota de uma lista
+    fechada. Este teste percorre o registo inteiro com argumentos plausíveis,
+    para que uma tool nova sem entrada no mapa não passe despercebida.
+    """
+    assert set(_ARGS_DE_EXEMPLO) == set(tools.nomes_das_tools()), (
+        "uma tool nova precisa de uma linha aqui — e de uma decisão sobre o botão dela"
+    )
+    vistas = 0
+    for papel in ("owner", "manager", "staff"):
+        for nome, args in _ARGS_DE_EXEMPLO.items():
+            for acao in navegacao.acoes_do_turno(
+                chamadas=[_chamada(nome, args)], papel=papel
+            ):
+                vistas += 1
+                assert acao.rota in navegacao.ROTAS, nome
+                assert acao.rotulo_id in navegacao.ROTULOS, nome
+                assert set(acao.parametros) <= navegacao.PARAMETROS_POR_ROTA[acao.rota]
+                for chave, valor in acao.parametros.items():
+                    valores = navegacao.VALORES_POR_PARAMETRO.get(chave)
+                    if valores is not None:
+                        assert valor in valores, f"{nome}: {chave}={valor}"
+                    else:
+                        # Um parâmetro livre (o `artigo` de `/stock/<artigo>`,
+                        # a `rececao` de `/receber/<id>`) só sai de um id que
+                        # uma tool já validou — nunca de texto do modelo.
+                        assert UUID(valor), f"{nome}: {chave} não é um uuid"
+    assert vistas > 20
+
+
+def test_uma_chamada_que_falhou_nao_da_botao_e_as_repeticoes_contam_uma_vez() -> None:
+    artigo = "0c5a2a2e-0000-4000-8000-000000000001"
+    acoes = navegacao.acoes_do_turno(
+        chamadas=[
+            _chamada("saldo_de_artigo", {"product_id": artigo}),
+            _chamada("movimentos_de_artigo", {"product_id": artigo}),
+            _chamada("rececoes", {"estado": "por_rever"}, ok=False),
+            _chamada("procurar_artigos", {"q": "farinha"}),
+        ],
+        papel="owner",
+    )
+    assert [(a.rota, a.rotulo_id) for a in acoes] == [("artigo", "ver_artigo")]
+
+
+def test_um_colaborador_nao_recebe_botoes_de_ecras_que_nao_ve() -> None:
+    """O painel e as definições são do dono; o botão para lá não sai aos outros."""
+    chamadas = [
+        _chamada("equipa", {}),
+        _chamada("estabelecimento", {}),
+        _chamada("alertas", {"tipo": "falta"}),
+    ]
+    do_dono = navegacao.acoes_do_turno(chamadas=chamadas, papel="owner")
+    do_staff = navegacao.acoes_do_turno(chamadas=chamadas, papel="staff")
+
+    assert [(a.rota, a.rotulo_id) for a in do_dono] == [
+        ("definicoes", "ver_equipa"),
+        ("definicoes", "ver_estabelecimento"),
+        ("alertas", "ver_falta"),
+    ]
+    assert [a.rota for a in do_staff] == ["alertas"]
+    assert do_staff[0].parametros == {"ver": "falta"}
+    assert navegacao.acoes_do_turno(
+        chamadas=[_chamada("ajuda_sobre", {"tema": "painel"})], papel="staff"
+    ) == (), "o Painel é do dono (ADR 0013)"
+
+
+#: Onde vive o `z.enum` de cada search param do cliente: ficheiro e nome do
+#: símbolo. Nem sempre é o nome do parâmetro — `period` é o `periodoSchema`,
+#: que vive nos schemas do `reporting` e é a rota que o importa.
+_ZOD: dict[str, tuple[str, str]] = {
+    "ver": ("routes/busca-de-alertas.ts", "ver"),
+    "periodo": ("routes/busca-de-alertas.ts", "periodo"),
+    "filtro": ("routes/busca-de-stock.ts", "filtro"),
+    "estado": ("routes/busca-de-rececoes.ts", "estado"),
+    "secao": ("features/accounts/secoes.ts", "secaoSchema"),
+    "period": ("features/reporting/schemas.ts", "periodoSchema"),
+    "aba": ("features/reporting/abas.ts", "abaSchema"),
+}
+
+
+def test_os_valores_dos_search_params_sao_os_mesmos_dos_schemas_zod() -> None:
+    """As duas pontas da decisão 3, amarradas — e falha nos **dois** sentidos.
+
+    Um botão com `?ver=expirados` cai no `.catch(undefined)` do Zod e abre o
+    ecrã sem filtro nenhum: a navegação não rebenta, mente. As duas metades
+    vivem em repositórios de linguagens diferentes, que é a forma de divergência
+    que ninguém vê.
+    """
+    raiz = pathlib.Path(__file__).resolve().parents[2] / "frontend/src"
+    for parametro, (ficheiro, simbolo) in _ZOD.items():
+        fonte = (raiz / ficheiro).read_text(encoding="utf-8")
+        bloco = re.search(rf"{simbolo}\s*[:=]\s*z\.enum\(\[([^\]]*)\]\)", fonte)
+        assert bloco is not None, f"não encontrei o z.enum de {parametro} em {ficheiro}"
+        assert set(re.findall(r'"([^"]+)"', bloco.group(1))) == set(
+            navegacao.VALORES_POR_PARAMETRO[parametro]
+        ), parametro
+    # O `explicar` é um `z.literal(1)` e não um enum: o único valor é "1".
+    painel = (raiz / "routes/busca-do-painel.ts").read_text(encoding="utf-8")
+    assert "explicar: z.literal(1)" in painel
+    assert navegacao.VALORES_POR_PARAMETRO["explicar"] == frozenset({"1"})

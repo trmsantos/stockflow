@@ -116,7 +116,7 @@ markers = [
 # import-linter — fronteiras entre módulos (ARCHITECTURE.md §3 e §6b).
 #
 # Grafo permitido, e nada mais:
-#   agents      -> purchasing.api, catalog.api, inventory.api
+#   agents      -> purchasing.api, catalog.api, inventory.api, recipes.api
 #   purchasing  -> inventory.api, catalog.api
 #   recipes     -> inventory.api, catalog.api
 #   inventory   -> catalog.api
@@ -279,21 +279,27 @@ ignore_imports = [
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 
-# Garante: agents -> purchasing.api, catalog.api, inventory.api e mais nada
-# (ADR 0027). Lê o ledger pela porta e nunca chama `record_movements` —
-# afirmado por teste (`tests/test_assistente.py`): o import-linter não sabe
-# dizer "só leitura", porque `inventory.api` expõe a escrita na mesma porta, e é
-# a lista fechada do registo de tools que o impede. Movimentos de stock nascem
-# sempre de purchasing.confirm_receipt depois de revisão humana (ARCHITECTURE.md
-# §6 e §6b). O `reporting` não tem `api.py` por decisão (ADR 0013, decisão 3):
-# é um sumidouro, e ninguém o importa.
+# Garante: agents -> purchasing.api, catalog.api, inventory.api, recipes.api e
+# mais nada (ADR 0027, alargado pela 0028). Lê o ledger pela porta e nunca chama
+# `record_movements` — afirmado por teste (`tests/test_assistente.py`): o
+# import-linter não sabe dizer "só leitura", porque `inventory.api` expõe a
+# escrita na mesma porta, e é a lista fechada do registo de tools que o impede.
+# Movimentos de stock nascem sempre de purchasing.confirm_receipt depois de
+# revisão humana (ARCHITECTURE.md §6 e §6b). O `reporting` não tem `api.py` por
+# decisão (ADR 0013, decisão 3): é um sumidouro, e ninguém o importa.
+#
+# **`apps.recipes` saiu desta lista a 2026-10-16** (ADR 0028, decisão 1 e
+# consequências): o dono pediu que o assistente responda sobre receitas — que
+# ficha é esta, que receitas usam farinha, o que se produziu ontem —, e isso
+# revoga o "`recipes` fica fora" da ADR 0027 d5. O que atravessa continua a ser
+# só `recipes.api`, pelo contrato genérico das portas, e só leitura, pela lista
+# fechada do registo de tools.
 [[tool.importlinter.contracts]]
-name = "agents só depende de purchasing, catalog e inventory, nunca de reporting"
+name = "agents só depende de purchasing, catalog, inventory e recipes, nunca de reporting"
 type = "forbidden"
 source_modules = ["apps.agents"]
 forbidden_modules = [
     "apps.reporting",
-    "apps.recipes",
     "apps.billing",
     "apps.notifications",
 ]

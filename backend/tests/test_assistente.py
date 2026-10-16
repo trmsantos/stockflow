@@ -28,7 +28,7 @@ import pathlib
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import time, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -49,7 +49,7 @@ from apps.accounts.services import (
     criar_tenant,
     revogar_pertenca,
 )
-from apps.agents import tools
+from apps.agents import navegacao, prompt, tools
 from apps.agents.models import (
     JANELA_DA_RESPOSTA,
     TURNOS_POR_CONVERSA,
@@ -61,14 +61,24 @@ from apps.agents.models import (
 from apps.agents.serializers import MensagemOutSerializer
 from apps.agents.tasks import purgar_conversas, purgar_conversas_expiradas, responder_mensagem
 from apps.catalog.models import Product, Supplier, UnidadeBase
-from apps.inventory.models import Location, Lot, StockLevel, StockMovement
+from apps.inventory.models import (
+    Location,
+    Lot,
+    StockCount,
+    StockCountLine,
+    StockLevel,
+    StockMovement,
+)
 from apps.purchasing.models import Receipt, ReceiptLine
+from apps.recipes.models import Recipe, RecipeLineItem
 from apps.shared.db import tenant_scope
 from config.celery import app
 
 URL = "/api/v1/assistant/conversations"
 CREDENCIAL = "farinha-fina-ao-amanhecer-9"
 CHAVE_DE_TESTE = "chave-falsa-nunca-usada"
+#: A hora de abertura por omissão de um `Tenant`, para o prompt dos testes.
+TIME_DE_ABERTURA = time(4, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +166,14 @@ class Cenario:
     bruno: User
     carla: User
     farinha: Product
+    massa: Product
     loja: Location
+    #: Uma receção confirmada, uma por rever, uma contagem aberta e uma receita:
+    #: é o que as treze leituras da ADR 0028 precisam de ter para ler.
+    rececao: Receipt
+    por_rever: Receipt
+    contagem: StockCount
+    receita: Recipe
 
 
 @pytest.fixture(autouse=True)
@@ -243,17 +260,76 @@ def cenario(transactional_db: None) -> Cenario:
             receipt=rececao,
             position=1,
             description="FARINHA",
-            quantity_received=Decimal("25"),
+            invoice_unit="saco",
+            quantity_invoiced=Decimal("1"),
+            base_per_invoice_unit=Decimal("25000"),
+            quantity_received=Decimal("25000"),
             location=loja,
             kind="goods",
             status="confirmed",
             product=farinha,
+            unit_price=Decimal("41.20"),
             line_total=Decimal("41.20"),
+        )
+        por_rever = Receipt.objects.create(
+            tenant=alfa,
+            supplier=fornecedor,
+            doc_type="FT",
+            received_at=timezone.now(),
+            location=loja,
+        )
+        ReceiptLine.objects.create(
+            tenant=alfa,
+            receipt=por_rever,
+            position=1,
+            description="FARINHA T65 SACO",
+            quantity_received=Decimal("25000"),
+            location=loja,
+            kind="goods",
+            status="needs_review",
+            product=farinha,
+            line_total=Decimal("41.20"),
+        )
+        contagem = StockCount.objects.create(tenant=alfa, location=loja)
+        StockCountLine.objects.create(
+            tenant=alfa,
+            stock_count=contagem,
+            product=farinha,
+            lot=lote,
+            quantity_expected=Decimal("12500"),
+        )
+        massa = Product.objects.create(
+            tenant=alfa,
+            short_name="Massa",
+            sku="MASSA",
+            base_unit=UnidadeBase.GRAMA,
+            display_unit="kg",
+            display_factor=Decimal("1000"),
+        )
+        receita = Recipe.objects.create(
+            tenant=alfa, product=massa, yield_factor=Decimal("0.9")
+        )
+        RecipeLineItem.objects.create(
+            tenant=alfa,
+            recipe=receita,
+            ingredient_product=farinha,
+            quantity_per_base_unit=Decimal("0.8"),
         )
     with tenant_scope(beta.id):
         conceder_pertenca(user=carla, tenant_id=beta.id, role=Papel.OWNER, display_name="Carla")
     return Cenario(
-        alfa=alfa, beta=beta, ana=ana, bruno=bruno, carla=carla, farinha=farinha, loja=loja
+        alfa=alfa,
+        beta=beta,
+        ana=ana,
+        bruno=bruno,
+        carla=carla,
+        farinha=farinha,
+        massa=massa,
+        loja=loja,
+        rececao=rececao,
+        por_rever=por_rever,
+        contagem=contagem,
+        receita=receita,
     )
 
 
@@ -657,24 +733,51 @@ def test_as_duas_tabelas_estao_sob_rls(cenario: Cenario, falso: ClienteFalso) ->
 # ---------------------------------------------------------------------------
 # 3. O ciclo de tool-use
 # ---------------------------------------------------------------------------
-def test_o_chat_nunca_escreve_no_ledger(cenario: Cenario, falso: ClienteFalso) -> None:
-    """Uma conversa que chama as sete tools deixa o ledger como o encontrou."""
+def _todas_as_tools(cenario: Cenario) -> list[tuple[str, dict[str, Any]]]:
+    """Um pedido por tool do registo, com argumentos válidos para este cenário.
+
+    Derivado de `nomes_das_tools()` e não escrito à mão: uma tool nova sem
+    linha aqui faz o teste do ledger falhar em vez de passar sem a exercitar.
+    """
     hoje = timezone.localdate()
+    artigo = str(cenario.farinha.id)
+    args: dict[str, dict[str, Any]] = {
+        "procurar_artigos": {"q": "farinha"},
+        "procurar_fornecedores": {"q": "moagem"},
+        "saldo_de_artigo": {"product_id": artigo},
+        "artigos_abaixo_do_minimo": {},
+        "lotes_a_vencer": {"dias": 7},
+        "movimentos_de_artigo": {"product_id": artigo},
+        "compras_por_periodo": {
+            "desde": str(hoje - timedelta(days=30)),
+            "ate": str(hoje),
+        },
+        "rececoes": {"estado": "por_rever"},
+        "rececao": {"id": str(cenario.rececao.id)},
+        "historico_de_precos": {"product_id": artigo},
+        "contagens": {"estado": "abertas"},
+        "contagem": {"id": str(cenario.contagem.id)},
+        "alertas": {"tipo": "todos"},
+        "artigo": {"id": artigo},
+        "receitas": {"q": ""},
+        "receita": {"id": str(cenario.receita.id)},
+        "producoes_recentes": {"dias": 7},
+        "equipa": {},
+        "estabelecimento": {},
+        "ajuda_sobre": {"tema": "perdas-ajustes-transferencias"},
+    }
+    assert set(args) == set(tools.nomes_das_tools()), (
+        "uma tool nova precisa de argumentos aqui: o teste do ledger exercita o registo todo"
+    )
+    return [(nome, args[nome]) for nome in tools.nomes_das_tools()]
+
+
+def test_o_chat_nunca_escreve_no_ledger(cenario: Cenario, falso: ClienteFalso) -> None:
+    """Uma conversa que chama as **vinte** tools deixa o ledger como o encontrou."""
+    pedidos = _todas_as_tools(cenario)
     falso.respostas = [
-        pede_tools(
-            ("procurar_artigos", {"q": "farinha"}),
-            ("procurar_fornecedores", {"q": "moagem"}),
-            ("saldo_de_artigo", {"product_id": str(cenario.farinha.id)}),
-        ),
-        pede_tools(
-            ("artigos_abaixo_do_minimo", {}),
-            ("lotes_a_vencer", {"dias": 7}),
-            ("movimentos_de_artigo", {"product_id": str(cenario.farinha.id)}),
-            (
-                "compras_por_periodo",
-                {"desde": str(hoje - timedelta(days=30)), "ate": str(hoje)},
-            ),
-        ),
+        pede_tools(*pedidos[:10]),
+        pede_tools(*pedidos[10:]),
         texto("Está tudo aqui."),
     ]
     with tenant_scope(cenario.alfa.id):
@@ -752,16 +855,14 @@ def test_o_staff_nao_recebe_compras_por_periodo_e_a_recusa_e_dupla(
     conversa_id = _perguntar(_cliente(cenario.bruno, cenario.alfa)).json()["id"]
 
     assert "compras_por_periodo" not in falso.tools_oferecidas[0]
-    assert set(falso.tools_oferecidas[0]) == set(tools.nomes_das_tools()) - {
-        "compras_por_periodo"
-    }
+    assert set(falso.tools_oferecidas[0]) == set(tools.nomes_das_tools()) - set(SO_EUROS)
     turno = _mensagens(cenario.alfa.id, conversa_id)[0]
     assert turno.role_at_time == "staff"
     rasto = turno.chamadas_validadas
     assert rasto[0]["name"] == "compras_por_periodo" and rasto[0]["ok"] is False
     assert "tool_nao_disponivel" in falso.chamadas[1]["messages"][3]["content"]
 
-    # O dono recebe as sete.
+    # O dono recebe as vinte.
     _perguntar(_cliente(cenario.ana, cenario.alfa))
     assert falso.tools_oferecidas[-1] == list(tools.nomes_das_tools())
 
@@ -846,8 +947,18 @@ def test_o_tool_calls_e_revalidado_a_leitura(cenario: Cenario, falso: ClienteFal
     assert [t["name"] for t in dados["tool_calls"]] == ["procurar_artigos"]
 
 
+#: As duas tools que são **euros ou compras** e por isso não são oferecidas a um
+#: colaborador (ADR 0027 d8, ADR 0028 d1). As outras dezoito são dos três papéis
+#: e filtram o dinheiro por dentro: a quantidade sai, o euro não.
+SO_EUROS = ("compras_por_periodo", "historico_de_precos")
+
+
 def test_o_registo_de_tools_e_fechado_e_so_de_leitura() -> None:
-    """As sete da ADR, por nome; e nenhum ficheiro do `agents` importa escrita do ledger."""
+    """As vinte, por nome e por ordem; e nenhuma escreve no ledger.
+
+    Sete da ADR 0027 e treze da 0028. A ordem é a do registo e entra no
+    contrato porque é a ordem em que as definições são oferecidas ao modelo.
+    """
     assert tools.nomes_das_tools() == (
         "procurar_artigos",
         "procurar_fornecedores",
@@ -856,11 +967,30 @@ def test_o_registo_de_tools_e_fechado_e_so_de_leitura() -> None:
         "lotes_a_vencer",
         "movimentos_de_artigo",
         "compras_por_periodo",
+        "rececoes",
+        "rececao",
+        "historico_de_precos",
+        "contagens",
+        "contagem",
+        "alertas",
+        "artigo",
+        "receitas",
+        "receita",
+        "producoes_recentes",
+        "equipa",
+        "estabelecimento",
+        "ajuda_sobre",
     )
-    assert tools.REGISTO["compras_por_periodo"].papeis == frozenset({"owner", "manager"})
+    assert len(tools.REGISTO) == 20
     for nome in tools.nomes_das_tools():
-        if nome != "compras_por_periodo":
-            assert tools.REGISTO[nome].papeis == frozenset({"owner", "manager", "staff"})
+        esperado = {"owner", "manager"} if nome in SO_EUROS else {"owner", "manager", "staff"}
+        assert tools.REGISTO[nome].papeis == frozenset(esperado), nome
+    # O que o prompt promete ao colaborador por palavras é o que o registo lhe
+    # faz por conjuntos. Sem isto, uma tool de euros nova deixava o prompt a
+    # prometer-lhe uma coisa que ele deixou de ter.
+    for papel, fora in (("staff", set(SO_EUROS)), ("owner", set()), ("manager", set())):
+        oferecidas = {t.nome for t in tools.tools_para(papel)}
+        assert set(tools.nomes_das_tools()) - oferecidas == fora, papel
 
     nomes_de_escrita = (
         "record_movements",
@@ -1046,3 +1176,284 @@ def test_a_mensagem_do_assistente_volta_verbatim_com_os_campos_extra_do_forneced
     assert resposta.mensagem_verbatim["tool_calls"][0]["extra_content"] == {
         "google": {"thought_signature": "abc"}
     }
+
+
+# ---------------------------------------------------------------------------
+# 5. ADR 0028: os casos de aceitação, com o cliente falso
+#
+# Cada um é uma pergunta do dono, as tools que o modelo pede, e o que o turno
+# serve: a resposta em texto e as `acoes` derivadas. O que se mede aqui não é a
+# redacção do modelo — isso é dele —, é **o que o servidor lhe põe à frente** e
+# **o que deriva do que ele chamou**.
+# ---------------------------------------------------------------------------
+def _turno(cliente: Client, conversa_id: str, posicao: int = 0) -> dict[str, Any]:
+    """Um turno como o `GET` da conversa o serve: é o alvo do polling."""
+    return cliente.get(f"{URL}/{conversa_id}").json()["messages"][posicao]
+
+
+def _acoes(turno: dict[str, Any]) -> list[tuple[str, dict[str, str], str]]:
+    return [(a["rota"], a["parametros"], a["rotulo_id"]) for a in turno["acoes"]]
+
+
+def test_tudo_sobre_a_loja_junta_quatro_leituras_e_leva_aos_ecras(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """"Dá-me tudo o que preciso de saber sobre a loja" (ADR 0028)."""
+    falso.respostas = [
+        pede_tools(
+            ("estabelecimento", {}),
+            ("alertas", {"tipo": "todos"}),
+            ("rececoes", {"estado": "por_rever"}),
+            ("contagens", {"estado": "abertas"}),
+        ),
+        texto("Tens 1 receção por rever, 1 contagem aberta e 1 lote a vencer."),
+    ]
+    cliente = _cliente(cenario.ana, cenario.alfa)
+
+    conversa_id = _perguntar(cliente, "Dá-me tudo o que preciso de saber sobre a loja").json()[
+        "id"
+    ]
+
+    turno = _turno(cliente, conversa_id)
+    assert turno["status"] == "respondida"
+    assert [t["name"] for t in turno["tool_calls"]] == [
+        "estabelecimento",
+        "alertas",
+        "rececoes",
+        "contagens",
+    ]
+    assert all(t["ok"] for t in turno["tool_calls"])
+    assert _acoes(turno) == [
+        ("definicoes", {"secao": "estabelecimento"}, "ver_estabelecimento"),
+        ("alertas", {}, "ver_alertas"),
+        ("receber", {"estado": "revisao"}, "rever_rececoes"),
+        ("contar", {}, "ver_contagens"),
+    ]
+
+
+def test_o_que_recebi_da_makro_este_mes(cenario: Cenario, falso: ClienteFalso) -> None:
+    hoje = timezone.localdate()
+    falso.respostas = [
+        pede_tools(("procurar_fornecedores", {"q": "moagem"})),
+        pede_tools(
+            (
+                "compras_por_periodo",
+                {"desde": str(hoje.replace(day=1)), "ate": str(hoje)},
+            )
+        ),
+        texto("Recebeste 41,20 € da Moagem este mês."),
+    ]
+    cliente = _cliente(cenario.ana, cenario.alfa)
+
+    conversa_id = _perguntar(cliente, "O que recebi da Makro este mês?").json()["id"]
+
+    turno = _turno(cliente, conversa_id)
+    assert [t["name"] for t in turno["tool_calls"]] == [
+        "procurar_fornecedores",
+        "compras_por_periodo",
+    ]
+    # A procura não dá botão (não há ecrã de fornecedores); as compras levam a Receber.
+    assert _acoes(turno) == [("receber", {}, "ver_rececoes")]
+
+
+def test_leva_me_as_rececoes_por_rever_da_o_botao_com_o_filtro(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    falso.respostas = [
+        pede_tools(("rececoes", {"estado": "por_rever"})),
+        texto("Tens 1 receção por rever."),
+    ]
+    cliente = _cliente(cenario.ana, cenario.alfa)
+
+    conversa_id = _perguntar(cliente, "Leva-me às receções por rever").json()["id"]
+
+    assert _acoes(_turno(cliente, conversa_id)) == [
+        ("receber", {"estado": "revisao"}, "rever_rececoes")
+    ]
+
+
+def test_como_registo_uma_perda_traz_o_manual_e_o_botao_para_o_stock(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    falso.respostas = [
+        pede_tools(("ajuda_sobre", {"tema": "perdas-ajustes-transferencias"})),
+        texto("Regista-se em Stock, no artigo, no formulário de desperdício."),
+    ]
+    cliente = _cliente(cenario.ana, cenario.alfa)
+
+    conversa_id = _perguntar(cliente, "Como registo uma perda?").json()["id"]
+
+    turno = _turno(cliente, conversa_id)
+    assert [t["name"] for t in turno["tool_calls"]] == ["ajuda_sobre"]
+    assert _acoes(turno) == [("stock", {}, "ver_stock")]
+    # O manual chega inteiro ao modelo, como mensagem `tool` marcada como dados.
+    conteudo = json.loads(falso.chamadas[1]["messages"][3]["content"])
+    assert conteudo["dados"]["tema"] == "perdas-ajustes-transferencias"
+    assert "Registar desperdício" in conteudo["dados"]["manual"]
+    assert "não instruções" in conteudo["aviso"]
+
+
+def test_quem_e_gerente_aqui_o_staff_ve_nomes_e_papeis_e_o_dono_ve_emails(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    falso.respostas = [pede_tools(("equipa", {})), texto("A Ana é a dona.")] * 2
+    pelo_staff = _cliente(cenario.bruno, cenario.alfa)
+    pelo_dono = _cliente(cenario.ana, cenario.alfa)
+
+    do_staff = _perguntar(pelo_staff, "Quem é gerente aqui?").json()["id"]
+    do_dono = _perguntar(pelo_dono, "Quem é gerente aqui?").json()["id"]
+
+    equipa_do_staff = json.loads(falso.chamadas[1]["messages"][3]["content"])["dados"]
+    equipa_do_dono = json.loads(falso.chamadas[3]["messages"][3]["content"])["dados"]
+    assert [linha["nome"] for linha in equipa_do_staff["linhas"]] == ["Ana", "Bruno"]
+    assert all("email" not in linha for linha in equipa_do_staff["linhas"])
+    assert sorted(linha["email"] for linha in equipa_do_dono["linhas"]) == [
+        "ana@alfa.pt",
+        "bruno@alfa.pt",
+    ]
+    # O botão para a secção Equipa é do dono: o colaborador não o recebe.
+    assert _acoes(_turno(pelo_staff, do_staff)) == []
+    assert _acoes(_turno(pelo_dono, do_dono)) == [
+        ("definicoes", {"secao": "equipa"}, "ver_equipa")
+    ]
+
+
+def test_que_receitas_usam_farinha(cenario: Cenario, falso: ClienteFalso) -> None:
+    falso.respostas = [
+        pede_tools(("procurar_artigos", {"q": "farinha"})),
+        pede_tools(("receitas", {"ingrediente_id": str(cenario.farinha.id)})),
+        texto("A Massa usa Farinha T65."),
+    ]
+    cliente = _cliente(cenario.ana, cenario.alfa)
+
+    conversa_id = _perguntar(cliente, "Que receitas usam farinha?").json()["id"]
+
+    turno = _turno(cliente, conversa_id)
+    assert [t["name"] for t in turno["tool_calls"]] == ["procurar_artigos", "receitas"]
+    receitas = json.loads(falso.chamadas[2]["messages"][5]["content"])["dados"]
+    assert [linha["artigo"] for linha in receitas["linhas"]] == ["Massa"]
+    assert receitas["linhas"][0]["rendimento"] == "90 %"
+    assert _acoes(turno) == [], "as receitas ainda não têm ecrã, logo não há botão"
+
+
+def test_regista_2_kg_de_farinha_como_perda_nao_escreve_nada(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """O caso que a fatia seguinte vai resolver: aqui explica-se, não se executa."""
+    falso.respostas = [
+        pede_tools(("ajuda_sobre", {"tema": "perdas-ajustes-transferencias"})),
+        texto("Não registei nada. Faz-se em Stock, no artigo: escolhe a loja, 2 kg e o motivo."),
+    ]
+    with tenant_scope(cenario.alfa.id):
+        antes = (StockMovement.objects.count(), StockLevel.objects.count(), Lot.objects.count())
+        saldo_antes = StockLevel.objects.get(product=cenario.farinha).quantity
+    cliente = _cliente(cenario.ana, cenario.alfa)
+
+    conversa_id = _perguntar(cliente, "Regista 2 kg de farinha como perda").json()["id"]
+
+    turno = _turno(cliente, conversa_id)
+    assert "Não registei nada" in turno["answer"]
+    assert [t["name"] for t in turno["tool_calls"]] == ["ajuda_sobre"]
+    assert _acoes(turno) == [("stock", {}, "ver_stock")]
+    with tenant_scope(cenario.alfa.id):
+        depois = (StockMovement.objects.count(), StockLevel.objects.count(), Lot.objects.count())
+        assert depois == antes
+        assert StockLevel.objects.get(product=cenario.farinha).quantity == saldo_antes
+
+
+def test_quanto_faturei_este_mes_ainda_nao_tem_painel_e_leva_ao_ecra(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """Decisão 2: o `reporting` de hoje está errado, e números errados são piores."""
+    falso.respostas = [
+        pede_tools(("ajuda_sobre", {"tema": "painel"})),
+        texto("Ainda não tenho o painel do mês; esses números vês-los no ecrã Painel."),
+    ]
+    cliente = _cliente(cenario.ana, cenario.alfa)
+
+    conversa_id = _perguntar(cliente, "Quanto faturei este mês?").json()["id"]
+
+    turno = _turno(cliente, conversa_id)
+    assert _acoes(turno) == [("painel", {}, "ver_painel")]
+    assert "ainda não tenho o painel do mês" in prompt.prompt_de_sistema(
+        estabelecimento="Pastelaria Alfa",
+        papel="owner",
+        localizacoes=[],
+        agora=timezone.now(),
+        hoje=timezone.localdate(),
+        inicio_do_dia=TIME_DE_ABERTURA,
+        lingua="pt-pt",
+    ).lower()
+
+
+def test_o_colaborador_nao_recebe_tools_de_euros_nem_botoes_que_nao_ve(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    falso.respostas = [
+        pede_tools(
+            ("estabelecimento", {}),
+            ("alertas", {"tipo": "validade"}),
+            ("historico_de_precos", {"product_id": str(cenario.farinha.id)}),
+        ),
+        texto("Os valores em euros só o dono ou o gerente podem ver."),
+    ]
+    cliente = _cliente(cenario.bruno, cenario.alfa)
+
+    conversa_id = _perguntar(cliente, "Quanto custa a farinha?").json()["id"]
+
+    assert set(falso.tools_oferecidas[0]) == set(tools.nomes_das_tools()) - set(SO_EUROS)
+    turno = _turno(cliente, conversa_id)
+    rasto = {t["name"]: t for t in turno["tool_calls"]}
+    assert rasto["historico_de_precos"]["ok"] is False
+    assert _acoes(turno) == [("alertas", {"ver": "expira"}, "ver_validade")], (
+        "as Definições são do dono; o colaborador não recebe o botão nem falha a resposta"
+    )
+
+
+def test_as_acoes_sao_derivadas_e_nao_uma_coluna(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """Sem coluna nova e sem migração: mexer no rasto muda os botões à leitura."""
+    falso.respostas = [pede_tools(("rececoes", {"estado": "por_rever"})), texto("Uma.")]
+    cliente = _cliente(cenario.ana, cenario.alfa)
+    conversa_id = _perguntar(cliente).json()["id"]
+
+    with tenant_scope(cenario.alfa.id):
+        turno = ChatMessage.objects.get(conversation_id=conversa_id)
+        assert "acoes" not in {campo.name for campo in ChatMessage._meta.get_fields()}
+        turno.tool_calls = [
+            {
+                "name": "rececoes",
+                "args": {"estado": "hoje"},
+                "rows": 1,
+                "truncated": False,
+                "ok": True,
+                "ms": 1,
+            },
+            {"name": "inventada", "args": {}, "rows": 0, "truncated": False, "ok": True, "ms": 1},
+        ]
+        turno.save(update_fields=["tool_calls"])
+        dados = MensagemOutSerializer(turno).data
+
+    assert [(a["rota"], dict(a["parametros"])) for a in dados["acoes"]] == [
+        ("receber", {"estado": "hoje"})
+    ]
+    assert dados["acoes"][0]["rotulo_id"] == "ver_rececoes_de_hoje"
+
+
+def test_o_prompt_leva_os_temas_de_ajuda_e_o_que_o_papel_nao_tem(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    _perguntar(_cliente(cenario.bruno, cenario.alfa))
+    sistema = falso.sistemas[0]
+
+    for tema in navegacao.indice_de_temas():
+        assert tema in sistema, f"o modelo não consegue escolher o tema {tema}"
+    assert "NÃO pode ver valores em euros" in sistema
+    assert "só o dono ou o gerente" in sistema
+    assert "NÃO ESCREVES NADA" in sistema
+    assert "NÃO EXISTE" in sistema and "NÃO SEI" in sistema and "FORA DA APLICAÇÃO" in sistema
+    assert "0 €" in sistema, "a recusa do zero está escrita, não implícita"
+
+    _perguntar(_cliente(cenario.ana, cenario.alfa))
+    assert "vê tudo o que a aplicação sabe" in falso.sistemas[1]

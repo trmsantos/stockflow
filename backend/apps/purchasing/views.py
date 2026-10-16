@@ -72,6 +72,7 @@ from apps.purchasing.selectors import (
     compor_muitos,
     documentos_do_ambito,
     documentos_visiveis,
+    inicio_do_dia_de_negocio,
     pagina_por_posicao,
     preco_historico,
     resumo_de_recebidas,
@@ -521,10 +522,14 @@ class RececaoViewSet(viewsets.ModelViewSet):
         if estado == "revisao":
             queryset = queryset.filter(confirmed_at__isnull=True)
         elif estado == "hoje":
-            from django.utils import timezone
-
-            today = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            queryset = queryset.filter(confirmed_at__gte=today)
+            # **O início do dia de negócio**, e não a meia-noite (ADR 0028): o
+            # rótulo do ecrã promete "desde as 04:00" e este filtro prometia
+            # outra coisa entre a meia-noite e essa hora. É o mesmo selector
+            # que a porta usa para a tool `rececoes(hoje)`, para as duas
+            # respostas não divergirem.
+            queryset = queryset.filter(
+                confirmed_at__gte=inicio_do_dia_de_negocio(tenant_id=request.tenant.id)
+            )
 
         queryset = queryset.order_by("-received_at")
 

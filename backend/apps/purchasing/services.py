@@ -59,7 +59,7 @@ from apps.purchasing.models import (
     ReceiptLine,
 )
 from apps.purchasing.rasterizacao import ImagemNormalizada
-from apps.purchasing.selectors import slots_expirados
+from apps.purchasing.selectors import DOC_TIPO_QUE_SUBTRAI, slots_expirados
 from apps.shared.outbox import OutboxEvent, publish
 
 __all__ = [
@@ -861,14 +861,26 @@ def confirmar_rececao(
                     (linha.product_id, linha.lot_code or f"__{linha.product_id}__")
                 )
 
+                # **Só a nota de crédito é devolução** (ADR 0023, decisão 2 e
+                # cenários 1 e 6). Até 2026-10-16 lia-se `"receipt" if doc_type
+                # == "FT" else "return"`, e com isso uma fatura-recibo, uma
+                # fatura simplificada, uma guia de remessa e uma nota de débito
+                # — todas entradas de mercadoria — entravam no ledger como
+                # devoluções, com o sinal trocado em relação ao que a ADR 0014
+                # diz que cada movimento significa para o dinheiro. A NC reduz,
+                # e reduzir é a quantidade a negativo: o `return` com quantidade
+                # positiva **aumentava** o stock que a nota de crédito tira.
+                devolucao = receipt.doc_type == DOC_TIPO_QUE_SUBTRAI
                 mvt_dto = inventory_api.MovementDTO(
                     product_id=linha.product_id,
                     location_id=linha.location_id,
                     lot_id=lot_id,
-                    quantity=linha.quantity_received,
+                    quantity=(
+                        -linha.quantity_received if devolucao else linha.quantity_received
+                    ),
                     unit_cost=unit_cost,
                     cost_is_estimate=False,  # Opção B da Q8: custo confirmado (não estimado)
-                    movement_type="receipt" if receipt.doc_type == "FT" else "return",
+                    movement_type="return" if devolucao else "receipt",
                     occurred_at=receipt.received_at,
                     created_by_id=confirmed_by_id,
                     created_by_name=confirmed_by_name,

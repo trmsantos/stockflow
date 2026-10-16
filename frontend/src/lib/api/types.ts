@@ -759,7 +759,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description GET /receipts — lista paginada. */
+        /**
+         * @description GET /receipts — lista paginada na forma do DRF (`count`, `results`).
+         *
+         *     Cada receção vai **composta** (`_compor_rececao`), como no `retrieve`:
+         *     o `RececaoOutSerializer` lê `receipt.*` de um dicionário e não de um
+         *     `Receipt` — passar-lhe as linhas cruas era o 500 que o ecrã Receber via.
+         */
         get: operations["receipts_list"];
         put?: never;
         /** @description POST /receipts — cria receção. */
@@ -1085,6 +1091,32 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Um botão do turno: para onde vai, com que parâmetros e que palavra usa.
+         *
+         *     **Derivada e não guardada** (ADR 0028, decisão 4): o `MensagemOut` calcula-a
+         *     dos `tool_calls` revalidados do turno pelo mapa fechado do `navegacao.py`.
+         *
+         *     `rota` e `rotulo_id` são `ChoiceField` sobre listas fechadas de propósito: é
+         *     o que os faz sair como união no `types.ts` e o que torna um id que o cliente
+         *     não conheça um erro de compilação em vez de um botão sem palavra — o mesmo
+         *     mecanismo do registo de rotas da ADR 0009. **Nenhum rótulo nosso viaja no
+         *     arame** (ADR 0019): o que sai é o id, e a palavra resolve-se no catálogo do
+         *     cliente.
+         *
+         *     `parametros` é um mapa de strings porque mistura o parâmetro de caminho de
+         *     uma rota de detalhe (o `artigo` de `/stock/<artigo>`) com os de procura
+         *     (`?ver=falta`), e os valores são ora um uuid ora um membro de um `z.enum`.
+         *     Os valores nunca vêm do modelo — saem do mapa em código ou de um id que uma
+         *     tool já validou —, e é isso, e não o tipo do campo, que os fecha.
+         */
+        AcaoOut: {
+            parametros: {
+                [key: string]: string;
+            };
+            rota: components["schemas"]["RotaEnum"];
+            rotulo_id: components["schemas"]["RotuloIdEnum"];
+        };
         /** @description Entrada de ajuste (POST /stock/movements/adjustment). */
         AdjustmentRequest: {
             /**
@@ -1837,6 +1869,7 @@ export interface components {
          *     método sai opcional no `types.ts`, e estes o servidor manda sempre.
          */
         MensagemOut: {
+            acoes: components["schemas"]["AcaoOut"][];
             answer: string;
             asked_by_name: string;
             /** Format: decimal */
@@ -2346,6 +2379,20 @@ export interface components {
             route_id: components["schemas"]["RotaIdEnum"];
         };
         /**
+         * @description * `inicio` - inicio
+         *     * `painel` - painel
+         *     * `alertas` - alertas
+         *     * `assistente` - assistente
+         *     * `stock` - stock
+         *     * `artigo` - artigo
+         *     * `contar` - contar
+         *     * `receber` - receber
+         *     * `rececao` - rececao
+         *     * `definicoes` - definicoes
+         * @enum {string}
+         */
+        RotaEnum: "inicio" | "painel" | "alertas" | "assistente" | "stock" | "artigo" | "contar" | "receber" | "rececao" | "definicoes";
+        /**
          * @description * `inicio` - Início
          *     * `painel` - Painel de gestão
          *     * `alertas` - Alertas
@@ -2356,6 +2403,25 @@ export interface components {
          * @enum {string}
          */
         RotaIdEnum: "inicio" | "painel" | "alertas" | "assistente" | "stock" | "contar" | "receber";
+        /**
+         * @description * `ver_artigo` - ver_artigo
+         *     * `ver_falta` - ver_falta
+         *     * `ver_validade` - ver_validade
+         *     * `ver_desperdicio` - ver_desperdicio
+         *     * `ver_alertas` - ver_alertas
+         *     * `rever_rececoes` - rever_rececoes
+         *     * `ver_rececoes_de_hoje` - ver_rececoes_de_hoje
+         *     * `ver_rececoes` - ver_rececoes
+         *     * `ver_rececao` - ver_rececao
+         *     * `ver_contagens` - ver_contagens
+         *     * `ver_painel` - ver_painel
+         *     * `ver_stock` - ver_stock
+         *     * `ver_equipa` - ver_equipa
+         *     * `ver_estabelecimento` - ver_estabelecimento
+         *     * `ver_inicio` - ver_inicio
+         * @enum {string}
+         */
+        RotuloIdEnum: "ver_artigo" | "ver_falta" | "ver_validade" | "ver_desperdicio" | "ver_alertas" | "rever_rececoes" | "ver_rececoes_de_hoje" | "ver_rececoes" | "ver_rececao" | "ver_contagens" | "ver_painel" | "ver_stock" | "ver_equipa" | "ver_estabelecimento" | "ver_inicio";
         /**
          * @description A resposta dos cinco endpoints de autenticação. Sempre esta forma.
          *

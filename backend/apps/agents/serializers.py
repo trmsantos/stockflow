@@ -44,9 +44,11 @@ from rest_framework import serializers
 
 from apps.accounts.api import Papel
 from apps.agents.models import CodigoDeErroDaMensagem, EstadoDaMensagem
+from apps.agents.navegacao import ROTAS, ROTULOS
 from apps.purchasing.api import LeituraDeDocumento, LinhaLida
 
 __all__ = [
+    "AcaoOutSerializer",
     "ConversaOutSerializer",
     "ConversaResumoOutSerializer",
     "LeituraDeFaturaSerializer",
@@ -211,6 +213,31 @@ class ToolCallOutSerializer(serializers.Serializer):
     ms = serializers.IntegerField()
 
 
+class AcaoOutSerializer(serializers.Serializer):
+    """Um botão do turno: para onde vai, com que parâmetros e que palavra usa.
+
+    **Derivada e não guardada** (ADR 0028, decisão 4): o `MensagemOut` calcula-a
+    dos `tool_calls` revalidados do turno pelo mapa fechado do `navegacao.py`.
+
+    `rota` e `rotulo_id` são `ChoiceField` sobre listas fechadas de propósito: é
+    o que os faz sair como união no `types.ts` e o que torna um id que o cliente
+    não conheça um erro de compilação em vez de um botão sem palavra — o mesmo
+    mecanismo do registo de rotas da ADR 0009. **Nenhum rótulo nosso viaja no
+    arame** (ADR 0019): o que sai é o id, e a palavra resolve-se no catálogo do
+    cliente.
+
+    `parametros` é um mapa de strings porque mistura o parâmetro de caminho de
+    uma rota de detalhe (o `artigo` de `/stock/<artigo>`) com os de procura
+    (`?ver=falta`), e os valores são ora um uuid ora um membro de um `z.enum`.
+    Os valores nunca vêm do modelo — saem do mapa em código ou de um id que uma
+    tool já validou —, e é isso, e não o tipo do campo, que os fecha.
+    """
+
+    rota = serializers.ChoiceField(choices=[(rota, rota) for rota in ROTAS])
+    parametros = serializers.DictField(child=serializers.CharField())
+    rotulo_id = serializers.ChoiceField(choices=[(r, r) for r in ROTULOS])
+
+
 class MensagemOutSerializer(serializers.Serializer):
     """Um turno, como o `GET` da conversa o serve — o alvo do polling.
 
@@ -230,6 +257,7 @@ class MensagemOutSerializer(serializers.Serializer):
     asked_by_name = serializers.CharField(allow_blank=True)
     role_at_time = serializers.ChoiceField(choices=Papel.choices)
     tool_calls = ToolCallOutSerializer(many=True, source="chamadas_validadas")
+    acoes = AcaoOutSerializer(many=True, source="acoes_derivadas")
     model = serializers.CharField(allow_blank=True)
     input_tokens = serializers.IntegerField()
     output_tokens = serializers.IntegerField()
