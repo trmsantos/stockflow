@@ -66,9 +66,11 @@ export const PT = {
     naoExisteTitulo: "Esta conversa já não está aqui",
     naoExisteCorpo:
       "O endereço aponta para uma conversa que não existe neste estabelecimento, ou que foi apagada.",
-    /** Os dois lados de um turno, só para quem ouve. */
-    pergunta: "Pergunta",
-    resposta: "Resposta",
+    /** A assinatura visível da resposta: a mesma palavra do menu e do lançador. */
+    assistente: "Assistente",
+    /** Os nomes dos dois lados de um turno, para quem ouve (`role="group"`). */
+    perguntaDe: (nome: string) => `Pergunta de ${nome}`,
+    respostaDoAssistente: "Resposta do assistente",
     aConsultar: "A consultar o stock…",
     aConsultarTool: (tool: string) => `A consultar: ${tool}…`,
     desistiuTitulo: "Deixei de perguntar",

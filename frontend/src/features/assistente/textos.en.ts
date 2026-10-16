@@ -51,8 +51,9 @@ export const EN: typeof PT = {
     naoExisteTitulo: "This conversation is no longer here",
     naoExisteCorpo:
       "The address points to a conversation that does not exist in this establishment, or that was deleted.",
-    pergunta: "Question",
-    resposta: "Answer",
+    assistente: "Assistant",
+    perguntaDe: (nome: string) => `Question from ${nome}`,
+    respostaDoAssistente: "Assistant's answer",
     aConsultar: "Checking the stock…",
     aConsultarTool: (tool: string) => `Checking: ${tool}…`,
     desistiuTitulo: "I stopped asking",
