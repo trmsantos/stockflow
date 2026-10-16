@@ -141,6 +141,8 @@ export const PT = {
   },
 
   errosDaMensagem: {
+    modeloOcupado:
+      "O assistente está com muitos pedidos neste momento. Tente outra vez daqui a pouco.",
     tetoDeIteracoes:
       "A pergunta precisava de mais consultas do que o permitido. Tente dividi-la em perguntas mais pequenas.",
     tetoDeCusto: "O orçamento diário do assistente esgotou-se a meio da resposta. Volte amanhã.",

@@ -377,6 +377,7 @@ class StockMovementViewSet(viewsets.ViewSet):
                 reason=serializer.validated_data["reason"],
                 reason_detail=serializer.validated_data.get("reason_detail"),
                 user=request.user,
+                user_name=request.membership.display_name,
             )
 
             # Recuperar movimento criado
@@ -426,6 +427,7 @@ class StockMovementViewSet(viewsets.ViewSet):
                 reason=serializer.validated_data["reason"],
                 reason_detail=serializer.validated_data.get("reason_detail"),
                 user=request.user,
+                user_name=request.membership.display_name,
             )
 
             # Recuperar movimento criado
@@ -474,6 +476,7 @@ class StockMovementViewSet(viewsets.ViewSet):
                 quantity=serializer.validated_data["quantity"],
                 lot_id=serializer.validated_data.get("lot_id"),
                 user=request.user,
+                user_name=request.membership.display_name,
             )
 
             # Recuperar movimentos criados

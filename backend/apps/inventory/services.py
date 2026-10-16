@@ -192,8 +192,11 @@ class Autor(Protocol):
 
     Um `Protocol` e não o modelo `User`: este módulo não pode importar
     `apps.accounts.models` (só `api.py` atravessa a fronteira, ARCHITECTURE.md
-    §3), e do utilizador só se guarda o `id` no FK e o `email` em
-    `created_by_name` — a cópia que sobrevive à conta ser apagada.
+    §3), e do utilizador guarda-se o `id` no FK. O nome que fica em
+    `created_by_name` — a cópia que sobrevive à conta ser apagada — é o
+    `display_name` da **pertença**, que vem por `user_name` de quem chama: um
+    email no ledger é lido depois por qualquer colega (revisão de segurança de
+    2026-10-16). O `email` só serve de recurso para chamadores antigos.
     """
 
     id: UUID
@@ -483,6 +486,7 @@ def registar_waste(
     reason: str,
     reason_detail: str | None,
     user: Autor,
+    user_name: str = "",
 ) -> UUID:
     """Registar um movimento de desperdício (waste).
 
@@ -568,7 +572,7 @@ def registar_waste(
         movement_type="waste",
         occurred_at=timezone.now(),
         created_by_id=user.id,
-        created_by_name=user.email,
+        created_by_name=user_name or user.email,
         reason=reason,
     )
 
@@ -587,6 +591,7 @@ def registar_adjustment(
     reason: str,
     reason_detail: str | None,
     user: Autor,
+    user_name: str = "",
 ) -> UUID:
     """Registar um movimento de ajuste (adjustment).
 
@@ -665,7 +670,7 @@ def registar_adjustment(
         movement_type="adjustment",
         occurred_at=timezone.now(),
         created_by_id=user.id,
-        created_by_name=user.email,
+        created_by_name=user_name or user.email,
         reason=reason,
     )
 
@@ -683,6 +688,7 @@ def registar_transfer(
     quantity: Decimal,
     lot_id: UUID | None,
     user: Autor,
+    user_name: str = "",
 ) -> tuple[UUID, UUID]:
     """Registar uma transferência entre localizações (pair atómico).
 
@@ -778,7 +784,7 @@ def registar_transfer(
         movement_type="transfer_out",
         occurred_at=agora,
         created_by_id=user.id,
-        created_by_name=user.email,
+        created_by_name=user_name or user.email,
         reason=None,
         transfer_id=transfer_id,
     )
@@ -793,7 +799,7 @@ def registar_transfer(
         movement_type="transfer_in",
         occurred_at=agora,
         created_by_id=user.id,
-        created_by_name=user.email,
+        created_by_name=user_name or user.email,
         reason=None,
         transfer_id=transfer_id,
     )

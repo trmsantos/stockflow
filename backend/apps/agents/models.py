@@ -274,6 +274,7 @@ class CodigoDeErroDaMensagem(models.TextChoices):
     TEMPO_ESGOTADO = "tempo_esgotado", "o modelo não respondeu a tempo"
     RESPOSTA_INVALIDA = "resposta_invalida", "a resposta do modelo não se lê"
     ERRO_DO_MODELO = "erro_do_modelo", "o fornecedor do modelo recusou a chamada"
+    MODELO_OCUPADO = "modelo_ocupado", "o fornecedor está sobrecarregado"
     PERTENCA_REVOGADA = "pertenca_revogada", "quem perguntou já não pertence ao estabelecimento"
 
 

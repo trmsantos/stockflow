@@ -126,6 +126,7 @@ const FRASE_DO_ERRO: Record<CodigoDeErro, string> = {
   tempo_esgotado: textos.errosDaMensagem.tempoEsgotado,
   resposta_invalida: textos.errosDaMensagem.respostaInvalida,
   erro_do_modelo: textos.errosDaMensagem.erroDoModelo,
+  modelo_ocupado: textos.errosDaMensagem.modeloOcupado,
   pertenca_revogada: textos.errosDaMensagem.pertencaRevogada,
 };
 

@@ -2428,6 +2428,7 @@ components:
       - tempo_esgotado
       - resposta_invalida
       - erro_do_modelo
+      - modelo_ocupado
       - pertenca_revogada
       type: string
       description: |-
@@ -2436,6 +2437,7 @@ components:
         * `tempo_esgotado` - o modelo não respondeu a tempo
         * `resposta_invalida` - a resposta do modelo não se lê
         * `erro_do_modelo` - o fornecedor do modelo recusou a chamada
+        * `modelo_ocupado` - o fornecedor está sobrecarregado
         * `pertenca_revogada` - quem perguntou já não pertence ao estabelecimento
     EstabelecimentoInRequest:
       type: object

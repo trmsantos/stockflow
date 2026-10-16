@@ -96,6 +96,19 @@ class TempoEsgotado(ErroDoModelo):
     """O fornecedor não respondeu dentro do `timeout` da chamada."""
 
 
+class ModeloOcupado(ErroDoModelo):
+    """O fornecedor está sobrecarregado e disse para voltar mais tarde.
+
+    Distinta de `ErroDoModelo` porque é a **única** recusa que melhora com o
+    tempo: a ADR 0027 d9 pôs `max_retries=0` com o argumento de que "nenhuma
+    recusa melhora com o tempo e uma retentativa paga duas vezes", e isso é
+    verdade de um 400 ou de um 404 — não de um 503 "high demand", que no nível
+    gratuito da Gemini acontece em rajadas de minutos (medido a 2026-10-16).
+    Uma retentativa de uma chamada que nunca chegou ao modelo não paga nada:
+    não há tokens numa resposta que não existiu.
+    """
+
+
 class RespostaInvalida(ErroDoModelo):
     """A resposta do fornecedor não tem a forma que se lê."""
 
@@ -246,6 +259,20 @@ def custo_em_euros(*, modelo: str, input_tokens: int, output_tokens: int) -> Dec
     return custo.quantize(_SEIS_CASAS, rounding=ROUND_HALF_UP)
 
 
+#: Os estados que querem dizer "volta a tentar", e não "não faço isto". 503 é a
+#: sobrecarga que a Gemini devolve em rajadas; 429 do **fornecedor** é a quota
+#: dele, não o nosso teto diário, que é verificado antes da chamada.
+_ESTADOS_DE_SOBRECARGA = frozenset({429, 503})
+
+#: Quantas vezes uma chamada sobrecarregada se repete, e quanto espera entre
+#: tentativas. Curto de propósito: o turno tem um `timeout` por chamada e a
+#: pessoa está à espera do lado de lá. Fica no `modelo.py` e não nas settings
+#: porque é uma propriedade de como se fala com um fornecedor, não uma escolha
+#: de produto.
+TENTATIVAS_EM_SOBRECARGA = 3
+ESPERA_ENTRE_TENTATIVAS_S = 1.5
+
+
 def conversar(
     *,
     sistema: str,
@@ -268,6 +295,38 @@ def conversar(
     O que se loga: modelo, tokens, custo, duração e a chave. O que nunca se
     loga: a chave de API, a pergunta, a resposta.
     """
+    ultima: ModeloOcupado | None = None
+    for tentativa in range(1, TENTATIVAS_EM_SOBRECARGA + 1):
+        try:
+            return _conversar_uma_vez(
+                sistema=sistema,
+                mensagens=mensagens,
+                tools=tools,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                idempotency_key=f"{idempotency_key}:{tentativa}",
+            )
+        except ModeloOcupado as exc:
+            ultima = exc
+            logger.warning(
+                "modelo sobrecarregado; a repetir",
+                extra={"event": "chat_chamada", "outcome": "ocupado", "count": tentativa},
+            )
+            if tentativa < TENTATIVAS_EM_SOBRECARGA:
+                time.sleep(ESPERA_ENTRE_TENTATIVAS_S * tentativa)
+    raise ultima if ultima is not None else ErroDoModelo("o modelo não respondeu")
+
+
+def _conversar_uma_vez(
+    *,
+    sistema: str,
+    mensagens: Sequence[Mapping[str, Any]],
+    tools: Sequence[Mapping[str, Any]],
+    max_tokens: int,
+    timeout: int,
+    idempotency_key: str,
+) -> RespostaDoModelo:
+    """Uma chamada só. As retentativas por sobrecarga estão no `conversar`."""
     modelo = nome_do_modelo_de_chat()
     if not modelo:
         raise ModeloNaoConfigurado(
@@ -293,9 +352,15 @@ def conversar(
         )
     except openai.APITimeoutError as exc:
         raise TempoEsgotado(f"o modelo não respondeu em {timeout} s") from exc
+    except openai.APIStatusError as exc:
+        # Só a classe e o código: a mensagem de um erro do fornecedor pode citar
+        # o corpo do pedido, e o corpo tem a pergunta.
+        if exc.status_code in _ESTADOS_DE_SOBRECARGA:
+            raise ModeloOcupado(
+                f"o fornecedor respondeu {exc.status_code} e pediu para esperar"
+            ) from exc
+        raise ErroDoModelo(f"{type(exc).__name__} ao chamar o modelo") from exc
     except openai.OpenAIError as exc:
-        # Só a classe: a mensagem de um erro do fornecedor pode citar o corpo do
-        # pedido, e o corpo tem a pergunta.
         raise ErroDoModelo(f"{type(exc).__name__} ao chamar o modelo") from exc
     duracao_ms = int((time.monotonic() - comecou) * 1000)
 

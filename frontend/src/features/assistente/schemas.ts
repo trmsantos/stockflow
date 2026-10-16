@@ -41,6 +41,7 @@ const CODIGOS_DE_ERRO = {
   tempo_esgotado: "tempo_esgotado",
   resposta_invalida: "resposta_invalida",
   erro_do_modelo: "erro_do_modelo",
+  modelo_ocupado: "modelo_ocupado",
   pertenca_revogada: "pertenca_revogada",
 } as const satisfies Record<CodigoDeErroGerado, CodigoDeErroGerado>;
 

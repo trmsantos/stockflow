@@ -46,6 +46,7 @@ from apps.agents import tools
 from apps.agents.modelo import (
     VERSAO_DO_PROMPT,
     ErroDoModelo,
+    ModeloOcupado,
     RespostaDoModelo,
     RespostaInvalida,
     TempoEsgotado,
@@ -475,6 +476,14 @@ def responder(*, tenant_id: UUID, mensagem_id: UUID, request_id: str | None = No
         except RespostaInvalida as erro:
             _fechar_turno_com_erro(
                 mensagem, codigo=CodigoDeErroDaMensagem.RESPOSTA_INVALIDA, razao=str(erro)
+            )
+            return _registar(mensagem, request_id, "erro")
+        except ModeloOcupado as erro:
+            # Sobrecarga do fornecedor: as retentativas do `modelo.py` já
+            # falharam. O código é próprio porque a frase que a pessoa lê é
+            # "está ocupado, tenta outra vez" e não "falhou".
+            _fechar_turno_com_erro(
+                mensagem, codigo=CodigoDeErroDaMensagem.MODELO_OCUPADO, razao=str(erro)
             )
             return _registar(mensagem, request_id, "erro")
         except ErroDoModelo as erro:

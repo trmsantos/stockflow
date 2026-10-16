@@ -248,17 +248,34 @@ def _quantidade(
     }
 
 
-def _custo(quantidade: Decimal, unit_cost: Decimal, *, estimado: bool = False) -> dict[str, Any]:
-    """O valor de uma linha, ou "desconhecido" quando o custo unitário é zero."""
+def _custo(
+    quantidade: Decimal,
+    unit_cost: Decimal,
+    *,
+    estimado: bool = False,
+    contexto: ContextoDaTool | None = None,
+) -> dict[str, Any]:
+    """O valor de uma linha, ou "desconhecido" quando o custo unitário é zero.
+
+    Com `contexto`, o **número** só sai a quem vê euros: a quem não vê fica o
+    rótulo (`custo: "conhecido"`), que diz que há custo registado sem o dizer.
+    Sem `contexto` não filtra — e é por isso que ele é obrigatório em tudo o
+    que uma tool de `TODOS_OS_PAPEIS` devolve (revisão de 2026-10-16: o
+    `saldo_de_artigo` e o `movimentos_de_artigo` da ADR 0027 ficaram de fora da
+    regra quando ela nasceu, e um `staff` via euros).
+    """
     if Decimal(unit_cost) == 0:
         return {"valor_eur": None, "custo": "desconhecido"}
+    rotulo = {"custo": "estimado" if estimado else "conhecido"}
+    if contexto is not None and not _pode_ver_euros(contexto):
+        return rotulo
     valor = (abs(Decimal(quantidade)) * Decimal(unit_cost)).quantize(
         _DUAS_CASAS, rounding=ROUND_HALF_UP
     )
     return {
         "valor_eur": format(valor, "f"),
         "valor_texto": texto_de_dinheiro(valor),
-        "custo": "estimado" if estimado else "conhecido",
+        **rotulo,
     }
 
 
@@ -618,11 +635,17 @@ def _saldo_de_artigo(contexto: ContextoDaTool, args: SaldoDeArtigoArgs) -> dict[
         total += saldo.quantity
         if saldo.quantity == 0:
             continue
-        custo = _custo(saldo.quantity, saldo.unit_cost)
-        if custo["valor_eur"] is None:
+        # O valor por inteiro serve o **total**; o que vai na linha passa pelo
+        # papel. Somar aqui e filtrar ali é o que deixa o total certo para quem
+        # o vê, sem o número aparecer a quem não o pode ver.
+        custo_inteiro = _custo(saldo.quantity, saldo.unit_cost)
+        if custo_inteiro["valor_eur"] is None:
             linhas_sem_custo += 1
         else:
-            valor_total += Decimal(custo["valor_eur"])
+            valor_total += Decimal(custo_inteiro["valor_eur"])
+        custo = _custo(
+            saldo.quantity, saldo.unit_cost, estimado=False, contexto=contexto
+        )
         linhas.append(
             {
                 "localizacao": saldo.location_name,
@@ -638,9 +661,9 @@ def _saldo_de_artigo(contexto: ContextoDaTool, args: SaldoDeArtigoArgs) -> dict[
         "localizacao_filtrada": args.location_id,
         "linhas": linhas,
         "total": _quantidade(total, **unidades),
-        "valor_total_eur": format(valor_total, "f"),
-        "valor_total_texto": texto_de_dinheiro(valor_total),
+        **_dinheiro(contexto, valor_total, chave="valor_total_texto"),
         "linhas_sem_custo": linhas_sem_custo,
+        "euros_visiveis": _pode_ver_euros(contexto),
     }
 
 
@@ -779,8 +802,10 @@ def _movimentos_de_artigo(
                 "lote": m.lot_code,
                 "motivo": m.reason,
                 "referencia": m.reference,
-                "por": m.created_by_name,
-                **_custo(m.quantity, m.unit_cost, estimado=m.cost_is_estimate),
+                "por": _pessoa(m.created_by_name, contexto),
+                **_custo(
+                    m.quantity, m.unit_cost, estimado=m.cost_is_estimate, contexto=contexto
+                ),
             }
         )
     return {

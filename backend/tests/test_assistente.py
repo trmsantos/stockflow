@@ -880,15 +880,31 @@ class _TimeoutDoFornecedor(openai.APITimeoutError):
 
 
 class _LimiteDoFornecedor(openai.RateLimitError):
+    """429 do **fornecedor** (não o nosso teto diário): sobrecarga, repete-se."""
+
+    status_code = 429
+
     def __init__(self) -> None:
         Exception.__init__(self, "rate limited: corpo com a pergunta")
+
+
+class _RecusaDefinitiva(openai.BadRequestError):
+    """400: o pedido não melhora com o tempo — fecha o turno à primeira."""
+
+    status_code = 400
+
+    def __init__(self) -> None:
+        Exception.__init__(self, "bad request: corpo com a pergunta")
 
 
 @pytest.mark.parametrize(
     ("erro", "codigo"),
     [
         (_TimeoutDoFornecedor(), CodigoDeErroDaMensagem.TEMPO_ESGOTADO),
-        (_LimiteDoFornecedor(), CodigoDeErroDaMensagem.ERRO_DO_MODELO),
+        # 429 e 503 são sobrecarga: o `modelo.py` repete e, se insistir, o turno
+        # leva o código próprio (emenda à ADR 0027 d9, 2026-10-16).
+        (_LimiteDoFornecedor(), CodigoDeErroDaMensagem.MODELO_OCUPADO),
+        (_RecusaDefinitiva(), CodigoDeErroDaMensagem.ERRO_DO_MODELO),
     ],
 )
 def test_um_erro_do_fornecedor_fecha_o_turno_com_codigo(
@@ -1003,6 +1019,12 @@ def test_o_registo_de_tools_e_fechado_e_so_de_leitura() -> None:
         "criar_documento",
         "criar_receçao",
         "adicionar_linha_recepção",
+        # `produzir` é a única escrita exportada pelo `recipes/api.py`, porto que
+        # a ADR 0028 abriu ao `agents`: sem ele aqui, uma tool que o chamasse
+        # passava neste guarda-corpo (revisão de segurança de 2026-10-16).
+        "produzir",
+        "fechar_contagem",
+        "abrir_contagem",
         "registar_waste",
         "registar_adjustment",
         "registar_transfer",

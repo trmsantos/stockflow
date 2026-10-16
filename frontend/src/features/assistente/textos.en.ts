@@ -103,6 +103,8 @@ export const EN: typeof PT = {
   },
 
   errosDaMensagem: {
+    modeloOcupado:
+      "The assistant is handling too many requests right now. Try again shortly.",
     tetoDeIteracoes:
       "The question needed more lookups than allowed. Try splitting it into smaller questions.",
     tetoDeCusto: "The assistant's daily budget ran out mid-answer. Come back tomorrow.",

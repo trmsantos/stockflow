@@ -147,6 +147,7 @@ def _movimento(
     estimado: bool = False,
     transfer_id: UUID | None = None,
     lote: Lot | None = None,
+    por: str = "Teste",
 ) -> StockMovement:
     with tenant_scope(tenant.id):
         return StockMovement.objects.create(
@@ -160,7 +161,7 @@ def _movimento(
             cost_is_estimate=estimado,
             transfer_id=transfer_id,
             occurred_at=quando or timezone.now(),
-            created_by_name="Teste",
+            created_by_name=por,
         )
 
 
@@ -985,6 +986,65 @@ def test_uma_rececao_so_de_ambiente_nunca_pede_temperatura(loja: Loja) -> None:
 
     assert dados["pendencias"]["temperaturas_em_falta"] == []
     assert dados["pendencias"]["total"] == 0
+
+
+def test_o_staff_nao_ve_euros_no_saldo_nem_nos_movimentos(loja: Loja) -> None:
+    """As duas tools da ADR 0027 estavam fora da regra dos euros (2026-10-16).
+
+    `saldo_de_artigo` devolvia `valor_total_eur` e o valor de cada lote, e
+    `movimentos_de_artigo` o custo de cada linha, a quem o prompt promete que
+    não os vê. O total continua certo para quem os vê: soma-se por inteiro e
+    filtra-se à saída.
+    """
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    _nivel(loja.tenant, farinha, loja.armazem, "10000", custo="0.0015")
+    _movimento(loja.tenant, farinha, loja.armazem, "receipt", "10000", custo="0.0015")
+
+    para_staff, _ = _executar(
+        _contexto(loja.tenant, papel="staff"), "saldo_de_artigo", product_id=farinha.id
+    )
+    assert "valor_total_texto" not in para_staff
+    assert para_staff["euros_visiveis"] is False
+    for linha in para_staff["linhas"]:
+        assert "valor_eur" not in linha and "valor_texto" not in linha
+
+    para_dono, _ = _executar(
+        _contexto(loja.tenant, papel="owner"), "saldo_de_artigo", product_id=farinha.id
+    )
+    assert para_dono["valor_total_texto"] == "€ 15,00"
+
+    movimentos_staff, _ = _executar(
+        _contexto(loja.tenant, papel="staff"), "movimentos_de_artigo", product_id=farinha.id
+    )
+    for linha in movimentos_staff["linhas"]:
+        assert "valor_eur" not in linha and "valor_texto" not in linha
+        assert linha["custo"] == "conhecido"
+
+    movimentos_dono, _ = _executar(
+        _contexto(loja.tenant, papel="owner"), "movimentos_de_artigo", product_id=farinha.id
+    )
+    assert movimentos_dono["linhas"][0]["valor_texto"] == "€ 15,00"
+
+
+def test_o_email_de_quem_assinou_um_movimento_nao_sai_a_quem_nao_e_dono(loja: Loja) -> None:
+    """`created_by_name` antigo é um email: o `movimentos_de_artigo` mostrava-o."""
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    # Gravado com o email, como o `inventory/services.py` fazia até 2026-10-16;
+    # a tabela é append-only, logo escreve-se assim e não por `update`.
+    _movimento(
+        loja.tenant, farinha, loja.armazem, "receipt", "1000", custo="0.001", por="ana@exemplo.pt"
+    )
+
+    for papel in ("staff", "manager"):
+        resultado, _ = _executar(
+            _contexto(loja.tenant, papel=papel), "movimentos_de_artigo", product_id=farinha.id
+        )
+        assert "@" not in (resultado["linhas"][0]["por"] or "")
+
+    do_dono, _ = _executar(
+        _contexto(loja.tenant, papel="owner"), "movimentos_de_artigo", product_id=farinha.id
+    )
+    assert do_dono["linhas"][0]["por"] == "ana@exemplo.pt"
 
 
 def test_o_staff_nao_ve_precos_de_uma_rececao_e_o_nif_nunca_sai(loja: Loja) -> None:

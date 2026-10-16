@@ -1488,10 +1488,11 @@ export interface components {
          *     * `tempo_esgotado` - o modelo não respondeu a tempo
          *     * `resposta_invalida` - a resposta do modelo não se lê
          *     * `erro_do_modelo` - o fornecedor do modelo recusou a chamada
+         *     * `modelo_ocupado` - o fornecedor está sobrecarregado
          *     * `pertenca_revogada` - quem perguntou já não pertence ao estabelecimento
          * @enum {string}
          */
-        ErrorCodeEnum: "teto_de_iteracoes" | "teto_de_custo" | "tempo_esgotado" | "resposta_invalida" | "erro_do_modelo" | "pertenca_revogada";
+        ErrorCodeEnum: "teto_de_iteracoes" | "teto_de_custo" | "tempo_esgotado" | "resposta_invalida" | "erro_do_modelo" | "modelo_ocupado" | "pertenca_revogada";
         /**
          * @description O corpo do `PATCH /estabelecimento`: os três campos configuráveis.
          *
