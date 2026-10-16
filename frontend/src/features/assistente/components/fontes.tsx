@@ -4,7 +4,7 @@ import { formatSeconds } from "@/lib/format";
 import { useNomesDoCatalogo } from "../hooks/use-nomes-do-catalogo";
 import type { ToolCall } from "../schemas";
 import { textos } from "../textos";
-import { argumentosLegiveis, rotuloDaTool } from "../vocabulario";
+import { argumentosLegiveis, rotuloDaTool, toolContaLinhas } from "../vocabulario";
 
 /**
  * O rodapé "Fontes" de uma resposta: as tools chamadas, com os argumentos
@@ -59,10 +59,14 @@ function ListaDeFontes({ toolCalls }: { readonly toolCalls: readonly ToolCall[] 
               {argumento}
             </span>
           ))}
-          <span>
-            {" · "}
-            <span data-numeric>{textos.fio.linhas(tool.rows)}</span>
-          </span>
+          {/* A ajuda não conta linhas: devolve texto do manual, e «0 linhas»
+              ao lado de «Ajuda» é a contagem de uma coisa que não existe. */}
+          {toolContaLinhas(tool.name) ? (
+            <span>
+              {" · "}
+              <span data-numeric>{textos.fio.linhas(tool.rows)}</span>
+            </span>
+          ) : null}
           {tool.truncated ? <span>{` · ${textos.fio.truncado}`}</span> : null}
           {tool.ok ? null : <span className="text-danger">{` · ${textos.fio.falhou}`}</span>}
         </li>

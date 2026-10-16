@@ -11,6 +11,7 @@ import { formatTime } from "@/lib/format";
 import type { Mensagem } from "../schemas";
 import { textos } from "../textos";
 import { fraseDoErroDaMensagem, rotuloDaTool } from "../vocabulario";
+import { AcoesDoTurno } from "./acoes-do-turno";
 import { Fontes } from "./fontes";
 
 /**
@@ -68,12 +69,22 @@ import { Fontes } from "./fontes";
  * pinta no erro: todos os trilhos ficam na mesma vertical, e um trilho em
  * todas as respostas seria uma coluna pintada que não distingue nada
  * (DESIGN.md §3).
+ *
+ * ## Entre a resposta e as fontes: para onde se vai a seguir
+ *
+ * Os botões de acção (ADR 0028, decisão 4) ficam **abaixo** do texto e **acima**
+ * do rodapé «Fontes», e a ordem é a de leitura: o que se perguntou, o que se
+ * respondeu, o que se pode fazer com isso, de onde veio. Aparecem na mesma
+ * condição do rodapé — turno acabado, com resposta ou com erro: um turno que
+ * falhou a meio pode ter consultado coisas antes de falhar, e levar ao ecrã
+ * delas continua a ser verdade.
  */
 export function Turno({
   mensagem,
   ultimo,
   desistiu,
   aoRetomar,
+  aoNavegar,
 }: {
   readonly mensagem: Mensagem;
   /** O último da conversa: é o único cuja resposta nova se anuncia. */
@@ -81,6 +92,8 @@ export function Turno({
   /** O polling desistiu neste turno (ADR 0027, decisão 3). */
   readonly desistiu: boolean;
   readonly aoRetomar: () => void;
+  /** Carregou-se num botão de acção. O painel lateral fecha-se; a página não. */
+  readonly aoNavegar?: (() => void) | undefined;
 }) {
   const idPergunta = useId();
   const emCurso = mensagem.status === "pendente" || mensagem.status === "a_responder";
@@ -191,6 +204,8 @@ export function Turno({
             </p>
           ) : null}
         </div>
+
+        {emCurso ? null : <AcoesDoTurno acoes={mensagem.acoes} aoNavegar={aoNavegar} />}
 
         {emCurso ? null : <Fontes toolCalls={mensagem.tool_calls} duracaoMs={duracaoMs} />}
       </div>

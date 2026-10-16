@@ -254,7 +254,16 @@ export function PainelDoAssistente({
         ) : null}
 
         {aberta !== null && consulta.data !== undefined ? (
-          <FioDeTurnos conversa={consulta.data} desistiu={desistiu} aoRetomar={retomar} />
+          <FioDeTurnos
+            conversa={consulta.data}
+            desistiu={desistiu}
+            aoRetomar={retomar}
+            // Um botão de acção navega por baixo da gaveta; se ela ficasse
+            // aberta, o ecrã para onde a resposta levou ficava escondido pela
+            // própria resposta. É o mesmo gesto da ligação para a página
+            // inteira, aqui em cima.
+            aoNavegar={aoFechar}
+          />
         ) : null}
       </div>
 

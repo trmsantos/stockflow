@@ -16,10 +16,18 @@ export function FioDeTurnos({
   conversa,
   desistiu,
   aoRetomar,
+  aoNavegar,
 }: {
   readonly conversa: Conversa;
   readonly desistiu: boolean;
   readonly aoRetomar: () => void;
+  /**
+   * Carregou-se num botão de acção de um turno. Só o painel lateral o passa —
+   * para se fechar enquanto a navegação acontece por baixo dele —, e é por isso
+   * que atravessa daqui em vez de viver num contexto: um contexto para um
+   * consumidor é uma dependência escondida a mais.
+   */
+  readonly aoNavegar?: (() => void) | undefined;
 }) {
   const fim = useRef<HTMLDivElement>(null);
   const ultimo = conversa.messages.at(-1);
@@ -44,6 +52,7 @@ export function FioDeTurnos({
             ultimo={mensagem.id === ultimo?.id}
             desistiu={desistiu && mensagem.id === ultimo?.id}
             aoRetomar={aoRetomar}
+            aoNavegar={aoNavegar}
           />
         ))}
       </ol>

@@ -85,6 +85,61 @@ export const PT = {
     semFontes: "Sem consultas ao stock.",
   },
 
+  /**
+   * Os botões de um turno (ADR 0028, decisão 4) — **o catálogo que resolve o
+   * `rotulo_id`**. Nenhum rótulo nosso viaja no arame (ADR 0019): o que chega
+   * do servidor é o id, e a palavra é destas quinze linhas.
+   *
+   * Curtas e verbais, porque são a acção seguinte e não um título: a pessoa já
+   * leu a resposta e o botão diz **o que vai acontecer se carregar**.
+   *
+   * O `verInicio` é o rótulo do tema «o próprio assistente», cuja rota é o
+   * assistente — o botão nunca sai do servidor (quem está lá já está lá), e a
+   * palavra existe porque o contrato lista o id.
+   */
+  acoes: {
+    /** O nome do grupo, para quem ouve: quinze botões sem nome são quinze «link». */
+    grupo: "Ações sugeridas",
+    verArtigo: "Ver o artigo",
+    verFalta: "Ver o que falta",
+    verValidade: "Ver validades",
+    verDesperdicio: "Ver o desperdício",
+    verAlertas: "Ver os alertas",
+    reverRececoes: "Rever receções",
+    verRececoesDeHoje: "Ver as receções de hoje",
+    verRececoes: "Ver as receções",
+    verRececao: "Abrir a receção",
+    verContagens: "Abrir contagem",
+    verPainel: "Ver o painel",
+    verStock: "Ver o stock",
+    verEquipa: "Ver a equipa",
+    verEstabelecimento: "Ver o estabelecimento",
+    verInicio: "Ir para o início",
+  },
+
+  /**
+   * Os doze temas do manual (ADR 0028, decisão 3), em palavras de produto.
+   *
+   * Aparecem no rodapé «Fontes» ao lado da ajuda — «Ajuda · Perdas e ajustes» —,
+   * que é o que distingue uma resposta que **explicou** de uma que consultou
+   * números. O slug (`perdas-ajustes-transferencias`) é um nome de ficheiro no
+   * servidor e não se mostra a ninguém.
+   */
+  temas: {
+    receber: "Receber mercadoria",
+    reverLinhas: "Rever linhas da fatura",
+    perdasAjustesTransferencias: "Perdas e ajustes",
+    contar: "Contagens",
+    alertasEMinimos: "Alertas e mínimos",
+    painel: "Painel do mês",
+    artigosSkuEmbalagens: "Artigos e embalagens",
+    fornecedores: "Fornecedores",
+    receitasEProducao: "Receitas e produção",
+    equipaEConvites: "Equipa e convites",
+    definicoes: "Definições",
+    assistente: "O assistente",
+  },
+
   errosDaMensagem: {
     tetoDeIteracoes:
       "A pergunta precisava de mais consultas do que o permitido. Tente dividi-la em perguntas mais pequenas.",
@@ -137,6 +192,21 @@ export const PT = {
     lotesAVencer: "Lotes a vencer",
     movimentosDeArtigo: "Movimentos de artigo",
     comprasPorPeriodo: "Compras por período",
+    /** As doze da leitura total (ADR 0028, decisão 1), uma por `api.py`. */
+    rececoes: "Receções",
+    rececao: "Receção",
+    historicoDePrecos: "Histórico de preços",
+    contagens: "Contagens",
+    contagem: "Contagem",
+    alertas: "Alertas",
+    artigo: "Ficha do artigo",
+    receitas: "Receitas",
+    receita: "Receita",
+    producoesRecentes: "Produções recentes",
+    equipa: "Equipa",
+    estabelecimento: "Estabelecimento",
+    /** A única tool que não lê dados: lê o manual curado (ADR 0028, decisão 3). */
+    ajudaSobre: "Ajuda",
     dias: (n: number) => (n === 1 ? "1 dia" : `${String(n)} dias`),
     periodo: (desde: string, ate: string) => `${desde} a ${ate}`,
     desde: (data: string) => `desde ${data}`,

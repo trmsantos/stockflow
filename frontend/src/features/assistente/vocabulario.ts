@@ -1,7 +1,7 @@
 import { formatDate } from "@/lib/format";
 
 import type { NomesDoCatalogo } from "./hooks/use-nomes-do-catalogo";
-import type { CodigoDeErro, ToolCall } from "./schemas";
+import type { CodigoDeErro, RotuloDeAcao, ToolCall } from "./schemas";
 import { textos } from "./textos";
 
 /**
@@ -26,11 +26,94 @@ const ROTULO_DA_TOOL = new Map<string, string>([
   ["lotes_a_vencer", textos.tools.lotesAVencer],
   ["movimentos_de_artigo", textos.tools.movimentosDeArtigo],
   ["compras_por_periodo", textos.tools.comprasPorPeriodo],
+  // As doze da leitura total (ADR 0028, decisão 1). Sem elas o rodapé mostrava
+  // `rececoes` e `historico_de_precos` ao lado de «Lotes a vencer» — nomes de
+  // função do servidor numa linha que é copy.
+  ["rececoes", textos.tools.rececoes],
+  ["rececao", textos.tools.rececao],
+  ["historico_de_precos", textos.tools.historicoDePrecos],
+  ["contagens", textos.tools.contagens],
+  ["contagem", textos.tools.contagem],
+  ["alertas", textos.tools.alertas],
+  ["artigo", textos.tools.artigo],
+  ["receitas", textos.tools.receitas],
+  ["receita", textos.tools.receita],
+  ["producoes_recentes", textos.tools.producoesRecentes],
+  ["equipa", textos.tools.equipa],
+  ["estabelecimento", textos.tools.estabelecimento],
+  // A única tool que não lê dados (ADR 0028, decisão 3). No rodapé lê-se
+  // «Ajuda · Perdas e ajustes» e não o nome do ficheiro do manual.
+  ["ajuda_sobre", textos.tools.ajudaSobre],
 ]);
 
 /** O nome legível de uma tool, ou o técnico se o registo crescer antes disto. */
 export function rotuloDaTool(nome: string): string {
   return ROTULO_DA_TOOL.get(nome) ?? nome;
+}
+
+/**
+ * Uma tool que **conta linhas**? A ajuda não: devolve um texto do manual, e
+ * `0 linhas` ao lado de «Ajuda» é uma contagem de uma coisa que não existe.
+ */
+export function toolContaLinhas(nome: string): boolean {
+  return nome !== "ajuda_sobre";
+}
+
+/**
+ * Os doze temas do manual, do slug para a palavra de produto (ADR 0028,
+ * decisão 3). Um slug que este cliente não conheça **não se mostra**: o nome do
+ * ficheiro do servidor não é copy.
+ */
+const NOME_DO_TEMA = new Map<string, string>([
+  ["receber", textos.temas.receber],
+  ["rever-linhas", textos.temas.reverLinhas],
+  ["perdas-ajustes-transferencias", textos.temas.perdasAjustesTransferencias],
+  ["contar", textos.temas.contar],
+  ["alertas-e-minimos", textos.temas.alertasEMinimos],
+  ["painel", textos.temas.painel],
+  ["artigos-sku-embalagens", textos.temas.artigosSkuEmbalagens],
+  ["fornecedores", textos.temas.fornecedores],
+  ["receitas-e-producao", textos.temas.receitasEProducao],
+  ["equipa-e-convites", textos.temas.equipaEConvites],
+  ["definicoes", textos.temas.definicoes],
+  ["assistente", textos.temas.assistente],
+]);
+
+/**
+ * A palavra de cada `rotulo_id`, exaustiva sobre o enum gerado: um id novo no
+ * backend (depois do `pnpm gen:api`) deixa de compilar aqui em vez de aparecer
+ * num botão sem palavra. Lido por `Map`, como o resto do ficheiro
+ * (`detect-object-injection`).
+ */
+const ROTULO_DA_ACAO: Record<RotuloDeAcao, string> = {
+  ver_artigo: textos.acoes.verArtigo,
+  ver_falta: textos.acoes.verFalta,
+  ver_validade: textos.acoes.verValidade,
+  ver_desperdicio: textos.acoes.verDesperdicio,
+  ver_alertas: textos.acoes.verAlertas,
+  rever_rececoes: textos.acoes.reverRececoes,
+  ver_rececoes_de_hoje: textos.acoes.verRececoesDeHoje,
+  ver_rececoes: textos.acoes.verRececoes,
+  ver_rececao: textos.acoes.verRececao,
+  ver_contagens: textos.acoes.verContagens,
+  ver_painel: textos.acoes.verPainel,
+  ver_stock: textos.acoes.verStock,
+  ver_equipa: textos.acoes.verEquipa,
+  ver_estabelecimento: textos.acoes.verEstabelecimento,
+  ver_inicio: textos.acoes.verInicio,
+};
+
+const ROTULOS_POR_ID = new Map<string, string>(Object.entries(ROTULO_DA_ACAO));
+
+/**
+ * A palavra de uma acção, ou `undefined` se este cliente não conhecer o id.
+ *
+ * O `undefined` não é defensivismo decorativo: é a segunda metade da regra do
+ * `schemas.ts` — uma acção sem palavra **não se mostra**, porque o id técnico
+ * (`rever_rececoes`) não é copy e nunca deve chegar a um botão.
+ */
+export function rotuloDaAcao(id: string): string | undefined {
+  return ROTULOS_POR_ID.get(id);
 }
 
 /**
@@ -95,6 +178,13 @@ function nome(valor: unknown, resolver: (id: string) => string | null): string |
 export function argumentosLegiveis(tool: ToolCall, nomes: NomesDoCatalogo): readonly string[] {
   const { args } = tool;
   const saida: string[] = [];
+
+  // Primeiro, porque é o assunto da chamada: «Ajuda · Perdas e ajustes».
+  const tema = texto(args.tema);
+  if (tema !== null) {
+    const palavra = NOME_DO_TEMA.get(tema);
+    if (palavra !== undefined) saida.push(palavra);
+  }
 
   const q = texto(args.q);
   if (q !== null) saida.push(`«${q}»`);
