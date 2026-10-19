@@ -927,6 +927,21 @@ class TestRotas:
         assert staff.get(
             f"/api/v1/stock/counts/{contagem_id}/closing"
         ).status_code == 403
+
+        # A justificação do fecho cita o valor ("faltaram 750 g, 0,90 €"), logo
+        # segue a mesma fronteira dos euros: esconder a diferença e deixar
+        # passar a frase que a descreve era fingir (decisão do dono, 2026-10-19).
+        dono.post(
+            f"/api/v1/stock/counts/{contagem_id}/closing",
+            {"reason": "Faltaram 750 g de farinha, 0,90 €."},
+            format="json",
+        )
+        do_staff = staff.get("/api/v1/stock/counts").json()["results"][0]
+        assert do_staff["closing_reason"] is None
+        assert do_staff["status"] == "closed", "fechada vê-se; o porquê em euros não"
+        assert dono.get("/api/v1/stock/counts").json()["results"][0][
+            "closing_reason"
+        ] == "Faltaram 750 g de farinha, 0,90 €."
         assert staff.post(
             f"/api/v1/stock/counts/{contagem_id}/closing",
             {"reason": "Eu fecho."},
@@ -950,6 +965,17 @@ class TestRotas:
             {"product": str(casa.farinha.id), "quantity": "1"},
             format="json",
         ).status_code == 404
+        # O fecho é a única rota que **escreve no ledger**: faltava aqui, e um
+        # refactor que contornasse o `get_object()` passava em silêncio
+        # (revisão de segurança de 2026-10-19).
+        assert dono.post(
+            f"/api/v1/stock/counts/{alheia.pk}/closing",
+            {"reason": "Fechar a do vizinho."},
+            format="json",
+        ).status_code == 404
+        with tenant_scope(vizinha.tenant.id):
+            alheia.refresh_from_db()
+        assert alheia.status == "open"
         assert dono.get("/api/v1/stock/counts").json()["count"] == 0
 
     def test_o_corpo_do_fecho_e_validado(self):

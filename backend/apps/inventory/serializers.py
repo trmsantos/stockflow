@@ -582,12 +582,19 @@ def _progresso_de_zona(
 
 
 def compor_contagem(
-    contagem: Any, *, counted_lines: int, total_lines: int
+    contagem: Any, *, counted_lines: int, total_lines: int, ve_euros: bool = True
 ) -> dict[str, Any]:
     """O cabeçalho de uma contagem, igual na lista e na resposta do `POST`.
 
     `current_zone` é a zona enquanto houver linhas por contar e `null` quando não
     houver — é o que o ecrã lê para saber onde está.
+
+    O `closing_reason` só sai a quem **vê euros**. É texto livre escrito por
+    quem fechou, e na prática cita o valor ("faltaram 750 g, 0,90 €") — o mesmo
+    euro que o `difference_eur` nega ao colaborador. Esconder a diferença e
+    deixar passar a frase que a descreve era uma fronteira a fingir (revisão de
+    segurança de 2026-10-19, decisão do dono no mesmo dia). O que o colaborador
+    continua a ver: que a contagem foi fechada, quando, e por quem.
     """
     zona = _progresso_de_zona(
         contagem.location, counted_lines=counted_lines, total_lines=total_lines
@@ -603,7 +610,7 @@ def compor_contagem(
         "current_zone": zona if counted_lines < total_lines else None,
         "zones": [zona],
         "closing_role": str(ROTULO_DE_QUEM_FECHA),
-        "closing_reason": contagem.closing_reason or None,
+        "closing_reason": (contagem.closing_reason or None) if ve_euros else None,
     }
 
 

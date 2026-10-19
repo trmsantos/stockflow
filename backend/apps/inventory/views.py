@@ -695,9 +695,13 @@ class ContagemViewSet(viewsets.GenericViewSet):
     def list(self, request: Request, *args, **kwargs) -> Response:
         """Lista paginada de contagens, da mais recente para a mais antiga."""
         pagina = self.paginate_queryset(self.get_queryset())
+        ve_euros = self._ve_euros(request)
         corpo = [
             compor_contagem(
-                contagem, counted_lines=contagem.n_contadas, total_lines=contagem.n_linhas
+                contagem,
+                counted_lines=contagem.n_contadas,
+                total_lines=contagem.n_linhas,
+                ve_euros=ve_euros,
             )
             for contagem in pagina
         ]
@@ -729,6 +733,7 @@ class ContagemViewSet(viewsets.GenericViewSet):
             contagem,
             counted_lines=progresso["n_contadas"],
             total_lines=progresso["n_linhas"],
+            ve_euros=self._ve_euros(request),
         )
         return Response(
             ContagemOutSerializer(corpo).data, status=status.HTTP_201_CREATED

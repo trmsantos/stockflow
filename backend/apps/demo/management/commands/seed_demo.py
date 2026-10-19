@@ -356,8 +356,15 @@ class Command(BaseCommand):
         now = timezone.now()
 
         for idx in range(10):
-            product_id = product_ids[idx % len(product_ids)]
-            location_id = location_ids[idx % len(location_ids)]
+            # Dois movimentos por artigo — uma entrada e o consumo dela —, em vez
+            # de dez artigos alternados: assim nenhum artigo nasce só com saída e
+            # fica com saldo negativo, que o ecrã mostra como "esperado −8 kg" e
+            # confunde quem vê a demonstração (ADR 0012: negativo é possível, mas
+            # não deve ser o estado inicial de uma loja de exemplo).
+            product_id = product_ids[idx // 2]
+            # A mesma localização do par: a entrada vai para o Armazém e o
+            # consumo tem de sair de lá, senão consome-se de uma cozinha vazia.
+            location_id = location_ids[(idx // 2) % len(location_ids)]
 
             movement_type = "receipt" if idx % 2 == 0 else "consumption"
             base = self._base_por_produto.get(product_id, "")
