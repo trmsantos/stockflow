@@ -85,6 +85,13 @@ discute. O que muda é a frase: o assistente já tem `compras_confirmadas`, `des
 aponta o `/painel`. Reabre-se no dia em que ele precisar da *identidade* (a subtracção de três termos) —
 e nesse dia é ADR própria, a revogar a d3 com argumento.
 
+**Respostas do dono (2026-10-19).** (1) O ecrã mostra o que é real e **declara** o que falta: onde
+haveria receita ou salários vai a frase, nunca um zero — é a decisão 7 da ADR 0013 aplicada, e o fecho
+do mês serve-se já, com os campos ausentes a `null`. (2) "Quanto comprei" é **o que entrou em stock**:
+o agregado do ledger ao custo gravado, pela data de receção, porque bate com o stock e com o
+desperdício. A leitura do contabilista (o que a fatura somou) fica fora de âmbito, e o rodapé do ecrã
+diz qual das duas está a ser mostrada.
+
 **Fora de âmbito, por extenso:** os módulos `sales` e `people` e tudo o que deles depende (receita,
 salários, `result_eur`, `cost_total_eur`, `prime_cost_pct`); o `purchasing_othercost` e a sua lista
 fechada de categorias; o `/reporting/projection` e qualquer projecção ou previsão; comparação com o
