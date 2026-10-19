@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
 __all__ = [
     "Balde",
@@ -144,9 +145,7 @@ def janela_do_periodo(*, key: str, inicio_do_dia: time, agora: datetime) -> Jane
     else:
         raise ValueError(f"período desconhecido: {key!r}")
 
-    janela = janela_do_mes(
-        mes=f"{ano:04d}-{mes:02d}", inicio_do_dia=inicio_do_dia, agora=agora
-    )
+    janela = janela_do_mes(mes=f"{ano:04d}-{mes:02d}", inicio_do_dia=inicio_do_dia, agora=agora)
     return Janela(
         key=key,
         desde=janela.desde,
@@ -169,9 +168,7 @@ def janela_do_mes(*, mes: str, inicio_do_dia: time, agora: datetime) -> JanelaDo
         raise ValueError(f"mês desconhecido: {mes!r}")
     ano, numero = int(encontrado.group(1)), int(encontrado.group(2))
 
-    desde = inicio_do_dia_de_negocio(
-        dia=date(ano, numero, 1), inicio_do_dia=inicio_do_dia
-    )
+    desde = inicio_do_dia_de_negocio(dia=date(ano, numero, 1), inicio_do_dia=inicio_do_dia)
     seguinte = (ano + 1, 1) if numero == 12 else (ano, numero + 1)
     fim = inicio_do_dia_de_negocio(
         dia=date(seguinte[0], seguinte[1], 1), inicio_do_dia=inicio_do_dia
@@ -235,9 +232,7 @@ def baldes(*, janela: Janela, granularidade: str) -> tuple[Balde, ...]:
     return tuple(
         Balde(
             dias=tuple(grupo),
-            desde=inicio_do_dia_de_negocio(
-                dia=grupo[0], inicio_do_dia=janela.inicio_do_dia
-            ),
+            desde=inicio_do_dia_de_negocio(dia=grupo[0], inicio_do_dia=janela.inicio_do_dia),
             ate=min(
                 inicio_do_dia_de_negocio(
                     dia=grupo[-1] + timedelta(days=1), inicio_do_dia=janela.inicio_do_dia
@@ -247,3 +242,13 @@ def baldes(*, janela: Janela, granularidade: str) -> tuple[Balde, ...]:
         )
         for grupo in grupos
     )
+
+
+def exigir_forma_do_mes(mes: str) -> None:
+    """Recusa um `month` mal formado **antes** de qualquer ida à base de dados.
+
+    A mensagem nomeia a forma esperada e não ecoa o que veio: devolver ao
+    pedinte a string que ele escreveu não acrescenta nada a quem lê.
+    """
+    if not FORMA_DO_MES.match(mes):
+        raise ValidationError({"detail": "Mês inválido. Esperado o formato AAAA-MM."})

@@ -108,7 +108,12 @@ class _PainelView(APIView):
         """
         pedido = request.query_params.get("period", PERIODO_POR_OMISSAO)
         if pedido not in PERIODOS:
-            raise ValidationError({"detail": f"Período desconhecido: {pedido!r}."})
+            # A mensagem nomeia o que vale e **não ecoa o que veio**: devolver ao
+            # pedinte a string que ele escreveu não acrescenta nada a quem lê e
+            # é um reflexo gratuito (revisão de segurança de 2026-10-19).
+            raise ValidationError(
+                {"detail": f"Período inválido. Esperado um de: {', '.join(PERIODOS)}."}
+            )
         return pedido
 
 
@@ -126,9 +131,10 @@ class ResumoDoPeriodoView(_PainelView):
         },
     )
     def get(self, request: Request) -> Response:
+        periodo = self._periodo(request)
         inicio_do_dia, vat_regime = self._estabelecimento(request)
         janela = periodos.janela_do_periodo(
-            key=self._periodo(request),
+            key=periodo,
             inicio_do_dia=inicio_do_dia,
             agora=timezone.now(),
         )
@@ -152,9 +158,10 @@ class SeriesDoPeriodoView(_PainelView):
         },
     )
     def get(self, request: Request) -> Response:
+        periodo = self._periodo(request)
         inicio_do_dia, _ = self._estabelecimento(request)
         janela = periodos.janela_do_periodo(
-            key=self._periodo(request),
+            key=periodo,
             inicio_do_dia=inicio_do_dia,
             agora=timezone.now(),
         )
@@ -176,8 +183,11 @@ class FechoDoMesView(_PainelView):
         },
     )
     def get(self, request: Request) -> Response:
-        inicio_do_dia, vat_regime = self._estabelecimento(request)
+        # A forma do mês valida-se antes de ir à base de dados: um parâmetro
+        # inválido não paga uma query (revisão de segurança de 2026-10-19).
         pedido = request.query_params.get("month", "")
+        periodos.exigir_forma_do_mes(pedido)
+        inicio_do_dia, vat_regime = self._estabelecimento(request)
         try:
             mes = periodos.janela_do_mes(
                 mes=pedido,
@@ -185,10 +195,6 @@ class FechoDoMesView(_PainelView):
                 agora=timezone.now(),
             )
         except ValueError as erro:
-            raise ValidationError(
-                {"detail": "O mês pede-se em `YYYY-MM`."}
-            ) from erro
-        fecho = selectors.fecho_do_mes(
-            tenant_id=request.tenant.id, mes=mes, vat_regime=vat_regime
-        )
+            raise ValidationError({"detail": "O mês pede-se em `YYYY-MM`."}) from erro
+        fecho = selectors.fecho_do_mes(tenant_id=request.tenant.id, mes=mes, vat_regime=vat_regime)
         return Response(FechoDoMesOutSerializer(fecho).data)

@@ -133,9 +133,7 @@ def repartir(*, total: Decimal, partes: Sequence[Decimal]) -> tuple[Decimal, ...
         # todos os baldes, um motivo filtrado). Levanta em vez de repartir o
         # que puder: um número errado em silêncio num ecrã de dinheiro é pior
         # do que um 500.
-        raise ValueError(
-            f"repartição impossível: {total} não é a soma de {len(partes)} partes"
-        )
+        raise ValueError(f"repartição impossível: {total} não é a soma de {len(partes)} partes")
     ordem = sorted(range(len(partes)), key=lambda indice: (-restos[indice], indice))
     valores = list(pisos)
     for indice in ordem[:em_falta]:
@@ -383,11 +381,7 @@ def _componentes(
         CostComponentOut(
             id=identificador,
             amount_eur=euros(valor),
-            share=(
-                ZERO.quantize(MILESIMO)
-                if valor < ZERO
-                else fraccao(parte=valor, todo=maior)
-            ),
+            share=(ZERO.quantize(MILESIMO) if valor < ZERO else fraccao(parte=valor, todo=maior)),
             is_part_of_total=soma and valor >= ZERO,
             part_of=dentro_de,
         )
@@ -543,18 +537,14 @@ def _mercadoria(*, tenant_id: UUID, janela: Janela, vat_regime: str) -> Mercador
             # a mercadoria. Hoje nenhum caminho de escrita grava
             # `cost_is_estimate=True`, logo o número é sempre `0.00` — o que
             # não se pode escrever no contrato é "está tudo faturado".
-            por_estimar=(
-                por_tipo["receipt"].valor_estimado_eur if "receipt" in por_tipo else ZERO
-            ),
+            por_estimar=(por_tipo["receipt"].valor_estimado_eur if "receipt" in por_tipo else ZERO),
             vat_regime=vat_regime,
         ),
         bruto=bruto,
     )
 
 
-def resumo_do_periodo(
-    *, tenant_id: UUID, janela: Janela, vat_regime: str
-) -> SummaryOut:
+def resumo_do_periodo(*, tenant_id: UUID, janela: Janela, vat_regime: str) -> SummaryOut:
     """`GET /reporting/summary` — o bloco de período.
 
     Os três campos de receita vão a `None` e não a `"0.00"`: um zero em euros é
@@ -626,9 +616,7 @@ def series_do_periodo(*, tenant_id: UUID, janela: Janela) -> SeriesOut:
     return SeriesOut(
         period=_periodo(janela),
         granularity=granularidade,
-        buckets=tuple(
-            BucketOut(since=grupo.desde, until=grupo.ate) for grupo in grupos
-        ),
+        buckets=tuple(BucketOut(since=grupo.desde, until=grupo.ate) for grupo in grupos),
         scale_max_eur=escala,
         series=(
             SerieOut(

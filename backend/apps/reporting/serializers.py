@@ -131,9 +131,7 @@ class QualidadeDosDadosOutSerializer(serializers.Serializer):
     last_count_at = serializers.DateTimeField(allow_null=True)
     revenue_source = serializers.ChoiceField(choices=ORIGENS_DA_RECEITA)
     #: Porque é que há campos a `null`, uma vez e em ids (ADR 0029, decisão 1).
-    unavailable = serializers.ListField(
-        child=serializers.ChoiceField(choices=INDISPONIVEIS)
-    )
+    unavailable = serializers.ListField(child=serializers.ChoiceField(choices=INDISPONIVEIS))
     #: Para o ecrã escrever "valores sem IVA" onde isso muda a leitura. O painel
     #: **não corrige** nada com este campo (ADR 0014).
     vat_regime = serializers.ChoiceField(choices=REGIMES_DE_IVA)
