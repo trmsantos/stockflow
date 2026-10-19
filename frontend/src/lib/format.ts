@@ -120,6 +120,32 @@ export function formatQuantity(value: string | number, unit: string): string {
   return `${quantidade.format(Number(value))}${NBSP}${unit}`;
 }
 
+/**
+ * `"24.000"` → `"24"`, `"0.500"` → `"0,5"` — um decimal da API como se **escreve
+ * num campo**, e não como se mostra numa tabela.
+ *
+ * Duas diferenças face ao `formatQuantity`, e as duas são sobre o `<input>` do
+ * Contar:
+ *
+ *  1. **sem separador de milhares.** O `Intl` escreveria `24 000` ou `24.000`
+ *     para vinte e quatro mil, e o parser do campo — um `replace(",", ".")`
+ *     seguido de um regex decimal — não o sabe ler. Um campo que mostra o que
+ *     não aceita de volta é um campo que perde o valor no primeiro `onBlur`;
+ *  2. **sem zeros à direita.** O servidor manda `"24.000"` para 24 kg, e
+ *     `24.000` lido por um português é **vinte e quatro mil**. Era a leitura
+ *     errada do número mais importante do ecrã, e a forma de a matar é não a
+ *     escrever: `24` é exacto, curto, e é o que a pessoa escreveu.
+ *
+ * Por isso é manual e não `Intl`: aqui o que se quer é a forma **de entrada**,
+ * que tem menos liberdade do que a de leitura. A vírgula é a de pt-PT nas duas
+ * línguas, pela razão do topo deste ficheiro — o campo tem um parser só.
+ */
+export function formatDecimalField(value: string): string {
+  const [inteiro = "", decimais = ""] = value.split(".");
+  const significativas = decimais.replace(/0+$/, "");
+  return significativas === "" ? inteiro : `${inteiro},${significativas}`;
+}
+
 /** `78,40 €` */
 export function formatMoney(value: string | number): string {
   return dinheiro.format(Number(value));

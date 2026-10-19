@@ -3,7 +3,6 @@ import type { Connect, Plugin } from "vite";
 import type { z } from "zod";
 
 import { ROTAS_DE_ALERTAS } from "./alertas.ts";
-import { ROTAS_DE_CONTAGEM } from "./contagem.ts";
 import { ROTAS_DE_STOCK } from "./stock.ts";
 
 /**
@@ -147,8 +146,13 @@ export interface OpcoesDeFixtures {
 /**
  * As rotas servidas. Uma linha por recurso, e a remoção é por recurso: no dia
  * em que o endpoint real existir, apaga-se o ficheiro e esta linha.
+ *
+ * **O `contagem.ts` foi o primeiro a sair** (2026-10-19, ADR 0030): o Django
+ * serve as seis rotas de `/stock/counts` e o ecrã Contar não depende de nada
+ * daqui. Ficam três recursos — `/stock/levels`, `/stock/movements` e os dois de
+ * `/stock/alerts` —, e são outra fatia.
  */
-const ROTAS: readonly Rota[] = [...ROTAS_DE_STOCK, ...ROTAS_DE_CONTAGEM, ...ROTAS_DE_ALERTAS];
+const ROTAS: readonly Rota[] = [...ROTAS_DE_STOCK, ...ROTAS_DE_ALERTAS];
 
 function esperar(ms: number): Promise<void> {
   return new Promise((resolver) => {

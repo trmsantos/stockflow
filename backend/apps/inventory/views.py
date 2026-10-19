@@ -34,6 +34,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import Papel, PertenceAoTenant, TemPapel, membership_atual
+from apps.catalog.api import produto_por_id
 from apps.inventory.count_services import (
     CODIGO_CONTAGEM_FECHADA,
     CODIGO_CONTAGEM_JA_ABERTA,
@@ -77,6 +78,7 @@ from apps.inventory.serializers import (
     compor_contagem,
     compor_fecho,
     compor_linha,
+    em_unidade_base,
     zona_da_localizacao,
 )
 from apps.inventory.services import (
@@ -797,15 +799,26 @@ class ContagemViewSet(viewsets.GenericViewSet):
         )
 
     def _registar_linha(self, request: Request, contagem: StockCount) -> Response:
-        """Upsert por artigo: a última observação ganha, e diz quem a fez."""
+        """Upsert por artigo: a última observação ganha, e diz quem a fez.
+
+        O `quantity` do corpo vem na **unidade de contagem** — a mesma que a
+        linha publica em `count_unit` e em que o campo do ecrã está rotulado — e
+        é aqui que se converte para a do ledger. O serviço fala sempre em unidade
+        base; o contrato HTTP fala na unidade de quem conta.
+        """
         entrada = LinhaDeContagemInSerializer(data=request.data)
         entrada.is_valid(raise_exception=True)
+        produto = produto_por_id(
+            tenant_id=request.tenant.id, product_id=entrada.validated_data["product"]
+        )
         try:
             linha = registar_linha_contagem(
                 tenant_id=request.tenant.id,
                 contagem=contagem,
                 product_id=entrada.validated_data["product"],
-                quantity=entrada.validated_data["quantity"],
+                quantity=em_unidade_base(
+                    entrada.validated_data["quantity"], produto=produto
+                ),
                 user_name=self._nome_de_quem_conta(request),
             )
         except ContagemFechada as erro:

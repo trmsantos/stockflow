@@ -828,9 +828,12 @@ class TestRotas:
         assert linha["difference"] is None
         assert linha["counted_by"] is None
 
+        # 4,250 **kg** — o corpo fala na unidade de contagem da linha
+        # (`count_unit`), que é a de apresentação do artigo. Quem conta escreve o
+        # que o rótulo do campo diz; a conversão para gramas é do servidor.
         contou = dono.post(
             f"/api/v1/stock/counts/{contagem_id}/lines",
-            {"product": str(casa.farinha.id), "quantity": "4250.000"},
+            {"product": str(casa.farinha.id), "quantity": "4.250"},
             format="json",
         )
         assert contou.status_code == 200, contou.content
@@ -904,7 +907,7 @@ class TestRotas:
         # Contar: o `staff` pode, e é esse o ponto da fatia.
         contou = staff.post(
             f"/api/v1/stock/counts/{contagem_id}/lines",
-            {"product": str(casa.farinha.id), "quantity": "4250"},
+            {"product": str(casa.farinha.id), "quantity": "4.250"},
             format="json",
         )
         assert contou.status_code == 200, contou.content

@@ -234,16 +234,20 @@ export const quebraParaRegistarSchema = z.object({
  * ------------------------------------------------------------------------- */
 
 /**
- * Uma zona física **dentro** de uma localização: Balcão, Frigorífico, Arca,
- * Armazém. Não é a loja (`localizacaoSchema`) — é a prateleira por onde se
- * anda, e a `position` é a ordem do percurso. "Ordem por localização física …
- * é regra, não preferência" (guião da sessão 0, §1): quem conta atravessa a
- * cozinha, não o alfabeto.
+ * Uma zona da contagem — e **nesta fatia a zona é a localização** (ADR 0030,
+ * decisão 3, confirmada pelo dono: "contei a câmara fria" é uma contagem da
+ * câmara fria).
  *
- * O `blind` é a sonda da contagem cega. Numa zona cega o `expected` da linha
- * **não viaja na resposta**: esconder no cliente um número que o servidor
- * mandou não é contagem cega, é um número à distância de um devtools — e a
- * ancoragem que se queria evitar continuava a acontecer, só que no código.
+ * O schema não muda de forma e passa a ter uma fonte: o `slug` é o do nome da
+ * localização, o `name` é o nome dela e a `position` é `0`, porque **há uma
+ * zona por contagem**. Zonas como entidade própria — tabela, ordem do percurso,
+ * atribuição artigo→zona — ficaram fora de âmbito por extenso, e até lá o que
+ * organiza o stock são as localizações que já existem.
+ *
+ * O `blind` chega sempre a `false` e isso é **facto e não marcador de lugar**:
+ * a contagem cega não existe nesta fatia, logo o `expected` viaja sempre. Fica
+ * no contrato porque é o servidor que o afirma — no dia em que o dono a
+ * escolher, muda lá e o `expected` deixa de viajar.
  */
 export const zonaSchema = z.object({
   slug: z.string().min(1),
@@ -308,19 +312,45 @@ export const linhaDeContagemSchema = z.object({
   counted: quantidadeSchema.nullable(),
   /** `counted − expected`. `null` enquanto faltar um dos dois. */
   difference: quantidadeSchema.nullable(),
-  /** A mesma diferença em euros, com sinal. Arredondada ao cêntimo pelo CMP. */
+  /**
+   * A mesma diferença em euros, com sinal, arredondada ao cêntimo pelo CMP — e
+   * **`null` para quem não vê euros** (ADR 0030, decisão 1: a lista é de toda a
+   * gente, os euros são de `owner|manager`).
+   *
+   * O preço do contrato é que `null` passa a dizer duas coisas: "ainda não
+   * contado" e "não te é mostrado". O ecrã distingue-as pelo campo ao lado — há
+   * `difference` sem `difference_eur` — e nunca desenha um traço onde havia
+   * dinheiro: para quem não os vê, a coluna não existe.
+   */
   difference_eur: decimal.nullable(),
+  /**
+   * Quem contou e quando — uma **cópia do nome** da pertença, como no ledger,
+   * para sobreviver à conta ser apagada.
+   *
+   * Não é cromado: com uma só contagem aberta por estabelecimento, duas pessoas
+   * contam ao mesmo tempo em dois telemóveis e **a última a escrever ganha** (o
+   * `POST` é um upsert por artigo). Quem recontar tem de ver que já ali esteve
+   * alguém, e a resposta a "o João já contou isto?" é esta linha e não uma soma
+   * — somar duas observações da mesma prateleira é contar a mesma farinha duas
+   * vezes.
+   */
   counted_by: z.string().nullable(),
   counted_at: z.iso.datetime({ offset: true }).nullable(),
 });
 
 /**
  * O corpo de `POST /stock/counts/<id>/lines`: a quantidade contada de um
- * artigo, **na unidade de contagem da linha**.
+ * artigo, **na unidade de contagem da linha** (o `count_unit`, que é o rótulo
+ * que está ao lado do campo). Quem conta escreve o que lê no rótulo; a
+ * conversão para a unidade do ledger é do servidor, que é onde o
+ * `inventory-domain` §2 a põe.
  *
  * É um POST na coleção e não um PATCH na linha porque contar é registar uma
  * observação nova — a última substitui a anterior, e não há id de linha para
- * quem está a andar pela cozinha com o telemóvel a saber.
+ * quem está a andar pela cozinha com o telemóvel a saber. O upsert por
+ * `(contagem, artigo)` dá **idempotência de graça**: repetir o mesmo pedido
+ * depois de um timeout não conta duas vezes, que é o modo de falha real de
+ * contar em pé com rede fraca.
  */
 export const contagemDeLinhaSchema = z.object({
   product: z.uuid(),
@@ -333,12 +363,36 @@ export const contagemParaIniciarSchema = z.object({
 });
 
 /**
- * O fecho da contagem: as diferenças em quantidade **e em euros**, e o limiar
- * acima do qual a justificação é obrigatória.
+ * As linhas que ficam **por contar**: quantas e quais.
  *
- * O limiar vem no payload para o ecrã o poder **mostrar** ("diferenças de 15 €
- * — motivo obrigatório acima de 5 €"), que é a alternativa ao painel de
- * configurações que o guião §4 nº 7 proíbe.
+ * Existe para o botão poder dizer "Fechar com 3 por contar" em vez de se
+ * desligar: fechar uma contagem imperfeita tem de ser possível, senão quem
+ * conta inventa números para o botão acender (guião §4, proibição 3). E os
+ * nomes vêm com o número porque "3 por contar" não diz se faltou a farinha ou
+ * as saquetas de açúcar — e só uma dessas duas faz alguém voltar ao armazém.
+ *
+ * Uma linha nunca contada **não gera movimento**: ausência de observação não é
+ * diferença de zero, e o stock dela fica exactamente como está.
+ */
+export const porContarSchema = z.object({
+  count: z.number().int().nonnegative(),
+  names: z.array(z.string()),
+});
+
+/**
+ * O fecho da contagem: as diferenças em quantidade **e em euros**, o que fica
+ * por contar, e a justificação.
+ *
+ * **A justificação é sempre obrigatória, sem limiar** (ADR 0030, segunda ronda
+ * de respostas do dono, nº 5): o limiar de 50 € era uma hipótese por calibrar e
+ * o dono preferiu a disciplina de uma frase em todas as contagens. O
+ * `reason_required_above_eur` continua a viajar — vale zero — porque é o número
+ * que se muda se ele voltar atrás; o ecrã não o mostra, porque "obrigatório
+ * acima de 0 €" é uma frase que não informa ninguém.
+ *
+ * Este corpo é o **mesmo** no `GET` (pré-visualização, que não escreve nada) e
+ * no `POST` (que escreve), com o `status` a dizer qual dos dois se está a ler.
+ * O `GET` é de `owner|manager` e responde **403** a quem conta.
  */
 export const fechoDeContagemSchema = z.object({
   count: z.uuid(),
@@ -347,12 +401,14 @@ export const fechoDeContagemSchema = z.object({
   total_lines: z.number().int().nonnegative(),
   /** Só as linhas com diferença, a maior em euros primeiro. */
   differences: z.array(linhaDeContagemSchema),
+  /** O que fica de fora do ajuste, com nome. */
+  uncounted_lines: porContarSchema,
   /** Perda e ganho separados, os dois positivos. */
   loss_eur: decimal,
   gain_eur: decimal,
   /** `gain − loss`. Com sinal. */
   net_eur: decimal,
-  /** `loss + gain` comparado com este valor decide se o motivo é obrigatório. */
+  /** Zero desde a segunda ronda da ADR 0030. Fica por ser onde se volta atrás. */
   reason_required_above_eur: decimal,
   reason_required: z.boolean(),
   closing_role: z.string().min(1),
@@ -364,12 +420,18 @@ export const fechoDeContagemSchema = z.object({
  * uma contagem não cai nos cinco motivos de um desperdício, e a razão de uma
  * diferença é quase sempre uma frase ("faltou lançar a transferência").
  *
- * Opcional no contrato, obrigatório acima do limiar: é o servidor que recusa,
- * não o botão que se desativa. Fechar uma contagem com diferenças tem de ser
- * possível (guião §4, proibição 3).
+ * **Obrigatória, e já não opcional.** Era `.optional()` enquanto o contrato
+ * tinha um limiar em euros; a segunda ronda da ADR 0030 tirou o limiar e
+ * deixou a regra sem excepção, e o servidor responde 400 por campo a um corpo
+ * sem ela. Um `.optional()` aqui era o cliente a deixar sair um pedido que já
+ * se sabe recusado — o ecrã pede a frase antes.
+ *
+ * O que isto **não** é: uma forma de impedir o fecho. Fechar com diferenças e
+ * fechar sem ter contado tudo continuam os dois a ser possíveis (guião §4,
+ * proibição 3). O que se exige é que alguém escreva porquê.
  */
 export const fechoParaRegistarSchema = z.object({
-  reason: z.string().trim().min(1).max(200).optional(),
+  reason: z.string().trim().min(1).max(200),
 });
 
 /* ---------------------------------------------------------------------------
@@ -470,6 +532,7 @@ export type Contagem = z.output<typeof contagemSchema>;
 export type LinhaDeContagem = z.output<typeof linhaDeContagemSchema>;
 export type ContagemDeLinha = z.output<typeof contagemDeLinhaSchema>;
 export type ContagemParaIniciar = z.output<typeof contagemParaIniciarSchema>;
+export type PorContar = z.output<typeof porContarSchema>;
 export type FechoDeContagem = z.output<typeof fechoDeContagemSchema>;
 export type FechoParaRegistar = z.output<typeof fechoParaRegistarSchema>;
 export type MotivoDeAlerta = z.output<typeof motivoDeAlertaSchema>;

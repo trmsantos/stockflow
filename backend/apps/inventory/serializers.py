@@ -19,6 +19,12 @@ from apps.inventory.count_services import (
     ROTULO_DE_QUEM_FECHA,
 )
 
+#: O tecto da coluna `Decimal(12,3)` do `StockCountLine`, na unidade **base**.
+#: Vive aqui e não no serviço porque é aqui que a conversão faz o número crescer.
+MAXIMO_DA_QUANTIDADE = Decimal("999999999.999")
+
+DETALHE_QUANTIDADE_GRANDE = _("This amount is too large for a count.")
+
 __all__ = [
     "LocalizacaoInSerializer",
     "LocalizacaoOutSerializer",
@@ -45,6 +51,7 @@ __all__ = [
     "compor_contagem",
     "compor_fecho",
     "compor_linha",
+    "em_unidade_base",
     "quantidade",
     "zona_da_localizacao",
 ]
@@ -403,7 +410,12 @@ class LinhaDeContagemInSerializer(serializers.Serializer):
         max_digits=12,
         decimal_places=3,
         min_value=Decimal("0"),
-        help_text="Quantidade contada, na unidade base do artigo (≥ 0)",
+        help_text=(
+            "Quantidade contada, na unidade de contagem da linha "
+            "(`count_unit`, que é a de apresentação do artigo: kg, L, un). "
+            "O servidor converte para a unidade base — converter no cliente é "
+            "o que o domínio proíbe."
+        ),
     )
 
 
@@ -511,6 +523,37 @@ def quantidade(valor: Decimal, *, produto: Any) -> dict[str, Any]:
         "display": (valor / factor).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
         "display_unit": produto.display_unit,
     }
+
+
+def em_unidade_base(valor: Decimal, *, produto: Any) -> Decimal:
+    """O inverso do `quantidade()`: da unidade **de contagem** para a do ledger.
+
+    Quem conta escreve "24" ao lado de um rótulo que diz `kg`, porque é esse o
+    `count_unit` que a linha serve (`produto.display_unit`). O ledger guarda
+    gramas. Sem esta multiplicação o `POST /lines` lia aqueles 24 como 24 g e o
+    fecho gravava um `adjustment` de −24,976 kg — num ledger append-only, onde
+    uma linha errada não se corrige, corrige-se com outra.
+
+    Vive **ao lado do `quantidade()` e não no serviço**, de propósito: as duas
+    direcções da mesma conversão são a mesma decisão, e o serviço fala sempre em
+    unidade base (é o que os seus testes afirmam). O que esta camada faz é
+    traduzir o contrato HTTP, que fala na unidade de quem conta.
+
+    `produto` a `None` devolve o valor como veio: quem não existe é recusado
+    pelo serviço com o 400 por campo, e não aqui com um `AttributeError`.
+
+    O tecto é o da coluna, `Decimal(12,3)`, e é verificado **aqui** porque é aqui
+    que o número cresce: o serializer valida 12 dígitos na unidade de contagem e
+    a multiplicação por 1000 pode pô-los a 15. Sem esta linha, um valor absurdo
+    saía como 500 do Postgres em vez de 400 por campo.
+    """
+    if produto is None:
+        return valor
+    factor = produto.display_factor or Decimal("1")
+    em_base = (valor * factor).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+    if em_base > MAXIMO_DA_QUANTIDADE:
+        raise serializers.ValidationError({"quantity": [DETALHE_QUANTIDADE_GRANDE]})
+    return em_base
 
 
 def zona_da_localizacao(localizacao: Any) -> dict[str, Any]:

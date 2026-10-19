@@ -401,6 +401,9 @@ msgstr "Esta contagem já foi fechada."
 msgid "This item is tracked by lot and has no lot recorded yet. Record the goods receipt before counting it."
 msgstr "Este artigo tem controlo por lotes e ainda não tem nenhum lote registado. Faz primeiro a receção da mercadoria para o poderes contar."
 
+msgid "This amount is too large for a count."
+msgstr "Esta quantidade é grande de mais para uma contagem."
+
 msgid "Write why this count is being closed."
 msgstr "Escreve porque é que esta contagem está a ser fechada."
 

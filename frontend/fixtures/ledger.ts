@@ -45,9 +45,11 @@ import type { Contexto } from "./servidor.ts";
  * nenhum.
  *
  * Apagabilidade: este ficheiro não serve rota nenhuma — são os `*.ts` ao lado
- * (`stock.ts`, `contagem.ts`, `alertas.ts`) que têm as rotas e que se apagam um
- * a um quando o Django servir cada recurso. Quando sair o último, sai também
- * este.
+ * (`stock.ts`, `alertas.ts`) que têm as rotas e que se apagam um a um quando o
+ * Django servir cada recurso. O `contagem.ts` já saiu (2026-10-19, ADR 0030) e
+ * é a prova de que a apagabilidade funciona: saiu o ficheiro, saiu a linha do
+ * `servidor.ts`, e nada em `src/` mudou de forma por causa disso. Quando sair o
+ * último, sai também este.
  */
 
 export type Loja = "centro" | "mercado" | "cozinha";

@@ -2143,7 +2143,7 @@ export interface components {
             product: string;
             /**
              * Format: decimal
-             * @description Quantidade contada, na unidade base do artigo (≥ 0)
+             * @description Quantidade contada, na unidade de contagem da linha (`count_unit`, que é a de apresentação do artigo: kg, L, un). O servidor converte para a unidade base — converter no cliente é o que o domínio proíbe.
              */
             quantity: string;
         };

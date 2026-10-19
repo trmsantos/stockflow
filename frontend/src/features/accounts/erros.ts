@@ -1,6 +1,7 @@
 import type { ZodError } from "zod";
 
 import { ApiError, mensagemDeErro } from "@/lib/api/errors";
+import { erroDoCampo } from "@/lib/api/erros-por-campo";
 
 import { textos } from "./textos";
 
@@ -111,10 +112,10 @@ export function mensagemDaRecusa(erro: unknown): string {
  * caracteres", "é muito comum", "é inteiramente numérica"), e as três
  * interessam a quem está a escolher a password.
  *
- * Defensivo em cada passo, pela razão do topo do ficheiro: o payload pode ser
- * `null` (resposta sem JSON), pode não ser um objeto, a chave pode não existir,
- * e o valor pode ser uma string em vez de uma lista. Nenhum desses casos é um
- * erro desta função — é a ausência de erro naquele campo.
+ * A leitura de **um** campo desceu para `@/lib/api/erros-por-campo` quando as
+ * contagens passaram a ser o terceiro módulo a precisar dela — era o gatilho
+ * que o `purchasing` tinha escrito. O que fica aqui é a parte que é deste
+ * módulo: a **lista** de campos, que é a do formulário.
  *
  * Só olha para os campos que lhe são **dados**: um `Object.keys(payload)` punha
  * no ecrã o nome de qualquer chave que o servidor inventasse, incluindo
@@ -133,28 +134,9 @@ export function errosPorCampo<Campo extends string>(
   campos: readonly Campo[],
 ): Map<Campo, string> {
   const resultado = new Map<Campo, string>();
-  if (!(erro instanceof ApiError)) return resultado;
-
-  const payload: unknown = erro.payload;
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    return resultado;
-  }
-
-  // `Map<string, unknown>` com o tipo escrito: `Object.entries` sobre `object`
-  // devolve `[string, any][]`, e sem a anotação o `any` escapava para o resto da
-  // função — que é o que o `@typescript-eslint/no-unsafe-assignment` apanha.
-  const corpo = new Map<string, unknown>(Object.entries(payload));
-
   for (const campo of campos) {
-    const valor = corpo.get(campo);
-    if (typeof valor === "string" && valor !== "") {
-      resultado.set(campo, valor);
-      continue;
-    }
-    if (Array.isArray(valor)) {
-      const frases = valor.filter((linha): linha is string => typeof linha === "string");
-      if (frases.length > 0) resultado.set(campo, frases.join(" "));
-    }
+    const frase = erroDoCampo(erro, campo);
+    if (frase !== null) resultado.set(campo, frase);
   }
   return resultado;
 }
