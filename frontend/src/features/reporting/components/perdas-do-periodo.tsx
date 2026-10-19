@@ -4,9 +4,14 @@ import { formatMoney, formatMoneyRounded } from "@/lib/format";
 
 import { COLUNAS_DE_RUBRICA, LARGURA_MINIMA_DE_RUBRICA } from "../colunas";
 import { notaDaContagem } from "../contagem";
-import type { ResumoDoPeriodo } from "../schemas";
+import { semSinal, type ResumoDoPeriodo } from "../schemas";
 import { textos } from "../textos";
-import { notaDeCusto, rotuloDaQuebraDesconhecida, rotuloDeMotivo } from "../vocabulario";
+import {
+  notaDaQuebraDesconhecida,
+  notaDeCusto,
+  rotuloDaQuebraDesconhecida,
+  rotuloDeMotivo,
+} from "../vocabulario";
 import { LinhaDeRubrica } from "./linha-de-rubrica";
 
 /**
@@ -88,10 +93,16 @@ export function PerdasDoPeriodo({
             nota={notaDeCusto("waste")}
             explicar={explicar}
           />
+          {/* **O excedente mostra-se sem o menos.** O rótulo já diz que o
+              líquido foi a favor da casa (ADR 0013, decisão 7); um `−120,00 €`
+              por baixo dele é uma dupla negação, e quem passa os olhos lê o
+              sinal antes da palavra e conclui que há um erro. O `semSinal` corta
+              o `-` da string que o servidor mandou — não é `Math.abs`, não
+              converte e não arredonda. */}
           <LinhaDeRubrica
             rubrica={rotuloDaQuebraDesconhecida(resumo.unknown_shrinkage_eur)}
-            valor={formatMoney(resumo.unknown_shrinkage_eur)}
-            nota={`${notaDeCusto("unknown_shrinkage")} — ${contagem.texto}`}
+            valor={formatMoney(semSinal(resumo.unknown_shrinkage_eur))}
+            nota={`${notaDaQuebraDesconhecida(resumo.unknown_shrinkage_eur)} — ${contagem.texto}`}
             tintaDaNota={contagem.tinta}
             explicar={explicar}
           />

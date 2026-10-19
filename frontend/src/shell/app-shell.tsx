@@ -1,5 +1,5 @@
 import { Outlet } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { AppHeader } from "./app-header";
 import { montarMenu, type EntradaDaProjeccao } from "./menu";
@@ -38,6 +38,16 @@ import { textos } from "./textos";
  * ao mesmo tempo com o shell a **declarar** a interface e a feature a
  * satisfazê-la — a razão inteira está no `sessao-do-shell.ts`.
  *
+ * ## O lançador do assistente entra pela mesma porta
+ *
+ * O botão fixo que abre o assistente numa gaveta (ADR 0027, decisão 10,
+ * adenda) é de **todos** os ecrãs deste invólucro, logo monta-se aqui e não
+ * numa rota — é o que faz o painel sobreviver à navegação. Mas é produto de uma
+ * feature, e o shell não a pode importar: entra como `lancador`, um nó que o
+ * `routes/involucro.tsx` constrói. O shell dá-lhe o sítio na árvore (depois do
+ * `<main>`, para ser o último focável) e nada mais. Sem lançador — na página
+ * de desenvolvimento, por exemplo — o slot fica vazio e o invólucro é o mesmo.
+ *
  * ## As superfícies, e uma divergência do DESIGN.md §2 que é deliberada
  *
  * O §2 escreve o cromado assim: "sidebar no `background` e conteúdo no
@@ -70,9 +80,12 @@ import { textos } from "./textos";
 export function AppShell({
   sessao,
   projeccao,
+  lancador,
 }: {
   readonly sessao: SessaoDoShell;
   readonly projeccao: readonly EntradaDaProjeccao[];
+  /** O lançador global do assistente, construído pela rota (ver acima). */
+  readonly lancador?: ReactNode;
 }) {
   // `useMemo` e não um `const` de render: o menu é a identidade que o
   // `MenuDeNavegacao`, a sidebar e a gaveta recebem, e recalculá-lo a cada render
@@ -108,6 +121,7 @@ export function AppShell({
         <main id="conteudo" className="flex flex-1 flex-col">
           <Outlet />
         </main>
+        {lancador}
       </div>
     </div>
   );

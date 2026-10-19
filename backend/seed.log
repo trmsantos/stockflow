@@ -1,0 +1,13 @@
+{"ts": "2026-10-14T14:11:05.258034+00:00", "level": "INFO", "logger": "axes.apps", "message": "AXES: BEGIN version 8.3.1, blocking by combination of ip_address and username or username", "request_id": null, "tenant_id": null, "user_id": null}
+✓ Users criados: owner@demo.pt, staff@demo.pt, employee@demo.pt
+✓ Tenant criado: 00000000-0000-4000-8000-000000000001 (Loja Chiado)
+✓ Users criados: owner@demo.pt, staff@demo.pt
+✓ Memberships criados
+✓ 50 produtos criados
+✓ 3 localizações criadas
+✓ 3 fornecedores criados
+✓ 10 movimentos criados
+✓ 2 receções criadas
+✓ Loja Chiado criado com owner, staff e employee
+✓ Loja Amoreiras criado com owner, staff e employee
+✓ Loja Colombo criado com owner, staff e employee

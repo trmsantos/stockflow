@@ -60,3 +60,9 @@ CONTENT_SECURITY_POLICY = {
 }
 
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# Pool `solo` em desenvolvimento: no macOS o `prefork` arranca os filhos por
+# *spawn* e rebenta com `not enough values to unpack (expected 3, got 0)` antes
+# de correr qualquer tarefa. Um processo chega para o dev; o `--pool` da linha
+# de comandos continua a mandar, e o `prod.py` não herda isto.
+CELERY_WORKER_POOL = "solo"

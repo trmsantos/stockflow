@@ -333,18 +333,27 @@ Ordem do pipeline: `docker/db/roles.sql` (bootstrap dos roles) → `migrate` com
 `MIGRATION_DATABASE_URL` → `pytest` (setup como dono, testes como app) → os gates acima. O
 `check --deploy` não abre ligação à base de dados e corre só com a credencial da app.
 
-### Estado dos CVEs das imagens, medido em 2026-09-30
+### Estado dos CVEs das imagens: `proxy` e `frontend` medidos em 2026-10-19, `backend` em 2026-09-30
 
 **Zero HIGH/CRITICAL com correcção disponível nas três imagens.** As do `proxy` e do `frontend` estão
 a zero mesmo **sem** `--ignore-unfixed`, e sem excepção nenhuma: não existe `.trivyignore`.
 
-O Caddy é construído do código (`docker/proxy.Dockerfile`) com Go 1.26.8 **e** com as quatro
-dependências transitivas que traziam os CVEs fixadas nas versões que o grafo resolve —
-`x/crypto 0.57.0`, `x/net 0.59.0`, `x/text 0.42.0`, `grpc 1.84.0`. O Go novo corrigiu a *stdlib*
-(11 dos 17); estas quatro são o resto. Fixar as versões **mínimas corrigidas** não funciona: cada
-uma puxa outra para cima em cascata, e as versões acima vieram de deixar o Go resolver com `-u` e
-**ler** o resultado. O `go mod tidy` depois do upgrade é obrigatório, senão faltam entradas no
-`go.sum` e a build morre.
+O Caddy é construído do código (`docker/proxy.Dockerfile` e `docker/frontend.Dockerfile`, que
+partilham o andar `caddy-builder`) com Go 1.26.9 **e** com as quatro dependências transitivas que
+traziam os CVEs fixadas nas versões que o grafo resolve — `x/crypto 0.58.0`, `x/net 0.61.0`,
+`x/text 0.43.0`, `grpc 1.84.0`. Fixar as versões **mínimas corrigidas** não funciona: cada uma puxa
+outra para cima em cascata, e as versões acima vieram de deixar o Go resolver com `-u` e **ler** o
+resultado. O `go mod tidy` depois do upgrade é obrigatório, senão faltam entradas no `go.sum` e a
+build morre.
+
+**A `stdlib` não se fixa com `go get`, fixa-se com o digest do builder.** Na ronda de 2026-10-19 o
+`trivy` deu 4 HIGH no binário e **três** deles eram da `stdlib` 1.26.8 (CVE-2026-78667,
+CVE-2026-78669, CVE-2026-97031 — negação de serviço em `Range`, HTTP/2 e `crypto/tls`/ECH). Com
+`GOTOOLCHAIN=local` a `stdlib` do binário é exactamente a da imagem `golang` do andar de build, e
+nenhum `go get` lhe toca: a correcção é subir o digest (`1.26.8-alpine3.24` → `1.26.9-alpine3.24`).
+O quarto era o `x/net` 0.59.0, cujo mínimo corrigido era o 0.60.0 e que o `-u` levou ao 0.61.0,
+arrastando `crypto` e `text` — a cascata outra vez. **Os dois Dockerfiles têm de subir juntos**: o
+andar `caddy-builder` é igual nos dois e deixar um para trás volta a falhar o gate nessa imagem.
 
 **Como esta secção esteve errada, porque a lição vale mais do que o número.** Houve aqui uma
 excepção de seis CVEs, com tabela e gatilho, apagada com base numa medição que dizia zero. A

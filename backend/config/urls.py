@@ -38,6 +38,16 @@ api_v1_patterns = [
     path("", include("apps.catalog.urls")),
     # Inventário: localizações (ADR 0021, fatia 2). O ledger vem na fatia 3.
     path("", include("apps.inventory.urls")),
+    # O assistente (ADR 0027): `/assistant/conversations`. Com âmbito, como
+    # tudo o que não declara o contrário; as três rotas entram no lado com
+    # âmbito da lista fechada do `tests/test_rls_isolation.py`.
+    path("", include("apps.agents.urls")),
+    # O painel de gestão (ADR 0029): `/reporting/summary`, `/series`, `/month`.
+    # O `reporting` é um módulo-sumidouro — sem tabelas, sem `api.py` e sem
+    # política —, e **esta linha é o que o liga**: até agora o cliente chamava
+    # caminhos que não existiam. Com âmbito, e as três views levam
+    # `TemPapel.exige(Papel.OWNER)`: o painel inteiro é do dono.
+    path("", include("apps.reporting.urls")),
 ]
 
 if settings.API_DOCS_ENABLED:

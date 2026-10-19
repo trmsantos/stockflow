@@ -4,7 +4,7 @@ import { formatDate, formatDaysAway, formatMoney } from "@/lib/format";
 
 import { eZero, type QualidadeDosDados } from "../schemas";
 import { textos } from "../textos";
-import { rotuloDaOrigemDaReceita } from "../vocabulario";
+import { fraseDoQueFalta, nomeDoQueFalta, rotuloDaOrigemDaReceita } from "../vocabulario";
 
 /**
  * **O painel declara o que não sabe**, e a declaração é parte do contrato (ADR
@@ -17,7 +17,7 @@ import { rotuloDaOrigemDaReceita } from "../vocabulario";
  * depressa do que um prejuízo falso**, porque o prejuízo falso faz perguntar e
  * o lucro falso faz acreditar.
  *
- * ## Quatro declarações, **uma linha cada** — e isso é o que mudou
+ * ## Cinco declarações no máximo, **uma linha cada** — e isso é o que mudou
  *
  * Eram quatro parágrafos: rótulo em caixa alta numa coluna de 224px, valor, e
  * uma frase de duas linhas com a consequência. 212px de altura para quatro
@@ -58,6 +58,14 @@ interface Declaracao {
   readonly tinta: string;
   /** A consequência, em texto: vai para o `title` e para a camada. */
   readonly consequencia: string;
+  /**
+   * O valor é **prosa** e não um dado: uma lista de nomes de rubrica, não uma
+   * data nem euros. Sem isto ia em mono, com o tracking e a largura de algarismo
+   * do IBM Plex — "Vendas, Custo de pessoal e Custos fixos" escrito como se
+   * fosse um número. O DESIGN.md §2 é literal: todo o dado numérico é mono, e
+   * **nada de prosa é**.
+   */
+  readonly prosa?: boolean;
   /** Só quando há o que fazer. Um aviso sem saída é um beco. */
   readonly porta?: Porta;
 }
@@ -68,15 +76,47 @@ function diasDesde(instante: string): number {
   return Math.round((new Date(instante).getTime() - Date.now()) / umDia);
 }
 
+/**
+ * **A declaração do que não existe, numa linha só** (ADR 0029, decisão 1).
+ *
+ * O `unavailable` traz as famílias sem fonte de dados, e o ecrã escreve-lhes os
+ * nomes; a frase inteira de cada uma vai ao `title` e à camada do `?explicar=1`.
+ * Uma linha por família dava seis linhas neste bloco, que é o peso que o dono do
+ * produto já recusou uma vez — e as frases longas estão onde servem melhor:
+ * coladas ao sítio exacto onde o número estaria.
+ *
+ * Devolve `null` quando não há nada a declarar, que é o dia em que os módulos
+ * existirem. Este bloco não inventa uma linha para dizer que está tudo bem.
+ */
+function declaracaoDoQueFalta(qualidade: QualidadeDosDados): Declaracao | null {
+  const familias = qualidade.unavailable;
+  if (familias.length === 0) return null;
+
+  return {
+    campo: textos.falta.campo,
+    valor: textos.falta.lista(familias.map(nomeDoQueFalta)),
+    prosa: true,
+    tinta: "text-warning",
+    consequencia: familias.map(fraseDoQueFalta).join(" "),
+  };
+}
+
 function declaracoesDe(qualidade: QualidadeDosDados): readonly Declaracao[] {
   const semFatura = !eZero(qualidade.purchases_awaiting_invoice_eur);
   const semVendas = qualidade.revenue_source === "none";
+  // A origem das vendas e o `unavailable` com `revenue` lá dentro são o **mesmo
+  // facto** dito duas vezes, e a segunda forma diz-o melhor: "ainda não há
+  // vendas registadas nesta aplicação" em vez de "origem das vendas: nenhuma".
+  // Quando houver uma origem a nomear (POS ou à mão), a linha volta.
+  const origemVale = !(semVendas && qualidade.unavailable.includes("revenue"));
+  const queFalta = declaracaoDoQueFalta(qualidade);
   // A última contagem é a única das quatro que pode **não existir**, e o `null`
   // é informação e não ausência de valor: "nunca se contou" é a declaração.
   const ultimaContagem = qualidade.last_count_at;
   const semContagem = ultimaContagem === null;
 
-  return [
+  const declaracoes: readonly (Declaracao | null)[] = [
+    queFalta,
     {
       campo: textos.qualidade.campoConsumo,
       valor: qualidade.consumption_registered ? textos.qualidade.sim : textos.qualidade.nao,
@@ -111,24 +151,29 @@ function declaracoesDe(qualidade: QualidadeDosDados): readonly Declaracao[] {
         ? { porta: { rotulo: textos.qualidade.portaContar, para: "/contar" } }
         : {}),
     },
-    {
-      campo: textos.qualidade.campoOrigemDasVendas,
-      valor: semVendas
-        ? textos.qualidade.nenhuma
-        : qualidade.revenue_source === "pos"
-          ? textos.qualidade.pos
-          : textos.qualidade.aMao,
-      tinta: semVendas ? "text-warning" : "",
-      consequencia: textos.qualidade.origemDasVendas(
-        rotuloDaOrigemDaReceita(qualidade.revenue_source),
-      ),
-    },
+    origemVale
+      ? {
+          campo: textos.qualidade.campoOrigemDasVendas,
+          valor: semVendas
+            ? textos.qualidade.nenhuma
+            : qualidade.revenue_source === "pos"
+              ? textos.qualidade.pos
+              : textos.qualidade.aMao,
+          tinta: semVendas ? "text-warning" : "",
+          consequencia: textos.qualidade.origemDasVendas(
+            rotuloDaOrigemDaReceita(qualidade.revenue_source),
+          ),
+        }
+      : null,
   ];
+
+  return declaracoes.filter((uma): uma is Declaracao => uma !== null);
 }
 
 /** Há algo a declarar? É a pergunta que decide entre uma linha e quatro. */
 function temDeclaracoes(qualidade: QualidadeDosDados): boolean {
   return (
+    qualidade.unavailable.length > 0 ||
     !qualidade.consumption_registered ||
     !eZero(qualidade.purchases_awaiting_invoice_eur) ||
     qualidade.last_count_at === null ||
@@ -153,10 +198,18 @@ function Linha({
       </span>
       {/* `text-left` explícito: o `[data-numeric]` do `base.css` alinha à
           direita, que é o certo numa célula de tabela e o errado numa linha de
-          leitura — aqui o valor vem logo depois do rótulo. */}
-      <span data-numeric className={`shrink-0 text-left text-sm ${declaracao.tinta}`}>
-        {declaracao.valor}
-      </span>
+          leitura — aqui o valor vem logo depois do rótulo.
+
+          E `data-numeric` só quando o valor **é** um dado: uma lista de nomes de
+          rubrica em mono lê-se como um código. Essa também não leva `shrink-0`,
+          porque uma frase tem de poder partir de linha. */}
+      {declaracao.prosa === true ? (
+        <span className={`min-w-0 text-sm ${declaracao.tinta}`}>{declaracao.valor}</span>
+      ) : (
+        <span data-numeric className={`shrink-0 text-left text-sm ${declaracao.tinta}`}>
+          {declaracao.valor}
+        </span>
+      )}
       {declaracao.porta === undefined ? null : (
         <Link
           to={declaracao.porta.para}

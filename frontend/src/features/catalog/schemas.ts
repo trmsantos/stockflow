@@ -29,7 +29,18 @@ export const produtoSchema = z.object({
   display_unit: z.string().min(1),
   display_factor: decimal,
   track_lots: z.boolean(),
-  expiry_kind: tipoValidadeSchema.nullable(),
+  /**
+   * O contrato serve **três** formas de "sem validade": o enum, `""` e `null`
+   * (`ExpiryKindEnum | BlankEnum | NullEnum`, no `types.ts`), e o Django da
+   * demo manda `""`. Medido a 2026-10-15: com `.nullable()` só, o Zod recusava a
+   * resposta inteira de `/products`, o `useArtigos` acabava em
+   * `ResponseShapeError`, e cinquenta artigos liam-se como "nenhum". Aceita-se
+   * o `""` e normaliza-se para `null`, para o tipo de saída não mudar.
+   */
+  expiry_kind: z
+    .union([tipoValidadeSchema, z.literal("")])
+    .nullable()
+    .transform((valor) => (valor === "" ? null : valor)),
   conservation: conservacaoSchema,
   min_quantity: decimal,
   is_active: z.boolean(),

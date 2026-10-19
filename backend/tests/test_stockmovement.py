@@ -10,22 +10,18 @@ Validações principais:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
-from django.db import connection, transaction
+from django.db import IntegrityError, ProgrammingError, connection
 from django.utils import timezone as django_timezone
 
-from decimal import Decimal
-
-from apps.accounts.models import Tenant, User
+from apps.accounts.models import Tenant
 from apps.accounts.services import criar_tenant as criar_tenant_service
 from apps.catalog.models import Product, UnidadeBase
 from apps.inventory.models import Location, Lot, ProductCost, StockLevel, StockMovement
 from apps.inventory.services import MovementDTO, get_or_create_lots, record_movements
-from apps.shared.db import system_scope, tenant_scope
+from apps.shared.db import tenant_scope
 
 
 def criar_produto(tenant: Tenant, nome: str = "Produto Teste") -> Product:
@@ -112,8 +108,9 @@ class TestStockMovementAppendOnly:
                 created_by_name="Teste",
             )
 
-        # Tentar atualizar deve falhar no banco de dados
-        with pytest.raises(Exception):  # permission denied
+        # Tentar atualizar deve falhar na base de dados: `permission denied`,
+        # que o Django entrega como ProgrammingError.
+        with pytest.raises(ProgrammingError, match="permission denied"):
             with connection.cursor() as cursor:
                 cursor.execute(
                     "UPDATE inventory_stockmovement SET quantity = %s WHERE id = %s",
@@ -148,8 +145,8 @@ class TestStockMovementAppendOnly:
                 created_by_name="Teste",
             )
 
-        # Tentar deletar deve falhar no banco de dados
-        with pytest.raises(Exception):  # permission denied
+        # Tentar apagar deve falhar na base de dados, pela mesma razão.
+        with pytest.raises(ProgrammingError, match="permission denied"):
             with connection.cursor() as cursor:
                 cursor.execute(
                     "DELETE FROM inventory_stockmovement WHERE id = %s",
@@ -398,7 +395,7 @@ class TestQuantityConstraint:
                 tenant=tenant, name="Loja", position=1
             )
 
-            with pytest.raises(Exception):  # IntegrityError or similar
+            with pytest.raises(IntegrityError):  # a constraint CHECK
                 StockMovement.objects.create(
                     tenant=tenant,
                     product=product,

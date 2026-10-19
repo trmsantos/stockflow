@@ -54,11 +54,16 @@ export const PT = {
     vazioStock: "sem stock registado",
 
     painel: "Painel",
-    aCarregarGrafico: "A carregar o gráfico de vendas e compras…",
+    aCarregarGrafico: "A carregar o gráfico de compras…",
     vazioSemAcesso: "sem acesso ao painel",
     vazioUmIntervalo: "um só intervalo — nada para comparar",
+    /**
+     * **"Compras" e não "vendas e compras"**: hoje o servidor serve uma série
+     * só (ADR 0029, decisão 5), e um nome que promete duas é uma legenda a
+     * descrever um gráfico que não existe.
+     */
     rotuloDoGrafico: (maximo: string) =>
-      `Vendas e compras dos últimos sete dias, com o máximo do eixo em ${maximo}`,
+      `Compras dos últimos sete dias, com o máximo do eixo em ${maximo}`,
   },
 
   /* -------------------------------------------------------------------------
@@ -69,13 +74,19 @@ export const PT = {
     naoSabe: "O que este painel não sabe",
     aCarregarDeclaracoes: "A carregar o que o painel declara…",
     dinheiroEMercadoria: "O dinheiro e a mercadoria",
-    vendasECompras: "Vendas e compras",
+    /**
+     * **Um nome que não promete o que o gráfico não desenha.** Era "Vendas e
+     * compras", e com uma série só (ADR 0029, decisão 5) o título anunciava uma
+     * segunda barra que nunca aparecia. O que lá está dizem-no a legenda e a
+     * linha por baixo dela.
+     */
+    aoLongoDoPeriodo: "Ao longo do período",
     notaDoGrafico: (grao: string, maximo: string) => `${grao} · até ${maximo}`,
     erroDoGrafico: "Não foi possível carregar o gráfico",
     nadaRegistado: (periodo: string) => `Nada registado ${periodo}`,
-    vazioTitulo: "Sem vendas, sem compras e sem consumo nesta janela",
+    vazioTitulo: "Sem compras e sem consumo nesta janela",
     vazioCorpo:
-      "Não há aqui quatro linhas de zeros porque zeros não respondem a nada. Comece por dar entrada à mercadoria que chegou: as compras aparecem no painel no dia em que a receção é confirmada.",
+      "Não há aqui linhas de zeros porque zeros não respondem a nada. Comece por dar entrada à mercadoria que chegou: as compras aparecem no painel no dia em que a receção é confirmada.",
     receberMercadoria: "Receber mercadoria",
     perdas: "Desperdício e quebra desconhecida",
     fechoDe: (mes: string) => `Fecho de ${mes}`,
@@ -84,8 +95,84 @@ export const PT = {
       `Não há nada registado em ${mes}. Use a navegação de mês, na barra acima, para um mês com movimento.`,
     resultadoDe: (mes: string) => `Resultado de ${mes}`,
     custoPorCargo: "Custo por cargo",
-    /** Só em desenvolvimento: o caminho que vem a seguir não é copy. */
-    demonstracao: "Os números do painel são de demonstração. O sistema visual está em",
+  },
+
+  /**
+   * **O que o servidor ainda não sabe, em linguagem de dono** (ADR 0029,
+   * decisão 1 e respostas do dono).
+   *
+   * O contrato manda três ids (`revenue`, `payroll`, `other_costs`) e **nenhum
+   * deles aparece no ecrã**: cada um tem aqui um nome de rubrica e duas frases,
+   * a curta para o sítio onde o número estaria e a longa para a declaração do
+   * topo. É a mesma regra de sempre — nenhum rótulo viaja no arame.
+   *
+   * Nenhuma das frases diz "indisponível", "sem dados" ou "N/A". O dono não
+   * perguntou por um campo: perguntou quanto vendeu. A resposta honesta é que
+   * esta aplicação ainda não guarda vendas, e **quando** passará a guardar.
+   */
+  falta: {
+    /**
+     * O microrótulo da declaração, e é **uma** linha para as três famílias.
+     *
+     * Uma linha por família dava seis linhas no bloco do topo, que é o peso que
+     * o dono do produto já recusou uma vez. A razão viaja uma vez (é o que o
+     * `unavailable` é), os nomes ficam à vista, e a frase inteira de cada uma
+     * está no `title` e na camada do `?explicar=1` — além da frase curta que
+     * aparece no sítio exacto onde o número estaria.
+     */
+    campo: "ainda não entra",
+    /** A junção é regra da língua: o inglês remata com "and". */
+    lista: (nomes: readonly string[]) => {
+      const ultima = nomes.at(-1) ?? "";
+      return nomes.length <= 1 ? ultima : `${nomes.slice(0, -1).join(", ")} e ${ultima}`;
+    },
+    vendasCampo: "Vendas",
+    vendasCurto: "ainda não há vendas registadas nesta aplicação",
+    vendasFrase:
+      "Ainda não há vendas registadas nesta aplicação. Sem elas não há receita, nem margem, nem rácio de mercadoria — e um zero no lugar delas seria uma afirmação falsa sobre o negócio.",
+    pessoalCampo: "Custo de pessoal",
+    pessoalCurto: "os salários entram quando existir a área de pessoal",
+    pessoalFrase:
+      "Os salários entram quando existir a área de pessoal. Até lá não há custo de pessoal, nem total de gastos, nem resultado do mês.",
+    fixosCampo: "Custos fixos",
+    fixosCurto: "a renda, a energia e os outros custos fixos ainda não se registam aqui",
+    fixosFrase:
+      "A renda, a energia, a água, o gás, o TPA, as licenças e o contabilista ainda não se registam nesta aplicação, logo não entram em gasto nenhum deste ecrã.",
+    /**
+     * O campo veio a `null` e o servidor não disse porquê. Acontece se o
+     * contrato ganhar uma família nova antes deste catálogo: o ecrã continua a
+     * declarar que não sabe, e deixa de saber dizer a razão.
+     */
+    semRazao: "ainda não se sabe — o servidor não diz porquê",
+    /**
+     * A frase que se escreve **no lugar do número**: o nome da rubrica e a razão.
+     * Uma só, usada no contador, na linha da tabela e na legenda do gráfico — a
+     * ausência diz-se da mesma maneira em todo o ecrã.
+     */
+    frase: (campo: string, razao: string) => `${campo}: ${razao}.`,
+  },
+
+  /**
+   * **O rodapé honesto**: as quatro frases que delimitam tudo o que está acima
+   * (ADR 0029, respostas do dono).
+   *
+   * Não é decoração nem letra miúda. "Quanto comprei" tem duas leituras — o que
+   * entrou em stock e o que a fatura somou — e o painel mostra a primeira; o
+   * valor de stock é um saldo de **agora** e não do fim do período escolhido; e
+   * num estabelecimento isento de IVA os euros aqui são **menos** do que a
+   * empresa pagou. Cada uma destas é um mal-entendido que custa a confiança do
+   * ecrã inteiro, e três linhas no fundo evitam-nas.
+   */
+  rodape: {
+    rotulo: "Como ler estes números",
+    valorDeStock: (dia: string, hora: string) => `Valor de stock a ${dia} às ${hora}.`,
+    ultimaContagem: (dia: string) => `Última contagem: ${dia}.`,
+    nuncaSeContou: "Nunca se contou.",
+    baseDasCompras:
+      "Compras é o que entrou em stock, ao custo registado em cada movimento — não o que as faturas somaram.",
+    /** Só no `isento_art_53`, onde o IVA suportado **é** custo e não se deduz. */
+    semIva:
+      "Valores sem IVA; neste regime o IVA suportado nas compras não está incluído no custo.",
   },
 
   /* -------------------------------------------------------------------------
@@ -248,6 +335,12 @@ export const PT = {
   perdas: {
     /** Quando o líquido das contagens é a favor da casa, não é uma perda. */
     excedenteDeContagem: "Excedente de contagem",
+    /**
+     * O excedente mostra-se **sem o sinal menos**. Um `−120,00 €` debaixo de
+     * "Excedente de contagem" é uma dupla negação com cara de erro: lê-se o
+     * vermelho do menos antes de se ler a palavra.
+     */
+    excedenteNota: "encontrou-se mais do que o sistema dizia — o líquido das contagens a favor da casa",
     tabela: "As duas perdas do período: desperdício e quebra desconhecida",
     vazio:
       "Nada deitado fora neste período. O desperdício aparece aqui por motivo, do maior para o menor, à medida que for registado.",
@@ -283,7 +376,14 @@ export const PT = {
     avisoDoRacio:
       "Este rácio não é comparável com os do sector: a remuneração do dono não entra nos custos de pessoal. Quando o dono trabalha no negócio sem se pagar, o custo de pessoal real é 4 a 5 pontos mais alto do que este número.",
     cargosVazio:
-      "Não há cargos com custo neste mês. O custo por cargo aparece aqui à medida que houver remunerações registadas.",
+      "O custo por cargo aparece quando existir a área de pessoal: é ela que guarda quem trabalha, em que função e com que remuneração.",
+    /**
+     * Os três rácios comparam gastos com **vendas**, e dois deles precisam
+     * ainda dos salários. Sem nenhuma das duas fontes a régua ficava vazia, e
+     * uma régua vazia parece um ecrã partido em vez de um ecrã honesto.
+     */
+    semRacios:
+      "Os rácios do mês comparam gastos com vendas, e os de pessoal precisam também dos salários. Enquanto faltarem as duas fontes, nenhum dos três existe.",
     cargoNaoEPapel: "O cargo é a função de quem trabalha, não o acesso que tem à aplicação.",
     campoCargo: "Cargo",
     custo: "Custo",
@@ -354,11 +454,20 @@ export const PT = {
     totalDeGastosNota: "mercadoria, perdas, pessoal e custos fixos — somado pelo servidor",
     notaFechado: "vendas sem IVA menos o total de gastos",
     notaACorrer: "mês a correr: o pessoal e os custos fixos são do mês inteiro",
+    /**
+     * O total de gastos e o resultado são **função** do que falta: somar o que
+     * há e chamar-lhe total seria dar por fechada uma conta a que faltam duas
+     * parcelas, e é exactamente o painel optimista que a ADR 0013 (decisão 7)
+     * proíbe.
+     */
+    dependeDoPessoal:
+      "só existe quando houver custo de pessoal e custos fixos — somar a mercadoria sozinha e chamar-lhe total era dar a conta por fechada",
+    semResultado: "sem total de gastos não há resultado, e o que falta ao total são duas parcelas inteiras",
     /** Acaba com espaço: o que se lê a seguir é a frase das exclusões. */
     negativo: "Resultado negativo neste mês. ",
     comExclusoes: (exclusoes: string) =>
       `${exclusoes} É o que sobra do que está nesta tabela, e só isso.`,
-    notaDasBarras: "Repartição dos gastos que somam ao total, do maior para o menor.",
+    notaDasBarras: "Repartição dos gastos já registados, do maior para o menor.",
     campoGasto: "Gasto",
     rotuloDasBarras: "Gastos do mês por categoria, do maior para o menor",
   },
@@ -411,8 +520,17 @@ export const PT = {
     umSoIntervalo:
       "Um só intervalo neste período: não há variação para desenhar. Os totais estão em cima, e os outros períodos da barra do topo dão sete dias ou mais.",
     rotuloDaSerie: (serie: string, total: string) => `${serie} — ${total} no total`,
-    rotulo: (grao: string, maximo: string) =>
-      `Vendas e compras ${grao}, com o máximo do eixo em ${maximo}`,
+    /**
+     * O nome do gráfico nomeia **as séries que ele desenha**, e não um par fixo:
+     * com uma série só, "vendas e compras" descrevia um desenho que não existe.
+     * A junção é regra da língua e por isso vive aqui.
+     */
+    rotulo: (series: readonly string[], grao: string, maximo: string) => {
+      const ultima = series.at(-1) ?? "";
+      const lista =
+        series.length <= 1 ? ultima : `${series.slice(0, -1).join(", ")} e ${ultima}`;
+      return `${lista}, ${grao}, com o máximo do eixo em ${maximo}`;
+    },
     aCarregar: "A carregar o gráfico do período…",
   },
 

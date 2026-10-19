@@ -1,4 +1,5 @@
 import { useMenuDaSessao, useSessaoDoShell } from "@/features/accounts/api";
+import { LancadorDoAssistente } from "@/features/assistente/screens/lancador";
 import { AppShell } from "@/shell/app-shell";
 
 /**
@@ -53,6 +54,14 @@ import { AppShell } from "@/shell/app-shell";
  * A casa não suprime lint (CLAUDE.md), e a forma que o linter pede é também a
  * melhor: o ficheiro de rota volta a ser caminho, `beforeLoad` e nada mais.
  *
+ * ## E desde a adenda da ADR 0027, uma terceira ligação: o lançador do assistente
+ *
+ * O botão fixo que abre o assistente numa gaveta é de todos os ecrãs do
+ * invólucro, logo é o shell que lhe dá o sítio — mas é produto da feature
+ * `assistente`, com os hooks e os componentes da página, e o shell não a pode
+ * importar. Esta ponte constrói-o e entrega-o ao `AppShell` como um nó, pela
+ * porta `screens/` que é a única que uma rota pode atravessar.
+ *
  * **Não busca dados**: os dois hooks leem a **única** cache que existe (a do
  * TanStack Query), a mesma entrada de `/auth/sessao` que o `beforeLoad` da rota
  * já garantiu — e o menu é um campo dessa resposta, não um segundo pedido
@@ -63,5 +72,16 @@ export function InvolucroDaAplicacao() {
   const sessao = useSessaoDoShell();
   const projeccao = useMenuDaSessao();
 
-  return <AppShell sessao={sessao} projeccao={projeccao} />;
+  return (
+    <AppShell
+      sessao={sessao}
+      projeccao={projeccao}
+      // O lançador do assistente (ADR 0027, decisão 10, adenda) é da feature e
+      // o shell não a pode importar: é esta ponte que o constrói, como constrói
+      // a sessão. O `key` pelo estabelecimento activo é o que fecha o painel e
+      // limpa a conversa quando se troca de casa — um remount em vez de um
+      // efeito a repor estado, e nada em `localStorage`.
+      lancador={<LancadorDoAssistente key={sessao.ativo?.id} />}
+    />
+  );
 }

@@ -65,31 +65,49 @@ from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import PertenceAoTenant, membership_atual, utilizador_atual
 from apps.purchasing.ficheiros import caminho_dentro_do_media
-from apps.purchasing.models import InvoiceDocument
+from apps.purchasing.models import InvoiceDocument, Receipt, ReceiptLine
 from apps.purchasing.selectors import (
     com_paginas,
     compor,
     compor_muitos,
     documentos_do_ambito,
     documentos_visiveis,
+    inicio_do_dia_de_negocio,
     pagina_por_posicao,
+    preco_historico,
+    resumo_de_recebidas,
 )
 from apps.purchasing.serializers import (
+    CabecalhoInSerializer,
     DocumentoInSerializer,
     DocumentoOutSerializer,
     FicheiroDeDocumentoInSerializer,
+    LinhaInSerializer,
+    LinhaOutSerializer,
+    RececaoInSerializer,
+    RececaoOutSerializer,
     RecusaDeDocumentoOutSerializer,
+    ResumoDeRececoesOutSerializer,
+    RevisaoDeLinhaInSerializer,
+    TemperaturaInSerializer,
 )
 from apps.purchasing.services import (
     CODIGO_DOCUMENTO_DESCARTADO,
     CODIGO_DOCUMENTO_FECHADO,
     CODIGO_DOCUMENTO_SEM_PAGINAS,
     CODIGO_PAGINAS_EXCEDIDAS,
+    CriacaoDeRececaoJaExiste,
     RecusaDeDocumento,
+    SemLinhasRevistas,
     anexar_ficheiro,
+    apagar_rascunho,
+    confirmar_rececao,
     criar_documento,
+    criar_rececao,
     descartar_documento,
     fechar_documento,
+    registar_temperatura,
+    rever_linha,
 )
 
 __all__ = ["STATUS_DA_RECUSA_DE_DOCUMENTO", "DocumentoViewSet"]
@@ -448,36 +466,13 @@ def _resposta_de_recusa(recusa: RecusaDeDocumento) -> Response:
 # Receção de mercadoria (fatia 2, parte B)
 # ============================================================================
 
-from apps.purchasing.models import Receipt, ReceiptLine
-from apps.purchasing.selectors import (
-    preco_historico,
-    resumo_de_recebidas,
-)
-from apps.purchasing.serializers import (
-    CabecalhoInSerializer,
-    LinhaInSerializer,
-    LinhaOutSerializer,
-    RececaoInSerializer,
-    RececaoOutSerializer,
-    ResumoDeRececoesOutSerializer,
-    RevisaoDeLinhaInSerializer,
-    TemperaturaInSerializer,
-)
-from apps.purchasing.services import (
-    CriacaoDeRececaoJaExiste,
-    SemLinhasRevistas,
-    apagar_rascunho,
-    confirmar_rececao,
-    criar_rececao,
-    registar_temperatura,
-    rever_linha,
-)
-
 
 @extend_schema_view(
     list=extend_schema(
         parameters=[
-            OpenApiParameter("estado", OpenApiTypes.STR, OpenApiTypes.STR, required=False),
+            # O terceiro argumento é o `location`; com `OpenApiTypes.STR` no lugar
+            # dele o `spectacular` morria a serializar o enum para YAML.
+            OpenApiParameter("estado", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False),
         ]
     ),
 )
@@ -487,6 +482,12 @@ class RececaoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, PertenceAoTenant]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "rececoes"
+    # `none()` ao nível da classe, como o `LocalizacaoViewSet`: é daqui que o
+    # drf-spectacular deriva o tipo do `pk` do caminho — o `get_queryset` lê o
+    # `request.tenant`, que não existe na geração do schema, e sem isto o `id`
+    # saía como "string" com um warning que o `--fail-on-warn` transforma em
+    # exit 1. Nunca é usado para servir pedidos: o `get_queryset` sobrepõe-se.
+    queryset = Receipt.objects.none()
 
     def get_queryset(self) -> QuerySet:
         """Filtrado por tenant."""
@@ -508,28 +509,38 @@ class RececaoViewSet(viewsets.ModelViewSet):
         return Response(output.data)
 
     def list(self, request, *args, **kwargs):
-        """GET /receipts — lista paginada."""
+        """GET /receipts — lista paginada na forma do DRF (`count`, `results`).
+
+        Cada receção vai **composta** (`_compor_rececao`), como no `retrieve`:
+        o `RececaoOutSerializer` lê `receipt.*` de um dicionário e não de um
+        `Receipt` — passar-lhe as linhas cruas era o 500 que o ecrã Receber via.
+        """
         estado = request.query_params.get("estado", None)
-        page = int(request.query_params.get("page", 1))
 
         queryset = self.get_queryset()
 
         if estado == "revisao":
             queryset = queryset.filter(confirmed_at__isnull=True)
         elif estado == "hoje":
-            from django.utils import timezone
-            today = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            queryset = queryset.filter(confirmed_at__gte=today)
+            # **O início do dia de negócio**, e não a meia-noite (ADR 0028): o
+            # rótulo do ecrã promete "desde as 04:00" e este filtro prometia
+            # outra coisa entre a meia-noite e essa hora. É o mesmo selector
+            # que a porta usa para a tool `rececoes(hoje)`, para as duas
+            # respostas não divergirem.
+            queryset = queryset.filter(
+                confirmed_at__gte=inicio_do_dia_de_negocio(tenant_id=request.tenant.id)
+            )
 
-        # Ordenação
         queryset = queryset.order_by("-received_at")
 
-        # Paginação
-        page_size = 50
-        offset = (page - 1) * page_size
-        items = queryset[offset : offset + page_size]
-
-        serializer = self.get_serializer(items, many=True)
+        pagina = self.paginate_queryset(queryset)
+        itens = pagina if pagina is not None else list(queryset)
+        compostos = [self._compor_rececao(receipt) for receipt in itens]
+        serializer = RececaoOutSerializer(
+            compostos, many=True, context=self.get_serializer_context()
+        )
+        if pagina is not None:
+            return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
@@ -609,13 +620,18 @@ class RececaoViewSet(viewsets.ModelViewSet):
         # GET
         linhas = receipt.lines.all()
         serializer = LinhaOutSerializer(
-            [self._compor_linha(l) for l in linhas], many=True
+            [self._compor_linha(item) for item in linhas], many=True
         )
         return Response({
             "count": linhas.count(),
             "results": serializer.data
         })
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("linha_id", OpenApiTypes.UUID, OpenApiParameter.PATH, required=True),
+        ]
+    )
     @action(detail=True, methods=["post"], url_path=r"lines/(?P<linha_id>[^/.]+)/confirmation")
     def line_confirmation(self, request, pk=None, linha_id=None):
         """POST /receipts/{id}/lines/{linha}/confirmation — revê linha."""
@@ -630,13 +646,12 @@ class RececaoViewSet(viewsets.ModelViewSet):
         try:
             linha = ReceiptLine.objects.get(pk=linha_id, receipt_id=receipt.id)
         except ReceiptLine.DoesNotExist:
-            raise Http404
+            raise Http404 from None
 
         serializer = RevisaoDeLinhaInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         # Rever linha
-        membership = membership_atual(request)
         linha = rever_linha(
             receipt_id=receipt.id,
             linha_id=linha.id,
@@ -710,8 +725,11 @@ class RececaoViewSet(viewsets.ModelViewSet):
         receipt = Receipt.objects.prefetch_related("lines").get(pk=receipt.id)
 
         # Buscar dados relacionados
-        product_ids = [l.product_id for l in receipt.lines.all() if l.product_id]
-        location_ids = [receipt.location_id] + [l.location_id for l in receipt.lines.all() if l.location_id]
+        linhas = list(receipt.lines.all())
+        product_ids = [item.product_id for item in linhas if item.product_id]
+        location_ids = [receipt.location_id] + [
+            item.location_id for item in linhas if item.location_id
+        ]
 
         produtos = catalog_api.produtos_por_id(tenant_id=receipt.tenant_id, ids=product_ids)
         locais = inventory_api.localizacoes_por_id(tenant_id=receipt.tenant_id, ids=location_ids)
@@ -721,7 +739,7 @@ class RececaoViewSet(viewsets.ModelViewSet):
             "receipt": receipt,
             "produtos": produtos,
             "locais": locais,
-            "linhas": [self._compor_linha(l, produtos, locais) for l in receipt.lines.all()],
+            "linhas": [self._compor_linha(item, produtos, locais) for item in linhas],
         }
 
         return dados
@@ -753,7 +771,8 @@ class RececaoViewSet(viewsets.ModelViewSet):
 
         # Stock quantity
         stock_quantity = None
-        if linha.kind == "goods" and produto and linha.base_per_invoice_unit and linha.quantity_received:
+        tem_quantidade = bool(linha.base_per_invoice_unit and linha.quantity_received)
+        if linha.kind == "goods" and produto and tem_quantidade:
             base_qty = linha.quantity_received * linha.base_per_invoice_unit
             display_qty = base_qty / produto.display_factor if produto.display_factor else base_qty
             stock_quantity = {

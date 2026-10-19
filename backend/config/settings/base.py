@@ -16,9 +16,11 @@ Regras que este ficheiro impõe (CLAUDE.md, SECURITY.md):
   fixado no ADR 0002. O `prod.py` volta a exigi-la sem default.
 """
 
+from decimal import Decimal
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
 from csp.constants import NONCE, NONE, SELF
 
 from config.env import admin_path, optional, required, required_db
@@ -323,6 +325,11 @@ REST_FRAMEWORK = {
         "documentos": "20/min",
         "catalogo": "20/min",
         "rececoes": "20/min",
+        # As escritas do assistente (ADR 0027, decisão 4): cada pergunta é uma
+        # tarefa com chamadas a um modelo pago. 10/min é folgado para uma
+        # conversa e apertado para um script; o teto de custo a sério é o
+        # orçamento diário por tenant, mais abaixo.
+        "assistente": "10/min",
     },
     # Nº de proxies de confiança à frente do Django. É o que decide a chave do
     # AnonRateThrottle: sem esta setting o DRF usa o `X-Forwarded-For` cru como
@@ -411,6 +418,43 @@ SPECTACULAR_SETTINGS = {
         "OrigemDoDocumentoEnum": "apps.purchasing.models.OrigemDoDocumento",
         "EstadoDoDocumentoEnum": "apps.purchasing.models.EstadoDoDocumento",
         "EstadoDaLeituraEnum": "apps.purchasing.models.EstadoDaLeitura",
+        # O estado de um turno do assistente (ADR 0027, decisão 4). O campo
+        # chama-se `status` como o da receção e o das linhas, e sem o nome aqui
+        # era mais uma colisão a resolver com um sufixo numérico.
+        "EstadoDaMensagemEnum": "apps.agents.models.EstadoDaMensagem",
+        # Os dois conjuntos de `conservation`: o do artigo (três valores) e o da
+        # temperatura registada numa receção (só as duas classes que o HACCP
+        # mede). Dois campos com o mesmo nome e conjuntos diferentes davam
+        # `Conservation500Enum` — o nome por colisão, que muda sozinho.
+        "ConservacaoEnum": "apps.catalog.models.Conservacao",
+        "ConservacaoMedidaEnum": ["chilled", "frozen"],
+        # As três uniões do painel que se chamam `id` (ADR 0013, decisão 5).
+        # Sem estas entradas, três conjuntos de valores diferentes partilhavam
+        # o nome derivado do campo (`IdEnum`) e o drf-spectacular resolvia a
+        # colisão com um sufixo de hash — `Id50cEnum`, um nome que muda sozinho
+        # quando a lista muda, e um warning que é exit 1 no `pnpm gen:api`.
+        #
+        # O `IdDeCustoEnum` resolve uma segunda coisa de borla: o `part_of` de
+        # `ComponenteDeCustoOut` tem o mesmo conjunto com outro nome de campo,
+        # e um conjunto com dois nomes é o outro warning desta família.
+        #
+        # Os nomes são os que o `features/reporting/schemas.ts` já usa.
+        "IdDeCustoEnum": [
+            "purchases",
+            "goods_consumed",
+            "waste",
+            "unknown_shrinkage",
+            "payroll",
+            "other",
+        ],
+        "IdDeSerieEnum": ["revenue", "purchases"],
+        "IdDeParteDeSalariosEnum": [
+            "base",
+            "social_security",
+            "subsidies",
+            "meal_allowance",
+            "insurance",
+        ],
     },
 }
 
@@ -522,6 +566,17 @@ CELERY_BEAT_SCHEDULE = {
         # tarefa de trabalho.
         "options": {"expires": 60},
     },
+    # A purga das conversas do assistente (ADR 0027, decisão 2): uma vez por
+    # dia, de madrugada, o `SystemTask` descobre os tenants pelo
+    # `accounts_user.tenant_ids` e enfileira uma purga por tenant. `expires` de
+    # uma hora: se o worker estiver em baixo de madrugada, a entrada corre
+    # quando ele voltar; se estiver em baixo um dia, a de amanhã faz o mesmo
+    # trabalho e a de hoje descarta-se.
+    "purgar-conversas-expiradas": {
+        "task": "agents.purgar_conversas_expiradas",
+        "schedule": crontab(hour=4, minute=30),
+        "options": {"expires": 60 * 60},
+    },
 }
 
 # **Onde fica o ficheiro de estado do `beat` não se decide aqui**, e é uma
@@ -627,6 +682,50 @@ MEDIA_URL = None
 # consome é uma promessa de configuração que não existe. Passa a `env(...)` no
 # dia em que houver cliente.
 AGENTS_EXTRACTION_MODEL = ""
+
+# ---------------------------------------------------------------------------
+# Chat sobre stock (ADR 0027, decisões 7 e 9)
+# ---------------------------------------------------------------------------
+# O primeiro cliente de LLM do repositório, e **só o worker fala com a rede**: o
+# processo web recusa 503 `assistente_indisponivel` quando uma das duas
+# primeiras está vazia, antes de criar linha nenhuma, e nunca chama o modelo. A
+# chave entra só pelo ambiente do `worker` (ver `docker/compose.yml`), nunca pelo
+# do `backend`. Lidas com `optional`: uma variável vazia num `.env` é "desligado"
+# e não um valor truncado (`config/env.py`).
+#
+# O modelo por omissão é o do dono (2026-10-15): o mais barato que faz tool-use,
+# para a fase de testes custar o mínimo. Trocar de modelo é configuração; trocar
+# de fornecedor é a fábrica `cliente()` de `apps/agents/modelo.py`.
+AGENTS_CHAT_MODEL = optional(env, "AGENTS_CHAT_MODEL", "gpt-5-mini")
+AGENTS_CHAT_API_KEY = optional(env, "AGENTS_CHAT_API_KEY", "")
+# URL base de um fornecedor OpenAI-compatível (Google AI Studio, Groq, GitHub
+# Models…). Vazia = api.openai.com. É o que permite usar um nível gratuito nesta
+# fase sem tocar no código: o SDK é o mesmo, muda o destino.
+AGENTS_CHAT_BASE_URL = optional(env, "AGENTS_CHAT_BASE_URL", "")
+# Na API da OpenAI o parâmetro chama-se `max_completion_tokens`; aqui guarda o
+# nome do `ARCHITECTURE.md` §6 ("cada chamada tem `max_tokens`").
+AGENTS_CHAT_MAX_TOKENS = env.int("AGENTS_CHAT_MAX_TOKENS", default=1024)
+# Por chamada, não por turno: um turno tem até `AGENTS_CHAT_MAX_TOOL_ITERATIONS`
+# chamadas. O proxy corta o upstream aos 60 s, mas isto corre no worker.
+AGENTS_CHAT_TIMEOUT_S = env.int("AGENTS_CHAT_TIMEOUT_S", default=30)
+AGENTS_CHAT_MAX_TOOL_ITERATIONS = env.int("AGENTS_CHAT_MAX_TOOL_ITERATIONS", default=6)
+# Os dois tetos diários (SECURITY.md §6), baixos de propósito e do dono:
+# euros por tenant e perguntas por pessoa. Verificados no `POST` (429) e outra
+# vez na tarefa antes de cada chamada (`erro/teto_de_custo`). `Decimal` e nunca
+# `float`: é dinheiro (CLAUDE.md).
+AGENTS_CHAT_DAILY_BUDGET_EUR = Decimal(optional(env, "AGENTS_CHAT_DAILY_BUDGET_EUR", "0.50"))
+AGENTS_CHAT_DAILY_MESSAGES_PER_USER = env.int("AGENTS_CHAT_DAILY_MESSAGES_PER_USER", default=30)
+# RGPD, decisão do dono: as conversas apagam-se aos 90 dias, tenant a tenant,
+# pela entrada `purgar-conversas-expiradas` do `beat`.
+AGENTS_CHAT_RETENTION_DAYS = env.int("AGENTS_CHAT_RETENTION_DAYS", default=90)
+# Preço por milhão de tokens, em euros, por modelo. **Os tokens são a verdade e
+# os euros derivam**: o que a tabela muda é o `cost_eur` gravado a partir de
+# hoje, nunca os tokens. Um modelo fora da tabela custa 0,00 € e deixa um aviso
+# no log — o teto diário em euros não o trava, e é por isso que o aviso existe.
+# Valores de 2026-10-15 (USD 0,25 / 2,00 por milhão, a ~0,92 EUR/USD).
+AGENTS_MODEL_PRICES_EUR_PER_MTOKEN = {
+    "gpt-5-mini": {"input": Decimal("0.23"), "output": Decimal("1.85")},
+}
 
 # ---------------------------------------------------------------------------
 # Logging estruturado (ARCHITECTURE.md §8) — ver `config/log.py`.

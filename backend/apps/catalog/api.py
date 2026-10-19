@@ -26,14 +26,21 @@ from apps.catalog.models import (
     Supplier,
     SupplierProductCode,
 )
+from apps.catalog.selectors import codigos_do_produto as _codigos_do_produto
+from apps.catalog.selectors import embalagens_do_produto as _embalagens_do_produto
+from apps.catalog.selectors import procurar_fornecedores as _procurar_fornecedores
+from apps.catalog.selectors import procurar_produtos as _procurar_produtos
 
 __all__ = [
+    "CodigoDeFornecedorResumo",
     "Correspondencia",
     "CorrespondenciaAprendida",
     "EmbalagemResumo",
     "FornecedorResumo",
     "ProdutoResumo",
+    "codigos_por_artigo",
     "correspondencias",
+    "embalagens_por_artigo",
     "criar_embalagem",
     "criar_fornecedor",
     "criar_produto",
@@ -43,6 +50,10 @@ __all__ = [
     "memorizar_correspondencias",
     "normalizar_nif",
     "normalizar_unidade",
+    "procurar_artigos",
+    "procurar_fornecedores",
+    "produto_por_id",
+    "produto_por_sku",
     "produtos_por_id",
 ]
 
@@ -52,7 +63,13 @@ __all__ = [
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ProdutoResumo:
-    """Um artigo como os outros módulos o veem."""
+    """Um artigo como os outros módulos o veem.
+
+    O `sku` é o código canónico por tenant (único sem caixa quando existe —
+    ver `Product`), e é por ele que as contagens e o `reporting` nomeiam o
+    artigo. Tem default porque o helper do semeador, mais abaixo, constrói o
+    resumo sem o ler.
+    """
 
     id: UUID
     short_name: str
@@ -63,6 +80,32 @@ class ProdutoResumo:
     expiry_kind: str | None
     conservation: str
     is_active: bool
+    sku: str = ""
+    #: O mínimo do artigo, na unidade base; `0` é "sem mínimo" (ADR 0027,
+    #: decisão 6). Default pela razão do `sku`: o semeador constrói o resumo
+    #: sem o ler.
+    min_quantity: Decimal = Decimal("0")
+
+
+def _resumo_do_produto(p: Product) -> ProdutoResumo:
+    """O `ProdutoResumo` de uma linha. Uma construção, em vez de cinco cópias."""
+    return ProdutoResumo(
+        id=p.id,
+        short_name=p.short_name,
+        base_unit=p.base_unit,
+        display_unit=p.display_unit,
+        display_factor=p.display_factor,
+        track_lots=p.track_lots,
+        expiry_kind=p.expiry_kind or None,
+        conservation=p.conservation,
+        is_active=p.is_active,
+        sku=p.sku,
+        min_quantity=p.min_quantity,
+    )
+
+
+def _resumo_do_fornecedor(f: Supplier) -> FornecedorResumo:
+    return FornecedorResumo(id=f.id, name=f.name, nif=f.nif, is_active=f.is_active)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -84,6 +127,22 @@ class FornecedorResumo:
     name: str
     nif: str
     is_active: bool
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CodigoDeFornecedorResumo:
+    """Como **um** fornecedor nomeia um artigo: o código e a descrição que imprime.
+
+    É a memória da ADR 0021 lida pelo artigo e não pelo fornecedor, que é a
+    direcção que a ficha do artigo precisa ("a Makro chama-lhe 7734, FARINHA T65
+    SACO 25KG"). Sem NIF: a ficha de um artigo não é sítio para o número de
+    contribuinte de ninguém.
+    """
+
+    supplier_id: UUID
+    supplier_name: str
+    code: str
+    description_raw: str
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -114,20 +173,62 @@ def produtos_por_id(
 ) -> Mapping[UUID, ProdutoResumo]:
     """Artigos pelo ID, num mapa."""
     artigos = Product.objects.filter(tenant_id=tenant_id, id__in=ids)
-    return {
-        p.id: ProdutoResumo(
-            id=p.id,
-            short_name=p.short_name,
-            base_unit=p.base_unit,
-            display_unit=p.display_unit,
-            display_factor=p.display_factor,
-            track_lots=p.track_lots,
-            expiry_kind=p.expiry_kind or None,
-            conservation=p.conservation,
-            is_active=p.is_active,
+    return {p.id: _resumo_do_produto(p) for p in artigos}
+
+
+def procurar_artigos(*, tenant_id: UUID, q: str, limite: int = 10) -> tuple[ProdutoResumo, ...]:
+    """A procura do assistente (ADR 0027, decisão 6): nome ou SKU, por tokens.
+
+    Activos primeiro e inactivos marcados (`is_active`), nunca escondidos. O
+    limite é cortado a 20 no selector.
+    """
+    return tuple(
+        _resumo_do_produto(p) for p in _procurar_produtos(tenant_id=tenant_id, q=q, limite=limite)
+    )
+
+
+def procurar_fornecedores(
+    *, tenant_id: UUID, q: str, limite: int = 10
+) -> tuple[FornecedorResumo, ...]:
+    """A procura de fornecedores do assistente: nome por tokens, NIF exacto."""
+    return tuple(
+        _resumo_do_fornecedor(f)
+        for f in _procurar_fornecedores(tenant_id=tenant_id, q=q, limite=limite)
+    )
+
+
+def embalagens_por_artigo(*, tenant_id: UUID, product_id: UUID) -> tuple[EmbalagemResumo, ...]:
+    """As embalagens de um artigo, pela ordem em que foram criadas (ADR 0028).
+
+    "Saco de 25 kg", "caixa de 12" — é o que permite ao assistente responder
+    "em que embalagens é que isto vem" sem o modelo ter de converter nada: a
+    `base_quantity` vem na unidade base e quem lê apresenta-a.
+    """
+    return tuple(
+        EmbalagemResumo(
+            id=e.id,
+            product_id=e.product_id,
+            label=e.label,
+            base_quantity=e.base_quantity,
+            ean=e.ean,
         )
-        for p in artigos
-    }
+        for e in _embalagens_do_produto(tenant_id=tenant_id, product_id=product_id)
+    )
+
+
+def codigos_por_artigo(
+    *, tenant_id: UUID, product_id: UUID, limite: int = 20
+) -> tuple[CodigoDeFornecedorResumo, ...]:
+    """Os códigos de fornecedor aprendidos para um artigo (ADR 0028)."""
+    return tuple(
+        CodigoDeFornecedorResumo(
+            supplier_id=linha.supplier_id,
+            supplier_name=linha.supplier.name,
+            code=linha.code,
+            description_raw=linha.description_raw,
+        )
+        for linha in _codigos_do_produto(tenant_id=tenant_id, product_id=product_id)[:limite]
+    )
 
 
 def embalagens_por_id(
@@ -177,6 +278,22 @@ def fornecedor_por_nif(*, tenant_id: UUID, nif: str) -> FornecedorResumo | None:
         return None
 
 
+def produto_por_id(*, tenant_id: UUID, product_id: UUID) -> ProdutoResumo | None:
+    """Artigo pelo ID, ou None."""
+    try:
+        return _resumo_do_produto(Product.objects.get(tenant_id=tenant_id, id=product_id))
+    except Product.DoesNotExist:
+        return None
+
+
+def produto_por_sku(*, tenant_id: UUID, sku: str) -> ProdutoResumo | None:
+    """Artigo pelo SKU (insensível à caixa), ou None."""
+    try:
+        return _resumo_do_produto(Product.objects.get(tenant_id=tenant_id, sku__iexact=sku.strip()))
+    except Product.DoesNotExist:
+        return None
+
+
 def correspondencias(
     *, tenant_id: UUID, supplier_id: UUID, codes: Sequence[str]
 ) -> Mapping[str, Correspondencia]:
@@ -211,18 +328,22 @@ def criar_produto(
     conservation: str = "ambient",
     id: UUID | None = None,
 ) -> ProdutoResumo:
-    """Criar um artigo. Consumidor: `apps/demo`."""
-    p = Product.objects.create(
-        id=id,
-        tenant_id=tenant_id,
-        short_name=short_name,
-        base_unit=base_unit,
-        display_unit=display_unit,
-        display_factor=display_factor,
-        track_lots=track_lots,
-        expiry_kind=expiry_kind or "",
-        conservation=conservation,
-    )
+    """Criar um artigo (ou retornar o existente). Consumidor: `apps/demo`."""
+    try:
+        p = Product.objects.get(tenant_id=tenant_id, short_name__iexact=short_name)
+    except Product.DoesNotExist:
+        p = Product.objects.create(
+            id=id,
+            tenant_id=tenant_id,
+            short_name=short_name,
+            sku=short_name,
+            base_unit=base_unit,
+            display_unit=display_unit,
+            display_factor=display_factor,
+            track_lots=track_lots,
+            expiry_kind=expiry_kind or "",
+            conservation=conservation,
+        )
     return ProdutoResumo(
         id=p.id,
         short_name=p.short_name,
@@ -272,13 +393,16 @@ def criar_fornecedor(
     nif: str | None = None,
     id: UUID | None = None,
 ) -> FornecedorResumo:
-    """Criar um fornecedor. Consumidor: `apps/demo`."""
-    f = Supplier.objects.create(
-        id=id,
-        tenant_id=tenant_id,
-        name=name,
-        nif=nif or "",
-    )
+    """Criar um fornecedor (ou retornar o existente). Consumidor: `apps/demo`."""
+    try:
+        f = Supplier.objects.get(tenant_id=tenant_id, name__iexact=name)
+    except Supplier.DoesNotExist:
+        f = Supplier.objects.create(
+            id=id,
+            tenant_id=tenant_id,
+            name=name,
+            nif=nif or "",
+        )
     return FornecedorResumo(
         id=f.id,
         name=f.name,

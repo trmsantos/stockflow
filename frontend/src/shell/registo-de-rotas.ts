@@ -1,5 +1,6 @@
 import type { AbsoluteToPath, RegisteredRouter } from "@tanstack/react-router";
 import {
+  BotMessageSquare,
   Boxes,
   ChartNoAxesColumn,
   ClipboardCheck,
@@ -195,6 +196,18 @@ export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
     grupo: textos.grupos.painel,
     icone: TriangleAlert,
     pergunta: textos.rotas.alertas.pergunta,
+    campo: false,
+  },
+  assistente: {
+    caminho: "/assistente",
+    rotulo: textos.rotas.assistente.rotulo,
+    grupo: textos.grupos.painel,
+    icone: BotMessageSquare,
+    pergunta: textos.rotas.assistente.pergunta,
+    // **Não** é rota de campo (ADR 0027, decisão 10): funciona por deep link num
+    // telemóvel, com a lista de conversas numa gaveta, mas é desenhado ao
+    // computador — a 1280px, duas colunas. O papel não está aqui, pela regra do
+    // ficheiro: os três papéis usam o assistente e quem filtra é o servidor.
     campo: false,
   },
   stock: {

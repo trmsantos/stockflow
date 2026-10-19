@@ -7,6 +7,7 @@ import { eNegativo, type ComponenteDeCusto, type FechoDoMes } from "../schemas";
 import { textos } from "../textos";
 import { tintaDeCusto } from "../tinta-do-painel";
 import {
+  ausenciaDe,
   fraseDasExclusoes,
   notaDaBaseDosSalarios,
   notaDaOrigemDosSalarios,
@@ -15,7 +16,7 @@ import {
   rotuloDeOutroCusto,
   rotuloDeParteDeSalarios,
 } from "../vocabulario";
-import { LinhaDeRubrica } from "./linha-de-rubrica";
+import { LinhaDeAusencia, LinhaDeRubrica } from "./linha-de-rubrica";
 
 /**
  * Onde foi o dinheiro do mês, e o que **sobrou**.
@@ -96,10 +97,14 @@ function notaDaParcela(parcela: ComponenteDeCusto, mes: FechoDoMes): string {
   if (parcela.id === "other" && mes.other_costs.length > 0) {
     partes.push(decomposicaoDosCustosFixos(mes));
   }
-  if (parcela.id === "payroll") {
+  if (parcela.id === "payroll" && mes.payroll_basis !== null && mes.payroll_source !== null) {
     // As duas palavras longas do pessoal vivem aqui e não num contador: é a
     // nota que tem largura para elas (ver o `vocabulario.ts`, onde está medido
     // o que aconteceu quando a frase inteira foi para a régua).
+    //
+    // As duas vêm a `null` enquanto não houver salários (ADR 0029, decisão 1), e
+    // aí não há nota a escrever: um "custo-empresa" ao lado de um número que não
+    // existe descrevia a base de uma conta que ninguém fez.
     partes.push(
       `${notaDaBaseDosSalarios(mes.payroll_basis)}, ${notaDaOrigemDosSalarios(mes.payroll_source)}`,
     );
@@ -117,7 +122,15 @@ export function ResultadoDoMes({
   readonly explicar: boolean;
 }) {
   const exclusoes = fraseDasExclusoes(mes.result_excludes);
-  const prejuizo = mes.closed && eNegativo(mes.result_eur);
+  const vendas = mes.revenue_net_eur;
+  const vendasComIva = mes.revenue_gross_eur;
+  const total = mes.cost_total_eur;
+  const resultado = mes.result_eur;
+  const declaradas = mes.data_quality.unavailable;
+  // O vermelho do prejuízo só existe quando **há** resultado e o mês fechou: um
+  // veredicto sobre um número que não existe é o alarme falso mais barato de
+  // produzir.
+  const prejuizo = mes.closed && resultado !== null && eNegativo(resultado);
 
   const barras: readonly BarraOrdenada[] = mes.costs
     // Só o que soma: um gráfico de repartição com uma parcela que não é parcela
@@ -144,12 +157,21 @@ export function ResultadoDoMes({
         rotulo={textos.resultado.tabela}
       >
         <tbody>
-          <LinhaDeRubrica
-            rubrica={textos.rubricas.vendasSemIva}
-            valor={formatMoney(mes.revenue_net_eur)}
-            nota={textos.rubricas.comIva(formatMoney(mes.revenue_gross_eur))}
-            explicar={explicar}
-          />
+          {vendas === null || vendasComIva === null ? (
+            <LinhaDeAusencia
+              frase={textos.falta.frase(
+                textos.rubricas.vendasSemIva,
+                ausenciaDe("revenue", declaradas),
+              )}
+            />
+          ) : (
+            <LinhaDeRubrica
+              rubrica={textos.rubricas.vendasSemIva}
+              valor={formatMoney(vendas)}
+              nota={textos.rubricas.comIva(formatMoney(vendasComIva))}
+              explicar={explicar}
+            />
+          )}
 
           {mes.costs.map((parcela) => (
             <LinhaDeRubrica
@@ -162,21 +184,61 @@ export function ResultadoDoMes({
             />
           ))}
 
-          <LinhaDeRubrica
-            rubrica={textos.rubricas.totalDeGastos}
-            valor={formatMoney(mes.cost_total_eur)}
-            nota={textos.resultado.totalDeGastosNota}
-            destacada
-            explicar={explicar}
-          />
-          <LinhaDeRubrica
-            rubrica={textos.rubricas.resultado}
-            valor={formatMoneyChange(mes.result_eur)}
-            nota={mes.closed ? textos.resultado.notaFechado : textos.resultado.notaACorrer}
-            destacada
-            tinta={prejuizo ? "text-danger" : ""}
-            explicar={explicar}
-          />
+          {/* **As rubricas que o servidor ainda não tem continuam na conta**, em
+              palavras. O `costs` só traz as parcelas com fonte de dados; sem
+              estas duas linhas o dono via uma tabela de gastos sem pessoal nem
+              renda e não tinha como saber se isso era um negócio sem despesas ou
+              um ecrã incompleto. */}
+          {declaradas.includes("payroll") ? (
+            <LinhaDeAusencia
+              frase={textos.falta.frase(
+                textos.custos.pessoalRotulo,
+                ausenciaDe("payroll", declaradas),
+              )}
+            />
+          ) : null}
+          {declaradas.includes("other_costs") ? (
+            <LinhaDeAusencia
+              frase={textos.falta.frase(
+                textos.custos.fixosRotulo,
+                ausenciaDe("other_costs", declaradas),
+              )}
+            />
+          ) : null}
+
+          {total === null ? (
+            <LinhaDeAusencia
+              frase={textos.falta.frase(
+                textos.rubricas.totalDeGastos,
+                textos.resultado.dependeDoPessoal,
+              )}
+            />
+          ) : (
+            <LinhaDeRubrica
+              rubrica={textos.rubricas.totalDeGastos}
+              valor={formatMoney(total)}
+              nota={textos.resultado.totalDeGastosNota}
+              destacada
+              explicar={explicar}
+            />
+          )}
+          {resultado === null ? (
+            <LinhaDeAusencia
+              frase={textos.falta.frase(
+                textos.rubricas.resultado,
+                textos.resultado.semResultado,
+              )}
+            />
+          ) : (
+            <LinhaDeRubrica
+              rubrica={textos.rubricas.resultado}
+              valor={formatMoneyChange(resultado)}
+              nota={mes.closed ? textos.resultado.notaFechado : textos.resultado.notaACorrer}
+              destacada
+              tinta={prejuizo ? "text-danger" : ""}
+              explicar={explicar}
+            />
+          )}
         </tbody>
       </MolduraDeTabela>
 

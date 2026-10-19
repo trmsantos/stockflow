@@ -19,7 +19,15 @@ from django.db.models.functions import Lower
 
 from apps.shared.models import TenantModel
 
-__all__ = ["Location", "Lot", "StockMovement", "StockLevel", "ProductCost"]
+__all__ = [
+    "Location",
+    "Lot",
+    "StockMovement",
+    "StockLevel",
+    "ProductCost",
+    "StockCount",
+    "StockCountLine",
+]
 
 
 class Location(TenantModel):
@@ -58,7 +66,8 @@ class Lot(TenantModel):
     Representado por um triplo único: tenant, product (FK) e code (char 150).
     Campos:
     - `product` FK a `catalog_product`
-    - `code` char(150) — o lote impresso na embalagem ou gerado (se track_lots=False, um lote sintético '__<product_id>__')
+    - `code` char(150) — o lote impresso na embalagem ou gerado (se track_lots=False,
+      um lote sintético '__<product_id>__')
     - `expires_at` DateTime null — data da validade, nulável
     - `received_at` DateTime — marca do primeiro movimento que o criou, imutável
 
@@ -107,17 +116,25 @@ class StockMovement(TenantModel):
       transfer_out, transfer_in, production_out, production_in
     - `quantity` Decimal(12,3) com sinal — positivo para entrada, negativo para saída
     - `unit_cost` Decimal(12,6) — avaliação de cada unidade, immutável
-    - `cost_is_estimate` bool — se o custo é estimado (A, guia sem fatura) ou confirmado (B, com fatura)
-    - `reason` CharField com choices enum (waste, adjustment): expired, spoiled, prep_loss, breakage, other
-    - `reason_detail` TextField null — detalhes adicionais quando reason='other'
-    - `reference` CharField(255) null — chave de deduplicação (doc_number_normalized, uuid produção, id contagem)
-    - `production_id` UUID null — referência da produção (production_out e production_in partilham este id)
+    - `cost_is_estimate` bool — se o custo é estimado (A, guia sem fatura) ou
+      confirmado (B, com fatura)
+    - `reason` CharField com choices enum (waste, adjustment): expired, spoiled,
+      prep_loss, breakage, other; `''` quando o movimento não tem motivo
+    - `reason_detail` TextField — detalhes adicionais quando reason='other'; `''` se não há
+    - `reference` CharField(255) — chave de deduplicação (doc_number_normalized,
+      uuid produção, id contagem); `''` quando o movimento não referencia documento
+    - `production_id` UUID null — referência da produção (production_out e
+      production_in partilham este id)
     - `transfer_id` UUID null — ID do par transfer_out/transfer_in
     - `occurred_at` DateTime — quando o movimento aconteceu
     - `created_by` FK User SET_NULL, `created_by_name` char(150) — quem criou o movimento
 
+    Os três campos de texto acima são `NOT NULL` com `default=''`: ausência escreve-se `''`
+    e nunca `NULL`, para não haver dois valores a significar "nada" (convenção do Django, a
+    mesma que o `purchasing` segue).
+
     Append-only na BD: REVOKE UPDATE, DELETE; CHECK(quantity != 0).
-    Índice parcial: (tenant_id, reference) WHERE reference IS NOT NULL.
+    Índice parcial: (tenant_id, reference) WHERE reference <> ''.
     """
 
     MOVEMENT_TYPES = [
@@ -178,15 +195,15 @@ class StockMovement(TenantModel):
     reason = models.CharField(
         max_length=20,
         choices=REASON_CHOICES,
-        null=True,
         blank=True,
+        default="",
         verbose_name="motivo",
     )
     reason_detail = models.TextField(
-        blank=True, null=True, verbose_name="detalhes do motivo"
+        blank=True, default="", verbose_name="detalhes do motivo"
     )
     reference = models.CharField(
-        max_length=255, null=True, blank=True, verbose_name="referência de documento"
+        max_length=255, blank=True, default="", verbose_name="referência de documento"
     )
     production_id = models.UUIDField(
         null=True, blank=True, verbose_name="ID da produção"
@@ -220,7 +237,7 @@ class StockMovement(TenantModel):
             models.Index(
                 fields=["tenant", "reference"],
                 name="inv_stockmv_tenant_ref_idx",
-                condition=models.Q(reference__isnull=False),
+                condition=~models.Q(reference=""),
             ),
         ]
 
@@ -337,3 +354,133 @@ class ProductCost(TenantModel):
 
     def __str__(self) -> str:
         return f"Custo {self.product} @ {self.location}: {self.unit_cost}"
+
+
+class StockCount(TenantModel):
+    """Uma contagem de stock: lista de artigos a contar numa localização.
+
+    Campos:
+    - `location` FK a `inventory_location` — onde a contagem foi feita
+    - `started_at` DateTime — quando começou
+    - `closed_at` DateTime null — quando foi fechada
+    - `status` CharField em ["open", "closed"] — estado da contagem
+    - `created_by` FK User — quem criou
+    - `closed_by` FK User null — quem fechou
+    """
+
+    STATUSES = [
+        ("open", "Aberta"),
+        ("closed", "Fechada"),
+    ]
+
+    location = models.ForeignKey(
+        "inventory.Location",
+        on_delete=models.RESTRICT,
+        related_name="+",
+        verbose_name="localização",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUSES,
+        default="open",
+        verbose_name="estado",
+    )
+    started_at = models.DateTimeField(auto_now_add=True, verbose_name="iniciada em")
+    closed_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="fechada em"
+    )
+    created_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="+",
+        verbose_name="criada por",
+    )
+    closed_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="fechada por",
+    )
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "contagem de stock"
+        verbose_name_plural = "contagens de stock"
+        indexes = [
+            models.Index(
+                fields=["tenant", "location", "status"], name="inv_count_tenant_loc_status"
+            ),
+            models.Index(fields=["tenant", "status"], name="inv_count_tenant_status"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Contagem @ {self.location} ({self.status})"
+
+
+class StockCountLine(TenantModel):
+    """Uma linha da contagem: um artigo/lote com quantidade esperada e contada.
+
+    Campos:
+    - `stock_count` FK a `StockCount`
+    - `product` FK a `catalog_product`
+    - `lot` FK a `inventory_lot` null — lote específico ou None
+    - `quantity_expected` Decimal(12,3) — quantidade em stock no sistema
+    - `quantity_counted` Decimal(12,3) null — quantidade contada (NULL até ser preenchida)
+    - `zone` CharField(100) — zona/secção (ex.: "frio", "prateleira 1"); `''` se não há
+    - `created_at` DateTime — quando foi criada
+    - `counted_at` DateTime null — quando foi contada
+    """
+
+    stock_count = models.ForeignKey(
+        "inventory.StockCount",
+        on_delete=models.CASCADE,
+        related_name="lines",
+        verbose_name="contagem",
+    )
+    product = models.ForeignKey(
+        "catalog.Product",
+        on_delete=models.RESTRICT,
+        related_name="+",
+        verbose_name="artigo",
+    )
+    lot = models.ForeignKey(
+        "inventory.Lot",
+        on_delete=models.RESTRICT,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="lote",
+    )
+    quantity_expected = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        verbose_name="quantidade esperada",
+    )
+    quantity_counted = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        verbose_name="quantidade contada",
+    )
+    zone = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        verbose_name="zona",
+    )
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "linha de contagem"
+        verbose_name_plural = "linhas de contagem"
+        indexes = [
+            models.Index(
+                fields=["tenant", "stock_count", "product"],
+                name="inv_countline_tenant_sc_prod",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.product} @ Contagem {self.stock_count.pk}"

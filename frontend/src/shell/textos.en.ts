@@ -94,6 +94,10 @@ export const EN: typeof PT = {
       rotulo: "Alerts",
       pergunta: "What is expiring? What is missing? How much did I throw away?",
     },
+    assistente: {
+      rotulo: "Assistant",
+      pergunta: "How much flour do I have? What expires this week?",
+    },
     stock: { rotulo: "Stock", pergunta: "What do I have, and how much?" },
     contar: {
       rotulo: "Count",

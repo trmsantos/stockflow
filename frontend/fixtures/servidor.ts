@@ -4,7 +4,6 @@ import type { z } from "zod";
 
 import { ROTAS_DE_ALERTAS } from "./alertas.ts";
 import { ROTAS_DE_CONTAGEM } from "./contagem.ts";
-import { ROTAS_DO_PAINEL } from "./painel.ts";
 import { ROTAS_DE_STOCK } from "./stock.ts";
 
 /**
@@ -113,92 +112,26 @@ export interface Rota {
   readonly responder: (ctx: Contexto) => Resposta;
   /** A variante vazia, para "o que aparece quando não há nada?". */
   readonly vazio?: (ctx: Contexto) => Resposta;
-  /**
-   * A variante **restrita**: o 403 de quem não tem o papel que este caminho
-   * exige (ADR 0013, decisão 6).
-   *
-   * Sai **sozinho** quando a sessão a correr não tem um dos `papeis` declarados
-   * na rota, e continua a poder pedir-se à mão com `?_fixture=restrito` — que é
-   * como se sonda o ramo estando autenticado como dono. Hoje só o
-   * `/reporting/month` o tem, porque é o único caminho cuja permissão é de um
-   * papel só.
-   *
-   * **Era `opt-in` e só `opt-in`, e isso era um defeito**: com uma sessão `staff`
-   * real este caminho devolvia 200 com a folha salarial. A razão inteira está no
-   * `papelDaSessao`.
-   *
-   * E não é fingir uma sessão (que a ADR 0010 proíbe): é devolver uma recusa,
-   * na mesma direcção do `RECUSA_SEM_SESSAO`. Uma sessão falsa **concede** o
-   * que o servidor recusaria; uma recusa não concede nada.
-   */
-  readonly restrito?: (ctx: Contexto) => Resposta;
-  /**
-   * Os papéis que o endpoint **real** aceita, segundo a ADR que o especifica
-   * (para o `/reporting/month`, `{owner}`). Com isto declarado, o 403 de papel
-   * deixa de ser `opt-in` e passa a sair sozinho quando a sessão a correr não
-   * tem o papel — ver `papelDaSessao`.
-   */
-  readonly papeis?: readonly string[];
 }
 
-/**
- * O papel da sessão a correr, **perguntado ao backend** e não inferido daqui.
+/*
+ * **O 403 de papel saiu deste servidor a 2026-10-19, e saiu por ter deixado de
+ * ser preciso.**
  *
- * ## Porque isto existe, e porque não contradiz a lição do 409
+ * Ele existia para o painel: os três caminhos de `/reporting/*` eram servidos
+ * aqui, e a recusa de quem não é dono (ADR 0013, decisão 6) tinha de ser
+ * exercitável. Para a fazer honesta, este ficheiro perguntava o papel à sessão
+ * real — e a lição que isso ensinou fica escrita, porque vale para o próximo
+ * caminho que precise dela: um ramo de 403 que só se exercita com uma bandeira
+ * que ninguém põe **apodrece**, e com uma sessão `staff` real aquela fixture
+ * devolvia 200 com a folha salarial inteira.
  *
- * Medido a 2026-10-06 com uma sessão `staff` real: o `/reporting/month` devolvia
- * **200 com a folha salarial inteira**, porque o 403 de papel era `opt-in` por
- * bandeira. O cliente fazia o certo (não dispara o pedido sem o papel), mas a
- * fixture era **mais permissiva do que a realidade** — e isso é a família de
- * defeito que este repositório já pagou duas vezes: o `z.iso.datetime()` nu
- * esteve 11 dias invisível porque os dados falsos eram mais complacentes do que
- * o Django. Um ramo de 403 que só se exercita com uma bandeira que ninguém põe é
- * um ramo que apodrece.
- *
- * O comentário do `restrito` dizia que "tudo o que se pareça com autorização tem
- * de se pedir", e vinha da lição do 409 de tenant divergente. Essa lição é
- * verdadeira e é sobre **inventar**: aquela fixture comparava um header contra
- * uma constante que ela própria fabricou, e rejeitava tudo quando a autenticação
- * a sério chegou. Perguntar o papel à sessão real é o oposto de inventar — é
- * deferir para a autoridade, que é exactamente o que o endpoint real faz.
- *
- * E **não** se lê o papel de um header do cliente: isso seria tratar a sessão
- * como credencial, que é a regra que o CLAUDE.md põe em primeiro lugar. O papel
- * vem de onde ele vive.
- *
- * ## A ausência de resposta não é uma recusa
- *
- * Se o backend não responder, ou se não houver sessão, devolve-se `null` e a rota
- * **serve normalmente**. Não saber o papel não é o mesmo que saber que ele não
- * serve, e inventar um 403 por falta de informação era repetir o 409 com outro
- * número. É também o que mantém o `curl` sem cookies a funcionar como sonda de
- * forma de dados, que é para o que ele serve.
+ * Com o `apps.reporting` ligado (ADR 0029), o 403 é o do Django, com o
+ * `permission_classes` da view a decidi-lo — que é a autoridade a sério e não
+ * uma imitação dela. Manter aqui uma segunda imitação de autorização era manter
+ * um caminho que nunca mais corre, e um caminho que nunca corre é a definição do
+ * que apodrece.
  */
-async function papelDaSessao(
-  origem: string,
-  cookie: string | undefined,
-): Promise<string | null> {
-  if (cookie === undefined || cookie === "") return null;
-  try {
-    // Sem barra a abrir o caminho: o `PREFIXO` **já termina em `/`**, e a barra
-    // dupla que eu escrevi à primeira dava 404 no Django — o que, pela regra de
-    // "não saber não é recusar" logo acima, se lia como "não há papel" e deixava
-    // passar tudo. Um defeito silencioso a corrigir um defeito silencioso.
-    const resposta = await fetch(`${origem}${PREFIXO}auth/sessao`, {
-      headers: { cookie },
-    });
-    if (!resposta.ok) return null;
-    const corpo: unknown = await resposta.json();
-    if (typeof corpo !== "object" || corpo === null) return null;
-    const ativo = (corpo as { tenant_ativo?: unknown }).tenant_ativo;
-    if (typeof ativo !== "object" || ativo === null) return null;
-    const papel = (ativo as { papel?: unknown }).papel;
-    return typeof papel === "string" ? papel : null;
-  } catch {
-    // O backend em baixo não é uma recusa: ver o bloco acima.
-    return null;
-  }
-}
 
 export interface OpcoesDeFixtures {
   /** Atraso default, em ms. */
@@ -209,30 +142,13 @@ export interface OpcoesDeFixtures {
   readonly erros?: readonly string[];
   /** Caminhos que respondem 403 `sem_sessao` — a sessão que expira a meio. */
   readonly semSessao?: readonly string[];
-  /** Caminhos que respondem 403 de **papel** — o painel do dono visto por outro. */
-  readonly restritos?: readonly string[];
-  /**
-   * A origem do Django, para o `papelDaSessao` perguntar o papel a quem o tem.
-   *
-   * Entra por opção e não por `process.env`: o `no-restricted-properties` do
-   * `eslint.config.js` recusa — e bem — `process.env` em código do projecto, e a
-   * razão está no SECURITY.md §7. A origem já é calculada uma vez no
-   * `vite.config.ts` (é a mesma do proxy), logo passá-la daí é o que impede duas
-   * definições de onde está o backend.
-   */
-  readonly origemDoBackend?: string;
 }
 
 /**
  * As rotas servidas. Uma linha por recurso, e a remoção é por recurso: no dia
  * em que o endpoint real existir, apaga-se o ficheiro e esta linha.
  */
-const ROTAS: readonly Rota[] = [
-  ...ROTAS_DE_STOCK,
-  ...ROTAS_DE_CONTAGEM,
-  ...ROTAS_DE_ALERTAS,
-  ...ROTAS_DO_PAINEL,
-];
+const ROTAS: readonly Rota[] = [...ROTAS_DE_STOCK, ...ROTAS_DE_CONTAGEM, ...ROTAS_DE_ALERTAS];
 
 function esperar(ms: number): Promise<void> {
   return new Promise((resolver) => {
@@ -340,8 +256,6 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
   const vazios = new Set(opcoes.vazios ?? []);
   const erros = new Set(opcoes.erros ?? []);
   const semSessao = new Set(opcoes.semSessao ?? []);
-  const restritos = new Set(opcoes.restritos ?? []);
-  const origemDoBackend = opcoes.origemDoBackend ?? "http://127.0.0.1:8010";
 
   const middleware: Connect.NextHandleFunction = (req, res, next) => {
     const metodo = req.method ?? "GET";
@@ -372,7 +286,7 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
        * Os estados do DESIGN.md §3 (e a recusa de âmbito) pedem-se de duas
        * formas, e nenhuma delas é um `if` dentro da app: por caminho, ao
        * arrancar o `pnpm dev` (`FIXTURES_ERRO=/api/v1/stock/levels pnpm dev`),
-       * ou por pedido, com `?_fixture=erro|vazio|sem_sessao|restrito`. O segundo existe
+       * ou por pedido, com `?_fixture=erro|vazio|sem_sessao`. O segundo existe
        * para sondar com `curl` sem reiniciar; nada em `src/` o envia, e no dia
        * em que o Django servir o caminho o parâmetro deixa de ter quem o leia.
        *
@@ -386,19 +300,6 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
       const comRecusaDeAmbito =
         pedido === "sem_sessao" || semSessao.has(caminho) || semSessao.has(rota.caminho);
       const comTenantDivergente = pedido === "tenant_divergente";
-      // O papel só se pergunta quando a rota declara exigir um: uma chamada ao
-      // backend por pedido em todas as rotas era um custo sem leitor.
-      const papel =
-        rota.papeis === undefined
-          ? null
-          : await papelDaSessao(origemDoBackend, req.headers.cookie);
-      const papelInsuficiente =
-        papel !== null && rota.papeis !== undefined && !rota.papeis.includes(papel);
-      const comRecusaDePapel =
-        pedido === "restrito" ||
-        papelInsuficiente ||
-        restritos.has(caminho) ||
-        restritos.has(rota.caminho);
 
       // Primeiro de todos, porque é o que o `TenantMiddleware` faz: a falta de
       // âmbito é decidida **antes** de o header ser comparado (um 409) e antes
@@ -449,26 +350,6 @@ export function servidorDeFixtures(opcoes: OpcoesDeFixtures = {}): Plugin {
           detail: "Pedido sem token CSRF. Recarregue a página e tente outra vez.",
         });
         registar(metodo, caminho, 403, Date.now() - inicio);
-        return;
-      }
-
-      // Depois do âmbito e do CSRF, e antes de a view correr: é a ordem do
-      // Django e do DRF — o `TenantMiddleware` resolve o âmbito, o
-      // `CsrfViewMiddleware` verifica o token, e só então o
-      // `permission_classes` da view recusa o papel. Uma rota sem variante
-      // `restrito` ignora o modo e responde normalmente: o `/month` é o único
-      // caminho de um papel só, e inventar um 403 nos outros era afirmar uma
-      // permissão que nenhuma view tem.
-      if (comRecusaDePapel && rota.restrito) {
-        await esperar(atraso);
-        const recusa = rota.restrito({
-          caminho,
-          parametros: url.searchParams,
-          variaveis,
-          corpo: null,
-        });
-        enviar(res, recusa.estado, recusa.corpo);
-        registar(metodo, caminho, recusa.estado, Date.now() - inicio);
         return;
       }
 

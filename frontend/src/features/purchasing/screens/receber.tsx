@@ -160,8 +160,13 @@ export function EcraDeReceber() {
           `style`, porque não é uma decisão de design e portanto não é um token
           (é a mesma razão, e a mesma forma, que a tab bar usava).
           O `mt-auto` mantém a barra em baixo quando a lista é curta, em vez de a
-          deixar a meio do ecrã. */}
+          deixar a meio do ecrã.
+          O `data-barra-inferior` é um contrato de um atributo com o lançador
+          global do assistente (ADR 0027, decisão 10, adenda): ele mede a altura
+          do que tiver esta marca e sobe acima dela, em vez de tapar o canto
+          direito desta barra. Este ecrã não sabe que ele existe. */}
       <div
+        data-barra-inferior=""
         className="sticky bottom-0 z-10 mt-auto flex flex-col items-start gap-1 border-t border-border bg-background px-celula-x pt-2"
         style={{ paddingBottom: "calc(var(--spacing) * 2 + env(safe-area-inset-bottom))" }}
       >

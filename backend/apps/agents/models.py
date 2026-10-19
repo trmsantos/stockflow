@@ -30,16 +30,51 @@ ganha entrada nenhuma nesta fatia: a primeira da sua história é o
 `inventory_stockmovement`, na fatia 3.
 
 Nenhum destes modelos é registado no admin (ADR 0007).
+
+## As duas tabelas do chat sobre stock (ADR 0027, decisão 1)
+
+`agents_conversation` e `agents_chatmessage`, **uma linha por turno** — pergunta e
+resposta na mesma linha, como a `Extraction` é uma linha por chamada. Herdam
+`TenantModel` e nascem com política de RLS na `0002`; dependem só do `accounts`.
+Também não são append-only: `started_at`, `answer`, `tool_calls` e `cost_eur` são
+`UPDATE`s do mesmo turno, e o `DELETE` da conversa é real (purga aos 90 dias). O
+`APPEND_ONLY` e o `SEM_POLITICA` do `tests/test_db_roles.py` não mexem.
 """
 
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
+
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils import timezone
 
+from apps.agents.navegacao import Acao, acoes_do_turno
+from apps.agents.rasto import chamadas_validas
 from apps.shared.models import TenantModel
 
-__all__ = ["EstadoDaExtracao", "Extraction"]
+__all__ = [
+    "JANELA_DA_RESPOSTA",
+    "TURNOS_POR_CONVERSA",
+    "ChatMessage",
+    "CodigoDeErroDaMensagem",
+    "Conversation",
+    "EstadoDaExtracao",
+    "EstadoDaMensagem",
+    "Extraction",
+]
+
+#: Quanto tempo um turno pode estar `pendente`/`a_responder` antes de se **ler**
+#: como `erro/tempo_esgotado` — por derivação, nunca por escrita (ADR 0027,
+#: decisão 3; é o relógio da `JANELA_DA_EXTRACAO`). Dois minutos: seis chamadas
+#: de trinta segundos no pior caso são três, e o cliente desiste aos noventa
+#: segundos de qualquer forma.
+JANELA_DA_RESPOSTA = timedelta(minutes=2)
+
+#: Turnos por conversa (ADR 0027, decisão 9). Ao trigésimo o `POST` recusa com
+#: `conversa_cheia`, e a pessoa abre outra.
+TURNOS_POR_CONVERSA = 30
 
 
 class EstadoDaExtracao(models.TextChoices):
@@ -214,3 +249,246 @@ class Extraction(TenantModel):
 
     def __str__(self) -> str:
         return f"{self.document_id} #{self.attempt} ({self.status})"
+
+
+class EstadoDaMensagem(models.TextChoices):
+    """O estado de um turno: os quatro da decisão 1 da ADR 0027.
+
+    `pendente` é a linha acabada de criar pelo `POST`; `a_responder` é a tarefa
+    a correr, com `started_at` escrito; `respondida` e `erro` são terminais. O
+    quinto estado que o cliente vê — `tempo_esgotado` — não está aqui porque é
+    derivado (ver `ChatMessage.estado_derivado`).
+    """
+
+    PENDENTE = "pendente", "à espera de um worker"
+    A_RESPONDER = "a_responder", "o modelo está a responder"
+    RESPONDIDA = "respondida", "respondida"
+    ERRO = "erro", "a resposta falhou"
+
+
+class CodigoDeErroDaMensagem(models.TextChoices):
+    """Porque é que um turno falhou (ADR 0027, decisão 4). Lista fechada."""
+
+    TETO_DE_ITERACOES = "teto_de_iteracoes", "o modelo chamou tools demasiadas vezes"
+    TETO_DE_CUSTO = "teto_de_custo", "o orçamento diário do estabelecimento esgotou-se"
+    TEMPO_ESGOTADO = "tempo_esgotado", "o modelo não respondeu a tempo"
+    RESPOSTA_INVALIDA = "resposta_invalida", "a resposta do modelo não se lê"
+    ERRO_DO_MODELO = "erro_do_modelo", "o fornecedor do modelo recusou a chamada"
+    MODELO_OCUPADO = "modelo_ocupado", "o fornecedor está sobrecarregado"
+    PERTENCA_REVOGADA = "pertenca_revogada", "quem perguntou já não pertence ao estabelecimento"
+
+
+class Conversation(TenantModel):
+    """Uma conversa com o assistente. É **da pessoa**, não do estabelecimento.
+
+    A resposta foi calculada com as permissões de quem perguntou, e partilhar
+    transcrições no tenant mostraria a um `staff` números que só um `owner`
+    pode pedir — logo os selectors filtram `created_by` ao lado da política, e
+    nesta fatia nem o `owner` lê as dos outros (ADR 0027, decisão 2).
+
+    `created_by_name` é a cópia que sobrevive à conta ser apagada, como no
+    `StockMovement`. `title` é a primeira pergunta cortada a 120. `last_message_at`
+    é o que ordena a lista e o que a purga compara.
+    """
+
+    created_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="+",
+        db_index=False,
+        verbose_name="criada por",
+    )
+    created_by_name = models.CharField(
+        max_length=150, blank=True, default="", verbose_name="criada por (nome)"
+    )
+    title = models.CharField(max_length=120, verbose_name="título")
+    last_message_at = models.DateTimeField(verbose_name="última mensagem em")
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "conversa"
+        verbose_name_plural = "conversas"
+        indexes = [
+            *TenantModel.Meta.indexes,
+            # A listagem: as conversas de uma pessoa, mais recentes primeiro.
+            models.Index(
+                fields=["tenant", "created_by", "-last_message_at"],
+                name="conversation_autor_recente_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class ChatMessage(TenantModel):
+    """Um turno: a pergunta, a resposta, o rasto das tools e o que custou.
+
+    ## `tool_calls` é JSON verbatim, e é lido como o `payload` da extração
+
+    Nome, argumentos, número de linhas, truncado, milissegundos e `ok` de cada
+    tool chamada, gravados à medida que acontecem. Validado **à leitura**
+    (`chamadas_validadas`) e nunca comparado num `if`: é prova de como o número
+    foi obtido — o rodapé "Fontes" do ecrã — e não configuração (ADR 0021,
+    decisão 4; ADR 0027, decisão 1).
+
+    ## `idempotency_key`, única globalmente
+
+    `chat:<id da mensagem>`: a linha é a chave, logo uma segunda entrega da mesma
+    tarefa encontra a linha já fora de `pendente` e não paga outra vez. Por
+    chamada ao modelo a tarefa deriva `chat:<mensagem>:<iteração>` e grava-a no
+    log — é registo nosso, não um contrato com a API (ADR 0027, decisão 9).
+
+    ## `role_at_time`
+
+    O papel de quem perguntou **no momento** da pergunta. É por ele que a lista
+    de tools oferecida ao modelo é filtrada (decisão 8), e fica gravado para a
+    resposta continuar explicável depois de o papel mudar.
+    """
+
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name="messages",
+        db_index=False,
+        verbose_name="conversa",
+    )
+    position = models.PositiveSmallIntegerField(editable=False, verbose_name="posição")
+    asked_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="+",
+        db_index=False,
+        verbose_name="perguntado por",
+    )
+    asked_by_name = models.CharField(
+        max_length=150, blank=True, default="", verbose_name="perguntado por (nome)"
+    )
+    role_at_time = models.CharField(max_length=20, verbose_name="papel no momento")
+    question = models.CharField(max_length=2000, verbose_name="pergunta")
+    #: Um dos códigos de `LANGUAGES`: o `request.LANGUAGE_CODE` do `POST`. O
+    #: prompt manda responder nesta língua (ADR 0027, decisões 1 e 4).
+    language = models.CharField(max_length=10, verbose_name="língua da pergunta")
+    answer = models.TextField(blank=True, default="", verbose_name="resposta")
+    tool_calls = models.JSONField(
+        default=list, editable=False, verbose_name="tools chamadas, verbatim"
+    )
+    model = models.CharField(
+        max_length=100, blank=True, default="", editable=False, verbose_name="modelo chamado"
+    )
+    prompt_version = models.CharField(
+        max_length=50, blank=True, default="", editable=False, verbose_name="versão do prompt"
+    )
+    idempotency_key = models.CharField(
+        max_length=200, editable=False, verbose_name="chave de idempotência"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=EstadoDaMensagem.choices,
+        default=EstadoDaMensagem.PENDENTE,
+        editable=False,
+        verbose_name="estado",
+    )
+    error_code = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        choices=CodigoDeErroDaMensagem.choices,
+        editable=False,
+        verbose_name="código do erro",
+    )
+    #: Classe e mensagem da excepção, nunca o traceback (SECURITY.md §1).
+    error = models.TextField(blank=True, default="", editable=False, verbose_name="razão do erro")
+    input_tokens = models.PositiveIntegerField(
+        default=0, editable=False, verbose_name="tokens de entrada"
+    )
+    output_tokens = models.PositiveIntegerField(
+        default=0, editable=False, verbose_name="tokens de saída"
+    )
+    iterations = models.PositiveSmallIntegerField(
+        default=0, editable=False, verbose_name="chamadas ao modelo"
+    )
+    #: Seis casas, pela razão do `Extraction.cost_eur`: a duas, todas as
+    #: chamadas custariam 0,00 €. Nunca `float` (CLAUDE.md).
+    cost_eur = models.DecimalField(
+        max_digits=12, decimal_places=6, default=0, editable=False, verbose_name="custo em euros"
+    )
+    started_at = models.DateTimeField(
+        null=True, blank=True, default=None, editable=False, verbose_name="começou em"
+    )
+    finished_at = models.DateTimeField(
+        null=True, blank=True, default=None, editable=False, verbose_name="acabou em"
+    )
+
+    class Meta(TenantModel.Meta):
+        verbose_name = "mensagem do assistente"
+        verbose_name_plural = "mensagens do assistente"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "conversation", "position"],
+                name="chatmessage_conversa_posicao_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["idempotency_key"],
+                name="chatmessage_idempotency_key_uniq",
+            ),
+        ]
+        indexes = [
+            *TenantModel.Meta.indexes,
+            # Os dois tetos diários (ADR 0027, decisão 9): perguntas por pessoa
+            # e por dia, e o custo por tenant e dia — este serve-se do índice
+            # herdado `(tenant, -created_at)`.
+            models.Index(
+                fields=["tenant", "asked_by", "-created_at"],
+                name="chatmessage_autor_dia_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"turno {self.position} ({self.status})"
+
+    @property
+    def esgotou_o_tempo(self) -> bool:
+        """Ainda não acabou e já passou a `JANELA_DA_RESPOSTA`.
+
+        Conta a partir de `started_at` ou, se a tarefa nunca chegou a começar, do
+        `created_at` da linha: é o caso do worker morto entre o commit e o broker,
+        que de outra forma ficava `pendente` para sempre.
+        """
+        if self.status not in (EstadoDaMensagem.PENDENTE, EstadoDaMensagem.A_RESPONDER):
+            return False
+        desde = self.started_at or self.created_at
+        return desde is not None and timezone.now() - desde > JANELA_DA_RESPOSTA
+
+    @property
+    def estado_derivado(self) -> str:
+        """O `status` que o cliente vê: `erro` quando o relógio passou."""
+        if self.esgotou_o_tempo:
+            return str(EstadoDaMensagem.ERRO)
+        return str(self.status)
+
+    @property
+    def codigo_de_erro_derivado(self) -> str | None:
+        """O `error_code` que o cliente vê, com o `tempo_esgotado` derivado."""
+        if self.esgotou_o_tempo:
+            return str(CodigoDeErroDaMensagem.TEMPO_ESGOTADO)
+        return self.error_code or None
+
+    @property
+    def chamadas_validadas(self) -> list[dict[str, Any]]:
+        """O `tool_calls` revalidado à leitura: só as entradas com a forma certa."""
+        return chamadas_validas(self.tool_calls)
+
+    @property
+    def acoes_derivadas(self) -> tuple[Acao, ...]:
+        """Os botões deste turno, derivados do rasto e do papel de quem perguntou.
+
+        **Não é uma coluna** (ADR 0028, decisão 4): deriva-se à leitura das
+        tools que o turno chamou, pelo mapa fechado do `navegacao.py`, como o
+        `estado_derivado` deriva do relógio. O modelo não pede rotas nem
+        escreve URLs — não há URL vinda dele para injectar —, e o papel usado é
+        o `role_at_time`, que é o que a resposta já respeitou: um botão para um
+        ecrã que o papel não vê acabaria em 403.
+        """
+        return acoes_do_turno(chamadas=self.chamadas_validadas, papel=self.role_at_time)

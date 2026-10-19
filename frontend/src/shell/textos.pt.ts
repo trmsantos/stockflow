@@ -104,7 +104,7 @@ export const PT = {
   },
 
   /**
-   * As seis rotas de operação. A `pergunta` é a do DESIGN.md §1 — o que o ecrã
+   * As sete rotas de operação. A `pergunta` é a do DESIGN.md §1 — o que o ecrã
    * responde — e aparece na gaveta e nos títulos só-para-áudio.
    */
   rotas: {
@@ -116,6 +116,10 @@ export const PT = {
     alertas: {
       rotulo: "Alertas",
       pergunta: "O que expira? O que falta? Quanto deitei fora?",
+    },
+    assistente: {
+      rotulo: "Assistente",
+      pergunta: "Quanto tenho de farinha? O que vence esta semana?",
     },
     stock: { rotulo: "Stock", pergunta: "O que é que eu tenho, e quanto?" },
     contar: {

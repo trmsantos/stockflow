@@ -168,7 +168,15 @@ export const movimentoSchema = z.object({
   quantity: quantidadeSchema,
   location: localizacaoSchema,
   lot_code: z.string().nullable(),
-  reason: motivoQuebraSchema.nullable(),
+  /* O vazio é o "sem motivo" do servidor desde 2026-10-19: as colunas de texto
+   * do ledger deixaram de aceitar `NULL` (convenção do Django — um valor só
+   * para "nada"), e um `z.enum()` recusa `""`. O `null` fica aceite porque as
+   * linhas antigas e os fixtures ainda o usam; ambos chegam aqui como `null`,
+   * que é o que o ecrã já sabe desenhar. */
+  reason: motivoQuebraSchema
+    .or(z.literal(""))
+    .nullable()
+    .transform((valor) => (valor === "" ? null : valor)),
   created_by: z.string().min(1),
 /* `{ offset: true }` e não `z.iso.datetime()` nu, e isto esteve 11 dias a ser uma
  * bomba de relógio invisível. O Django corre com `TIME_ZONE = "Europe/Lisbon"` e
@@ -185,6 +193,9 @@ export const movimentoSchema = z.object({
  * virava um erro de forma com uma mensagem que não aponta para o fuso horário. */
   occurred_at: z.iso.datetime({ offset: true }),
   /** Referência: fatura, contagem, transferência. Texto curto, para mostrar. */
+  /** Referência: fatura, contagem, transferência. Texto curto, para mostrar.
+   * `z.string()` já aceita o `""` que o servidor passou a enviar em vez de
+   * `NULL` (2026-10-19); o `null` fica para as linhas antigas e os fixtures. */
   reference: z.string().nullable(),
 });
 

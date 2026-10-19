@@ -21,25 +21,58 @@ e pela resposta do `PUT /menu`.
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from django.db.models import QuerySet
+from django.db.models import F, Func, QuerySet, UUIDField
 
 from apps.accounts.menu import ItemDeMenu, rota_do_registo
 from apps.accounts.models import (
     Invitation,
     Membership,
     RotaDeMenu,
+    Tenant,
     TenantMenuItem,
+    User,
 )
 
 __all__ = [
     "convite_por_token_hash",
     "convites_do_ambito",
+    "convites_pendentes_do_ambito",
     "itens_de_menu_do_ambito",
     "membership_no_ambito",
+    "membros_do_ambito",
     "projeccao_de_menu",
+    "tenant_do_ambito",
+    "tenants_dos_utilizadores_ativos",
 ]
+
+
+def tenants_dos_utilizadores_ativos() -> tuple[UUID, ...]:
+    """Os ids de tenant que algum utilizador activo pode tentar, sem âmbito.
+
+    É a quinta leitura deste ficheiro e a única que corre **fora** de qualquer
+    âmbito, e pode: lê o `accounts_user.tenant_ids`, que é o único bit legível
+    fora de âmbito (ADR 0007), e nada mais. É o caminho que o
+    `_revogar_demonstracoes_anteriores` já percorre, agora para a purga das
+    conversas do assistente (ADR 0027, decisão 2): o cron que itera tenants não
+    lê o `accounts_tenant` — a política dessa tabela não tem o disjunto de
+    sistema, e dar-lho foi recusado pelo dono — descobre-os por aqui.
+
+    `unnest` em SQL e `DISTINCT` na base de dados, em vez de achatar listas em
+    Python: o número de utilizadores cresce com os clientes e o que se quer é
+    uma lista de ids, uma vez por dia. Um tenant sem nenhum utilizador activo
+    não aparece — e também não tem conversas de ninguém.
+    """
+    ids = (
+        User.objects.filter(is_active=True)
+        .annotate(tenant=Func(F("tenant_ids"), function="unnest", output_field=UUIDField()))
+        .values_list("tenant", flat=True)
+        .distinct()
+        .order_by("tenant")
+    )
+    return tuple(ids)
 
 
 def membership_no_ambito(*, user_id: UUID, tenant_id: UUID) -> Membership | None:
@@ -226,3 +259,37 @@ def projeccao_de_menu(*, tenant_id: UUID, papel: str | None = None) -> tuple[Ite
             )
         )
     return tuple(sorted(itens, key=lambda item: (item.ordem, item.route_id)))
+
+
+def membros_do_ambito(*, tenant_id: UUID) -> QuerySet[Membership]:
+    """As pertenças deste estabelecimento, activas primeiro, por nome.
+
+    Com `select_related("user")` porque quem lê precisa do email **de alguns**
+    (só o dono o vê, ADR 0028) e de saber quem é cada um para marcar o "és tu".
+    Uma pertença inactiva continua aqui: é o que permite dizer "três activos e
+    um desactivado" em vez de fazer a pessoa desaparecer.
+    """
+    return (
+        Membership.objects.filter(tenant_id=tenant_id)
+        .select_related("user")
+        .order_by("-is_active", "display_name", "id")
+    )
+
+
+def convites_pendentes_do_ambito(*, tenant_id: UUID, agora: datetime) -> list[Invitation]:
+    """Os convites por aceitar e ainda dentro do prazo, mais recentes primeiro.
+
+    "Pendente" é a derivação do `EstadoDoConvite`: nem aceite, nem revogado,
+    nem expirado. Faz-se no `WHERE` e não em Python porque os três timestamps
+    são colunas e um convite expirado não é um convite por tratar.
+    """
+    return list(
+        convites_do_ambito(tenant_id=tenant_id).filter(
+            accepted_at__isnull=True, revoked_at__isnull=True, expires_at__gt=agora
+        )
+    )
+
+
+def tenant_do_ambito(*, tenant_id: UUID) -> Tenant | None:
+    """O estabelecimento activo, ou `None` se a política não o devolver."""
+    return Tenant.objects.filter(pk=tenant_id).first()

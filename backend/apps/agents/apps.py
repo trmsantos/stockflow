@@ -4,7 +4,7 @@ from django.apps import AppConfig
 class AgentsConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.agents"
-    verbose_name = "Agentes de IA: extração de faturas, previsões"
+    verbose_name = "Agentes de IA: extração de faturas, chat sobre stock, previsões"
 
     def ready(self) -> None:
         """Duas ligações, e as duas são o mesmo princípio em direções opostas.

@@ -65,6 +65,23 @@ import { avisoDoRacioDePessoal } from "../vocabulario";
 /** A régua da aba: os três rácios, e só os que o servidor mandou. */
 export function NumerosDoMes({ mes }: { readonly mes: FechoDoMes }) {
   const aviso = avisoDoRacioDePessoal(mes.result_excludes);
+  const comMercadoria =
+    mes.goods_cost_ratio_pct !== null && mes.data_quality.consumption_registered;
+  const semRacioNenhum =
+    !comMercadoria && mes.labour_cost_ratio_pct === null && mes.prime_cost_pct === null;
+
+  // Os três a `null` davam uma régua **vazia** — uma faixa com duas réguas de
+  // 1px e nada lá dentro, que se lê como um ecrã partido e não como um ecrã
+  // honesto. Quando não há rácio nenhum, o que ocupa o lugar é a frase que diz
+  // de que é que eles dependem.
+  if (semRacioNenhum) {
+    return (
+      <p className="flex items-start gap-2 border-b border-border px-celula-x py-3 text-sm text-muted-foreground">
+        <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
+        <span className="text-pretty">{textos.pessoal.semRacios}</span>
+      </p>
+    );
+  }
 
   return (
     <>
@@ -75,7 +92,7 @@ export function NumerosDoMes({ mes }: { readonly mes: FechoDoMes }) {
             prejuízo falso (ADR 0013, decisão 7). O `null` do contrato é a
             ausência; o que falta registar está no bloco de qualidade de dados,
             no topo do painel. */}
-        {mes.goods_cost_ratio_pct === null || !mes.data_quality.consumption_registered ? null : (
+        {!comMercadoria ? null : (
           <div className={CLASSE_CONTADOR}>
             <CorpoDoContador
               campo={textos.contadores.mercadoria}

@@ -16,19 +16,33 @@ from __future__ import annotations
 from collections.abc import Iterable
 from uuid import UUID
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 
 from apps.catalog.models import Product, ProductPackaging, Supplier, SupplierProductCode
 
 __all__ = [
     "codigos_do_fornecedor",
+    "codigos_do_produto",
     "embalagens_do_ambito",
     "embalagens_do_produto",
     "fornecedores_do_ambito",
     "listar_fornecedores",
     "listar_produtos",
+    "procurar_fornecedores",
+    "procurar_produtos",
     "produtos_do_ambito",
 ]
+
+#: Os limites da procura do assistente (ADR 0027, decisão 5): dez por omissão,
+#: vinte no máximo. O modelo pede mais quando precisa, e um resultado de cem
+#: linhas não cabe nos 8 KB de uma resposta de tool.
+LIMITE_DA_PROCURA = 10
+LIMITE_MAXIMO_DA_PROCURA = 20
+
+
+def _tokens(q: str) -> list[str]:
+    """As palavras da pergunta, separadas por espaço. Sem `unaccent` nesta fatia."""
+    return [token for token in q.split() if token]
 
 
 def produtos_do_ambito(*, tenant_id: UUID) -> QuerySet[Product]:
@@ -52,6 +66,48 @@ def listar_produtos(
     if active is not None:
         artigos = artigos.filter(is_active=active)
     return artigos.order_by("short_name", "id")
+
+
+def procurar_produtos(
+    *, tenant_id: UUID, q: str, limite: int = LIMITE_DA_PROCURA
+) -> list[Product]:
+    """A procura do assistente: cada palavra casa no nome curto **ou** no SKU.
+
+    Tokens separados por espaço em **AND** — "farinha t65" encontra "Farinha T65"
+    e não encontra "Farinha T55" — e cada token é `icontains` sobre o nome ou
+    sobre o SKU, porque é por qualquer dos dois que o staff nomeia o artigo. Só
+    caixa, sem acentos: `unaccent` é uma extensão do Postgres e uma decisão
+    própria (ADR 0027, decisão 5).
+
+    Activos primeiro, e os inactivos **marcados e não escondidos**: um artigo
+    desactivado continua a ter histórico, e a resposta certa a "quanto tenho de
+    X" sobre um artigo inactivo é "está inactivo", não "não existe".
+    """
+    artigos = produtos_do_ambito(tenant_id=tenant_id)
+    for token in _tokens(q):
+        artigos = artigos.filter(Q(short_name__icontains=token) | Q(sku__icontains=token))
+    limite = max(1, min(limite, LIMITE_MAXIMO_DA_PROCURA))
+    return list(artigos.order_by("-is_active", "short_name", "id")[:limite])
+
+
+def procurar_fornecedores(
+    *, tenant_id: UUID, q: str, limite: int = LIMITE_DA_PROCURA
+) -> list[Supplier]:
+    """A procura de fornecedores do assistente: nome por tokens, NIF exacto.
+
+    O NIF é chave e não texto: nove dígitos casam só com o NIF inteiro, porque
+    "5000" a casar com metade de um NIF era um fornecedor errado com aspecto de
+    certo.
+    """
+    fornecedores = fornecedores_do_ambito(tenant_id=tenant_id)
+    termo = q.strip()
+    if termo.isdigit():
+        fornecedores = fornecedores.filter(nif=termo)
+    else:
+        for token in _tokens(termo):
+            fornecedores = fornecedores.filter(name__icontains=token)
+    limite = max(1, min(limite, LIMITE_MAXIMO_DA_PROCURA))
+    return list(fornecedores.order_by("-is_active", "name", "id")[:limite])
 
 
 def embalagens_do_ambito(*, tenant_id: UUID) -> QuerySet[ProductPackaging]:
@@ -106,3 +162,18 @@ def codigos_do_fornecedor(
     if codes is not None:
         linhas = linhas.filter(code__in=list(codes))
     return linhas.order_by("code", "id")
+
+
+def codigos_do_produto(*, tenant_id: UUID, product_id: UUID) -> QuerySet[SupplierProductCode]:
+    """A memória **pelo artigo**: que fornecedores o nomeiam e com que código.
+
+    O irmão do `codigos_do_fornecedor`, do outro lado da mesma tabela: aquele
+    responde "que artigo é este código da Makro", este responde "como é que os
+    meus fornecedores chamam a este artigo", que é o que a ficha do artigo
+    mostra. O `select_related("supplier")` serve o nome do fornecedor por linha.
+    """
+    return (
+        SupplierProductCode.objects.filter(tenant_id=tenant_id, product_id=product_id)
+        .select_related("supplier")
+        .order_by("supplier__name", "code")
+    )

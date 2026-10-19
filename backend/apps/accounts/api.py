@@ -35,15 +35,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime, time
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from django.http import HttpRequest
 
+from apps.accounts import selectors
+from apps.accounts.menu import rota_do_registo
 from apps.accounts.models import Papel, UserManager
 from apps.accounts.permissions import PertenceAoTenant, TemPapel
-from apps.accounts.selectors import membership_no_ambito
+from apps.accounts.selectors import membership_no_ambito, tenants_dos_utilizadores_ativos
 from apps.shared.db import TenantScopeConflict, current_tenant
 
 if TYPE_CHECKING:
@@ -52,6 +55,15 @@ if TYPE_CHECKING:
     from apps.accounts.services import DemonstracaoSemeada
 
 __all__ = [
+    "ConvitePendente",
+    "ConvitesPendentes",
+    "DefinicoesDoAmbito",
+    "EquipaDoAmbito",
+    "MembroDoAmbito",
+    "convites_pendentes_do_ambito",
+    "definicoes_do_ambito",
+    "membros_do_ambito",
+    "papeis_da_rota",
     "MembershipInfo",
     "Papel",
     "PertenceAoTenant",
@@ -59,6 +71,10 @@ __all__ = [
     "TenantContext",
     "TenantOption",
     "UserOut",
+    "criar_tenant",
+    "criar_usuario",
+    "criar_membership",
+    "obter_usuario_por_papel",
     "dispensa_declarada",
     "dispensar_ambito",
     "inicio_do_dia_de_negocio",
@@ -67,6 +83,7 @@ __all__ = [
     "opcao_de_tenant",
     "semear_demonstracao",
     "tenant_scope_exempt",
+    "tenants_dos_utilizadores_ativos",
     "utilizador_atual",
 ]
 
@@ -404,6 +421,62 @@ def semear_demonstracao(
 
 
 # ---------------------------------------------------------------------------
+# Criação de dados para o semeador (`apps/demo`)
+# ---------------------------------------------------------------------------
+def criar_tenant(*, name: str, id: UUID | None = None) -> object:
+    """Cria um tenant com UUID conhecido, ou devolve o que já existe com esse UUID.
+
+    O `id` fixo é o que torna o `seed_demo` idempotente. A inserção corre dentro
+    do âmbito do próprio tenant: a política do `accounts_tenant` compara `id`
+    com `app.tenant_id` também nas escritas (ADR 0007). Consumidor: `apps/demo`.
+    """
+    from uuid import uuid4
+
+    from apps.accounts.models import Tenant
+    from apps.shared.db import tenant_scope
+
+    tenant_id = id or uuid4()
+    with tenant_scope(tenant_id):
+        tenant, _ = Tenant.objects.get_or_create(id=tenant_id, defaults={"name": name})
+    return tenant
+
+
+def criar_usuario(*, email: str, password: str) -> object:
+    """Devolve a conta com este email, criando-a com a password dada se não existir.
+
+    A password de uma conta existente não se toca — a mesma regra de
+    `criar_tenant_com_dono`. Consumidor: `apps/demo`.
+    """
+    from apps.accounts.models import User
+
+    try:
+        return User.objects.get_by_natural_key(email)
+    except User.DoesNotExist:
+        return User.objects.create_user(email, password)
+
+
+def criar_membership(*, user_id: UUID, tenant_id: UUID, role: str, display_name: str) -> object:
+    """Concede a pertença pelo serviço oficial, que também espelha `User.tenant_ids`.
+
+    Tem de ser chamado dentro de `tenant_scope(tenant_id)`. Sem o espelho o
+    login não encontra o estabelecimento: é o `tenant_ids` que dá os candidatos
+    que a política depois confirma. Consumidor: `apps/demo`.
+    """
+    from apps.accounts.models import User
+    from apps.accounts.services import conceder_pertenca
+
+    user = User.objects.get(pk=user_id)
+    return conceder_pertenca(user=user, tenant_id=tenant_id, role=role, display_name=display_name)
+
+
+def obter_usuario_por_papel(*, tenant_id: UUID, role: str) -> object:
+    """Obtém um usuário de um tenant por papel. Consumidor: `apps/demo`."""
+    from apps.accounts.models import User
+
+    return User.objects.get(memberships__tenant_id=tenant_id, memberships__role=role)
+
+
+# ---------------------------------------------------------------------------
 # Configuração do estabelecimento
 # ---------------------------------------------------------------------------
 def inicio_do_dia_de_negocio(*, tenant_id: UUID) -> object:
@@ -415,3 +488,148 @@ def inicio_do_dia_de_negocio(*, tenant_id: UUID) -> object:
 
     tenant = Tenant.objects.get(id=tenant_id)
     return tenant.business_day_starts_at
+
+
+# ===========================================================================
+# A equipa e o estabelecimento pela porta (ADR 0028).
+#
+# **O que não sai daqui, e é decisão:** `user_id` nenhum (um id de conta é uma
+# chave para fora deste estabelecimento, ADR 0007), NIF nenhum, e o email só
+# quando quem pergunta é o dono. O módulo continua sem expor pesquisa de
+# utilizadores — o que estas funções devolvem é a lista de **quem já pertence a
+# este tenant**, que não é um oráculo de enumeração de contas.
+# ===========================================================================
+@dataclass(frozen=True, kw_only=True, slots=True)
+class MembroDoAmbito:
+    """Uma pessoa deste estabelecimento: o nome **daqui**, o papel e se és tu.
+
+    `display_name` e não o nome da conta: o nome é um dado do tenant (ADR
+    0007). `email` vem a `""` para quem não é dono, e `es_tu` existe para a
+    resposta poder dizer "tu" em vez de repetir o nome de quem pergunta.
+    """
+
+    display_name: str
+    role: str
+    is_active: bool
+    email: str
+    es_tu: bool
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EquipaDoAmbito:
+    """Os membros activos, com o número de inactivos ao lado."""
+
+    membros: tuple[MembroDoAmbito, ...]
+    n_ativos: int
+    n_inativos: int
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ConvitePendente:
+    """Um convite por aceitar. Só o dono recebe a lista; o gerente recebe o número."""
+
+    email: str
+    role: str
+    display_name: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ConvitesPendentes:
+    """Quantos convites estão por aceitar, e quais — quando quem pergunta pode ver."""
+
+    n: int
+    #: Vazio para quem não é dono: o número é o que o gerente vê.
+    convites: tuple[ConvitePendente, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DefinicoesDoAmbito:
+    """O estabelecimento como o assistente o descreve. **Sem NIF.**"""
+
+    id: UUID
+    name: str
+    is_demo: bool
+    business_day_starts_at: time
+    vat_regime: str
+
+
+def membros_do_ambito(*, tenant_id: UUID, user_id: UUID, papel: str) -> EquipaDoAmbito:
+    """A equipa deste estabelecimento, filtrada pelo papel de quem pergunta.
+
+    Os três papéis veem nomes e papéis (decisão do dono, 2026-10-16); **só o
+    dono vê emails**. Um email é a credencial de login de outra pessoa e não um
+    adorno da lista.
+    """
+    membros = selectors.membros_do_ambito(tenant_id=tenant_id)
+    linhas = tuple(
+        MembroDoAmbito(
+            display_name=membro.display_name,
+            role=membro.role,
+            is_active=membro.is_active,
+            email=membro.user.email if papel == Papel.OWNER else "",
+            es_tu=membro.user_id == user_id,
+        )
+        for membro in membros
+    )
+    ativos = tuple(linha for linha in linhas if linha.is_active)
+    return EquipaDoAmbito(
+        membros=ativos,
+        n_ativos=len(ativos),
+        n_inativos=len(linhas) - len(ativos),
+    )
+
+
+def convites_pendentes_do_ambito(*, tenant_id: UUID, papel: str) -> ConvitesPendentes:
+    """Os convites por aceitar: o número para toda a gente, o detalhe só para o dono."""
+    from django.utils import timezone
+
+    convites = selectors.convites_pendentes_do_ambito(
+        tenant_id=tenant_id, agora=timezone.now()
+    )
+    if papel != Papel.OWNER:
+        return ConvitesPendentes(n=len(convites), convites=())
+    return ConvitesPendentes(
+        n=len(convites),
+        convites=tuple(
+            ConvitePendente(
+                email=convite.email,
+                role=convite.role,
+                display_name=convite.display_name,
+                expires_at=convite.expires_at,
+            )
+            for convite in convites
+        ),
+    )
+
+
+def definicoes_do_ambito(*, tenant_id: UUID) -> DefinicoesDoAmbito | None:
+    """O nome, o relógio do negócio e o regime de IVA. `None` fora do âmbito."""
+    tenant = selectors.tenant_do_ambito(tenant_id=tenant_id)
+    if tenant is None:
+        return None
+    return DefinicoesDoAmbito(
+        id=tenant.id,
+        name=tenant.name,
+        is_demo=tenant.is_demo,
+        business_day_starts_at=tenant.business_day_starts_at,
+        vat_regime=tenant.vat_regime,
+    )
+
+
+def papeis_da_rota(route_id: str) -> frozenset[str]:
+    """Quem pode ver um ecrã, pelo registo de rotas do menu (ADR 0009).
+
+    A porta do que o `apps/accounts/menu.py` decide, para outro módulo poder
+    fazer a mesma pergunta sem importar o registo: o assistente filtra por aqui
+    os botões que serve no fim de um turno (ADR 0028, decisão 3), porque um
+    botão para um ecrã que o papel não vê acaba em 403 — o caso literal do
+    "esconder um item que um papel não pode usar é autorização e não
+    preferência" (ADR 0011).
+
+    Um id que o registo não conheça devolve o conjunto **vazio**, que é "nenhum
+    papel vê isto" e portanto nenhum botão. É o mesmo que acontece à rota
+    `assistente`, que existe no registo com conjunto vazio de propósito.
+    """
+    rota = rota_do_registo(route_id)
+    return rota.papeis if rota is not None else frozenset()

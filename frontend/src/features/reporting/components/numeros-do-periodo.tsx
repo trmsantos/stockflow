@@ -46,6 +46,8 @@ import { notaDaBaseDaReceita } from "../vocabulario";
  */
 export function NumerosDoPeriodo({ resumo }: { readonly resumo: ResumoDoPeriodo }) {
   const { data_quality: qualidade } = resumo;
+  const vendas = resumo.revenue_gross_eur;
+  const base = resumo.revenue_basis;
   // Duas condições e não uma: o contrato pode mandar o rácio a `null` só porque
   // as vendas foram zero (um domingo fechado), e isso é outra coisa de "não há
   // consumo registado" — mas as duas levam ao mesmo sítio, que é não mostrar
@@ -54,20 +56,31 @@ export function NumerosDoPeriodo({ resumo }: { readonly resumo: ResumoDoPeriodo 
 
   return (
     <ReguaDeContadores>
-      <div className={CLASSE_CONTADOR}>
-        {/* `campo="vendas"` e não "vendas nos últimos 7 dias": um microrótulo em
-            caixa alta com 25 caracteres fazia este campo crescer para ~330px, e
-            os campos da régua empacotam à esquerda sem esticar — o primeiro
-            passava a ocupar um terço da faixa. A janela está dita duas vezes na
-            barra logo acima (o período activo e a fronteira ecoada), e um
-            microrótulo é um **nome de campo**, como o `<th>` da tabela que vem
-            a seguir: um `<th>` não repete o filtro. */}
-        <CorpoDoContador
-          campo={textos.contadores.vendas}
-          figura={formatMoneyRounded(resumo.revenue_gross_eur)}
-          nota={notaDaBaseDaReceita(resumo.revenue_basis)}
-        />
-      </div>
+      {/* **Um campo a `null` sai da régua; não fica a traço.** Um "—" de 2rem em
+          mono é um número ilegível com o peso de um número, e um `0 €` era uma
+          afirmação falsa sobre o negócio (ADR 0029, decisão 1). A régua empacota
+          à esquerda e não estica, logo esconder um campo não deixa buraco.
+
+          A frase que diz o que falta **não** se repete aqui: ela é a primeira
+          linha da tabela que vem logo a seguir, que é onde "Vendas, sem IVA" se
+          procura. Dizê-la duas vezes a 40px de distância era o manual de
+          instruções que o dono do produto já recusou uma vez. */}
+      {vendas === null || base === null ? null : (
+        <div className={CLASSE_CONTADOR}>
+          {/* `campo="vendas"` e não "vendas nos últimos 7 dias": um microrótulo
+              em caixa alta com 25 caracteres fazia este campo crescer para
+              ~330px, e os campos da régua empacotam à esquerda sem esticar — o
+              primeiro passava a ocupar um terço da faixa. A janela está dita
+              duas vezes na barra logo acima (o período activo e a fronteira
+              ecoada), e um microrótulo é um **nome de campo**, como o `<th>` da
+              tabela que vem a seguir: um `<th>` não repete o filtro. */}
+          <CorpoDoContador
+            campo={textos.contadores.vendas}
+            figura={formatMoneyRounded(vendas)}
+            nota={notaDaBaseDaReceita(base)}
+          />
+        </div>
+      )}
 
       {comRacio ? (
         <div className={CLASSE_CONTADOR}>

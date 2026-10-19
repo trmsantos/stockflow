@@ -299,3 +299,107 @@ msgstr "Este fornecedor não existe neste estabelecimento."
 
 msgid "{unidade} is a unit of {dimensao} and the base unit of this item is {base}. Choose a display unit of the same dimension."
 msgstr "{unidade} é uma unidade de {dimensao} e a unidade base deste artigo é {base}. Escolha uma unidade de apresentação da mesma dimensão."
+
+# ---------------------------------------------------------------------------
+# Movimentos manuais de ajuste — fatia 5 (apps/inventory/services.py)
+# ---------------------------------------------------------------------------
+
+msgid "Cannot transfer to the same location."
+msgstr "Não pode transferir para a mesma localização."
+
+msgid "Invalid reason."
+msgstr "Motivo inválido."
+
+msgid "Location is inactive."
+msgstr "A localização está inativa."
+
+msgid "Location not found."
+msgstr "Localização não encontrada."
+
+msgid "Lot is required for tracked products."
+msgstr "O lote é obrigatório para artigos rastreados."
+
+msgid "Lot not found or has no stock at source location."
+msgstr "Lote não encontrado ou sem stock na localização de origem."
+
+msgid "Lot not found or has no stock."
+msgstr "Lote não encontrado ou sem stock."
+
+msgid "Lot not found."
+msgstr "Lote não encontrado."
+
+msgid "One or both locations are inactive."
+msgstr "Uma ou ambas as localizações estão inativas."
+
+msgid "Product not found."
+msgstr "Artigo não encontrado."
+
+msgid "Quantity cannot be zero."
+msgstr "A quantidade não pode ser zero."
+
+msgid "Quantity must be positive."
+msgstr "A quantidade tem de ser positiva."
+
+msgid "Synthetic lot not found. Create stock first."
+msgstr "Lote sintético não encontrado. Crie stock primeiro."
+
+# ---------------------------------------------------------------------------
+# Increment 1: SKU e controlo por lotes (apps/catalog/services.py), contagens
+# (apps/inventory/count_services.py), lote e validade na revisão da receção
+# (apps/purchasing/serializers.py) e produção de receitas
+# (apps/recipes/services.py)
+# ---------------------------------------------------------------------------
+# Doze mensagens que saíam em inglês a quem lê em português; foi o
+# `test_nenhuma_mensagem_nossa_sai_em_ingles` que as apanhou. A ordem segue a
+# do varredor: por ficheiro, e dentro de cada um por msgid.
+
+msgid "Cannot change lot tracking when stock exists."
+msgstr "Não é possível alterar o controlo por lotes enquanto há stock."
+
+msgid "There is already an item with this SKU in this establishment."
+msgstr "Já existe um artigo com este SKU neste estabelecimento."
+
+msgid "Cannot close: some lines are not yet counted."
+msgstr "Não é possível fechar: há linhas ainda por contar."
+
+msgid "Count not found or already closed."
+msgstr "Contagem não encontrada ou já fechada."
+
+msgid "Count not found."
+msgstr "Contagem não encontrada."
+
+msgid "Expiry date is required when lot code is provided."
+msgstr "A validade é obrigatória quando se indica o lote."
+
+msgid "Lot code is required for items that track lots."
+msgstr "O lote é obrigatório para artigos com controlo por lotes."
+
+msgid "Location not found or inactive."
+msgstr "Localização não encontrada ou inativa."
+
+msgid "Quantity must be greater than zero."
+msgstr "A quantidade tem de ser maior que zero."
+
+msgid "Recipe has no ingredients."
+msgstr "A receita não tem ingredientes."
+
+msgid "Recipe not found or inactive."
+msgstr "Receita não encontrada ou inativa."
+
+msgid "Recipe yield_factor must be greater than zero."
+msgstr "O factor de rendimento da receita tem de ser maior que zero."
+
+# ---------------------------------------------------------------------------
+# As recusas do assistente (ADR 0027, decisão 4): `apps/agents/services.py`.
+# ---------------------------------------------------------------------------
+msgid "The assistant is not configured on this server."
+msgstr "O assistente não está configurado neste servidor."
+
+msgid "The assistant's daily limit has been reached. Try again tomorrow."
+msgstr "O limite diário do assistente foi atingido. Tenta de novo amanhã."
+
+msgid "The assistant is still answering the previous question in this conversation."
+msgstr "O assistente ainda está a responder à pergunta anterior desta conversa."
+
+msgid "This conversation has reached its limit of questions. Start a new one."
+msgstr "Esta conversa chegou ao limite de perguntas. Começa uma nova."

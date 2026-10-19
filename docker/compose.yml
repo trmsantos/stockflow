@@ -191,7 +191,7 @@ services:
       REDIS_URL: redis://redis:6379
       DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
       ALLOWED_HOSTS: localhost,127.0.0.1,backend
-      CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090}
+      CSRF_TRUSTED_ORIGINS: http://localhost:${PROXY_PORT:-8090},http://127.0.0.1:${PROXY_PORT:-8090},http://localhost:${FRONTEND_DEV_PORT:-5183},http://127.0.0.1:${FRONTEND_DEV_PORT:-5183}
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -240,6 +240,16 @@ services:
       REDIS_URL: redis://redis:6379
       DJANGO_ADMIN_URL: ${ADMIN_PATH:-gestao-interna}
       ALLOWED_HOSTS: localhost
+      # **O assistente (ADR 0027) fala com a OpenAI daqui e só daqui.** A chave
+      # `AGENTS_CHAT_API_KEY` entra no ambiente **deste** serviço e nunca no do
+      # `backend`: o processo web recusa 503 quando ela falta e não abre socket
+      # nenhum. Em desenvolvimento vem do `.env` (`${AGENTS_CHAT_API_KEY:-}`,
+      # vazio = assistente desligado); em produção é um Docker secret ou vem do
+      # orquestrador. Este serviço não tem bloco `networks:`, logo sai pela rede
+      # por omissão do compose para `api.openai.com` em HTTPS — se um dia a rede
+      # passar a `internal: true`, o worker precisa de uma rede com saída.
+      AGENTS_CHAT_MODEL: ${AGENTS_CHAT_MODEL:-gpt-5-mini}
+      AGENTS_CHAT_API_KEY: ${AGENTS_CHAT_API_KEY:-}
     # O `MEDIA_ROOT` (ADR 0021), em volume e **partilhado com o backend**.
     #
     # Duas razões, e as duas são de correcção e não de arrumação. É o **mesmo** volume do

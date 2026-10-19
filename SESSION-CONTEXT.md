@@ -36,7 +36,40 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
-**Estado atual (2026-10-08):** repo `trmsantos/stockflow`, privado, na conta pessoal. `main` tem o
+**Estado atual (2026-10-19):** o **Painel está ligado** (ADR 0029): três endpoints só-dono sobre o
+ledger, com receita e salários declarados ausentes em vez de zeros, e os fixtures do painel mortos.
+Antes disso, o **assistente cobre a app** (ADR 0028): 20 tools de leitura, ajuda curada e botões para
+o ecrã certo, derivados no servidor. Suite: **703 passed**; `security-check` PASS nas duas fatias.
+Por fazer: repor os dados de demo (o seed antigo gravou custo por grama — `681e027` corrige, mas o
+ledger é append-only); os 4 `DJ001`; abrir o PR, que o CI nunca correu sobre nada disto.
+
+**Estado anterior (2026-10-15):** `main` está **19 commits à frente do `origin/main` sem PR** — o CI
+só corre em PR, logo nada disto passou por ele ainda. Suite do backend: **645 passed** (corrida
+sozinha; dois `pytest` ao mesmo tempo colidem na BD de teste). `ruff check .` tem **4 `DJ001`
+pré-existentes** em `apps/inventory/models.py` (`null=True` em CharField) que exigem ADR + migração
+de dados sob FORCE RLS; import-linter 11/11; `pnpm typecheck/lint/build` verdes; `security_check.sh`
+PASS na fatia do chat.
+
+Feito desde 2026-10-08: catálogo, localizações e receções (ADR 0022, PR #6); ledger de stock (ADR
+0023), painel e alertas (0024), ajustes manuais (0025), produção (0026); o **Increment 1** ligou
+Alertas, Receber, Contar e Produtos ao backend real — **o Painel não**: `apps/reporting/urls.py` não
+está em `config/urls.py` e o frontend chama `/reporting/summary`, que não existe; continua nos
+fixtures. A 2026-10-15 corrigiram-se os bugs que o 16f2e7e deixou (RLS sem FORCE nas contagens, SKU
+único não parcial, testes) e nasceu o **Increment 2 — chat sobre stock (ADR 0027)**: `/assistente`,
+sete tools só de leitura, 202 + polling, fornecedor OpenAI-compatível gratuito por
+`AGENTS_CHAT_BASE_URL` (o dono escolheu não pagar nesta fase). Para ver uma resposta real falta só a
+chave em `backend/.env` e um worker (`DJANGO_SETTINGS_MODULE=config.settings.dev uv run celery -A config worker -l info`).
+
+Dev local: `backend/.env` é a única fonte de variáveis (o Django lê-o sozinho; **não** exportar
+`.env.dev`); `uv run manage.py runserver` entra em **8090**; migrações com
+`DATABASE_URL="$MIGRATION_DATABASE_URL"`; `uv run manage.py seed_demo --create-tenant` cria três
+lojas com `owner@demo.pt` / `manager@demo.pt` / `staff@demo.pt` (`DemoPassword123!`).
+
+**Por decidir / por fazer a seguir:** os 4 `DJ001`; validades
+do painel em calendário civil vs dia de negócio no chat (incoerência a nomear ao `domain-expert`);
+abrir o PR para o CI correr sobre os 19 commits.
+
+**Estado histórico (2026-10-08):** repo `trmsantos/stockflow`, privado, na conta pessoal. `main` tem o
 PR #3 mergeado (i18n, definições, temas, demonstração, SMTP); o **PR #4 está aberto** com a fatia 1 da
 recepção de mercadoria. **454 testes** no backend, `ruff` limpo sem `# noqa`, import-linter 11/11,
 `security_check.sh` a dar **PASS** com zero achados, e os seis gates do `pnpm lint` verdes.

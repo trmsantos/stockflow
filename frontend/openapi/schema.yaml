@@ -5,6 +5,169 @@ info:
   description: 'Gestão de stock, validades, receitas e compras para restauração. Multi-tenant:
     cada pedido corre no contexto do tenant da sessão.'
 paths:
+  /api/v1/assistant/conversations:
+    get:
+      operationId: assistente_conversas_listar
+      description: As conversas de uma pessoa com o assistente, num estabelecimento.
+      summary: As conversas de quem pede, mais recentes primeiro
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - assistant
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedConversaResumoOutList'
+          description: ''
+    post:
+      operationId: assistente_perguntar
+      description: 'Cria a conversa **e** faz a primeira pergunta: não existe conversa
+        vazia. Responde 202 com a conversa e o turno `pendente`; a resposta chega
+        por polling do `GET` da conversa. 503 `assistente_indisponivel` sem modelo
+        ou chave; 429 `teto_diario_atingido` nos dois tetos diários.'
+      summary: Abrir uma conversa com a primeira pergunta
+      tags:
+      - assistant
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PerguntaInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PerguntaInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversaOut'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoAssistenteOut'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoAssistenteOut'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoAssistenteOut'
+          description: ''
+  /api/v1/assistant/conversations/{id}:
+    get:
+      operationId: assistente_conversa
+      description: As conversas de uma pessoa com o assistente, num estabelecimento.
+      summary: Uma conversa com os turnos — o alvo do polling
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this conversa.
+        required: true
+      tags:
+      - assistant
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversaOut'
+          description: ''
+    delete:
+      operationId: assistente_conversa_apagar
+      description: As conversas de uma pessoa com o assistente, num estabelecimento.
+      summary: Apagar uma conversa minha
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this conversa.
+        required: true
+      tags:
+      - assistant
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/assistant/conversations/{id}/messages:
+    post:
+      operationId: assistente_perguntar_na_conversa
+      description: 202 com o turno `pendente`. 409 `resposta_pendente` enquanto o
+        turno anterior não acabar; 409 `conversa_cheia` ao trigésimo turno.
+      summary: A pergunta seguinte numa conversa
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this conversa.
+        required: true
+      tags:
+      - assistant
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PerguntaInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PerguntaInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensagemOut'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoAssistenteOut'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoAssistenteOut'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoAssistenteOut'
+          description: ''
   /api/v1/auth/ativar:
     post:
       operationId: auth_ativar
@@ -761,6 +924,107 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErroOut'
           description: ''
+  /api/v1/locations:
+    get:
+      operationId: localizacoes_listar
+      description: Lista paginada de localizações, ordenadas por posição.
+      summary: Localizações do estabelecimento (por posição)
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - locations
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedLocalizacaoOutList'
+          description: ''
+    post:
+      operationId: localizacoes_criar
+      description: Criar uma localização.
+      summary: Criar uma localização
+      tags:
+      - locations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocalizacaoInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LocalizacaoInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocalizacaoIn'
+          description: ''
+  /api/v1/locations/{id}:
+    put:
+      operationId: locations_update
+      description: Localizações do inventário.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this localização.
+        required: true
+      tags:
+      - locations
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocalizacaoOut'
+          description: ''
+    patch:
+      operationId: localizacoes_atualizar
+      description: PATCH uma localização.
+      summary: Atualizar localização
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this localização.
+        required: true
+      tags:
+      - locations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocalizacaoPatchInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LocalizacaoPatchInRequest'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LocalizacaoPatchIn'
+          description: ''
   /api/v1/menu:
     put:
       operationId: menu_guardar
@@ -811,8 +1075,1006 @@ paths:
                 items:
                   $ref: '#/components/schemas/RotaDeMenuOut'
           description: ''
+  /api/v1/products:
+    get:
+      operationId: produtos_listar
+      description: Lista paginada de artigos.
+      summary: Artigos do estabelecimento
+      parameters:
+      - in: query
+        name: active
+        schema:
+          type: boolean
+        description: Filtrar por estado (true/false/null)
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: q
+        schema:
+          type: string
+        description: Procurar por nome curto
+      tags:
+      - products
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedProdutoOutList'
+          description: ''
+    post:
+      operationId: produtos_criar
+      description: Criar um artigo com embalagem opcional aninhada.
+      summary: Criar um artigo com embalagem opcional
+      tags:
+      - products
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProdutoInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProdutoInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProdutoIn'
+          description: ''
+  /api/v1/products/{id}:
+    put:
+      operationId: products_update
+      description: Artigos do catálogo.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this artigo.
+        required: true
+      tags:
+      - products
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProdutoOut'
+          description: ''
+    patch:
+      operationId: produtos_atualizar
+      description: PATCH um artigo.
+      summary: Atualizar artigo (sem base_unit, sem min_quantity)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this artigo.
+        required: true
+      tags:
+      - products
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProdutoPatchInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProdutoPatchInRequest'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProdutoPatchIn'
+          description: ''
+  /api/v1/products/{id}/packagings:
+    get:
+      operationId: produto_embalagens_listar
+      description: GET /products/{id}/packagings — embalagens do artigo.
+      summary: Embalagens de um artigo
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this artigo.
+        required: true
+      tags:
+      - products
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProdutoOut'
+          description: ''
+    post:
+      operationId: produto_embalagem_criar
+      description: POST /products/{id}/packagings — criar embalagem.
+      summary: Criar embalagem de um artigo
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this artigo.
+        required: true
+      tags:
+      - products
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProdutoOut'
+          description: ''
+  /api/v1/receipts:
+    get:
+      operationId: receipts_list
+      description: |-
+        GET /receipts — lista paginada na forma do DRF (`count`, `results`).
+
+        Cada receção vai **composta** (`_compor_rececao`), como no `retrieve`:
+        o `RececaoOutSerializer` lê `receipt.*` de um dicionário e não de um
+        `Receipt` — passar-lhe as linhas cruas era o 500 que o ecrã Receber via.
+      parameters:
+      - in: query
+        name: estado
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - receipts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRececaoOutList'
+          description: ''
+    post:
+      operationId: receipts_create
+      description: POST /receipts — cria receção.
+      tags:
+      - receipts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RececaoInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RececaoInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoIn'
+          description: ''
+  /api/v1/receipts/{id}:
+    get:
+      operationId: receipts_retrieve
+      description: GET /receipts/{id} — retorna uma receção com estrutura completa.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      tags:
+      - receipts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoOut'
+          description: ''
+    put:
+      operationId: receipts_update
+      description: ViewSet para receções de mercadoria.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      tags:
+      - receipts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoOut'
+          description: ''
+    patch:
+      operationId: receipts_partial_update
+      description: PATCH /receipts/{id} — atualiza cabeçalho.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      tags:
+      - receipts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CabecalhoInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CabecalhoInRequest'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CabecalhoIn'
+          description: ''
+    delete:
+      operationId: receipts_destroy
+      description: DELETE /receipts/{id} — apaga rascunho.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      tags:
+      - receipts
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/receipts/{id}/confirmation:
+    post:
+      operationId: receipts_confirmation_create
+      description: POST /receipts/{id}/confirmation — confirma receção.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      tags:
+      - receipts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoOut'
+          description: ''
+  /api/v1/receipts/{id}/lines:
+    get:
+      operationId: receipts_lines_retrieve
+      description: GET/POST /receipts/{id}/lines — lista/cria linhas.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      tags:
+      - receipts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoOut'
+          description: ''
+    post:
+      operationId: receipts_lines_create
+      description: GET/POST /receipts/{id}/lines — lista/cria linhas.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      tags:
+      - receipts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoOut'
+          description: ''
+  /api/v1/receipts/{id}/lines/{linha_id}/confirmation:
+    post:
+      operationId: receipts_lines_confirmation_create
+      description: POST /receipts/{id}/lines/{linha}/confirmation — revê linha.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      - in: path
+        name: linha_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - receipts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoOut'
+          description: ''
+  /api/v1/receipts/{id}/temperature:
+    post:
+      operationId: receipts_temperature_create
+      description: POST /receipts/{id}/temperature — registra temperatura.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this receção de mercadoria.
+        required: true
+      tags:
+      - receipts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RececaoOutRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoOut'
+          description: ''
+  /api/v1/receipts/summary:
+    get:
+      operationId: receipts_summary_retrieve
+      description: GET /receipts/summary — resumo de receções.
+      tags:
+      - receipts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RececaoOut'
+          description: ''
+  /api/v1/reporting/month:
+    get:
+      operationId: reporting_mes
+      description: '`GET /reporting/month?month=YYYY-MM` — o mês de negócio, não o
+        mês fiscal.'
+      summary: O fecho de um mês de negócio
+      parameters:
+      - in: query
+        name: month
+        schema:
+          type: string
+        description: O mês de negócio, em `YYYY-MM`.
+        required: true
+      tags:
+      - reporting
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FechoDoMesOut'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+  /api/v1/reporting/series:
+    get:
+      operationId: reporting_series
+      description: '`GET /reporting/series` — os baldes do gráfico, com `Σ(points)
+        == total_eur`.'
+      summary: A mesma janela, intervalo a intervalo
+      parameters:
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum:
+          - 30d
+          - 7d
+          - month
+          - prev_month
+          - today
+        description: A janela a resolver. Por omissão, `7d`.
+      tags:
+      - reporting
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeriesDoPeriodoOut'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+  /api/v1/reporting/summary:
+    get:
+      operationId: reporting_resumo
+      description: '`GET /reporting/summary` — a mercadoria do período, e o que não
+        se sabe.'
+      summary: O resumo do período (painel de gestão)
+      parameters:
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum:
+          - 30d
+          - 7d
+          - month
+          - prev_month
+          - today
+        description: A janela a resolver. Por omissão, `7d`.
+      tags:
+      - reporting
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumoDoPeriodoOut'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+  /api/v1/stock/alerts:
+    get:
+      operationId: stock_alerts
+      description: Alertas de falta, validade a vencer e vencida.
+      summary: Alertas de falta, validade a vencer e vencida
+      tags:
+      - stock
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alert'
+          description: ''
+  /api/v1/stock/by-location:
+    get:
+      operationId: stock_by_location
+      description: Stock por (product, lot) nessa localização.
+      summary: Stock por (product, lot) em localização
+      tags:
+      - stock
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StockDetail'
+          description: ''
+  /api/v1/stock/by-product:
+    get:
+      operationId: stock_by_product
+      description: Stock por (location, lot) desse produto.
+      summary: Stock por (location, lot) desse produto
+      tags:
+      - stock
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StockDetail'
+          description: ''
+  /api/v1/stock/movements/adjustment:
+    post:
+      operationId: stock_movements_adjustment
+      description: Registar um ajuste de stock (POST /stock/movements/adjustment).
+      summary: Registar ajuste de stock
+      tags:
+      - stock
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdjustmentRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AdjustmentRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockMovementResponse'
+          description: ''
+  /api/v1/stock/movements/transfer:
+    post:
+      operationId: stock_movements_transfer
+      description: Transferir stock entre localizações (POST /stock/movements/transfer).
+      summary: Transferir stock entre localizações
+      tags:
+      - stock
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockMovementResponse'
+          description: ''
+  /api/v1/stock/movements/waste:
+    post:
+      operationId: stock_movements_waste
+      description: Registar um desperdício (POST /stock/movements/waste).
+      summary: Registar desperdício
+      tags:
+      - stock
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WasteRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WasteRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockMovementResponse'
+          description: ''
+  /api/v1/stock/summary:
+    get:
+      operationId: stock_summary
+      description: Resumo de stock agregado por produto.
+      summary: Resumo de stock agregado por produto
+      tags:
+      - stock
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StockSummary'
+          description: ''
+  /api/v1/suppliers:
+    get:
+      operationId: fornecedores_listar
+      description: Lista paginada de fornecedores.
+      summary: Fornecedores do estabelecimento
+      parameters:
+      - in: query
+        name: active
+        schema:
+          type: boolean
+        description: Filtrar por estado
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: q
+        schema:
+          type: string
+        description: Procurar por nome
+      tags:
+      - suppliers
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedFornecedorOutList'
+          description: ''
+    post:
+      operationId: fornecedores_criar
+      description: Criar um fornecedor.
+      summary: Criar um fornecedor
+      tags:
+      - suppliers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FornecedorInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FornecedorInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FornecedorIn'
+          description: ''
+  /api/v1/suppliers/{id}:
+    put:
+      operationId: suppliers_update
+      description: Fornecedores do catálogo.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this fornecedor.
+        required: true
+      tags:
+      - suppliers
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FornecedorOut'
+          description: ''
+    patch:
+      operationId: fornecedores_atualizar
+      description: PATCH um fornecedor.
+      summary: Atualizar fornecedor
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this fornecedor.
+        required: true
+      tags:
+      - suppliers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FornecedorPatchInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FornecedorPatchInRequest'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FornecedorPatchIn'
+          description: ''
+  /api/v1/suppliers/{id}/product-codes:
+    get:
+      operationId: fornecedor_codigos_listar
+      description: GET /suppliers/{id}/product-codes — memória do fornecedor.
+      summary: Códigos de um fornecedor (memória)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this fornecedor.
+        required: true
+      tags:
+      - suppliers
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FornecedorOut'
+          description: ''
 components:
   schemas:
+    AcaoOut:
+      type: object
+      description: |-
+        Um botão do turno: para onde vai, com que parâmetros e que palavra usa.
+
+        **Derivada e não guardada** (ADR 0028, decisão 4): o `MensagemOut` calcula-a
+        dos `tool_calls` revalidados do turno pelo mapa fechado do `navegacao.py`.
+
+        `rota` e `rotulo_id` são `ChoiceField` sobre listas fechadas de propósito: é
+        o que os faz sair como união no `types.ts` e o que torna um id que o cliente
+        não conheça um erro de compilação em vez de um botão sem palavra — o mesmo
+        mecanismo do registo de rotas da ADR 0009. **Nenhum rótulo nosso viaja no
+        arame** (ADR 0019): o que sai é o id, e a palavra resolve-se no catálogo do
+        cliente.
+
+        `parametros` é um mapa de strings porque mistura o parâmetro de caminho de
+        uma rota de detalhe (o `artigo` de `/stock/<artigo>`) com os de procura
+        (`?ver=falta`), e os valores são ora um uuid ora um membro de um `z.enum`.
+        Os valores nunca vêm do modelo — saem do mapa em código ou de um id que uma
+        tool já validou —, e é isso, e não o tipo do campo, que os fecha.
+      properties:
+        rota:
+          $ref: '#/components/schemas/RotaEnum'
+        parametros:
+          type: object
+          additionalProperties:
+            type: string
+        rotulo_id:
+          $ref: '#/components/schemas/RotuloIdEnum'
+      required:
+      - parametros
+      - rota
+      - rotulo_id
+    AdjustmentRequest:
+      type: object
+      description: Entrada de ajuste (POST /stock/movements/adjustment).
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          description: UUID do produto
+        location_id:
+          type: string
+          format: uuid
+          description: UUID da localização
+        quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          description: Quantidade ± (positivo = entrada, negativo = saída)
+        lot_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID do lote (obrigatório se product.track_lots=True)
+        reason:
+          allOf:
+          - $ref: '#/components/schemas/ReasonEnum'
+          description: |-
+            Motivo do ajuste
+
+            * `expired` - expired
+            * `spoiled` - spoiled
+            * `prep_loss` - prep_loss
+            * `breakage` - breakage
+            * `other` - other
+        reason_detail:
+          type: string
+          description: Detalhes opcionais se reason='other'
+          maxLength: 500
+      required:
+      - location_id
+      - product_id
+      - quantity
+      - reason
+    Alert:
+      type: object
+      description: Alerta de stock (falta, validade a vencer, vencida) (fatia 4).
+      properties:
+        alert_type:
+          type: string
+          readOnly: true
+          description: shortage|expiring_soon|expired
+        severity:
+          type: string
+          readOnly: true
+          description: critical|warning|info
+        product_id:
+          type: string
+          format: uuid
+          readOnly: true
+        product_name:
+          type: string
+          readOnly: true
+        location_id:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        location_name:
+          type: string
+          readOnly: true
+          nullable: true
+        lot_code:
+          type: string
+          readOnly: true
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+          description: Data de validade (NULL se sem data)
     AtivacaoInRequest:
       type: object
       description: |-
@@ -865,6 +2127,162 @@ components:
           maxLength: 128
       required:
       - fragmento
+    BaseUnitEnum:
+      enum:
+      - g
+      - ml
+      - un
+      type: string
+      description: |-
+        * `g` - grama
+        * `ml` - mililitro
+        * `un` - unidade
+    BlankEnum:
+      enum:
+      - ''
+    CabecalhoIn:
+      type: object
+      description: Entrada para PATCH de cabeçalho (zona da pessoa).
+      properties:
+        supplier:
+          type: string
+          format: uuid
+          nullable: true
+        doc_type:
+          $ref: '#/components/schemas/DocTypeEnum'
+        received_at:
+          type: string
+          format: date-time
+        location:
+          type: string
+          format: uuid
+    CabecalhoInRequest:
+      type: object
+      description: Entrada para PATCH de cabeçalho (zona da pessoa).
+      properties:
+        supplier:
+          type: string
+          format: uuid
+          nullable: true
+        doc_type:
+          $ref: '#/components/schemas/DocTypeEnum'
+        received_at:
+          type: string
+          format: date-time
+        location:
+          type: string
+          format: uuid
+    CategoryEnum:
+      enum:
+      - rent
+      - energy
+      - water
+      - gas
+      - card_fees
+      - licences
+      - accounting
+      - other
+      type: string
+      description: |-
+        * `rent` - rent
+        * `energy` - energy
+        * `water` - water
+        * `gas` - gas
+        * `card_fees` - card_fees
+        * `licences` - licences
+        * `accounting` - accounting
+        * `other` - other
+    ComponenteDeCustoOut:
+      type: object
+      description: 'Uma parcela de custo: o servidor decide o que soma e quem contém
+        quem.'
+      properties:
+        id:
+          $ref: '#/components/schemas/IdDeCustoEnum'
+        amount_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        share:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+        is_part_of_total:
+          type: boolean
+        part_of:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/IdDeCustoEnum'
+          - $ref: '#/components/schemas/NullEnum'
+      required:
+      - amount_eur
+      - id
+      - is_part_of_total
+      - part_of
+      - share
+    ConservacaoEnum:
+      enum:
+      - ambient
+      - chilled
+      - frozen
+      type: string
+      description: |-
+        * `ambient` - ambiente
+        * `chilled` - refrigerado
+        * `frozen` - congelado
+    ConservacaoMedidaEnum:
+      enum:
+      - chilled
+      - frozen
+      type: string
+      description: |-
+        * `chilled` - chilled
+        * `frozen` - frozen
+    ConversaOut:
+      type: object
+      description: A conversa inteira, com os turnos por posição (≤ 30).
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_message_at:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MensagemOut'
+      required:
+      - created_at
+      - id
+      - last_message_at
+      - messages
+      - title
+    ConversaResumoOut:
+      type: object
+      description: 'Uma linha da lista de conversas: sem os turnos, que vêm no detalhe.'
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_message_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - id
+      - last_message_at
+      - title
     ConviteCriadoOut:
       type: object
       description: |-
@@ -990,6 +2408,69 @@ components:
         * `expirado` - expirou sem ser usado
         * `aceite` - aceite, com pertença criada
         * `revogado` - revogado por quem convidou
+    CustoPorCargoOut:
+      type: object
+      description: O custo de um cargo — que não é o papel de acesso. Lista vazia
+        nesta fatia.
+      properties:
+        role_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        headcount:
+          type: integer
+        payroll_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        share:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+      required:
+      - headcount
+      - name
+      - payroll_eur
+      - role_id
+      - share
+    DesperdicioPorMotivoOut:
+      type: object
+      description: Quanto se perdeu por motivo. Ordenada pelo servidor, a maior primeiro.
+      properties:
+        reason:
+          $ref: '#/components/schemas/ReasonEnum'
+        amount_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        share:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+        movements:
+          type: integer
+      required:
+      - amount_eur
+      - movements
+      - reason
+      - share
+    DocTypeEnum:
+      enum:
+      - FT
+      - FR
+      - FS
+      - NC
+      - ND
+      - GR
+      type: string
+      description: |-
+        * `FT` - FT
+        * `FR` - FR
+        * `FS` - FS
+        * `NC` - NC
+        * `ND` - ND
+        * `GR` - GR
     DocumentoInRequest:
       type: object
       description: |-
@@ -1083,6 +2564,52 @@ components:
       - receipt
       - source
       - state
+    EmbalagemIn:
+      type: object
+      description: Embalagem nova (aninhada em `ProdutoInSerializer`).
+      properties:
+        label:
+          type: string
+          description: Rótulo único por artigo (sem caixa)
+          maxLength: 60
+          minLength: 1
+        base_quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          description: Unidades base por embalagem
+        ean:
+          type: string
+          nullable: true
+          default: ''
+          description: 8, 12, 13 ou 14 dígitos com dígito de controlo
+          maxLength: 14
+      required:
+      - base_quantity
+      - label
+    EmbalagemInRequest:
+      type: object
+      description: Embalagem nova (aninhada em `ProdutoInSerializer`).
+      properties:
+        label:
+          type: string
+          minLength: 1
+          description: Rótulo único por artigo (sem caixa)
+          maxLength: 60
+        base_quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          description: Unidades base por embalagem
+        ean:
+          type: string
+          nullable: true
+          default: ''
+          description: 8, 12, 13 ou 14 dígitos com dígito de controlo
+          maxLength: 14
+      required:
+      - base_quantity
+      - label
     ErroOut:
       type: object
       description: |-
@@ -1107,6 +2634,24 @@ components:
       required:
       - code
       - detail
+    ErrorCodeEnum:
+      enum:
+      - teto_de_iteracoes
+      - teto_de_custo
+      - tempo_esgotado
+      - resposta_invalida
+      - erro_do_modelo
+      - modelo_ocupado
+      - pertenca_revogada
+      type: string
+      description: |-
+        * `teto_de_iteracoes` - o modelo chamou tools demasiadas vezes
+        * `teto_de_custo` - o orçamento diário do estabelecimento esgotou-se
+        * `tempo_esgotado` - o modelo não respondeu a tempo
+        * `resposta_invalida` - a resposta do modelo não se lê
+        * `erro_do_modelo` - o fornecedor do modelo recusou a chamada
+        * `modelo_ocupado` - o fornecedor está sobrecarregado
+        * `pertenca_revogada` - quem perguntou já não pertence ao estabelecimento
     EstabelecimentoInRequest:
       type: object
       description: |-
@@ -1199,6 +2744,18 @@ components:
         * `lido` - o modelo respondeu e a resposta valida
         * `ilegivel` - o modelo respondeu e a resposta não valida
         * `erro` - a chamada falhou
+    EstadoDaMensagemEnum:
+      enum:
+      - pendente
+      - a_responder
+      - respondida
+      - erro
+      type: string
+      description: |-
+        * `pendente` - à espera de um worker
+        * `a_responder` - o modelo está a responder
+        * `respondida` - respondida
+        * `erro` - a resposta falhou
     EstadoDoDocumentoEnum:
       enum:
       - aguarda_captura
@@ -1219,6 +2776,15 @@ components:
         * `ilegivel` - o modelo respondeu algo que não se consegue validar
         * `erro` - a extração falhou ou nunca acabou
         * `descartado` - descartado por uma pessoa
+    ExpiryKindEnum:
+      enum:
+      - use_by
+      - best_before
+      type: string
+      description: |-
+        * `` - Sem rótulo
+        * `use_by` - consumir até
+        * `best_before` - consumir de preferência antes de
     ExtracaoOut:
       type: object
       description: |-
@@ -1290,6 +2856,173 @@ components:
       - supplier_name
       - supplier_nif
       - total
+    FechoDoMesOut:
+      type: object
+      description: |-
+        `GET /reporting/month`. A palavra "lucro" não aparece: o campo é `result_eur`.
+
+        Metade dos campos vai a `null` e as quatro listas vêm vazias, e é a decisão
+        1 da ADR 0029: sem `people` não há salários e sem salários não há total de
+        gastos nem resultado. Servir zeros era desenhar barras a zero e um rácio a
+        0% — o painel optimista que a decisão 7 da ADR 0013 nomeia.
+      properties:
+        month:
+          type: string
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+        business_day_starts_at:
+          type: string
+        closed:
+          type: boolean
+        days_elapsed:
+          type: integer
+        days_in_month:
+          type: integer
+        revenue_net_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        revenue_gross_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        revenue_basis:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/RevenueBasisEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        purchases_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        goods_consumed_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_change_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        waste_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        unknown_shrinkage_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_value_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_value_as_of:
+          type: string
+          format: date-time
+        payroll_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        payroll_basis:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/PayrollBasisEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        payroll_source:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/PayrollSourceEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        payroll_breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParteDeSalariosOut'
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustoPorCargoOut'
+        other_costs:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutroCustoOut'
+        costs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComponenteDeCustoOut'
+        cost_total_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        result_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        result_excludes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResultExcludesEnum'
+        goods_cost_ratio_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,1})?$
+          nullable: true
+        labour_cost_ratio_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,1})?$
+          nullable: true
+        prime_cost_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,1})?$
+          nullable: true
+        waste_by_reason:
+          type: array
+          items:
+            $ref: '#/components/schemas/DesperdicioPorMotivoOut'
+        data_quality:
+          $ref: '#/components/schemas/QualidadeDosDadosOut'
+      required:
+      - business_day_starts_at
+      - closed
+      - cost_total_eur
+      - costs
+      - data_quality
+      - days_elapsed
+      - days_in_month
+      - goods_consumed_eur
+      - goods_cost_ratio_pct
+      - labour_cost_ratio_pct
+      - month
+      - other_costs
+      - payroll_basis
+      - payroll_breakdown
+      - payroll_eur
+      - payroll_source
+      - prime_cost_pct
+      - purchases_eur
+      - result_eur
+      - result_excludes
+      - revenue_basis
+      - revenue_gross_eur
+      - revenue_net_eur
+      - roles
+      - since
+      - stock_change_eur
+      - stock_value_as_of
+      - stock_value_eur
+      - unknown_shrinkage_eur
+      - until
+      - waste_by_reason
+      - waste_eur
     FicheiroDeDocumentoInRequest:
       type: object
       description: |-
@@ -1341,6 +3074,157 @@ components:
       - pages_detected
       - position
       - received_at
+    FornecedorIn:
+      type: object
+      description: Fornecedor novo.
+      properties:
+        name:
+          type: string
+          description: Nome único por tenant (sem caixa)
+          maxLength: 200
+          minLength: 1
+        nif:
+          type: string
+          nullable: true
+          default: ''
+          description: 9 dígitos com dígito de controlo
+          maxLength: 9
+      required:
+      - name
+    FornecedorInRequest:
+      type: object
+      description: Fornecedor novo.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Nome único por tenant (sem caixa)
+          maxLength: 200
+        nif:
+          type: string
+          nullable: true
+          default: ''
+          description: 9 dígitos com dígito de controlo
+          maxLength: 9
+      required:
+      - name
+    FornecedorOut:
+      type: object
+      description: Fornecedor lido (GET, POST 201).
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        nif:
+          type: string
+          readOnly: true
+        is_active:
+          type: boolean
+          readOnly: true
+    FornecedorPatchIn:
+      type: object
+      description: Fornecedor PATCH.
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+        nif:
+          type: string
+          nullable: true
+          maxLength: 9
+        is_active:
+          type: boolean
+    FornecedorPatchInRequest:
+      type: object
+      description: Fornecedor PATCH.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        nif:
+          type: string
+          nullable: true
+          maxLength: 9
+        is_active:
+          type: boolean
+    FornecedorReference:
+      type: object
+      description: Referência a um fornecedor (para RececaoOut).
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        nif:
+          type: string
+          maxLength: 20
+      required:
+      - name
+      - nif
+    GranularityEnum:
+      enum:
+      - day
+      - week
+      type: string
+      description: |-
+        * `day` - day
+        * `week` - week
+    IdDeCustoEnum:
+      enum:
+      - purchases
+      - goods_consumed
+      - waste
+      - unknown_shrinkage
+      - payroll
+      - other
+      type: string
+      description: |-
+        * `purchases` - purchases
+        * `goods_consumed` - goods_consumed
+        * `waste` - waste
+        * `unknown_shrinkage` - unknown_shrinkage
+        * `payroll` - payroll
+        * `other` - other
+    IdDeParteDeSalariosEnum:
+      enum:
+      - base
+      - social_security
+      - subsidies
+      - meal_allowance
+      - insurance
+      type: string
+      description: |-
+        * `base` - base
+        * `social_security` - social_security
+        * `subsidies` - subsidies
+        * `meal_allowance` - meal_allowance
+        * `insurance` - insurance
+    IdDeSerieEnum:
+      enum:
+      - revenue
+      - purchases
+      type: string
+      description: |-
+        * `revenue` - revenue
+        * `purchases` - purchases
+    IntervaloOut:
+      type: object
+      description: O intervalo de um ponto. Viaja uma vez, não por série.
+      properties:
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+      required:
+      - since
+      - until
     ItemDeMenuInRequest:
       type: object
       description: |-
@@ -1440,6 +3324,28 @@ components:
       - rotulo
       - route_id
       - visivel
+    KeyEnum:
+      enum:
+      - today
+      - 7d
+      - 30d
+      - month
+      - prev_month
+      type: string
+      description: |-
+        * `today` - today
+        * `7d` - 7d
+        * `30d` - 30d
+        * `month` - month
+        * `prev_month` - prev_month
+    LanguageEnum:
+      enum:
+      - pt-pt
+      - en
+      type: string
+      description: |-
+        * `pt-pt` - Português (Portugal)
+        * `en` - English
     LinhaLidaOut:
       type: object
       description: |-
@@ -1497,6 +3403,90 @@ components:
       - unit
       - unit_price
       - vat_rate
+    LocalizacaoIn:
+      type: object
+      description: Localização nova.
+      properties:
+        name:
+          type: string
+          description: Nome único por tenant (sem caixa)
+          maxLength: 60
+          minLength: 1
+        position:
+          type: integer
+          nullable: true
+          description: 'Posição (ordem). Default: fim da lista'
+      required:
+      - name
+    LocalizacaoInRequest:
+      type: object
+      description: Localização nova.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Nome único por tenant (sem caixa)
+          maxLength: 60
+        position:
+          type: integer
+          nullable: true
+          description: 'Posição (ordem). Default: fim da lista'
+      required:
+      - name
+    LocalizacaoOut:
+      type: object
+      description: Localização lida (GET, POST 201, PATCH 200).
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        position:
+          type: integer
+          readOnly: true
+        is_active:
+          type: boolean
+          readOnly: true
+    LocalizacaoPatchIn:
+      type: object
+      description: Localização PATCH.
+      properties:
+        name:
+          type: string
+          maxLength: 60
+          minLength: 1
+        position:
+          type: integer
+        is_active:
+          type: boolean
+    LocalizacaoPatchInRequest:
+      type: object
+      description: Localização PATCH.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+        position:
+          type: integer
+        is_active:
+          type: boolean
+    LocalizacaoReference:
+      type: object
+      description: Referência a uma localização (para LinhaOut).
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 60
+      required:
+      - id
+      - name
     LoginInRequest:
       type: object
       description: |-
@@ -1526,6 +3516,86 @@ components:
       required:
       - email
       - password
+    MensagemOut:
+      type: object
+      description: |-
+        Um turno, como o `GET` da conversa o serve — o alvo do polling.
+
+        `status` e `error_code` vêm das propriedades **derivadas** do modelo: um
+        turno parado há mais de dois minutos lê-se `erro/tempo_esgotado` sem
+        ninguém o escrever (ADR 0027, decisão 3). Campos normais com `source` e não
+        `SerializerMethodField`, pela razão medida no `purchasing`: um campo de
+        método sai opcional no `types.ts`, e estes o servidor manda sempre.
+      properties:
+        id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        status:
+          $ref: '#/components/schemas/EstadoDaMensagemEnum'
+        question:
+          type: string
+        language:
+          $ref: '#/components/schemas/LanguageEnum'
+        answer:
+          type: string
+        asked_by_name:
+          type: string
+        role_at_time:
+          $ref: '#/components/schemas/PapelEnum'
+        tool_calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCallOut'
+        acoes:
+          type: array
+          items:
+            $ref: '#/components/schemas/AcaoOut'
+        model:
+          type: string
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        cost_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_code:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/ErrorCodeEnum'
+          - $ref: '#/components/schemas/NullEnum'
+      required:
+      - acoes
+      - answer
+      - asked_by_name
+      - cost_eur
+      - error_code
+      - finished_at
+      - id
+      - input_tokens
+      - language
+      - model
+      - output_tokens
+      - position
+      - question
+      - role_at_time
+      - started_at
+      - status
+      - tool_calls
+    NullEnum:
+      enum:
+      - null
     OrigemDoDocumentoEnum:
       enum:
       - upload
@@ -1534,6 +3604,23 @@ components:
       description: |-
         * `upload` - ficheiro enviado
         * `capture` - fotografado no telemóvel
+    OutroCustoOut:
+      type: object
+      description: Um custo fixo mensal. Lista vazia nesta fatia (sem `purchasing_othercost`).
+      properties:
+        category:
+          $ref: '#/components/schemas/CategoryEnum'
+        amount_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        note:
+          type: string
+          nullable: true
+      required:
+      - amount_eur
+      - category
+      - note
     PaginaOut:
       type: object
       description: |-
@@ -1566,6 +3653,29 @@ components:
       - normalized
       - position
       - width
+    PaginatedConversaResumoOutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversaResumoOut'
     PaginatedConviteOutList:
       type: object
       required:
@@ -1612,6 +3722,98 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DocumentoOut'
+    PaginatedFornecedorOutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/FornecedorOut'
+    PaginatedLocalizacaoOutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocalizacaoOut'
+    PaginatedProdutoOutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProdutoOut'
+    PaginatedRececaoOutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/RececaoOut'
     PapelEnum:
       enum:
       - owner
@@ -1622,6 +3824,85 @@ components:
         * `owner` - dono
         * `manager` - gerente
         * `staff` - colaborador
+    ParteDeSalariosOut:
+      type: object
+      description: Uma parcela do custo-empresa. **Lista vazia nesta fatia** (sem
+        `people`).
+      properties:
+        id:
+          $ref: '#/components/schemas/IdDeParteDeSalariosEnum'
+        amount_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+      required:
+      - amount_eur
+      - id
+    PayrollBasisEnum:
+      enum:
+      - employer_cost
+      - gross
+      type: string
+      description: |-
+        * `employer_cost` - employer_cost
+        * `gross` - gross
+    PayrollSourceEnum:
+      enum:
+      - contractual
+      - actual
+      type: string
+      description: |-
+        * `contractual` - contractual
+        * `actual` - actual
+    PerguntaInRequest:
+      type: object
+      description: |-
+        O corpo dos dois `POST`: a pergunta, e mais nada.
+
+        `max_length=2000` é a coluna. `trim_whitespace` é o default do `CharField`
+        e é o que se quer: uma pergunta só de espaços é um 400, não uma chamada paga.
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+      - question
+    PeriodoResolvidoOut:
+      type: object
+      description: 'O período como o servidor o resolveu: mostrar a fronteira, não
+        escondê-la.'
+      properties:
+        key:
+          $ref: '#/components/schemas/KeyEnum'
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+        business_day_starts_at:
+          type: string
+      required:
+      - business_day_starts_at
+      - key
+      - since
+      - until
+    PontoDaSerieOut:
+      type: object
+      description: 'Um ponto: o valor e a altura da barra (`value / scale_max`).'
+      properties:
+        value_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        share:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+      required:
+      - share
+      - value_eur
     PreferenciasInRequest:
       type: object
       description: |-
@@ -1645,6 +3926,584 @@ components:
           $ref: '#/components/schemas/TemaEnum'
       required:
       - tema
+    ProdutoIn:
+      type: object
+      description: Produto novo com embalagem opcional aninhada.
+      properties:
+        short_name:
+          type: string
+          description: Nome único por tenant (sem caixa)
+          maxLength: 80
+          minLength: 1
+        sku:
+          description: SKU único por tenant (código de referência)
+          oneOf:
+          - type: string
+            maxLength: 80
+            minLength: 1
+          - type: string
+            maxLength: 0
+        base_unit:
+          allOf:
+          - $ref: '#/components/schemas/BaseUnitEnum'
+          description: |-
+            g, ml ou un
+
+            * `g` - grama
+            * `ml` - mililitro
+            * `un` - unidade
+        display_unit:
+          type: string
+          description: Unidade de apresentação (p.ex. kg)
+          maxLength: 20
+          minLength: 1
+        display_factor:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          description: Unidades base por unidade de apresentação
+        track_lots:
+          type: boolean
+          default: false
+          description: Se exige lote
+        expiry_kind:
+          nullable: true
+          default: ''
+          description: |-
+            use_by ou best_before
+
+            * `` - Sem rótulo
+            * `use_by` - consumir até
+            * `best_before` - consumir de preferência antes de
+          oneOf:
+          - $ref: '#/components/schemas/ExpiryKindEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        conservation:
+          allOf:
+          - $ref: '#/components/schemas/ConservacaoEnum'
+          default: ambient
+          description: |-
+            ambient, chilled ou frozen
+
+            * `ambient` - ambiente
+            * `chilled` - refrigerado
+            * `frozen` - congelado
+        packaging:
+          allOf:
+          - $ref: '#/components/schemas/EmbalagemIn'
+          nullable: true
+          description: Primeira embalagem (opcional)
+      required:
+      - base_unit
+      - display_factor
+      - display_unit
+      - short_name
+    ProdutoInRequest:
+      type: object
+      description: Produto novo com embalagem opcional aninhada.
+      properties:
+        short_name:
+          type: string
+          minLength: 1
+          description: Nome único por tenant (sem caixa)
+          maxLength: 80
+        sku:
+          description: SKU único por tenant (código de referência)
+          oneOf:
+          - type: string
+            maxLength: 80
+            minLength: 1
+          - type: string
+            maxLength: 0
+        base_unit:
+          allOf:
+          - $ref: '#/components/schemas/BaseUnitEnum'
+          description: |-
+            g, ml ou un
+
+            * `g` - grama
+            * `ml` - mililitro
+            * `un` - unidade
+        display_unit:
+          type: string
+          minLength: 1
+          description: Unidade de apresentação (p.ex. kg)
+          maxLength: 20
+        display_factor:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          description: Unidades base por unidade de apresentação
+        track_lots:
+          type: boolean
+          default: false
+          description: Se exige lote
+        expiry_kind:
+          nullable: true
+          default: ''
+          description: |-
+            use_by ou best_before
+
+            * `` - Sem rótulo
+            * `use_by` - consumir até
+            * `best_before` - consumir de preferência antes de
+          oneOf:
+          - $ref: '#/components/schemas/ExpiryKindEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        conservation:
+          allOf:
+          - $ref: '#/components/schemas/ConservacaoEnum'
+          default: ambient
+          description: |-
+            ambient, chilled ou frozen
+
+            * `ambient` - ambiente
+            * `chilled` - refrigerado
+            * `frozen` - congelado
+        packaging:
+          allOf:
+          - $ref: '#/components/schemas/EmbalagemInRequest'
+          nullable: true
+          description: Primeira embalagem (opcional)
+      required:
+      - base_unit
+      - display_factor
+      - display_unit
+      - short_name
+    ProdutoOut:
+      type: object
+      description: Produto lido (GET, POST 201, PATCH 200).
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        short_name:
+          type: string
+          readOnly: true
+        sku:
+          type: string
+          readOnly: true
+        base_unit:
+          type: string
+          readOnly: true
+        display_unit:
+          type: string
+          readOnly: true
+        display_factor:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          readOnly: true
+        track_lots:
+          type: boolean
+          readOnly: true
+        expiry_kind:
+          type: string
+          readOnly: true
+        conservation:
+          type: string
+          readOnly: true
+        min_quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          readOnly: true
+        is_active:
+          type: boolean
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+    ProdutoPatchIn:
+      type: object
+      description: 'Produto PATCH: só os campos editáveis (sem base_unit, sem min_quantity).'
+      properties:
+        short_name:
+          type: string
+          maxLength: 80
+          minLength: 1
+        sku:
+          type: string
+          maxLength: 80
+          minLength: 1
+        display_unit:
+          type: string
+          maxLength: 20
+          minLength: 1
+        display_factor:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        track_lots:
+          type: boolean
+        expiry_kind:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/ExpiryKindEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        conservation:
+          $ref: '#/components/schemas/ConservacaoEnum'
+        is_active:
+          type: boolean
+    ProdutoPatchInRequest:
+      type: object
+      description: 'Produto PATCH: só os campos editáveis (sem base_unit, sem min_quantity).'
+      properties:
+        short_name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 80
+        display_unit:
+          type: string
+          minLength: 1
+          maxLength: 20
+        display_factor:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        track_lots:
+          type: boolean
+        expiry_kind:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/ExpiryKindEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        conservation:
+          $ref: '#/components/schemas/ConservacaoEnum'
+        is_active:
+          type: boolean
+    QualidadeDosDadosOut:
+      type: object
+      description: O painel declara o que não sabe, e a declaração é parte do contrato.
+      properties:
+        consumption_registered:
+          type: boolean
+        purchases_awaiting_invoice_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        last_count_at:
+          type: string
+          format: date-time
+          nullable: true
+        revenue_source:
+          $ref: '#/components/schemas/RevenueSourceEnum'
+        unavailable:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnavailableEnum'
+        vat_regime:
+          $ref: '#/components/schemas/VatRegimeEnum'
+      required:
+      - consumption_registered
+      - last_count_at
+      - purchases_awaiting_invoice_eur
+      - revenue_source
+      - unavailable
+      - vat_regime
+    ReasonEnum:
+      enum:
+      - expired
+      - spoiled
+      - prep_loss
+      - breakage
+      - other
+      type: string
+      description: |-
+        * `expired` - expired
+        * `spoiled` - spoiled
+        * `prep_loss` - prep_loss
+        * `breakage` - breakage
+        * `other` - other
+    RececaoIn:
+      type: object
+      description: Entrada para criar receção.
+      properties:
+        location:
+          type: string
+          format: uuid
+        document:
+          type: string
+          format: uuid
+          nullable: true
+        supplier_name:
+          type: string
+          maxLength: 200
+        supplier_nif:
+          type: string
+          maxLength: 20
+        doc_number:
+          type: string
+          maxLength: 100
+        doc_date:
+          type: string
+          format: date
+          nullable: true
+        customer_name:
+          type: string
+          maxLength: 200
+        customer_nif:
+          type: string
+          maxLength: 20
+        document_total_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        supplier:
+          type: string
+          format: uuid
+          nullable: true
+        doc_type:
+          $ref: '#/components/schemas/DocTypeEnum'
+        received_at:
+          type: string
+          format: date-time
+      required:
+      - location
+    RececaoInRequest:
+      type: object
+      description: Entrada para criar receção.
+      properties:
+        location:
+          type: string
+          format: uuid
+        document:
+          type: string
+          format: uuid
+          nullable: true
+        supplier_name:
+          type: string
+          maxLength: 200
+        supplier_nif:
+          type: string
+          maxLength: 20
+        doc_number:
+          type: string
+          maxLength: 100
+        doc_date:
+          type: string
+          format: date
+          nullable: true
+        customer_name:
+          type: string
+          maxLength: 200
+        customer_nif:
+          type: string
+          maxLength: 20
+        document_total_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        supplier:
+          type: string
+          format: uuid
+          nullable: true
+        doc_type:
+          $ref: '#/components/schemas/DocTypeEnum'
+        received_at:
+          type: string
+          format: date-time
+      required:
+      - location
+    RececaoOut:
+      type: object
+      description: Saída de receção.
+      properties:
+        id:
+          type: string
+          format: uuid
+        document:
+          type: string
+          format: uuid
+          nullable: true
+        supplier:
+          allOf:
+          - $ref: '#/components/schemas/FornecedorReference'
+          readOnly: true
+        supplier_id:
+          type: string
+          format: uuid
+          nullable: true
+        doc_type:
+          $ref: '#/components/schemas/DocTypeEnum'
+        doc_number:
+          type: string
+          maxLength: 100
+        doc_date:
+          type: string
+          format: date
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        confirmed_by:
+          type: string
+          nullable: true
+          maxLength: 150
+        status:
+          allOf:
+          - $ref: '#/components/schemas/RececaoOutStatusEnum'
+          readOnly: true
+        lines_to_review:
+          type: integer
+          readOnly: true
+        line_count:
+          type: integer
+          readOnly: true
+        customer_name:
+          type: string
+          maxLength: 200
+        customer_nif:
+          type: string
+          maxLength: 20
+        company_name:
+          type: string
+          readOnly: true
+        company_nif:
+          type: string
+          readOnly: true
+        awaiting_invoice:
+          type: boolean
+          readOnly: true
+        document_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        lines_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+          readOnly: true
+        vat_breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/VatBreakdown'
+          readOnly: true
+        temperatures:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemperaturaRegistadaOut'
+          readOnly: true
+        cold_chain:
+          type: boolean
+          readOnly: true
+        location:
+          allOf:
+          - $ref: '#/components/schemas/LocalizacaoReference'
+          nullable: true
+          readOnly: true
+        locations:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocalizacaoReference'
+          readOnly: true
+        reference:
+          type: string
+          maxLength: 120
+      required:
+      - confirmed_at
+      - confirmed_by
+      - customer_name
+      - customer_nif
+      - doc_date
+      - doc_number
+      - doc_type
+      - document
+      - document_total
+      - id
+      - received_at
+      - reference
+      - supplier_id
+    RececaoOutRequest:
+      type: object
+      description: Saída de receção.
+      properties:
+        id:
+          type: string
+          format: uuid
+        document:
+          type: string
+          format: uuid
+          nullable: true
+        supplier_id:
+          type: string
+          format: uuid
+          nullable: true
+        doc_type:
+          $ref: '#/components/schemas/DocTypeEnum'
+        doc_number:
+          type: string
+          maxLength: 100
+        doc_date:
+          type: string
+          format: date
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        confirmed_by:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 150
+        customer_name:
+          type: string
+          maxLength: 200
+        customer_nif:
+          type: string
+          maxLength: 20
+        document_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        reference:
+          type: string
+          maxLength: 120
+      required:
+      - confirmed_at
+      - confirmed_by
+      - customer_name
+      - customer_nif
+      - doc_date
+      - doc_number
+      - doc_type
+      - document
+      - document_total
+      - id
+      - received_at
+      - reference
+      - supplier_id
+    RececaoOutStatusEnum:
+      enum:
+      - needs_review
+      - confirmed
+      type: string
+      description: |-
+        * `needs_review` - needs_review
+        * `confirmed` - confirmed
     RecusaDeDocumentoOut:
       type: object
       description: |-
@@ -1672,6 +4531,146 @@ components:
       required:
       - code
       - detail
+    RecusaDoAssistenteOut:
+      type: object
+      description: 'O corpo de uma recusa: `code` da lista fechada e `detail` traduzido.'
+      properties:
+        code:
+          type: string
+        detail:
+          type: string
+      required:
+      - code
+      - detail
+    RecusaDoPainelOut:
+      type: object
+      description: |-
+        O corpo de um 403 ou de um 400: **só `detail`, sem `code` novo** (ADR 0013, d6).
+
+        É a forma exacta que o DRF já devolve. Não reutiliza o `ErroOutSerializer`
+        do `accounts` — esse não é importável de fora do módulo —, e não tem `code`
+        porque este endpoint não tem ramos de recusa para o cliente distinguir: ou
+        é dono, ou não é.
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    ResultExcludesEnum:
+      enum:
+      - depreciation
+      - financing
+      - income_tax
+      - owner_compensation
+      type: string
+      description: |-
+        * `depreciation` - depreciation
+        * `financing` - financing
+        * `income_tax` - income_tax
+        * `owner_compensation` - owner_compensation
+    ResumoDoPeriodoOut:
+      type: object
+      description: |-
+        `GET /reporting/summary`. **Sem total de gastos e sem resultado**, de propósito.
+
+        Os dois vivem só no `/month`: um total com a mercadoria discriminada ao lado
+        dá a folha salarial por subtracção (ADR 0013, decisão 6). Hoje o painel
+        inteiro é do dono e não há ninguém a quem isso exponha nada — o invariante
+        fica para o dia em que um bloco se abrir ao encarregado.
+      properties:
+        period:
+          $ref: '#/components/schemas/PeriodoResolvidoOut'
+        revenue_net_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        revenue_gross_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        revenue_basis:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/RevenueBasisEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        purchases_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        goods_consumed_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_change_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        waste_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        unknown_shrinkage_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        goods_cost_ratio_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,1})?$
+          nullable: true
+        stock_value_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_value_as_of:
+          type: string
+          format: date-time
+        costs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComponenteDeCustoOut'
+        waste_by_reason:
+          type: array
+          items:
+            $ref: '#/components/schemas/DesperdicioPorMotivoOut'
+        data_quality:
+          $ref: '#/components/schemas/QualidadeDosDadosOut'
+      required:
+      - costs
+      - data_quality
+      - goods_consumed_eur
+      - goods_cost_ratio_pct
+      - period
+      - purchases_eur
+      - revenue_basis
+      - revenue_gross_eur
+      - revenue_net_eur
+      - stock_change_eur
+      - stock_value_as_of
+      - stock_value_eur
+      - unknown_shrinkage_eur
+      - waste_by_reason
+      - waste_eur
+    RevenueBasisEnum:
+      enum:
+      - gross
+      - net
+      type: string
+      description: |-
+        * `gross` - gross
+        * `net` - net
+    RevenueSourceEnum:
+      enum:
+      - none
+      - manual
+      - pos
+      type: string
+      description: |-
+        * `none` - none
+        * `manual` - manual
+        * `pos` - pos
     RotaDeMenuOut:
       type: object
       description: |-
@@ -1719,11 +4718,36 @@ components:
       - campo
       - papeis_permitidos
       - route_id
+    RotaEnum:
+      enum:
+      - inicio
+      - painel
+      - alertas
+      - assistente
+      - stock
+      - artigo
+      - contar
+      - receber
+      - rececao
+      - definicoes
+      type: string
+      description: |-
+        * `inicio` - inicio
+        * `painel` - painel
+        * `alertas` - alertas
+        * `assistente` - assistente
+        * `stock` - stock
+        * `artigo` - artigo
+        * `contar` - contar
+        * `receber` - receber
+        * `rececao` - rececao
+        * `definicoes` - definicoes
     RotaIdEnum:
       enum:
       - inicio
       - painel
       - alertas
+      - assistente
       - stock
       - contar
       - receber
@@ -1732,9 +4756,92 @@ components:
         * `inicio` - Início
         * `painel` - Painel de gestão
         * `alertas` - Alertas
+        * `assistente` - Assistente
         * `stock` - Stock
         * `contar` - Contar
         * `receber` - Receber
+    RotuloIdEnum:
+      enum:
+      - ver_artigo
+      - ver_falta
+      - ver_validade
+      - ver_desperdicio
+      - ver_alertas
+      - rever_rececoes
+      - ver_rececoes_de_hoje
+      - ver_rececoes
+      - ver_rececao
+      - ver_contagens
+      - ver_painel
+      - ver_stock
+      - ver_equipa
+      - ver_estabelecimento
+      - ver_inicio
+      type: string
+      description: |-
+        * `ver_artigo` - ver_artigo
+        * `ver_falta` - ver_falta
+        * `ver_validade` - ver_validade
+        * `ver_desperdicio` - ver_desperdicio
+        * `ver_alertas` - ver_alertas
+        * `rever_rececoes` - rever_rececoes
+        * `ver_rececoes_de_hoje` - ver_rececoes_de_hoje
+        * `ver_rececoes` - ver_rececoes
+        * `ver_rececao` - ver_rececao
+        * `ver_contagens` - ver_contagens
+        * `ver_painel` - ver_painel
+        * `ver_stock` - ver_stock
+        * `ver_equipa` - ver_equipa
+        * `ver_estabelecimento` - ver_estabelecimento
+        * `ver_inicio` - ver_inicio
+    SerieOut:
+      type: object
+      description: Uma série do gráfico.
+      properties:
+        id:
+          $ref: '#/components/schemas/IdDeSerieEnum'
+        unit:
+          type: string
+        total_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/PontoDaSerieOut'
+      required:
+      - id
+      - points
+      - total_eur
+      - unit
+    SeriesDoPeriodoOut:
+      type: object
+      description: '`GET /reporting/series`. Hoje com **uma** série, e a legenda diz
+        porquê.'
+      properties:
+        period:
+          $ref: '#/components/schemas/PeriodoResolvidoOut'
+        granularity:
+          $ref: '#/components/schemas/GranularityEnum'
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntervaloOut'
+        scale_max_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/SerieOut'
+      required:
+      - buckets
+      - granularity
+      - period
+      - scale_max_eur
+      - series
     SessaoOut:
       type: object
       description: |-
@@ -1784,6 +4891,117 @@ components:
         * `sem_estabelecimento` - sem estabelecimento associado
         * `escolha_pendente` - à espera da escolha do estabelecimento
         * `ativa` - sessão com estabelecimento ativo
+    StockDetail:
+      type: object
+      description: Detalhe de stock por (product, lot) ou (location, lot) (fatia 4).
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          readOnly: true
+        product_name:
+          type: string
+          readOnly: true
+        location_id:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        location_name:
+          type: string
+          readOnly: true
+          nullable: true
+        lot_code:
+          type: string
+          readOnly: true
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+          description: Data de validade (NULL se sem data)
+        quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          readOnly: true
+          description: Quantidade em unidade base
+        unit_cost:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          readOnly: true
+          nullable: true
+          description: Custo unitário (NULL se zero)
+        total_value:
+          type: number
+          format: double
+          nullable: true
+          description: Quantidade × custo unitário.
+          readOnly: true
+    StockMovementResponse:
+      type: object
+      description: Resposta de um movimento de stock criado (201).
+      properties:
+        movement_id:
+          type: string
+          format: uuid
+          readOnly: true
+        product_name:
+          type: string
+          readOnly: true
+        location_name:
+          type: string
+          readOnly: true
+        lot_code:
+          type: string
+          readOnly: true
+          nullable: true
+        quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          readOnly: true
+        unit_cost:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+    StockSummary:
+      type: object
+      description: Resumo de stock agregado por produto (painel, fatia 4).
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          readOnly: true
+        product_name:
+          type: string
+          readOnly: true
+        quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          readOnly: true
+          description: Quantidade total em unidade base
+        unit_cost:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          readOnly: true
+          nullable: true
+          description: Custo unitário (NULL se zero)
+        total_value:
+          type: number
+          format: double
+          nullable: true
+          description: Quantidade × custo unitário.
+          readOnly: true
     TemaEnum:
       enum:
       - escuro
@@ -1794,6 +5012,27 @@ components:
         * `escuro` - Escuro
         * `meio_termo` - Meio termo
         * `claro` - Claro
+    TemperaturaRegistadaOut:
+      type: object
+      description: Temperatura registada em receção.
+      properties:
+        conservation:
+          $ref: '#/components/schemas/ConservacaoMedidaEnum'
+        celsius:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,1})?$
+        measured_by:
+          type: string
+          maxLength: 150
+        measured_at:
+          type: string
+          format: date-time
+      required:
+      - celsius
+      - conservation
+      - measured_at
+      - measured_by
     TenantAtivoInRequest:
       type: object
       description: |-
@@ -1852,6 +5091,71 @@ components:
       - id
       - nome
       - papel
+    ToolCallOut:
+      type: object
+      description: Uma entrada do rasto, já revalidada à leitura (`chamadas_validadas`).
+      properties:
+        name:
+          type: string
+        args:
+          type: object
+          additionalProperties: {}
+        rows:
+          type: integer
+        truncated:
+          type: boolean
+        ok:
+          type: boolean
+        ms:
+          type: integer
+      required:
+      - args
+      - ms
+      - name
+      - ok
+      - rows
+      - truncated
+    TransferRequest:
+      type: object
+      description: Entrada de transferência (POST /stock/movements/transfer).
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          description: UUID do produto
+        from_location_id:
+          type: string
+          format: uuid
+          description: UUID da localização de origem
+        to_location_id:
+          type: string
+          format: uuid
+          description: UUID da localização de destino
+        quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          description: Quantidade > 0 (em unidade base)
+        lot_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID do lote (obrigatório se product.track_lots=True)
+      required:
+      - from_location_id
+      - product_id
+      - quantity
+      - to_location_id
+    UnavailableEnum:
+      enum:
+      - revenue
+      - payroll
+      - other_costs
+      type: string
+      description: |-
+        * `revenue` - revenue
+        * `payroll` - payroll
+        * `other_costs` - other_costs
     UtilizadorOut:
       type: object
       description: |-
@@ -1880,6 +5184,26 @@ components:
       - email
       - id
       - tema
+    VatBreakdown:
+      type: object
+      description: Breakdown de IVA.
+      properties:
+        rate:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,3})?$
+        base:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        vat:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+      required:
+      - base
+      - rate
+      - vat
     VatRegimeEnum:
       enum:
       - normal
@@ -1888,6 +5212,48 @@ components:
       description: |-
         * `normal` - Regime normal
         * `isento_art_53` - Isento (art. 53.º)
+    WasteRequest:
+      type: object
+      description: Entrada de desperdício (POST /stock/movements/waste).
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          description: UUID do produto
+        location_id:
+          type: string
+          format: uuid
+          description: UUID da localização
+        quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          description: Quantidade > 0 (em unidade base)
+        lot_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID do lote (obrigatório se product.track_lots=True)
+        reason:
+          allOf:
+          - $ref: '#/components/schemas/ReasonEnum'
+          description: |-
+            Motivo do desperdício
+
+            * `expired` - expired
+            * `spoiled` - spoiled
+            * `prep_loss` - prep_loss
+            * `breakage` - breakage
+            * `other` - other
+        reason_detail:
+          type: string
+          description: Detalhes opcionais se reason='other'
+          maxLength: 500
+      required:
+      - location_id
+      - product_id
+      - quantity
+      - reason
   securitySchemes:
     cookieAuth:
       type: apiKey

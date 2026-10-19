@@ -437,7 +437,9 @@ export function CartaoDoPainel() {
             rotulo={textos.inicio.rotuloDoGrafico(formatMoneyRounded(dados.scale_max_eur))}
             // Lado a lado e não empilhadas: são grandezas a comparar e não
             // partes de um todo. Empilhar vendas sobre compras somava dinheiro
-            // que entrou com dinheiro que saiu.
+            // que entrou com dinheiro que saiu. Hoje a série é uma só (ADR 0029,
+            // decisão 5) e o modo não se nota; fica declarado porque é o que
+            // continua certo no dia em que a segunda chegar.
             empilhado={false}
           />
         </div>

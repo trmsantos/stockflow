@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from django.db.models import Count, Prefetch, QuerySet
@@ -45,11 +47,17 @@ __all__ = [
     "DocumentoCompleto",
     "com_paginas",
     "compor",
+    "compras_confirmadas",
     "compor_muitos",
     "documentos_do_ambito",
     "documentos_visiveis",
+    "inicio_do_dia_de_negocio",
+    "linhas_com_preco_confirmado",
+    "linhas_da_rececao",
     "pagina_por_posicao",
     "paginas_do_documento",
+    "rececao_do_ambito",
+    "rececoes_por_estado",
     "slots_expirados",
 ]
 
@@ -374,3 +382,236 @@ def preco_historico(*, tenant_id: UUID, product_id: UUID, linha: ReceiptLine) ->
         "reference": ultima_linha.receipt.reference or ultima_linha.receipt.doc_number or "",
         "threshold_pct": THRESHOLD_PCT,
     }
+
+
+# ---------------------------------------------------------------------------
+# As compras confirmadas de um período (ADR 0027, decisão 6; ADR 0013, decisão 8)
+# ---------------------------------------------------------------------------
+#: Os tipos de documento que **subtraem** (nota de crédito) e os que não trazem
+#: preço (guia de remessa: `line_total` a NULL conta 0 e o documento é contado à
+#: parte). A nota de débito soma como uma fatura.
+DOC_TIPO_QUE_SUBTRAI = "NC"
+DOC_TIPO_SEM_PRECO = "GR"
+
+
+def compras_confirmadas(
+    *,
+    tenant_id: UUID,
+    desde: datetime,
+    ate: datetime,
+    supplier_id: UUID | None = None,
+    product_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Σ `line_total` das linhas confirmadas de mercadoria recebidas em `[desde, ate)`.
+
+    Agrega por **`received_at`** e não por `doc_date` (ADR 0013, decisão 8): o
+    que interessa ao custo do mês é quando a mercadoria entrou, e a resposta diz
+    "recebido entre X e Y". Só receções com `confirmed_at`, só linhas
+    `confirmed` e só `kind=goods` — vasilhame e encargos ficam fora (ADR 0021,
+    decisão 6 e adenda). O `line_total` é **sem IVA** e líquido de desconto, que
+    é o que uma fatura portuguesa imprime por linha; quem lê recebe
+    `iva_incluido: false` para não somar o que não está lá.
+
+    `NC` subtrai, `ND` soma, `GR` não tem preço: conta 0 e devolve o número de
+    documentos sem preço, para a resposta não dizer "gastou 0 €" numa semana em
+    que entraram três guias. Uma linha de outro tipo sem `line_total` conta em
+    `linhas_sem_custo`.
+    """
+    linhas = (
+        ReceiptLine.objects.filter(
+            tenant_id=tenant_id,
+            receipt__tenant_id=tenant_id,
+            receipt__confirmed_at__isnull=False,
+            receipt__received_at__gte=desde,
+            receipt__received_at__lt=ate,
+            status="confirmed",
+            kind="goods",
+        )
+        .select_related("receipt")
+        .order_by("receipt__received_at", "receipt_id", "position")
+    )
+    if supplier_id is not None:
+        linhas = linhas.filter(receipt__supplier_id=supplier_id)
+    if product_id is not None:
+        linhas = linhas.filter(product_id=product_id)
+
+    total = Decimal("0")
+    por_fornecedor: dict[UUID | None, Decimal] = {}
+    por_artigo: dict[UUID | None, Decimal] = {}
+    documentos: set[UUID] = set()
+    documentos_sem_preco: set[UUID] = set()
+    linhas_sem_custo = 0
+    for linha in linhas:
+        rececao = linha.receipt
+        documentos.add(rececao.id)
+        if rececao.doc_type == DOC_TIPO_SEM_PRECO:
+            documentos_sem_preco.add(rececao.id)
+            valor = Decimal("0")
+        elif linha.line_total is None:
+            linhas_sem_custo += 1
+            valor = Decimal("0")
+        elif rececao.doc_type == DOC_TIPO_QUE_SUBTRAI:
+            valor = -linha.line_total
+        else:
+            valor = linha.line_total
+        total += valor
+        por_fornecedor[rececao.supplier_id] = por_fornecedor.get(rececao.supplier_id, 0) + valor
+        por_artigo[linha.product_id] = por_artigo.get(linha.product_id, 0) + valor
+
+    fornecedores = catalog_api.fornecedores_por_id(
+        tenant_id=tenant_id, ids=[i for i in por_fornecedor if i is not None]
+    )
+    produtos = catalog_api.produtos_por_id(
+        tenant_id=tenant_id, ids=[i for i in por_artigo if i is not None]
+    )
+    return {
+        "total_eur": total,
+        "por_fornecedor": [
+            {
+                "supplier_id": sid,
+                "supplier_name": fornecedores[sid].name if sid in fornecedores else "",
+                "total_eur": valor,
+            }
+            for sid, valor in sorted(por_fornecedor.items(), key=lambda par: -par[1])
+        ],
+        "por_artigo": [
+            {
+                "product_id": pid,
+                "product_name": produtos[pid].short_name if pid in produtos else "",
+                "total_eur": valor,
+            }
+            for pid, valor in sorted(por_artigo.items(), key=lambda par: -par[1])
+        ],
+        "documentos": len(documentos),
+        "documentos_sem_preco": len(documentos_sem_preco),
+        "linhas_sem_custo": linhas_sem_custo,
+    }
+
+
+# ---------------------------------------------------------------------------
+# As leituras do assistente (ADR 0028): receções e histórico de preços.
+# ---------------------------------------------------------------------------
+#: Os três estados por que se pede uma lista de receções. **`por_rever` é
+#: `confirmed_at IS NULL`** e não "tem linhas `needs_review`": uma linha por
+#: rever é uma pendência *dentro* de um documento, e um documento com todas as
+#: linhas revistas mas por confirmar continua a faltar confirmar.
+ESTADOS_DE_RECECAO = ("por_rever", "confirmadas", "hoje")
+
+#: Quantos dias de negócio para trás a lista de confirmadas olha por omissão.
+DIAS_DE_RECECOES_CONFIRMADAS = 7
+
+#: Quantos meses de negócio o histórico de preços cobre por omissão, e o teto.
+MESES_DE_PRECOS = 6
+MESES_MAXIMOS_DE_PRECOS = 12
+
+#: Os tipos de documento que **não** entram num histórico de preços: a guia de
+#: remessa porque não traz preço, a nota de crédito e a nota de débito porque
+#: são correcções a um preço já praticado e não uma compra nova. As notas são
+#: **contadas** e ditas ("n notas ignoradas") para a resposta não parecer que
+#: viu tudo.
+DOC_TIPOS_SEM_PRECO_DE_COMPRA = ("GR",)
+DOC_TIPOS_DE_NOTA = ("NC", "ND")
+
+
+def inicio_do_dia_de_negocio(*, tenant_id: UUID, agora: datetime | None = None) -> datetime:
+    """O instante em que o dia de negócio **em curso** começou.
+
+    Às 02:00, com o dia a começar às 04:00, é ontem às 04:00 — e é por isso que
+    não basta substituir a hora no `agora`, que era o que o `estado=hoje` do
+    `RececaoViewSet` fazia: entre a meia-noite e as 04:00 ele filtrava desde a
+    meia-noite e o rótulo prometia o dia de negócio (ADR 0028).
+    """
+    hora = accounts_api.inicio_do_dia_de_negocio(tenant_id=tenant_id)
+    local = timezone.localtime(agora or timezone.now())
+    dia = local.date() if local.time() >= hora else local.date() - timedelta(days=1)
+    return timezone.make_aware(datetime.combine(dia, hora))
+
+
+def rececoes_por_estado(
+    *,
+    tenant_id: UUID,
+    estado: str,
+    desde: datetime | None = None,
+    limite: int = 20,
+) -> list[Receipt]:
+    """As receções de um estado, com as linhas e o fornecedor carregados.
+
+    `por_rever` ordena por `-received_at` (o que chegou mais tarde está mais
+    fresco na cabeça de quem o recebeu); `confirmadas` e `hoje` por
+    `-confirmed_at`, que é a pergunta "o que é que já entrou". Devolve
+    `limite + 1` linhas no máximo.
+    """
+    rececoes = Receipt.objects.filter(tenant_id=tenant_id).select_related(
+        "supplier", "location"
+    )
+    if estado == "por_rever":
+        rececoes = rececoes.filter(confirmed_at__isnull=True).order_by("-received_at", "id")
+    else:
+        rececoes = rececoes.filter(confirmed_at__isnull=False)
+        if desde is not None:
+            rececoes = rececoes.filter(confirmed_at__gte=desde)
+        rececoes = rececoes.order_by("-confirmed_at", "id")
+    return list(rececoes[: limite + 1])
+
+
+def rececao_do_ambito(*, tenant_id: UUID, receipt_id: UUID) -> Receipt | None:
+    """Uma receção pelo id, com fornecedor e localização. `None` fora do tenant."""
+    return (
+        Receipt.objects.filter(tenant_id=tenant_id, pk=receipt_id)
+        .select_related("supplier", "location")
+        .first()
+    )
+
+
+def linhas_da_rececao(*, tenant_id: UUID, receipt_id: UUID) -> list[ReceiptLine]:
+    """As linhas de uma receção, por posição, com o artigo carregado."""
+    return list(
+        ReceiptLine.objects.filter(tenant_id=tenant_id, receipt_id=receipt_id)
+        .select_related("product")
+        .order_by("position", "id")
+    )
+
+
+def linhas_com_preco_confirmado(
+    *, tenant_id: UUID, product_id: UUID, desde: datetime, ate: datetime, limite: int = 500
+) -> list[dict[str, Any]]:
+    """As linhas que servem para um histórico de preço de um artigo.
+
+    Os filtros são o contrato (ADR 0028): receção **confirmada**, linha
+    `confirmed`, `kind=goods`, `quantity_invoiced > 0`, `base_per_invoice_unit
+    > 0` e `line_total` não nulo. Sem os três últimos o preço por unidade base
+    não é calculável e uma linha sem preço calculável não é um preço de zero.
+
+    O preço calcula-se com a **quantidade faturada** e não com a recebida: o
+    que se pagou foi o que veio na fatura, e uma receção parcial (cinco
+    faturados, três confirmados) não encarece o quilo.
+    """
+    linhas = (
+        ReceiptLine.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            status="confirmed",
+            kind="goods",
+            quantity_invoiced__gt=Decimal("0"),
+            base_per_invoice_unit__gt=Decimal("0"),
+            line_total__isnull=False,
+            receipt__tenant_id=tenant_id,
+            receipt__confirmed_at__isnull=False,
+            receipt__received_at__gte=desde,
+            receipt__received_at__lt=ate,
+        )
+        .exclude(receipt__doc_type__in=DOC_TIPOS_SEM_PRECO_DE_COMPRA)
+        .values(
+            "id",
+            "quantity_invoiced",
+            "base_per_invoice_unit",
+            "line_total",
+            "receipt__doc_type",
+            "receipt__received_at",
+            "receipt__supplier_id",
+            "receipt__supplier__name",
+            "receipt__supplier_name",
+        )
+        .order_by("receipt__received_at", "id")[:limite]
+    )
+    return list(linhas)

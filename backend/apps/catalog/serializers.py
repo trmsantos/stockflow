@@ -93,6 +93,13 @@ class ProdutoInSerializer(serializers.Serializer):
         min_length=1,
         help_text="Nome único por tenant (sem caixa)",
     )
+    sku = serializers.CharField(
+        max_length=80,
+        min_length=1,
+        required=False,
+        allow_blank=True,
+        help_text="SKU único por tenant (código de referência)",
+    )
     base_unit = serializers.ChoiceField(
         choices=UnidadeBase.choices,
         help_text="g, ml ou un",
@@ -153,6 +160,7 @@ class ProdutoOutSerializer(serializers.Serializer):
 
     id = serializers.UUIDField(read_only=True)
     short_name = serializers.CharField(read_only=True)
+    sku = serializers.CharField(read_only=True)
     base_unit = serializers.CharField(read_only=True)
     display_unit = serializers.CharField(read_only=True)
     display_factor = serializers.DecimalField(
@@ -172,6 +180,11 @@ class ProdutoPatchInSerializer(serializers.Serializer):
     """Produto PATCH: só os campos editáveis (sem base_unit, sem min_quantity)."""
 
     short_name = serializers.CharField(
+        max_length=80,
+        min_length=1,
+        required=False,
+    )
+    sku = serializers.CharField(
         max_length=80,
         min_length=1,
         required=False,

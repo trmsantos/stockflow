@@ -2,16 +2,16 @@
 
 
 import pytest
-from rest_framework.test import APIClient
 from django.test import Client
+from django.utils import timezone
+from rest_framework.test import APIClient
 
-from apps.accounts.services import criar_tenant, conceder_pertenca
 from apps.accounts.models import Papel, User
-from apps.inventory.models import Location
+from apps.accounts.services import conceder_pertenca, criar_tenant
 from apps.catalog.models import Supplier
+from apps.inventory.models import Location
 from apps.purchasing.models import Receipt
 from apps.shared.db import tenant_scope
-
 
 CREDENCIAL = "trigo-fresco-ao-amanhecer-7"
 
@@ -60,6 +60,52 @@ class TestRececoes:
 
         # Verificar que começa vazio
         response = api_client.get(f"/api/v1/receipts/{receipt_id}/lines")
+        assert response.status_code == 200
+        assert response.data["count"] == 0
+
+    def test_listar_rececoes_devolve_pagina_com_rececoes_compostas(self):
+        """GET /receipts — 200, forma paginada do DRF e cada receção já composta."""
+        tenant = criar_tenant(name="Test Lista")
+
+        with tenant_scope(tenant.id):
+            user = User.objects.create_user("lista@test.com", CREDENCIAL)
+            conceder_pertenca(user=user, tenant_id=tenant.id, role=Papel.OWNER, display_name="Test")
+            loc = Location.objects.create(tenant=tenant, name="Loja", position=1)
+            supplier = Supplier.objects.create(tenant=tenant, name="Fornecedor", nif="987654321")
+            receipt = Receipt.objects.create(
+                tenant=tenant,
+                location=loc,
+                supplier=supplier,
+                supplier_name="Fornecedor",
+                supplier_nif="987654321",
+                doc_type="FT",
+                received_at=timezone.now(),
+            )
+
+        client = Client()
+        response = client.post(
+            "/api/v1/auth/login",
+            {"email": "lista@test.com", "password": CREDENCIAL},
+            content_type="application/json",
+        )
+        assert response.status_code == 200
+        api_client = APIClient()
+        for key, value in response.cookies.items():
+            api_client.cookies[key] = value.value
+
+        response = api_client.get("/api/v1/receipts")
+        assert response.status_code == 200
+        assert response.data["count"] == 1
+        linha = response.data["results"][0]
+        assert linha["id"] == str(receipt.id)
+        assert linha["status"] == "needs_review"
+        assert linha["supplier"] == {"name": "Fornecedor", "nif": "987654321"}
+
+        response = api_client.get("/api/v1/receipts?estado=revisao")
+        assert response.status_code == 200
+        assert [r["id"] for r in response.data["results"]] == [str(receipt.id)]
+
+        response = api_client.get("/api/v1/receipts?estado=hoje")
         assert response.status_code == 200
         assert response.data["count"] == 0
 

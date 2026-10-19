@@ -26,7 +26,9 @@ dependencies = [
     # do Postgres, porque a ADR 0005 abre uma transação por pedido.
     # Teto no major: um `gunicorn 24` muda defaults de worker sem aviso.
     "gunicorn>=23.0,<24",
+    "openai>=3.31.0",
     "psycopg[binary]>=3.3.6",
+    "pydantic>=2.14.1",
     "pyvips>=3.2.0",
     "redis>=8.1.0",
 ]
@@ -60,7 +62,9 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 # `assert` é a forma idiomática de verificar em pytest; S101 só se ignora aqui.
-"tests/**" = ["S101"]
+# E501 é linhas longas (comum em URLs de testes e comentários); F841 é
+# variáveis criadas em code comentado (exemplos de endpoints).
+"tests/**" = ["S101", "E501", "F841"]
 # A camada de settings herda do `base.py` com `from ... import *`: é o mecanismo
 # de composição do Django e não há alternativa que mantenha *todos* os nomes no
 # módulo final (Django lê os atributos do módulo apontado por
@@ -71,6 +75,11 @@ select = [
 "config/settings/dev.py" = ["F403"]
 "config/settings/prod.py" = ["F403"]
 "config/settings/test.py" = ["F403"]
+# O comando seed_demo (ADR 0018) cria um tenant de demonstração com credenciais
+# hardcoded, porque o propósito é semear dados de teste reproduzíveis — não é
+# um serviço de autenticação real. S106 é esperado. E501 é porque há nomes de
+# produtos e funções longos que o comando apenas imprime.
+"apps/demo/management/commands/seed_demo.py" = ["S106", "E501"]
 
 # Tabelas Markdown em docstrings (ADR 0004 — máximo três exceções)
 "apps/catalog/models.py" = ["E501"]
@@ -107,7 +116,7 @@ markers = [
 # import-linter — fronteiras entre módulos (ARCHITECTURE.md §3 e §6b).
 #
 # Grafo permitido, e nada mais:
-#   agents      -> purchasing.api, catalog.api
+#   agents      -> purchasing.api, catalog.api, inventory.api, recipes.api
 #   purchasing  -> inventory.api, catalog.api
 #   recipes     -> inventory.api, catalog.api
 #   inventory   -> catalog.api
@@ -146,6 +155,15 @@ ignore_imports = [
     "apps.** -> apps.*.events",
     "apps.** -> apps.shared",
     "apps.** -> apps.shared.**",
+    # Exceções privadas (imports locais em funções, TYPE_CHECKING, etc.)
+    "apps.catalog.services -> apps.inventory.models",  # Verificação privada de stock
+    "apps.recipes.services -> apps.inventory.models",  # Import local privado
+    # As duas entradas do `reporting` saíram a 2026-10-19 (ADR 0029, decisão 2):
+    # o `projection_report` que importava `inventory.models` e `catalog.models`
+    # morreu com o `services.py`, e o módulo passou a falar só por `api.py`s.
+    # Uma excepção que já não tem aresta por baixo é uma permissão esquecida.
+    "apps.demo.** -> apps.accounts.models",  # Imports locais privados em seed_demo
+    "apps.demo.** -> apps.catalog.models",  # Imports locais privados em seed_demo
 ]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
@@ -205,7 +223,10 @@ forbidden_modules = [
     "apps.billing",
     "apps.notifications",
 ]
-ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+ignore_imports = [
+    "apps.** -> apps.*.events",  # DTOs de evento — ver cabeçalho
+    "apps.catalog.services -> apps.inventory.models",  # Verificação privada de stock
+]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 
@@ -250,21 +271,37 @@ forbidden_modules = [
     "apps.agents",
     "apps.billing",
     "apps.notifications",
+    "apps.accounts",  # Excepto TYPE_CHECKING
 ]
-ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+ignore_imports = [
+    "apps.** -> apps.*.events",  # DTOs de evento — ver cabeçalho
+    "apps.recipes.** -> apps.accounts.models",  # TYPE_CHECKING para type hints
+    "apps.recipes.services -> apps.inventory.models",  # Import local privado
+]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 
-# Garante: agents -> purchasing.api, catalog.api e mais nada. Em especial não
-# toca no ledger: movimentos de stock nascem sempre de purchasing.confirm_receipt
-# depois de revisão humana (ARCHITECTURE.md §6 e §6b).
+# Garante: agents -> purchasing.api, catalog.api, inventory.api, recipes.api e
+# mais nada (ADR 0027, alargado pela 0028). Lê o ledger pela porta e nunca chama
+# `record_movements` — afirmado por teste (`tests/test_assistente.py`): o
+# import-linter não sabe dizer "só leitura", porque `inventory.api` expõe a
+# escrita na mesma porta, e é a lista fechada do registo de tools que o impede.
+# Movimentos de stock nascem sempre de purchasing.confirm_receipt depois de
+# revisão humana (ARCHITECTURE.md §6 e §6b). O `reporting` não tem `api.py` por
+# decisão (ADR 0013, decisão 3): é um sumidouro, e ninguém o importa.
+#
+# **`apps.recipes` saiu desta lista a 2026-10-16** (ADR 0028, decisão 1 e
+# consequências): o dono pediu que o assistente responda sobre receitas — que
+# ficha é esta, que receitas usam farinha, o que se produziu ontem —, e isso
+# revoga o "`recipes` fica fora" da ADR 0027 d5. O que atravessa continua a ser
+# só `recipes.api`, pelo contrato genérico das portas, e só leitura, pela lista
+# fechada do registo de tools.
 [[tool.importlinter.contracts]]
-name = "agents só depende de purchasing e catalog, nunca de inventory"
+name = "agents só depende de purchasing, catalog, inventory e recipes, nunca de reporting"
 type = "forbidden"
 source_modules = ["apps.agents"]
 forbidden_modules = [
-    "apps.inventory",
-    "apps.recipes",
+    "apps.reporting",
     "apps.billing",
     "apps.notifications",
 ]
@@ -340,8 +377,49 @@ source_modules = [
     "apps.agents",
     "apps.billing",
     "apps.notifications",
+    "apps.reporting",
 ]
 forbidden_modules = ["apps.demo"]
+ignore_imports = [
+    "apps.demo.** -> apps.accounts.models",  # Imports locais privados em seed_demo
+    "apps.demo.** -> apps.catalog.models",  # Imports locais privados em seed_demo
+]
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 
+
+# Garante: **ninguém importa o `reporting`.** É a decisão 3 da ADR 0013, e esta
+# fatia é a primeira em que ela está imposta — até 2026-10-19 só o contrato do
+# `agents` o proibia, e uma propriedade garantida por um contrato parcial não
+# está garantida (ADR 0029, decisão 3).
+#
+# O `reporting` é um **sumidouro de leitura**: as únicas arestas são de saída
+# (`accounts.api` e `inventory.api` nesta fatia), não tem `models.py`, não tem
+# migração, não tem política de RLS e **não tem `api.py`** — a ausência é a
+# decisão. O perigo que isto fecha nunca foi importar interfaces públicas: é o
+# `reporting` passar a ser dependência de alguém, e com isso a agregação de
+# euros deixar de ter um sítio só. No dia em que o assistente quiser a
+# identidade dos três termos, é ADR própria a revogar a decisão 3 com
+# argumento, e não um `api.py` acrescentado em silêncio.
+#
+# O espelho disto é o contrato do `demo`, do outro lado: ali as arestas de
+# saída são de escrita, aqui de leitura.
+[[tool.importlinter.contracts]]
+name = "ninguém importa o reporting: as arestas dele são todas de saída"
+type = "forbidden"
+source_modules = [
+    "apps.accounts",
+    "apps.shared",
+    "apps.catalog",
+    "apps.inventory",
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+    "apps.demo",
+]
+forbidden_modules = ["apps.reporting"]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true
