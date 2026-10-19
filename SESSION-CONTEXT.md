@@ -36,7 +36,16 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
-**Estado atual (2026-10-19):** o **Painel está ligado** (ADR 0029): três endpoints só-dono sobre o
+**Estado atual (2026-10-19, fim do dia):** as **contagens estão ligadas** (ADR 0030) — o `/contar`
+deixou os fixtures, o colaborador conta no telemóvel e o fecho escreve ajustes no ledger. Antes
+disso, nesse mesmo dia: PR #7 mergeado com o CI **verde nos sete jobs** pela primeira vez (o `ruff`
+bloqueava-o há fatias), o **Painel ligado** (ADR 0029) e o **assistente a cobrir a app** (ADR 0028).
+Suite: **729 passed**, `ruff check .` a zero. Dados de demo repostos e realistas.
+Faltam nos fixtures: `/stock/levels`, `/stock/movements`, `/stock/alerts/summary`,
+`/stock/alerts/waste`. Módulos vazios: `billing`, `notifications` (e `sales`/`people` não existem).
+A extração de faturas por IA continua por ligar — é o diferenciador do produto.
+
+**Estado de 2026-10-19 (manhã):** o **Painel está ligado** (ADR 0029): três endpoints só-dono sobre o
 ledger, com receita e salários declarados ausentes em vez de zeros, e os fixtures do painel mortos.
 Antes disso, o **assistente cobre a app** (ADR 0028): 20 tools de leitura, ajuda curada e botões para
 o ecrã certo, derivados no servidor. Suite: **703 passed**; `security-check` PASS nas duas fatias.
