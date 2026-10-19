@@ -11,12 +11,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 
 from django.db import transaction
 from django.db.models import Count, Q
+from django.utils import timezone
 
 from apps.inventory import selectors
 from apps.inventory.models import Location, StockCountLine, StockLevel
@@ -29,6 +30,9 @@ from apps.inventory.services import (
 )
 
 __all__ = [
+    "AgregadoDeDesperdicio",
+    "AgregadoDeMovimentos",
+    "AgregadoDiarioDeMovimentos",
     "AlertaResumo",
     "ArtigoAbaixoDoMinimo",
     "Autor",
@@ -57,11 +61,15 @@ __all__ = [
     "SaldoDeStock",
     "SaldoPorLote",
     "CustoMedioDeArtigo",
+    "ValorDeStock",
     "artigos_abaixo_do_minimo",
     "criar_localizacao",
+    "desperdicio_agregado_por_motivo",
     "listar_localizacoes",
     "localizacoes_por_id",
     "lotes_a_vencer",
+    "movimentos_agregados_por_dia_de_negocio",
+    "movimentos_agregados_por_tipo",
     "movimentos_resumidos",
     "obter_localizacao",
     "get_or_create_lots",
@@ -69,9 +77,9 @@ __all__ = [
     "MovementDTO",
     "get_fefo_lot",
     "get_stock_level",
-    "movimentos_por_periodo",
-    "movimentos_por_produto",
     "saldos_por_artigo",
+    "ultima_contagem_fechada_em",
+    "valor_de_stock",
 ]
 
 
@@ -406,36 +414,125 @@ def criar_localizacao(
     )
 
 
-def movimentos_por_periodo(
-    *,
-    tenant_id: UUID,
-    year: int,
-    month: int,
-) -> list:
-    """Obtém movimentos de um período específico (QuerySet). Consumidor: `apps/reporting`."""
-    from apps.inventory.models import StockMovement
+# ===========================================================================
+# Os agregados do painel (ADR 0029, decisão 2).
+#
+# Substituem o par `movimentos_por_periodo`/`movimentos_por_produto`, que
+# devolvia **instâncias ORM** através da fronteira — uma porta que deixa passar
+# um modelo é uma fronteira que só existe no papel, e o consumidor delas (o
+# antigo `reporting/services.py`) iterava o ledger em Python, que é o que a
+# ADR 0013 decisão 5 proíbe. Estas devolvem DTOs congelados e o `GROUP BY`
+# acontece no Postgres.
+#
+# **Duas promessas que quem lê tem de conhecer**, e são as que permitem que a
+# identidade da ADR 0013 decisão 4 feche ao cêntimo:
+#
+#   * **nada vem arredondado.** `SUM(quantity × unit_cost)` é `numeric` exato;
+#     o arredondamento a duas casas é apresentação e faz-se uma vez, à saída de
+#     quem lê;
+#   * **nada vem com o sinal lido.** Uma saída é negativa aqui, porque é
+#     negativa no ledger. Quem serve "positivo = quebra" nega uma vez, no seu
+#     lado. O `DesperdicioPorArtigo` acima é o outro contrato — esse promete
+#     valores positivos — e a diferença está escrita nos dois sítios de
+#     propósito.
+# ===========================================================================
+@dataclass(frozen=True, kw_only=True, slots=True)
+class AgregadoDeMovimentos:
+    """Σ de um tipo de movimento numa janela, como o ledger o gravou."""
 
-    return list(StockMovement.objects.filter(
-        tenant_id=tenant_id,
-        occurred_at__year=year,
-        occurred_at__month=month,
-    ))
+    movement_type: str
+    n: int
+    quantidade: Decimal
+    valor_eur: Decimal
+    #: A parte de `valor_eur` cujo custo ainda não tem fatura atrás
+    #: (`cost_is_estimate`). É **decomposição e nunca parcela**: já está dentro
+    #: do `valor_eur`, porque a mercadoria entrou.
+    valor_estimado_eur: Decimal
 
 
-def movimentos_por_produto(
-    *,
-    tenant_id: UUID,
-    product_id: UUID,
-    movement_types: list[str] | None = None,
-) -> list:
-    """Obtém movimentos de um produto, filtrados por tipo. Consumidor: `apps/reporting`."""
-    from apps.inventory.models import StockMovement
+@dataclass(frozen=True, kw_only=True, slots=True)
+class AgregadoDiarioDeMovimentos:
+    """O mesmo agregado com o balde do **dia de negócio** ao lado do tipo."""
 
-    qs = StockMovement.objects.filter(tenant_id=tenant_id, product_id=product_id)
-    if movement_types:
-        qs = qs.filter(movement_type__in=movement_types)
+    dia: date
+    movement_type: str
+    n: int
+    quantidade: Decimal
+    valor_eur: Decimal
+    valor_estimado_eur: Decimal
 
-    return list(qs)
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class AgregadoDeDesperdicio:
+    """Σ dos `waste` de uma janela por motivo. Sem truncatura: são cinco."""
+
+    #: `expired`, `spoiled`, `prep_loss`, `breakage`, `other` — ou `""` quando
+    #: o movimento ficou sem motivo.
+    reason: str
+    n: int
+    quantidade: Decimal
+    valor_eur: Decimal
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ValorDeStock:
+    """O valor do stock **a um instante**, com o instante ao lado.
+
+    `as_of` não é cromado: o valor é `Σ(saldo × CMP)` lido agora, logo no fecho
+    de um mês passado o número é o de hoje e o ecrã tem de o poder dizer.
+    """
+
+    valor_eur: Decimal
+    as_of: datetime
+
+
+def movimentos_agregados_por_tipo(
+    *, tenant_id: UUID, desde: datetime, ate: datetime
+) -> tuple[AgregadoDeMovimentos, ...]:
+    """Σ do ledger em `[desde, ate)`, uma linha por tipo de movimento presente."""
+    return tuple(
+        AgregadoDeMovimentos(**linha)
+        for linha in selectors.movimentos_agregados_por_tipo(
+            tenant_id=tenant_id, desde=desde, ate=ate
+        )
+    )
+
+
+def movimentos_agregados_por_dia_de_negocio(
+    *, tenant_id: UUID, desde: datetime, ate: datetime, inicio_do_dia: time
+) -> tuple[AgregadoDiarioDeMovimentos, ...]:
+    """O mesmo, com o balde do dia de negócio — `Σ(dias) == janela` por construção."""
+    return tuple(
+        AgregadoDiarioDeMovimentos(**linha)
+        for linha in selectors.movimentos_agregados_por_dia_de_negocio(
+            tenant_id=tenant_id, desde=desde, ate=ate, inicio_do_dia=inicio_do_dia
+        )
+    )
+
+
+def desperdicio_agregado_por_motivo(
+    *, tenant_id: UUID, desde: datetime, ate: datetime
+) -> tuple[AgregadoDeDesperdicio, ...]:
+    """Σ dos `waste` de `[desde, ate)` por motivo, sem corte e sem limiar."""
+    return tuple(
+        AgregadoDeDesperdicio(**linha)
+        for linha in selectors.desperdicio_agregado_por_motivo(
+            tenant_id=tenant_id, desde=desde, ate=ate
+        )
+    )
+
+
+def valor_de_stock(*, tenant_id: UUID) -> ValorDeStock:
+    """`Σ(saldo × CMP)` de todas as localizações, e o instante em que foi lido."""
+    return ValorDeStock(
+        valor_eur=selectors.valor_de_stock(tenant_id=tenant_id),
+        as_of=timezone.now(),
+    )
+
+
+def ultima_contagem_fechada_em(*, tenant_id: UUID) -> datetime | None:
+    """Quando a última contagem **fechada** fechou. `None` se nunca houve nenhuma."""
+    return selectors.ultima_contagem_fechada_em(tenant_id=tenant_id)
 
 
 # ===========================================================================

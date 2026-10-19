@@ -7,7 +7,7 @@ de RLS (SECURITY.md §1).
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -15,14 +15,21 @@ from uuid import UUID
 from django.db.models import (
     Case,
     Count,
+    DateField,
+    DateTimeField,
     DecimalField,
+    DurationField,
     F,
+    Func,
+    Max,
     Q,
     QuerySet,
     Sum,
+    TextField,
     Value,
     When,
 )
+from django.db.models.functions import Cast
 from django.utils import timezone
 
 from apps.inventory.models import (
@@ -40,6 +47,7 @@ __all__ = [
     "contagens_do_ambito",
     "custos_dos_niveis",
     "custos_medios_do_artigo",
+    "desperdicio_agregado_por_motivo",
     "desperdicio_por_artigo_e_motivo",
     "e_lote_sintetico",
     "linhas_da_contagem",
@@ -47,9 +55,14 @@ __all__ = [
     "listar_localizacoes",
     "localizacoes_do_ambito",
     "lotes_a_vencer",
+    "movimentos_agregados_por_dia_de_negocio",
+    "movimentos_agregados_por_tipo",
+    "movimentos_do_periodo",
     "movimentos_resumidos",
     "producoes_por_periodo",
     "saldos_do_artigo",
+    "ultima_contagem_fechada_em",
+    "valor_de_stock",
     "stock_alerts",
     "stock_summary",
     "stock_by_location",
@@ -721,3 +734,199 @@ def custos_medios_do_artigo(*, tenant_id: UUID, product_id: UUID) -> list[dict[s
         .select_related("location")
         .order_by("location__position", "location__name")
     ]
+
+
+# ===========================================================================
+# Os agregados do painel (ADR 0029). **Tudo em SQL**: a ADR 0013 decisão 5
+# proíbe um ciclo em Python sobre o ledger, e não é estilo — doze meses de
+# movimentos de um tenant são dezenas de milhares de linhas a atravessar a
+# fronteira para somar cinco números.
+#
+# Nenhuma destas funções arredonda. `SUM(quantity * unit_cost)` é `numeric`
+# exato no Postgres e é assim que sai: o arredondamento é uma decisão de
+# apresentação e vive **uma vez**, à saída do `reporting` (ADR 0013, decisão 4).
+# Arredondar por movimento ou num passo intermédio é como a identidade dos três
+# termos deixa de fechar ao cêntimo.
+#
+# O **sinal** também não se lê aqui: o que sai é o que o ledger gravou (uma
+# saída é negativa). Quem serve "positivo = quebra" nega uma vez, no seu
+# `selectors.py`. Duas inversões em sítios diferentes são um sinal trocado à
+# espera de acontecer.
+# ===========================================================================
+
+
+def _dia_de_negocio(*, inicio_do_dia: time) -> Cast:
+    """O balde do **dia de negócio** de `occurred_at`, como expressão SQL.
+
+    Com o dia a começar às 04:00, um `waste` das 02:00 pertence ao dia
+    anterior. A expressão é
+    `(occurred_at AT TIME ZONE <fuso>) - <início>`, lida como data — e
+    `::date` sobre um `timestamp` **é** o `date_trunc('day', …)` que a ADR 0013
+    decisão 8 escreve, com o resultado já no tipo certo: um dia de negócio é
+    uma data e não um instante.
+
+    Três coisas que dependem da ordem das operações e por isso ficam escritas:
+
+    * o desconto da hora é **na hora local**, depois do `AT TIME ZONE`. Em UTC,
+      o domingo de março tem 23 horas e o de outubro 25: um movimento das 04:30
+      locais do dia em que o relógio adianta cairia no dia de negócio anterior,
+      e o `Σ(dias) == mês` continuaria a fechar a mentir;
+    * é a **mesma** expressão que o agregado do total não usa — o total é a
+      janela inteira —, logo os baldes particionam exatamente a janela e a soma
+      deles *é* o total, em vez de se aproximar dele;
+    * nada é interpolado em SQL: o fuso e o deslocamento viajam como parâmetros
+      (`%s`). O `Cast` do fuso para `text` existe porque `AT TIME ZONE $1` sem
+      tipo é ambíguo para o Postgres (há uma sobrecarga que recebe `interval`).
+    """
+    deslocamento = timedelta(
+        hours=inicio_do_dia.hour,
+        minutes=inicio_do_dia.minute,
+        seconds=inicio_do_dia.second,
+    )
+    local = Func(
+        F("occurred_at"),
+        Cast(Value(timezone.get_current_timezone_name()), output_field=TextField()),
+        template="(%(expressions)s)",
+        arg_joiner=" AT TIME ZONE ",
+        output_field=DateTimeField(),
+    )
+    return Cast(
+        Func(
+            local,
+            Value(deslocamento, output_field=DurationField()),
+            template="(%(expressions)s)",
+            arg_joiner=" - ",
+            output_field=DateTimeField(),
+        ),
+        output_field=DateField(),
+    )
+
+
+def _valor_do_movimento() -> Sum:
+    """`SUM(quantity × unit_cost)` — o custo **gravado**, nunca o de hoje (ADR 0014)."""
+    return Sum(F("quantity") * F("unit_cost"), output_field=DecimalField())
+
+
+def _valor_estimado() -> Sum:
+    """O mesmo, só sobre as linhas cujo custo ainda não tem fatura atrás."""
+    return Sum(
+        F("quantity") * F("unit_cost"),
+        filter=Q(cost_is_estimate=True),
+        output_field=DecimalField(),
+    )
+
+
+def movimentos_do_periodo(*, tenant_id: UUID, desde: datetime, ate: datetime) -> QuerySet:
+    """A janela `[desde, ate)` do ledger, por `occurred_at`. A base dos agregados.
+
+    `occurred_at` e nunca `created_at` (ADR 0013, decisão 8): uma receção
+    lançada na segunda-feira com a mercadoria entrada no sábado é do sábado, e
+    uma fatura não tem hora.
+    """
+    return StockMovement.objects.filter(
+        tenant_id=tenant_id, occurred_at__gte=desde, occurred_at__lt=ate
+    )
+
+
+def movimentos_agregados_por_tipo(
+    *, tenant_id: UUID, desde: datetime, ate: datetime
+) -> list[dict[str, Any]]:
+    """Um `GROUP BY movement_type` da janela: quantos, quanto e quanto por estimar.
+
+    Devolve **uma linha por tipo presente**, com os valores como o ledger os
+    gravou. Quem lê classifica os tipos; esta função não sabe o que é uma
+    compra.
+    """
+    return [
+        {
+            "movement_type": linha["movement_type"],
+            "n": linha["n"],
+            "quantidade": linha["quantidade"] or Decimal("0"),
+            "valor_eur": linha["valor"] or Decimal("0"),
+            "valor_estimado_eur": linha["valor_estimado"] or Decimal("0"),
+        }
+        for linha in movimentos_do_periodo(tenant_id=tenant_id, desde=desde, ate=ate)
+        .values("movement_type")
+        .annotate(n=Count("id"), quantidade=Sum("quantity"))
+        .annotate(valor=_valor_do_movimento(), valor_estimado=_valor_estimado())
+        .order_by("movement_type")
+    ]
+
+
+def movimentos_agregados_por_dia_de_negocio(
+    *, tenant_id: UUID, desde: datetime, ate: datetime, inicio_do_dia: time
+) -> list[dict[str, Any]]:
+    """O mesmo agregado, com o balde do dia de negócio ao lado do tipo.
+
+    A soma dos dias **é** o total da janela: o filtro é o mesmo e o balde é uma
+    partição dele (ADR 0013, decisão 8). Um dia sem movimentos não tem linha —
+    quem desenha o gráfico é que sabe quantas barras quer.
+    """
+    return [
+        {
+            "dia": linha["dia"],
+            "movement_type": linha["movement_type"],
+            "n": linha["n"],
+            "quantidade": linha["quantidade"] or Decimal("0"),
+            "valor_eur": linha["valor"] or Decimal("0"),
+            "valor_estimado_eur": linha["valor_estimado"] or Decimal("0"),
+        }
+        for linha in movimentos_do_periodo(tenant_id=tenant_id, desde=desde, ate=ate)
+        .annotate(dia=_dia_de_negocio(inicio_do_dia=inicio_do_dia))
+        .values("dia", "movement_type")
+        .annotate(n=Count("id"), quantidade=Sum("quantity"))
+        .annotate(valor=_valor_do_movimento(), valor_estimado=_valor_estimado())
+        .order_by("dia", "movement_type")
+    ]
+
+
+def desperdicio_agregado_por_motivo(
+    *, tenant_id: UUID, desde: datetime, ate: datetime
+) -> list[dict[str, Any]]:
+    """Σ dos `waste` da janela por motivo. **Cinco linhas, sem truncatura.**
+
+    O `desperdicio_por_artigo_e_motivo` corta a lista porque serve uma resposta
+    a uma pessoa; este é um total, e um total truncado é um total errado. São
+    cinco motivos: não há lista para cortar.
+    """
+    return [
+        {
+            "reason": linha["reason"] or "",
+            "n": linha["n"],
+            "quantidade": linha["quantidade"] or Decimal("0"),
+            "valor_eur": linha["valor"] or Decimal("0"),
+        }
+        for linha in movimentos_do_periodo(tenant_id=tenant_id, desde=desde, ate=ate)
+        .filter(movement_type="waste")
+        .values("reason")
+        .annotate(n=Count("id"), quantidade=Sum("quantity"))
+        .annotate(valor=_valor_do_movimento())
+        .order_by("reason")
+    ]
+
+
+def valor_de_stock(*, tenant_id: UUID) -> Decimal:
+    """`Σ(quantidade × CMP)` dos níveis de stock — **instantâneo a agora**.
+
+    Base diferente da do fluxo: o fluxo vale ao custo gravado em cada movimento
+    (ADR 0014) e isto vale ao custo médio de hoje, porque é o que está lá. Não
+    se deriva a variação de stock pela diferença de dois instantâneos, e não se
+    serve um "valor de abertura" — quem lê imprime a data a que isto foi lido.
+    """
+    agregado = StockLevel.objects.filter(tenant_id=tenant_id).aggregate(
+        valor=Sum(F("quantity") * F("unit_cost"), output_field=DecimalField())
+    )
+    return agregado["valor"] or Decimal("0")
+
+
+def ultima_contagem_fechada_em(*, tenant_id: UUID) -> datetime | None:
+    """`MAX(closed_at)` das contagens **fechadas**, ou `None` se nunca houve uma.
+
+    Fechadas e não iniciadas: é o fecho que gera os `adjustment`, logo é o fecho
+    que explica a quebra desconhecida. `None` é "nunca se contou", e o painel
+    escreve-o — zero quebra sem contagem não é boa notícia, é ausência de
+    medição (ADR 0013, decisão 7).
+    """
+    return StockCount.objects.filter(tenant_id=tenant_id, status="closed").aggregate(
+        ultima=Max("closed_at")
+    )["ultima"]

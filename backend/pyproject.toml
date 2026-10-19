@@ -158,8 +158,10 @@ ignore_imports = [
     # Exceções privadas (imports locais em funções, TYPE_CHECKING, etc.)
     "apps.catalog.services -> apps.inventory.models",  # Verificação privada de stock
     "apps.recipes.services -> apps.inventory.models",  # Import local privado
-    "apps.reporting.services -> apps.inventory.models",  # Agregações de dados
-    "apps.reporting.services -> apps.catalog.models",  # (permitido via apps.catalog.api)
+    # As duas entradas do `reporting` saíram a 2026-10-19 (ADR 0029, decisão 2):
+    # o `projection_report` que importava `inventory.models` e `catalog.models`
+    # morreu com o `services.py`, e o módulo passou a falar só por `api.py`s.
+    # Uma excepção que já não tem aresta por baixo é uma permissão esquecida.
     "apps.demo.** -> apps.accounts.models",  # Imports locais privados em seed_demo
     "apps.demo.** -> apps.catalog.models",  # Imports locais privados em seed_demo
 ]
@@ -375,6 +377,7 @@ source_modules = [
     "apps.agents",
     "apps.billing",
     "apps.notifications",
+    "apps.reporting",
 ]
 forbidden_modules = ["apps.demo"]
 ignore_imports = [
@@ -384,3 +387,39 @@ ignore_imports = [
 unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 
+
+# Garante: **ninguém importa o `reporting`.** É a decisão 3 da ADR 0013, e esta
+# fatia é a primeira em que ela está imposta — até 2026-10-19 só o contrato do
+# `agents` o proibia, e uma propriedade garantida por um contrato parcial não
+# está garantida (ADR 0029, decisão 3).
+#
+# O `reporting` é um **sumidouro de leitura**: as únicas arestas são de saída
+# (`accounts.api` e `inventory.api` nesta fatia), não tem `models.py`, não tem
+# migração, não tem política de RLS e **não tem `api.py`** — a ausência é a
+# decisão. O perigo que isto fecha nunca foi importar interfaces públicas: é o
+# `reporting` passar a ser dependência de alguém, e com isso a agregação de
+# euros deixar de ter um sítio só. No dia em que o assistente quiser a
+# identidade dos três termos, é ADR própria a revogar a decisão 3 com
+# argumento, e não um `api.py` acrescentado em silêncio.
+#
+# O espelho disto é o contrato do `demo`, do outro lado: ali as arestas de
+# saída são de escrita, aqui de leitura.
+[[tool.importlinter.contracts]]
+name = "ninguém importa o reporting: as arestas dele são todas de saída"
+type = "forbidden"
+source_modules = [
+    "apps.accounts",
+    "apps.shared",
+    "apps.catalog",
+    "apps.inventory",
+    "apps.purchasing",
+    "apps.recipes",
+    "apps.agents",
+    "apps.billing",
+    "apps.notifications",
+    "apps.demo",
+]
+forbidden_modules = ["apps.reporting"]
+ignore_imports = ["apps.** -> apps.*.events"]  # DTOs de evento — ver cabeçalho
+unmatched_ignore_imports_alerting = "none"
+allow_indirect_imports = true

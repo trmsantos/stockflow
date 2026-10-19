@@ -846,6 +846,14 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/estabelecimento",
         "api/v1/menu",
         "api/v1/menu/rotas",
+        # O painel de gestão (ADR 0029). Com âmbito, que é o default: as três
+        # são leituras agregadas sobre o ledger do estabelecimento da sessão, e
+        # é **dentro** do âmbito que a RLS as cobre — o `reporting` não tem
+        # tabelas nem política próprias, logo é esta transação que o protege.
+        # O `fora_do_admin` acima não cresceu com esta feature.
+        "api/v1/reporting/month",
+        "api/v1/reporting/series",
+        "api/v1/reporting/summary",
         "api/v1/schema/",
     ], (
         "o conjunto das views com âmbito mudou. O default é ter âmbito, logo "

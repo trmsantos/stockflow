@@ -1560,6 +1560,124 @@ paths:
               schema:
                 $ref: '#/components/schemas/RececaoOut'
           description: ''
+  /api/v1/reporting/month:
+    get:
+      operationId: reporting_mes
+      description: '`GET /reporting/month?month=YYYY-MM` — o mês de negócio, não o
+        mês fiscal.'
+      summary: O fecho de um mês de negócio
+      parameters:
+      - in: query
+        name: month
+        schema:
+          type: string
+        description: O mês de negócio, em `YYYY-MM`.
+        required: true
+      tags:
+      - reporting
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FechoDoMesOut'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+  /api/v1/reporting/series:
+    get:
+      operationId: reporting_series
+      description: '`GET /reporting/series` — os baldes do gráfico, com `Σ(points)
+        == total_eur`.'
+      summary: A mesma janela, intervalo a intervalo
+      parameters:
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum:
+          - 30d
+          - 7d
+          - month
+          - prev_month
+          - today
+        description: A janela a resolver. Por omissão, `7d`.
+      tags:
+      - reporting
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeriesDoPeriodoOut'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+  /api/v1/reporting/summary:
+    get:
+      operationId: reporting_resumo
+      description: '`GET /reporting/summary` — a mercadoria do período, e o que não
+        se sabe.'
+      summary: O resumo do período (painel de gestão)
+      parameters:
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum:
+          - 30d
+          - 7d
+          - month
+          - prev_month
+          - today
+        description: A janela a resolver. Por omissão, `7d`.
+      tags:
+      - reporting
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumoDoPeriodoOut'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDoPainelOut'
+          description: ''
   /api/v1/stock/alerts:
     get:
       operationId: stock_alerts
@@ -2054,6 +2172,54 @@ components:
         location:
           type: string
           format: uuid
+    CategoryEnum:
+      enum:
+      - rent
+      - energy
+      - water
+      - gas
+      - card_fees
+      - licences
+      - accounting
+      - other
+      type: string
+      description: |-
+        * `rent` - rent
+        * `energy` - energy
+        * `water` - water
+        * `gas` - gas
+        * `card_fees` - card_fees
+        * `licences` - licences
+        * `accounting` - accounting
+        * `other` - other
+    ComponenteDeCustoOut:
+      type: object
+      description: 'Uma parcela de custo: o servidor decide o que soma e quem contém
+        quem.'
+      properties:
+        id:
+          $ref: '#/components/schemas/IdDeCustoEnum'
+        amount_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        share:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+        is_part_of_total:
+          type: boolean
+        part_of:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/IdDeCustoEnum'
+          - $ref: '#/components/schemas/NullEnum'
+      required:
+      - amount_eur
+      - id
+      - is_part_of_total
+      - part_of
+      - share
     ConservacaoEnum:
       enum:
       - ambient
@@ -2242,6 +2408,53 @@ components:
         * `expirado` - expirou sem ser usado
         * `aceite` - aceite, com pertença criada
         * `revogado` - revogado por quem convidou
+    CustoPorCargoOut:
+      type: object
+      description: O custo de um cargo — que não é o papel de acesso. Lista vazia
+        nesta fatia.
+      properties:
+        role_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        headcount:
+          type: integer
+        payroll_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        share:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+      required:
+      - headcount
+      - name
+      - payroll_eur
+      - role_id
+      - share
+    DesperdicioPorMotivoOut:
+      type: object
+      description: Quanto se perdeu por motivo. Ordenada pelo servidor, a maior primeiro.
+      properties:
+        reason:
+          $ref: '#/components/schemas/ReasonEnum'
+        amount_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        share:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+        movements:
+          type: integer
+      required:
+      - amount_eur
+      - movements
+      - reason
+      - share
     DocTypeEnum:
       enum:
       - FT
@@ -2643,6 +2856,173 @@ components:
       - supplier_name
       - supplier_nif
       - total
+    FechoDoMesOut:
+      type: object
+      description: |-
+        `GET /reporting/month`. A palavra "lucro" não aparece: o campo é `result_eur`.
+
+        Metade dos campos vai a `null` e as quatro listas vêm vazias, e é a decisão
+        1 da ADR 0029: sem `people` não há salários e sem salários não há total de
+        gastos nem resultado. Servir zeros era desenhar barras a zero e um rácio a
+        0% — o painel optimista que a decisão 7 da ADR 0013 nomeia.
+      properties:
+        month:
+          type: string
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+        business_day_starts_at:
+          type: string
+        closed:
+          type: boolean
+        days_elapsed:
+          type: integer
+        days_in_month:
+          type: integer
+        revenue_net_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        revenue_gross_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        revenue_basis:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/RevenueBasisEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        purchases_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        goods_consumed_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_change_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        waste_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        unknown_shrinkage_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_value_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_value_as_of:
+          type: string
+          format: date-time
+        payroll_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        payroll_basis:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/PayrollBasisEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        payroll_source:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/PayrollSourceEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        payroll_breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParteDeSalariosOut'
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustoPorCargoOut'
+        other_costs:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutroCustoOut'
+        costs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComponenteDeCustoOut'
+        cost_total_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        result_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        result_excludes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResultExcludesEnum'
+        goods_cost_ratio_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,1})?$
+          nullable: true
+        labour_cost_ratio_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,1})?$
+          nullable: true
+        prime_cost_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,1})?$
+          nullable: true
+        waste_by_reason:
+          type: array
+          items:
+            $ref: '#/components/schemas/DesperdicioPorMotivoOut'
+        data_quality:
+          $ref: '#/components/schemas/QualidadeDosDadosOut'
+      required:
+      - business_day_starts_at
+      - closed
+      - cost_total_eur
+      - costs
+      - data_quality
+      - days_elapsed
+      - days_in_month
+      - goods_consumed_eur
+      - goods_cost_ratio_pct
+      - labour_cost_ratio_pct
+      - month
+      - other_costs
+      - payroll_basis
+      - payroll_breakdown
+      - payroll_eur
+      - payroll_source
+      - prime_cost_pct
+      - purchases_eur
+      - result_eur
+      - result_excludes
+      - revenue_basis
+      - revenue_gross_eur
+      - revenue_net_eur
+      - roles
+      - since
+      - stock_change_eur
+      - stock_value_as_of
+      - stock_value_eur
+      - unknown_shrinkage_eur
+      - until
+      - waste_by_reason
+      - waste_eur
     FicheiroDeDocumentoInRequest:
       type: object
       description: |-
@@ -2786,6 +3166,65 @@ components:
       required:
       - name
       - nif
+    GranularityEnum:
+      enum:
+      - day
+      - week
+      type: string
+      description: |-
+        * `day` - day
+        * `week` - week
+    IdDeCustoEnum:
+      enum:
+      - purchases
+      - goods_consumed
+      - waste
+      - unknown_shrinkage
+      - payroll
+      - other
+      type: string
+      description: |-
+        * `purchases` - purchases
+        * `goods_consumed` - goods_consumed
+        * `waste` - waste
+        * `unknown_shrinkage` - unknown_shrinkage
+        * `payroll` - payroll
+        * `other` - other
+    IdDeParteDeSalariosEnum:
+      enum:
+      - base
+      - social_security
+      - subsidies
+      - meal_allowance
+      - insurance
+      type: string
+      description: |-
+        * `base` - base
+        * `social_security` - social_security
+        * `subsidies` - subsidies
+        * `meal_allowance` - meal_allowance
+        * `insurance` - insurance
+    IdDeSerieEnum:
+      enum:
+      - revenue
+      - purchases
+      type: string
+      description: |-
+        * `revenue` - revenue
+        * `purchases` - purchases
+    IntervaloOut:
+      type: object
+      description: O intervalo de um ponto. Viaja uma vez, não por série.
+      properties:
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+      required:
+      - since
+      - until
     ItemDeMenuInRequest:
       type: object
       description: |-
@@ -2885,6 +3324,20 @@ components:
       - rotulo
       - route_id
       - visivel
+    KeyEnum:
+      enum:
+      - today
+      - 7d
+      - 30d
+      - month
+      - prev_month
+      type: string
+      description: |-
+        * `today` - today
+        * `7d` - 7d
+        * `30d` - 30d
+        * `month` - month
+        * `prev_month` - prev_month
     LanguageEnum:
       enum:
       - pt-pt
@@ -3151,6 +3604,23 @@ components:
       description: |-
         * `upload` - ficheiro enviado
         * `capture` - fotografado no telemóvel
+    OutroCustoOut:
+      type: object
+      description: Um custo fixo mensal. Lista vazia nesta fatia (sem `purchasing_othercost`).
+      properties:
+        category:
+          $ref: '#/components/schemas/CategoryEnum'
+        amount_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        note:
+          type: string
+          nullable: true
+      required:
+      - amount_eur
+      - category
+      - note
     PaginaOut:
       type: object
       description: |-
@@ -3354,6 +3824,36 @@ components:
         * `owner` - dono
         * `manager` - gerente
         * `staff` - colaborador
+    ParteDeSalariosOut:
+      type: object
+      description: Uma parcela do custo-empresa. **Lista vazia nesta fatia** (sem
+        `people`).
+      properties:
+        id:
+          $ref: '#/components/schemas/IdDeParteDeSalariosEnum'
+        amount_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+      required:
+      - amount_eur
+      - id
+    PayrollBasisEnum:
+      enum:
+      - employer_cost
+      - gross
+      type: string
+      description: |-
+        * `employer_cost` - employer_cost
+        * `gross` - gross
+    PayrollSourceEnum:
+      enum:
+      - contractual
+      - actual
+      type: string
+      description: |-
+        * `contractual` - contractual
+        * `actual` - actual
     PerguntaInRequest:
       type: object
       description: |-
@@ -3368,6 +3868,41 @@ components:
           maxLength: 2000
       required:
       - question
+    PeriodoResolvidoOut:
+      type: object
+      description: 'O período como o servidor o resolveu: mostrar a fronteira, não
+        escondê-la.'
+      properties:
+        key:
+          $ref: '#/components/schemas/KeyEnum'
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+        business_day_starts_at:
+          type: string
+      required:
+      - business_day_starts_at
+      - key
+      - since
+      - until
+    PontoDaSerieOut:
+      type: object
+      description: 'Um ponto: o valor e a altura da barra (`value / scale_max`).'
+      properties:
+        value_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        share:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,3})?$
+      required:
+      - share
+      - value_eur
     PreferenciasInRequest:
       type: object
       description: |-
@@ -3647,6 +4182,35 @@ components:
           $ref: '#/components/schemas/ConservacaoEnum'
         is_active:
           type: boolean
+    QualidadeDosDadosOut:
+      type: object
+      description: O painel declara o que não sabe, e a declaração é parte do contrato.
+      properties:
+        consumption_registered:
+          type: boolean
+        purchases_awaiting_invoice_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        last_count_at:
+          type: string
+          format: date-time
+          nullable: true
+        revenue_source:
+          $ref: '#/components/schemas/RevenueSourceEnum'
+        unavailable:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnavailableEnum'
+        vat_regime:
+          $ref: '#/components/schemas/VatRegimeEnum'
+      required:
+      - consumption_registered
+      - last_count_at
+      - purchases_awaiting_invoice_eur
+      - revenue_source
+      - unavailable
+      - vat_regime
     ReasonEnum:
       enum:
       - expired
@@ -3978,6 +4542,135 @@ components:
       required:
       - code
       - detail
+    RecusaDoPainelOut:
+      type: object
+      description: |-
+        O corpo de um 403 ou de um 400: **só `detail`, sem `code` novo** (ADR 0013, d6).
+
+        É a forma exacta que o DRF já devolve. Não reutiliza o `ErroOutSerializer`
+        do `accounts` — esse não é importável de fora do módulo —, e não tem `code`
+        porque este endpoint não tem ramos de recusa para o cliente distinguir: ou
+        é dono, ou não é.
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+    ResultExcludesEnum:
+      enum:
+      - depreciation
+      - financing
+      - income_tax
+      - owner_compensation
+      type: string
+      description: |-
+        * `depreciation` - depreciation
+        * `financing` - financing
+        * `income_tax` - income_tax
+        * `owner_compensation` - owner_compensation
+    ResumoDoPeriodoOut:
+      type: object
+      description: |-
+        `GET /reporting/summary`. **Sem total de gastos e sem resultado**, de propósito.
+
+        Os dois vivem só no `/month`: um total com a mercadoria discriminada ao lado
+        dá a folha salarial por subtracção (ADR 0013, decisão 6). Hoje o painel
+        inteiro é do dono e não há ninguém a quem isso exponha nada — o invariante
+        fica para o dia em que um bloco se abrir ao encarregado.
+      properties:
+        period:
+          $ref: '#/components/schemas/PeriodoResolvidoOut'
+        revenue_net_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        revenue_gross_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        revenue_basis:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/RevenueBasisEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        purchases_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        goods_consumed_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_change_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        waste_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        unknown_shrinkage_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        goods_cost_ratio_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,1})?$
+          nullable: true
+        stock_value_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        stock_value_as_of:
+          type: string
+          format: date-time
+        costs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComponenteDeCustoOut'
+        waste_by_reason:
+          type: array
+          items:
+            $ref: '#/components/schemas/DesperdicioPorMotivoOut'
+        data_quality:
+          $ref: '#/components/schemas/QualidadeDosDadosOut'
+      required:
+      - costs
+      - data_quality
+      - goods_consumed_eur
+      - goods_cost_ratio_pct
+      - period
+      - purchases_eur
+      - revenue_basis
+      - revenue_gross_eur
+      - revenue_net_eur
+      - stock_change_eur
+      - stock_value_as_of
+      - stock_value_eur
+      - unknown_shrinkage_eur
+      - waste_by_reason
+      - waste_eur
+    RevenueBasisEnum:
+      enum:
+      - gross
+      - net
+      type: string
+      description: |-
+        * `gross` - gross
+        * `net` - net
+    RevenueSourceEnum:
+      enum:
+      - none
+      - manual
+      - pos
+      type: string
+      description: |-
+        * `none` - none
+        * `manual` - manual
+        * `pos` - pos
     RotaDeMenuOut:
       type: object
       description: |-
@@ -4101,6 +4794,54 @@ components:
         * `ver_equipa` - ver_equipa
         * `ver_estabelecimento` - ver_estabelecimento
         * `ver_inicio` - ver_inicio
+    SerieOut:
+      type: object
+      description: Uma série do gráfico.
+      properties:
+        id:
+          $ref: '#/components/schemas/IdDeSerieEnum'
+        unit:
+          type: string
+        total_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/PontoDaSerieOut'
+      required:
+      - id
+      - points
+      - total_eur
+      - unit
+    SeriesDoPeriodoOut:
+      type: object
+      description: '`GET /reporting/series`. Hoje com **uma** série, e a legenda diz
+        porquê.'
+      properties:
+        period:
+          $ref: '#/components/schemas/PeriodoResolvidoOut'
+        granularity:
+          $ref: '#/components/schemas/GranularityEnum'
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntervaloOut'
+        scale_max_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/SerieOut'
+      required:
+      - buckets
+      - granularity
+      - period
+      - scale_max_eur
+      - series
     SessaoOut:
       type: object
       description: |-
@@ -4405,6 +5146,16 @@ components:
       - product_id
       - quantity
       - to_location_id
+    UnavailableEnum:
+      enum:
+      - revenue
+      - payroll
+      - other_costs
+      type: string
+      description: |-
+        * `revenue` - revenue
+        * `payroll` - payroll
+        * `other_costs` - other_costs
     UtilizadorOut:
       type: object
       description: |-

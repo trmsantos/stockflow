@@ -882,6 +882,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reporting/month": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * O fecho de um mês de negócio
+         * @description `GET /reporting/month?month=YYYY-MM` — o mês de negócio, não o mês fiscal.
+         */
+        get: operations["reporting_mes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reporting/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A mesma janela, intervalo a intervalo
+         * @description `GET /reporting/series` — os baldes do gráfico, com `Σ(points) == total_eur`.
+         */
+        get: operations["reporting_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reporting/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * O resumo do período (painel de gestão)
+         * @description `GET /reporting/summary` — a mercadoria do período, e o que não se sabe.
+         */
+        get: operations["reporting_resumo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stock/alerts": {
         parameters: {
             query?: never;
@@ -1246,6 +1306,28 @@ export interface components {
             supplier?: string | null;
         };
         /**
+         * @description * `rent` - rent
+         *     * `energy` - energy
+         *     * `water` - water
+         *     * `gas` - gas
+         *     * `card_fees` - card_fees
+         *     * `licences` - licences
+         *     * `accounting` - accounting
+         *     * `other` - other
+         * @enum {string}
+         */
+        CategoryEnum: "rent" | "energy" | "water" | "gas" | "card_fees" | "licences" | "accounting" | "other";
+        /** @description Uma parcela de custo: o servidor decide o que soma e quem contém quem. */
+        ComponenteDeCustoOut: {
+            /** Format: decimal */
+            amount_eur: string;
+            id: components["schemas"]["IdDeCustoEnum"];
+            is_part_of_total: boolean;
+            part_of: (components["schemas"]["IdDeCustoEnum"] | components["schemas"]["NullEnum"]) | null;
+            /** Format: decimal */
+            share: string;
+        };
+        /**
          * @description * `ambient` - ambiente
          *     * `chilled` - refrigerado
          *     * `frozen` - congelado
@@ -1367,6 +1449,26 @@ export interface components {
          * @enum {string}
          */
         ConviteOutEstadoEnum: "pendente" | "expirado" | "aceite" | "revogado";
+        /** @description O custo de um cargo — que não é o papel de acesso. Lista vazia nesta fatia. */
+        CustoPorCargoOut: {
+            headcount: number;
+            name: string;
+            /** Format: decimal */
+            payroll_eur: string;
+            /** Format: uuid */
+            role_id: string;
+            /** Format: decimal */
+            share: string;
+        };
+        /** @description Quanto se perdeu por motivo. Ordenada pelo servidor, a maior primeiro. */
+        DesperdicioPorMotivoOut: {
+            /** Format: decimal */
+            amount_eur: string;
+            movements: number;
+            reason: components["schemas"]["ReasonEnum"];
+            /** Format: decimal */
+            share: string;
+        };
         /**
          * @description * `FT` - FT
          *     * `FR` - FR
@@ -1622,6 +1724,65 @@ export interface components {
             total: string | null;
         };
         /**
+         * @description `GET /reporting/month`. A palavra "lucro" não aparece: o campo é `result_eur`.
+         *
+         *     Metade dos campos vai a `null` e as quatro listas vêm vazias, e é a decisão
+         *     1 da ADR 0029: sem `people` não há salários e sem salários não há total de
+         *     gastos nem resultado. Servir zeros era desenhar barras a zero e um rácio a
+         *     0% — o painel optimista que a decisão 7 da ADR 0013 nomeia.
+         */
+        FechoDoMesOut: {
+            business_day_starts_at: string;
+            closed: boolean;
+            /** Format: decimal */
+            cost_total_eur: string | null;
+            costs: components["schemas"]["ComponenteDeCustoOut"][];
+            data_quality: components["schemas"]["QualidadeDosDadosOut"];
+            days_elapsed: number;
+            days_in_month: number;
+            /** Format: decimal */
+            goods_consumed_eur: string;
+            /** Format: decimal */
+            goods_cost_ratio_pct: string | null;
+            /** Format: decimal */
+            labour_cost_ratio_pct: string | null;
+            month: string;
+            other_costs: components["schemas"]["OutroCustoOut"][];
+            payroll_basis: (components["schemas"]["PayrollBasisEnum"] | components["schemas"]["NullEnum"]) | null;
+            payroll_breakdown: components["schemas"]["ParteDeSalariosOut"][];
+            /** Format: decimal */
+            payroll_eur: string | null;
+            payroll_source: (components["schemas"]["PayrollSourceEnum"] | components["schemas"]["NullEnum"]) | null;
+            /** Format: decimal */
+            prime_cost_pct: string | null;
+            /** Format: decimal */
+            purchases_eur: string;
+            /** Format: decimal */
+            result_eur: string | null;
+            result_excludes: components["schemas"]["ResultExcludesEnum"][];
+            revenue_basis: (components["schemas"]["RevenueBasisEnum"] | components["schemas"]["NullEnum"]) | null;
+            /** Format: decimal */
+            revenue_gross_eur: string | null;
+            /** Format: decimal */
+            revenue_net_eur: string | null;
+            roles: components["schemas"]["CustoPorCargoOut"][];
+            /** Format: date-time */
+            since: string;
+            /** Format: decimal */
+            stock_change_eur: string;
+            /** Format: date-time */
+            stock_value_as_of: string;
+            /** Format: decimal */
+            stock_value_eur: string;
+            /** Format: decimal */
+            unknown_shrinkage_eur: string;
+            /** Format: date-time */
+            until: string;
+            waste_by_reason: components["schemas"]["DesperdicioPorMotivoOut"][];
+            /** Format: decimal */
+            waste_eur: string;
+        };
+        /**
          * @description O corpo do `POST /documents/<id>/files`: **um** ficheiro, obrigatório.
          *
          *     Um e não uma lista: *"um ficheiro é um documento, com N páginas, e nunca é
@@ -1700,6 +1861,44 @@ export interface components {
             nif: string;
         };
         /**
+         * @description * `day` - day
+         *     * `week` - week
+         * @enum {string}
+         */
+        GranularityEnum: "day" | "week";
+        /**
+         * @description * `purchases` - purchases
+         *     * `goods_consumed` - goods_consumed
+         *     * `waste` - waste
+         *     * `unknown_shrinkage` - unknown_shrinkage
+         *     * `payroll` - payroll
+         *     * `other` - other
+         * @enum {string}
+         */
+        IdDeCustoEnum: "purchases" | "goods_consumed" | "waste" | "unknown_shrinkage" | "payroll" | "other";
+        /**
+         * @description * `base` - base
+         *     * `social_security` - social_security
+         *     * `subsidies` - subsidies
+         *     * `meal_allowance` - meal_allowance
+         *     * `insurance` - insurance
+         * @enum {string}
+         */
+        IdDeParteDeSalariosEnum: "base" | "social_security" | "subsidies" | "meal_allowance" | "insurance";
+        /**
+         * @description * `revenue` - revenue
+         *     * `purchases` - purchases
+         * @enum {string}
+         */
+        IdDeSerieEnum: "revenue" | "purchases";
+        /** @description O intervalo de um ponto. Viaja uma vez, não por série. */
+        IntervaloOut: {
+            /** Format: date-time */
+            since: string;
+            /** Format: date-time */
+            until: string;
+        };
+        /**
          * @description Uma linha do corpo do `PUT /menu`: o que o tenant decidiu sobre uma rota.
          *
          *     Os quatro campos configuráveis, e nada mais. **Não** há `campo`, e isso é
@@ -1766,6 +1965,15 @@ export interface components {
             route_id: components["schemas"]["RotaIdEnum"];
             visivel: boolean;
         };
+        /**
+         * @description * `today` - today
+         *     * `7d` - 7d
+         *     * `30d` - 30d
+         *     * `month` - month
+         *     * `prev_month` - prev_month
+         * @enum {string}
+         */
+        KeyEnum: "today" | "7d" | "30d" | "month" | "prev_month";
         /**
          * @description * `pt-pt` - Português (Portugal)
          *     * `en` - English
@@ -1900,6 +2108,13 @@ export interface components {
          * @enum {string}
          */
         OrigemDoDocumentoEnum: "upload" | "capture";
+        /** @description Um custo fixo mensal. Lista vazia nesta fatia (sem `purchasing_othercost`). */
+        OutroCustoOut: {
+            /** Format: decimal */
+            amount_eur: string;
+            category: components["schemas"]["CategoryEnum"];
+            note: string | null;
+        };
         /**
          * @description Uma página: a ordem, a imagem e a geometria.
          *
@@ -2031,6 +2246,24 @@ export interface components {
          * @enum {string}
          */
         PapelEnum: "owner" | "manager" | "staff";
+        /** @description Uma parcela do custo-empresa. **Lista vazia nesta fatia** (sem `people`). */
+        ParteDeSalariosOut: {
+            /** Format: decimal */
+            amount_eur: string;
+            id: components["schemas"]["IdDeParteDeSalariosEnum"];
+        };
+        /**
+         * @description * `employer_cost` - employer_cost
+         *     * `gross` - gross
+         * @enum {string}
+         */
+        PayrollBasisEnum: "employer_cost" | "gross";
+        /**
+         * @description * `contractual` - contractual
+         *     * `actual` - actual
+         * @enum {string}
+         */
+        PayrollSourceEnum: "contractual" | "actual";
         /**
          * @description O corpo dos dois `POST`: a pergunta, e mais nada.
          *
@@ -2039,6 +2272,22 @@ export interface components {
          */
         PerguntaInRequest: {
             question: string;
+        };
+        /** @description O período como o servidor o resolveu: mostrar a fronteira, não escondê-la. */
+        PeriodoResolvidoOut: {
+            business_day_starts_at: string;
+            key: components["schemas"]["KeyEnum"];
+            /** Format: date-time */
+            since: string;
+            /** Format: date-time */
+            until: string;
+        };
+        /** @description Um ponto: o valor e a altura da barra (`value / scale_max`). */
+        PontoDaSerieOut: {
+            /** Format: decimal */
+            share: string;
+            /** Format: decimal */
+            value_eur: string;
         };
         /**
          * @description O corpo do `PATCH /auth/preferencias`: o tema que esta pessoa prefere.
@@ -2197,6 +2446,17 @@ export interface components {
             sku?: string;
             track_lots?: boolean;
         };
+        /** @description O painel declara o que não sabe, e a declaração é parte do contrato. */
+        QualidadeDosDadosOut: {
+            consumption_registered: boolean;
+            /** Format: date-time */
+            last_count_at: string | null;
+            /** Format: decimal */
+            purchases_awaiting_invoice_eur: string;
+            revenue_source: components["schemas"]["RevenueSourceEnum"];
+            unavailable: components["schemas"]["UnavailableEnum"][];
+            vat_regime: components["schemas"]["VatRegimeEnum"];
+        };
         /**
          * @description * `expired` - expired
          *     * `spoiled` - spoiled
@@ -2342,6 +2602,73 @@ export interface components {
             detail: string;
         };
         /**
+         * @description O corpo de um 403 ou de um 400: **só `detail`, sem `code` novo** (ADR 0013, d6).
+         *
+         *     É a forma exacta que o DRF já devolve. Não reutiliza o `ErroOutSerializer`
+         *     do `accounts` — esse não é importável de fora do módulo —, e não tem `code`
+         *     porque este endpoint não tem ramos de recusa para o cliente distinguir: ou
+         *     é dono, ou não é.
+         */
+        RecusaDoPainelOut: {
+            detail: string;
+        };
+        /**
+         * @description * `depreciation` - depreciation
+         *     * `financing` - financing
+         *     * `income_tax` - income_tax
+         *     * `owner_compensation` - owner_compensation
+         * @enum {string}
+         */
+        ResultExcludesEnum: "depreciation" | "financing" | "income_tax" | "owner_compensation";
+        /**
+         * @description `GET /reporting/summary`. **Sem total de gastos e sem resultado**, de propósito.
+         *
+         *     Os dois vivem só no `/month`: um total com a mercadoria discriminada ao lado
+         *     dá a folha salarial por subtracção (ADR 0013, decisão 6). Hoje o painel
+         *     inteiro é do dono e não há ninguém a quem isso exponha nada — o invariante
+         *     fica para o dia em que um bloco se abrir ao encarregado.
+         */
+        ResumoDoPeriodoOut: {
+            costs: components["schemas"]["ComponenteDeCustoOut"][];
+            data_quality: components["schemas"]["QualidadeDosDadosOut"];
+            /** Format: decimal */
+            goods_consumed_eur: string;
+            /** Format: decimal */
+            goods_cost_ratio_pct: string | null;
+            period: components["schemas"]["PeriodoResolvidoOut"];
+            /** Format: decimal */
+            purchases_eur: string;
+            revenue_basis: (components["schemas"]["RevenueBasisEnum"] | components["schemas"]["NullEnum"]) | null;
+            /** Format: decimal */
+            revenue_gross_eur: string | null;
+            /** Format: decimal */
+            revenue_net_eur: string | null;
+            /** Format: decimal */
+            stock_change_eur: string;
+            /** Format: date-time */
+            stock_value_as_of: string;
+            /** Format: decimal */
+            stock_value_eur: string;
+            /** Format: decimal */
+            unknown_shrinkage_eur: string;
+            waste_by_reason: components["schemas"]["DesperdicioPorMotivoOut"][];
+            /** Format: decimal */
+            waste_eur: string;
+        };
+        /**
+         * @description * `gross` - gross
+         *     * `net` - net
+         * @enum {string}
+         */
+        RevenueBasisEnum: "gross" | "net";
+        /**
+         * @description * `none` - none
+         *     * `manual` - manual
+         *     * `pos` - pos
+         * @enum {string}
+         */
+        RevenueSourceEnum: "none" | "manual" | "pos";
+        /**
          * @description Uma rota do **registo**: o que existe para configurar, e os seus defaults.
          *
          *     É a resposta do `GET /menu/rotas`, e o que ela descreve é código e não dados
@@ -2423,6 +2750,23 @@ export interface components {
          * @enum {string}
          */
         RotuloIdEnum: "ver_artigo" | "ver_falta" | "ver_validade" | "ver_desperdicio" | "ver_alertas" | "rever_rececoes" | "ver_rececoes_de_hoje" | "ver_rececoes" | "ver_rececao" | "ver_contagens" | "ver_painel" | "ver_stock" | "ver_equipa" | "ver_estabelecimento" | "ver_inicio";
+        /** @description Uma série do gráfico. */
+        SerieOut: {
+            id: components["schemas"]["IdDeSerieEnum"];
+            points: components["schemas"]["PontoDaSerieOut"][];
+            /** Format: decimal */
+            total_eur: string;
+            unit: string;
+        };
+        /** @description `GET /reporting/series`. Hoje com **uma** série, e a legenda diz porquê. */
+        SeriesDoPeriodoOut: {
+            buckets: components["schemas"]["IntervaloOut"][];
+            granularity: components["schemas"]["GranularityEnum"];
+            period: components["schemas"]["PeriodoResolvidoOut"];
+            /** Format: decimal */
+            scale_max_eur: string;
+            series: components["schemas"]["SerieOut"][];
+        };
         /**
          * @description A resposta dos cinco endpoints de autenticação. Sempre esta forma.
          *
@@ -2614,6 +2958,13 @@ export interface components {
              */
             to_location_id: string;
         };
+        /**
+         * @description * `revenue` - revenue
+         *     * `payroll` - payroll
+         *     * `other_costs` - other_costs
+         * @enum {string}
+         */
+        UnavailableEnum: "revenue" | "payroll" | "other_costs";
         /**
          * @description Quem está autenticado: id e email, e mais nada.
          *
@@ -3977,6 +4328,120 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    reporting_mes: {
+        parameters: {
+            query: {
+                /** @description O mês de negócio, em `YYYY-MM`. */
+                month: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FechoDoMesOut"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoPainelOut"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoPainelOut"];
+                };
+            };
+        };
+    };
+    reporting_series: {
+        parameters: {
+            query?: {
+                /** @description A janela a resolver. Por omissão, `7d`. */
+                period?: "30d" | "7d" | "month" | "prev_month" | "today";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDoPeriodoOut"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoPainelOut"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoPainelOut"];
+                };
+            };
+        };
+    };
+    reporting_resumo: {
+        parameters: {
+            query?: {
+                /** @description A janela a resolver. Por omissão, `7d`. */
+                period?: "30d" | "7d" | "month" | "prev_month" | "today";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumoDoPeriodoOut"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoPainelOut"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDoPainelOut"];
                 };
             };
         };

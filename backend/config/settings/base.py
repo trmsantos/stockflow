@@ -428,6 +428,33 @@ SPECTACULAR_SETTINGS = {
         # `Conservation500Enum` — o nome por colisão, que muda sozinho.
         "ConservacaoEnum": "apps.catalog.models.Conservacao",
         "ConservacaoMedidaEnum": ["chilled", "frozen"],
+        # As três uniões do painel que se chamam `id` (ADR 0013, decisão 5).
+        # Sem estas entradas, três conjuntos de valores diferentes partilhavam
+        # o nome derivado do campo (`IdEnum`) e o drf-spectacular resolvia a
+        # colisão com um sufixo de hash — `Id50cEnum`, um nome que muda sozinho
+        # quando a lista muda, e um warning que é exit 1 no `pnpm gen:api`.
+        #
+        # O `IdDeCustoEnum` resolve uma segunda coisa de borla: o `part_of` de
+        # `ComponenteDeCustoOut` tem o mesmo conjunto com outro nome de campo,
+        # e um conjunto com dois nomes é o outro warning desta família.
+        #
+        # Os nomes são os que o `features/reporting/schemas.ts` já usa.
+        "IdDeCustoEnum": [
+            "purchases",
+            "goods_consumed",
+            "waste",
+            "unknown_shrinkage",
+            "payroll",
+            "other",
+        ],
+        "IdDeSerieEnum": ["revenue", "purchases"],
+        "IdDeParteDeSalariosEnum": [
+            "base",
+            "social_security",
+            "subsidies",
+            "meal_allowance",
+            "insurance",
+        ],
     },
 }
 

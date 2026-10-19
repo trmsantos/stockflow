@@ -93,10 +93,12 @@ docker/
 | `tasks.py` | Tarefas Celery | Não |
 | `permissions.py` | Classes DRF `has_permission` / `has_object_permission` | Não |
 
-Imposição: 10 contratos `forbidden` em `backend/pyproject.toml` — um transversal (entre módulos só
-se importa `api.py`, `events.py` e `apps.shared`) e um por módulo-origem, todos com
-`allow_indirect_imports = true`: só as arestas diretas são proibidas. Nem a interface pública é
-livre — `apps.notifications` a importar `apps.inventory.api` dá `BROKEN` e exit 1 no `lint-imports`.
+Imposição: 12 contratos `forbidden` em `backend/pyproject.toml` — um transversal (entre módulos só
+se importa `api.py`, `events.py` e `apps.shared`), um por módulo-origem e **dois de sumidouro**
+(ninguém importa o `demo`, ADR 0018; ninguém importa o `reporting`, ADR 0013 decisão 3 e ADR 0029
+decisão 3), todos com `allow_indirect_imports = true`: só as arestas diretas são proibidas. Nem a
+interface pública é livre — `apps.notifications` a importar `apps.inventory.api` dá `BROKEN` e
+exit 1 no `lint-imports`.
 
 ## 4. Fluxo de um request
 
