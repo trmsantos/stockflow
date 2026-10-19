@@ -30,8 +30,22 @@ from apps.catalog.selectors import codigos_do_produto as _codigos_do_produto
 from apps.catalog.selectors import embalagens_do_produto as _embalagens_do_produto
 from apps.catalog.selectors import procurar_fornecedores as _procurar_fornecedores
 from apps.catalog.selectors import procurar_produtos as _procurar_produtos
+from apps.catalog.unidades import (
+    DIMENSAO_DA_BASE,
+    FACTORES,
+    dimensao_da_unidade,
+    factor_para_base,
+)
 
 __all__ = [
+    # A tabela fechada de unidades (ADR 0022, §4.3), reexportada **sem
+    # invólucro**: são funções puras, e o `purchasing` usa-as para a conversão
+    # `invoice_unit → base_unit` sem nunca assumir um factor 1 implícito.
+    "DIMENSAO_DA_BASE",
+    "FACTORES",
+    "dimensao_da_unidade",
+    "factor_para_base",
+    "nif_valido",
     "CodigoDeFornecedorResumo",
     "Correspondencia",
     "CorrespondenciaAprendida",
@@ -157,12 +171,20 @@ class Correspondencia:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class CorrespondenciaAprendida:
-    """Um match a guardar após confirmação de receção (upsert)."""
+    """Um match a guardar após confirmação de receção (upsert).
+
+    `invoice_unit` é a unidade com que o código foi aprendido, normalizada (ADR
+    0022, emenda do `domain-expert`): sem ela, o mesmo código a mudar de `UN`
+    para `CX` dava ×50 em silêncio na fatura seguinte. Tem default porque a
+    coluna é `blank` e um código aprendido sem unidade impressa continua a ser
+    um match válido — o que não existe é um factor inventado por cima dele.
+    """
 
     code: str
     description_raw: str
     product_id: UUID
     packaging_id: UUID | None
+    invoice_unit: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +457,7 @@ def memorizar_correspondencias(
                 packaging_id=item.packaging_id,
                 code=item.code,
                 description_raw=item.description_raw,
+                invoice_unit=normalizar_unidade(item.invoice_unit),
                 learned_at=agora,
             )
         )
@@ -453,13 +476,14 @@ def memorizar_correspondencias(
     sql = """
     INSERT INTO catalog_supplierproductcode
         (id, tenant_id, supplier_id, product_id, packaging_id,
-         code, description_raw, learned_at, created_at, updated_at)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+         code, description_raw, invoice_unit, learned_at, created_at, updated_at)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON CONFLICT (tenant_id, supplier_id, code)
     DO UPDATE SET
         product_id = EXCLUDED.product_id,
         packaging_id = EXCLUDED.packaging_id,
         description_raw = EXCLUDED.description_raw,
+        invoice_unit = EXCLUDED.invoice_unit,
         learned_at = EXCLUDED.learned_at,
         updated_at = EXCLUDED.updated_at
     """
@@ -475,6 +499,7 @@ def memorizar_correspondencias(
                 item.packaging_id,
                 item.code,
                 item.description_raw,
+                item.invoice_unit,
                 item.learned_at,
                 timezone.now(),
                 timezone.now(),
@@ -495,6 +520,28 @@ def normalizar_nif(nif: str) -> str:
     if nif.startswith("PT") and len(nif) == 11 and nif[2:].isdigit():
         nif = nif[2:]
     return nif
+
+
+def nif_valido(nif: str) -> bool:
+    """O NIF tem nove dígitos e o **dígito de controlo** bate certo?
+
+    O NIF português é mod-11 sobre os oito primeiros dígitos com pesos 9..2, e o
+    nono é o resto. Esse dígito é a razão de a reconciliação poder ser por chave
+    exacta (ADR 0031, decisão 5): **um erro de OCR não dá match nenhum em vez de
+    dar o match errado**, e um match errado liga a fatura ao fornecedor errado e
+    envenena a memória `(fornecedor, código) → artigo` para sempre.
+
+    Puro e sem base de dados. `False` para tudo o que não tem a forma, incluindo
+    o vazio: falha fechada, que é o comportamento que se quer de uma porta de
+    entrada.
+    """
+    digitos = normalizar_nif(nif)
+    if len(digitos) != 9 or not digitos.isdigit():
+        return False
+    soma = sum(int(digitos[i]) * (9 - i) for i in range(8))
+    resto = soma % 11
+    controlo = 0 if resto < 2 else 11 - resto
+    return controlo == int(digitos[8])
 
 
 def normalizar_unidade(unidade: str) -> str:

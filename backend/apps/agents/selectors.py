@@ -31,6 +31,7 @@ __all__ = [
     "conversa_do_utilizador",
     "conversas_do_utilizador",
     "conversas_expiradas",
+    "custo_de_extracao_do_dia",
     "custo_do_dia",
     "ja_houve_tentativa",
     "mensagens_da_conversa",
@@ -55,6 +56,24 @@ def ja_houve_tentativa(*, tenant_id: UUID, documento_id: UUID) -> bool:
     return Extraction.objects.filter(
         tenant_id=tenant_id, document_id=documento_id
     ).exists()
+
+
+def custo_de_extracao_do_dia(
+    *, tenant_id: UUID, agora: datetime | None = None
+) -> Decimal:
+    """`SUM(cost_eur)` das extrações deste tenant desde a meia-noite local.
+
+    **Por tenant e não por utilizador** (ADR 0031, resposta 2 do dono): receber
+    mercadoria não é um acto pessoal, logo não há tecto por pessoa. E separado da
+    soma do chat de propósito: são dois orçamentos com dois números e duas
+    tabelas, e somá-los fazia uma tarde de perguntas ao assistente travar a
+    entrada de uma fatura.
+    """
+    desde = _inicio_do_dia_civil(agora or timezone.now())
+    total = Extraction.objects.filter(
+        tenant_id=tenant_id, created_at__gte=desde
+    ).aggregate(total=Sum("cost_eur"))["total"]
+    return total or Decimal("0")
 
 
 def ultimas_tentativas(

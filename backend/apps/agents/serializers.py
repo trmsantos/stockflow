@@ -97,17 +97,29 @@ class LinhaDeFaturaSerializer(serializers.Serializer):
         allow_null=True,
         default=None,
     )
+    #: Os três da ADR 0031, decisão 5 — **e só três**. `supplier_code` e `ean`
+    #: são a memória do match (sem eles cada fatura é a primeira); `discount_pct`
+    #: existe para o custo **não** derivar do preço bruto. Nenhum dos três
+    #: escolhe uma entidade: são texto impresso e uma percentagem impressa, e o
+    #: artigo continua a ser escolhido por uma pessoa.
+    supplier_code = serializers.CharField(max_length=50, allow_blank=True, default="")
+    ean = serializers.CharField(max_length=14, allow_blank=True, default="")
+    discount_pct = serializers.DecimalField(
+        max_digits=6, decimal_places=3, allow_null=True, default=None
+    )
 
 
 class LeituraDeFaturaSerializer(serializers.Serializer):
     """O cabeçalho e as linhas, como o modelo os leu.
 
-    O cabeçalho está aqui **e** fica nomeado que, a partir do dia em que o QR for
-    descodificado, deixa de ser a melhor fonte: o QR de uma fatura portuguesa traz
-    os dois NIF, o tipo, o estado, a data, o ATCUD, o espaço fiscal e as bases e o
-    IVA por taxa, sem erro de OCR (ADR 0021, adenda). **O QR é a verdade do
-    cabeçalho e o LLM só serve para as linhas** — e o que falta para isso é a
-    biblioteca que lê o QR, não este schema.
+    O cabeçalho está aqui **e já não é a melhor fonte**: desde a ADR 0031, o QR
+    da fatura — gerado por software certificado, sem OCR — **ganha sempre**
+    nestes campos quando é legível, e o que o modelo leu fica guardado como
+    divergência ("o papel diz X, o QR diz Y"). Quem faz essa substituição é o
+    `apps/purchasing/qr.py`, à leitura; este schema continua a pedir o cabeçalho
+    ao modelo porque uma fatura sem QR legível (uma fotografia dobrada, um
+    documento estrangeiro) continua a existir, e porque o nome e a morada do
+    fornecedor não estão no QR.
     """
 
     confidence = serializers.DecimalField(
@@ -182,6 +194,9 @@ def leitura_validada(payload: Any) -> LeituraDeDocumento | None:
                 vat_rate=linha["vat_rate"],
                 line_total=linha["line_total"],
                 confidence=linha["confidence"],
+                supplier_code=linha["supplier_code"],
+                ean=linha["ean"],
+                discount_pct=linha["discount_pct"],
             )
             for linha in sorted(dados["lines"], key=lambda linha: linha["position"])
         ),

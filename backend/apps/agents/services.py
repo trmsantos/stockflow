@@ -47,6 +47,7 @@ from apps.agents.modelo import (
     VERSAO_DO_PROMPT,
     ErroDoModelo,
     ModeloOcupado,
+    OrcamentoEsgotado,
     RespostaDoModelo,
     RespostaInvalida,
     TempoEsgotado,
@@ -67,6 +68,7 @@ from apps.agents.prompt import VERSAO_DO_PROMPT_DO_CHAT, prompt_de_sistema
 from apps.agents.rasto import entrada_de_rasto
 from apps.agents.selectors import (
     conversas_expiradas,
+    custo_de_extracao_do_dia,
     custo_do_dia,
     mensagens_da_conversa,
     perguntas_do_dia,
@@ -90,6 +92,7 @@ __all__ = [
     "fechar_com_resposta",
     "purgar_conversas_do_tenant",
     "responder",
+    "verificar_orcamento_de_extracao",
 ]
 
 logger = logging.getLogger(__name__)
@@ -104,6 +107,29 @@ def chave_de_idempotencia(*, documento_id: UUID, tentativa: int) -> str:
     chave única e nenhuma idempotência, que é o oposto do que o nome promete.
     """
     return f"extracao:{documento_id}:{tentativa}"
+
+
+def verificar_orcamento_de_extracao(*, tenant_id: UUID) -> None:
+    """Levanta `OrcamentoEsgotado` se o tecto diário deste tenant já foi atingido.
+
+    Verificado **imediatamente antes** da chamada e não no pedido: quem pede a
+    extração é um evento, não uma pessoa à espera de um 429, e o que interessa é
+    que nenhuma chamada paga aconteça acima do tecto. O resultado é um `erro`
+    com razão legível e não um estado novo (ADR 0031, decisão 7): *"o tecto
+    diário atingido é um `erro` com a razão legível, que é para isso que o
+    `motivo` existe"*.
+
+    Lê-se aqui e não no `modelo.py` pela mesma razão que o chat: a fronteira do
+    modelo não toca na base de dados.
+    """
+    gasto = custo_de_extracao_do_dia(tenant_id=tenant_id)
+    tecto = Decimal(settings.AGENTS_EXTRACTION_DAILY_BUDGET_EUR)
+    if gasto >= tecto:
+        raise OrcamentoEsgotado(
+            f"o orçamento diário de leitura deste estabelecimento ({tecto} €) "
+            "esgotou-se. As faturas de hoje leem-se à mão, e amanhã volta a "
+            "haver orçamento."
+        )
 
 
 @transaction.atomic
@@ -145,8 +171,16 @@ def fechar_com_resposta(*, tentativa: Extraction, resposta: RespostaDoModelo) ->
 
     A `confidence` sai do payload **só** quando ele valida: um número que vem de
     um payload que não se consegue ler não é uma medida de confiança nenhuma.
+
+    E o ramo `ilegivel` passa a escrever o `error` (ADR 0031, decisão 4): a
+    fronteira entre `ilegivel` e `lido com dúvidas` é **sintáctica e nossa** —
+    nunca a opinião do modelo sobre a fotografia —, e dizer *qual* campo não tem
+    a forma que se lê é a diferença entre "tenta outra vez" e um bilhete para
+    quem escreveu o schema. O texto é o do serializer e nunca o payload: o
+    payload é prova e não vai para lado nenhum sem revisão.
     """
-    valida = leitura_do_payload(resposta.payload).is_valid()
+    serializer = leitura_do_payload(resposta.payload)
+    valida = serializer.is_valid()
     tentativa.payload = resposta.payload
     tentativa.input_tokens = resposta.input_tokens
     tentativa.output_tokens = resposta.output_tokens
@@ -154,6 +188,7 @@ def fechar_com_resposta(*, tentativa: Extraction, resposta: RespostaDoModelo) ->
     tentativa.finished_at = timezone.now()
     tentativa.status = EstadoDaExtracao.LIDO if valida else EstadoDaExtracao.ILEGIVEL
     tentativa.confidence = _confianca(resposta) if valida else None
+    tentativa.error = "" if valida else _razao_da_ilegibilidade(serializer)
     tentativa.save(
         update_fields=[
             "payload",
@@ -163,10 +198,27 @@ def fechar_com_resposta(*, tentativa: Extraction, resposta: RespostaDoModelo) ->
             "finished_at",
             "status",
             "confidence",
+            "error",
             "updated_at",
         ]
     )
     return tentativa
+
+
+def _razao_da_ilegibilidade(serializer: object) -> str:
+    """Que campos não têm a forma que se lê. **Os nomes, nunca os valores.**
+
+    Os valores vêm do modelo e podem ser texto de uma fatura; os nomes dos
+    campos são nossos, estão no schema, e são o que torna a razão accionável.
+    """
+    erros = getattr(serializer, "errors", {})
+    campos = ", ".join(sorted(erros)) if isinstance(erros, dict) else ""
+    if not campos:
+        return "a resposta do modelo não tem a forma de uma leitura de fatura."
+    return (
+        f"a resposta do modelo não tem a forma de uma leitura de fatura: "
+        f"os campos {campos} não validam."
+    )[:_RAZAO_MAXIMA]
 
 
 @transaction.atomic

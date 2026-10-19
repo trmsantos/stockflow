@@ -42,6 +42,7 @@ from django.utils.translation import gettext_lazy as _
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from apps.purchasing.classificacao import AVISOS
 from apps.purchasing.ficheiros import (
     BYTES_PARA_DECIDIR,
     TAMANHO_MAXIMO_DO_FICHEIRO,
@@ -57,6 +58,8 @@ from apps.purchasing.models import (
 from apps.purchasing.services import FicheiroRecebido
 
 __all__ = [
+    "ConferenciaDeIvaOutSerializer",
+    "DivergenciaOutSerializer",
     "DocumentoInSerializer",
     "DocumentoOutSerializer",
     "ExtracaoOutSerializer",
@@ -69,6 +72,7 @@ __all__ = [
     "CabecalhoInSerializer",
     "LinhaInSerializer",
     "LinhaOutSerializer",
+    "LinhasOutSerializer",
     "RececaoInSerializer",
     "RececaoOutSerializer",
     "ResumoDeRececoesOutSerializer",
@@ -254,6 +258,42 @@ class LinhaLidaOutSerializer(serializers.Serializer):
     vat_rate = serializers.DecimalField(max_digits=6, decimal_places=3, allow_null=True)
     line_total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
     confidence = serializers.DecimalField(max_digits=4, decimal_places=3, allow_null=True)
+    supplier_code = serializers.CharField(max_length=50, allow_blank=True)
+    ean = serializers.CharField(max_length=14, allow_blank=True)
+    discount_pct = serializers.DecimalField(max_digits=6, decimal_places=3, allow_null=True)
+
+
+class DivergenciaOutSerializer(serializers.Serializer):
+    """Um campo em que o papel e o QR não dizem o mesmo. Três strings, para ler.
+
+    O valor servido no cabeçalho é sempre o do QR; isto é a prova de que ele
+    ganhou, e o que o ecrã mostra como *"o papel diz X, o QR diz Y"*.
+    """
+
+    field = serializers.CharField(source="campo")
+    paper = serializers.CharField(source="papel")
+    qr = serializers.CharField()
+
+
+class ConferenciaDeIvaOutSerializer(serializers.Serializer):
+    """Σ das linhas lidas numa taxa contra a base dessa taxa no QR.
+
+    `matches` falso é o sinal mais forte que esta feature produz sobre a
+    qualidade de uma leitura — mais forte do que a `confidence`, que o modelo
+    reporta de si próprio.
+    """
+
+    rate = serializers.DecimalField(max_digits=6, decimal_places=3, source="vat_rate")
+    lines_base = serializers.DecimalField(
+        max_digits=12, decimal_places=2, source="base_lida"
+    )
+    qr_base = serializers.DecimalField(
+        max_digits=12, decimal_places=2, source="base_qr", allow_null=True
+    )
+    difference = serializers.DecimalField(
+        max_digits=12, decimal_places=2, source="diferenca", allow_null=True
+    )
+    matches = serializers.BooleanField(source="bate")
 
 
 class ExtracaoOutSerializer(serializers.Serializer):
@@ -285,6 +325,16 @@ class ExtracaoOutSerializer(serializers.Serializer):
     issued_at = serializers.DateField(allow_null=True)
     customer_nif = serializers.CharField(max_length=20, allow_blank=True)
     total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
+    attempt = serializers.IntegerField(source="tentativa")
+    #: Os seis campos do QR (ADR 0031, C). `qr_read` é como o cliente sabe que o
+    #: cabeçalho é certificado e não leitura de uma fotografia; `cancelled` é
+    #: `E=A`, que é recusa e não aviso.
+    atcud = serializers.CharField(max_length=50, allow_blank=True)
+    fiscal_space = serializers.CharField(max_length=10, allow_blank=True)
+    qr_read = serializers.BooleanField(source="qr_lido")
+    cancelled = serializers.BooleanField(source="anulado")
+    divergences = DivergenciaOutSerializer(source="divergencias", many=True)
+    vat_checks = ConferenciaDeIvaOutSerializer(source="iva_por_taxa", many=True)
     lines = LinhaLidaOutSerializer(many=True)
 
 
@@ -524,13 +574,33 @@ class RevisaoDeLinhaInSerializer(serializers.Serializer):
     expires_at = serializers.DateField(required=False, allow_null=True)
     skip = serializers.BooleanField(required=False, default=False)
 
+    def to_internal_value(self, data):
+        """Os nomes do contrato para os nomes que o serviço espera.
+
+        O mesmo que o `RececaoInSerializer` faz, e pela mesma razão — o contrato
+        diz `product` e a coluna chama-se `product_id`. **Faltava aqui**, e a
+        consequência era um 500 em todas as revisões de linha: a view passa
+        `**validated_data` ao `rever_linha`, que não tem parâmetro `product`.
+        """
+        ret = super().to_internal_value(data)
+        for contrato, servico in (
+            ("product", "product_id"),
+            ("packaging", "packaging_id"),
+            ("location", "location_id"),
+        ):
+            if contrato in ret:
+                ret[servico] = ret.pop(contrato)
+        return ret
+
     def validate(self, data):
         """Validações entre campos."""
         # If kind is "goods" and product is provided, check track_lots requirement
         kind = data.get("kind", "goods")
         lot_code = data.get("lot_code", "").strip()
         expires_at = data.get("expires_at")
-        product_id = data.get("product")
+        # Já renomeado pelo `to_internal_value`; o `product` fica como segunda
+        # leitura para quem instancie este serializer com dados já internos.
+        product_id = data.get("product_id") or data.get("product")
 
         if kind == "goods" and product_id:
             from apps.catalog.api import produto_por_id
@@ -588,6 +658,27 @@ class LinhaOutSerializer(serializers.Serializer):
     reviewed_by = serializers.CharField(max_length=150, allow_null=True)
     reviewed_at = serializers.DateTimeField(allow_null=True)
     movement = serializers.UUIDField(allow_null=True)
+    #: **Marcação, nunca correcção** (ADR 0031, D). Lista fechada e derivada à
+    #: leitura — não há coluna nenhuma por trás —, e nenhum destes avisos
+    #: bloqueia a confirmação: o portão é humano e já existe. `ChoiceField` para
+    #: o `types.ts` sair como união e um aviso novo ser um erro de compilação do
+    #: lado do cliente em vez de uma string que ninguém trata.
+    warnings = serializers.ListField(
+        child=serializers.ChoiceField(choices=[(a, a) for a in AVISOS])
+    )
+
+
+class LinhasOutSerializer(serializers.Serializer):
+    """O corpo do `GET /receipts/<id>/lines`: a contagem e as linhas.
+
+    Existe para o `schema.yml` dizer a verdade. Sem ela, o `get_serializer_class`
+    da view devolvia o `RececaoOutSerializer` para esta acção e o contrato
+    prometia um cabeçalho de receção onde serve uma lista de linhas — o cliente
+    gerado não conhecia campo nenhum da linha, incluindo os `warnings`.
+    """
+
+    count = serializers.IntegerField()
+    results = LinhaOutSerializer(many=True)
 
 
 class VatBreakdownSerializer(serializers.Serializer):

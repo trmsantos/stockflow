@@ -7,6 +7,7 @@ POST   /api/v1/documents/<id>/closing         200 DocumentoOut  (repetível)
 GET    /api/v1/documents                      lista paginada
 GET    /api/v1/documents/<id>                 200 DocumentoOut  (o alvo do polling, ADR 0020 d.3)
 GET    /api/v1/documents/<id>/pages/<n>/image 200 image/webp    (inline, nosniff, com âmbito)
+POST   /api/v1/documents/<id>/extraction      202 DocumentoOut  (voltar a ler; ADR 0031, E)
 DELETE /api/v1/documents/<id>                 204               (descarta)
 ```
 
@@ -51,6 +52,9 @@ polling comer o orçamento dos uploads.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+from django.conf import settings
 from django.db.models import QuerySet
 from django.http import FileResponse, Http404
 from drf_spectacular.types import OpenApiTypes
@@ -64,6 +68,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import PertenceAoTenant, membership_atual, utilizador_atual
+from apps.purchasing.classificacao import avisos_da_linha
 from apps.purchasing.ficheiros import caminho_dentro_do_media
 from apps.purchasing.models import InvoiceDocument, Receipt, ReceiptLine
 from apps.purchasing.selectors import (
@@ -76,6 +81,7 @@ from apps.purchasing.selectors import (
     pagina_por_posicao,
     preco_historico,
     resumo_de_recebidas,
+    ultimos_precos_por_codigo,
 )
 from apps.purchasing.serializers import (
     CabecalhoInSerializer,
@@ -84,6 +90,7 @@ from apps.purchasing.serializers import (
     FicheiroDeDocumentoInSerializer,
     LinhaInSerializer,
     LinhaOutSerializer,
+    LinhasOutSerializer,
     RececaoInSerializer,
     RececaoOutSerializer,
     RecusaDeDocumentoOutSerializer,
@@ -92,10 +99,12 @@ from apps.purchasing.serializers import (
     TemperaturaInSerializer,
 )
 from apps.purchasing.services import (
+    CODIGO_DOCUMENTO_ANULADO,
     CODIGO_DOCUMENTO_DESCARTADO,
     CODIGO_DOCUMENTO_FECHADO,
     CODIGO_DOCUMENTO_SEM_PAGINAS,
     CODIGO_PAGINAS_EXCEDIDAS,
+    CODIGO_RELEITURA_RECUSADA,
     CriacaoDeRececaoJaExiste,
     RecusaDeDocumento,
     SemLinhasRevistas,
@@ -106,6 +115,7 @@ from apps.purchasing.services import (
     criar_rececao,
     descartar_documento,
     fechar_documento,
+    pedir_releitura,
     registar_temperatura,
     rever_linha,
 )
@@ -120,6 +130,8 @@ STATUS_DA_RECUSA_DE_DOCUMENTO: dict[str, int] = {
     CODIGO_DOCUMENTO_DESCARTADO: status.HTTP_409_CONFLICT,
     CODIGO_DOCUMENTO_SEM_PAGINAS: status.HTTP_409_CONFLICT,
     CODIGO_PAGINAS_EXCEDIDAS: status.HTTP_400_BAD_REQUEST,
+    CODIGO_DOCUMENTO_ANULADO: status.HTTP_409_CONFLICT,
+    CODIGO_RELEITURA_RECUSADA: status.HTTP_409_CONFLICT,
 }
 
 #: O balde do throttle das escritas. Nome em português porque é um nome interno e
@@ -334,6 +346,35 @@ class DocumentoViewSet(
         except RecusaDeDocumento as recusa:
             return _resposta_de_recusa(recusa)
         return self._resposta(documento, status.HTTP_200_OK)
+
+    @extend_schema(
+        operation_id="documentos_reextrair",
+        summary="Voltar a pedir a leitura deste documento ao modelo",
+        description=(
+            "O botão *tentar outra vez* do ramo de erro. **202**: a leitura "
+            "fica aceite e não feita — quem a faz é o worker, e o cliente já "
+            "sonda o `GET` do documento. Não é o `closing`, de propósito: o "
+            "fecho é repetível para um duplo toque não pagar duas leituras, e "
+            "este pedido **quer** pagar outra. 409 se já houver receção "
+            "confirmada, se o documento já estiver a ser lido, ou se as "
+            "tentativas tiverem acabado."
+        ),
+        request=None,
+        responses={
+            status.HTTP_202_ACCEPTED: DocumentoOutSerializer,
+            status.HTTP_409_CONFLICT: RecusaDeDocumentoOutSerializer,
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="extraction", url_name="extracao")
+    def extracao(self, request: Request, pk: str | None = None) -> Response:
+        """Pede ao modelo que volte a ler o documento."""
+        try:
+            documento = pedir_releitura(
+                tenant_id=request.tenant.id, documento=self.get_object()
+            )
+        except RecusaDeDocumento as recusa:
+            return _resposta_de_recusa(recusa)
+        return self._resposta(documento, status.HTTP_202_ACCEPTED)
 
     def perform_destroy(self, instance: InvoiceDocument) -> None:
         """O `DELETE` descarta; não apaga a linha."""
@@ -560,6 +601,11 @@ class RececaoViewSet(viewsets.ModelViewSet):
             receipt = Receipt.objects.get(pk=e.receipt_id)
             output = RececaoOutSerializer(self._compor_rececao(receipt))
             return Response(output.data, status=status.HTTP_200_OK)
+        except RecusaDeDocumento as recusa:
+            # Hoje só uma: o QR diz que o documento foi **anulado** pelo
+            # emissor, e um documento anulado não dá entrada a mercadoria
+            # nenhuma (ADR 0021, adenda). Recusa e não aviso.
+            return _resposta_de_recusa(recusa)
 
     def partial_update(self, request, pk=None, *args, **kwargs):
         """PATCH /receipts/{id} — atualiza cabeçalho."""
@@ -596,6 +642,15 @@ class RececaoViewSet(viewsets.ModelViewSet):
         apagar_rascunho(receipt_id=receipt.id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @extend_schema(
+        methods=["GET"],
+        responses={status.HTTP_200_OK: LinhasOutSerializer},
+    )
+    @extend_schema(
+        methods=["POST"],
+        request=LinhaInSerializer,
+        responses={status.HTTP_201_CREATED: LinhaOutSerializer},
+    )
     @action(detail=True, methods=["get", "post"])
     def lines(self, request, pk=None):
         """GET/POST /receipts/{id}/lines — lista/cria linhas."""
@@ -617,20 +672,18 @@ class RececaoViewSet(viewsets.ModelViewSet):
             output = LinhaOutSerializer(self._compor_linha(linha))
             return Response(output.data, status=status.HTTP_201_CREATED)
 
-        # GET
-        linhas = receipt.lines.all()
-        serializer = LinhaOutSerializer(
-            [self._compor_linha(item) for item in linhas], many=True
-        )
-        return Response({
-            "count": linhas.count(),
-            "results": serializer.data
-        })
+        # GET, **em lote**: sem isto eram cinco queries por linha, duas delas a
+        # atravessar a fronteira de um módulo.
+        compostas = self._compor_rececao(receipt)["linhas"]
+        serializer = LinhaOutSerializer(compostas, many=True)
+        return Response({"count": len(compostas), "results": serializer.data})
 
     @extend_schema(
         parameters=[
             OpenApiParameter("linha_id", OpenApiTypes.UUID, OpenApiParameter.PATH, required=True),
-        ]
+        ],
+        request=RevisaoDeLinhaInSerializer,
+        responses={status.HTTP_201_CREATED: LinhaOutSerializer},
     )
     @action(detail=True, methods=["post"], url_path=r"lines/(?P<linha_id>[^/.]+)/confirmation")
     def line_confirmation(self, request, pk=None, linha_id=None):
@@ -733,18 +786,37 @@ class RececaoViewSet(viewsets.ModelViewSet):
 
         produtos = catalog_api.produtos_por_id(tenant_id=receipt.tenant_id, ids=product_ids)
         locais = inventory_api.localizacoes_por_id(tenant_id=receipt.tenant_id, ids=location_ids)
+        # Os últimos preços por código, **em lote**: o aviso `preco_desviado` é
+        # por linha e a alternativa era uma query por linha a atravessar o
+        # histórico inteiro de uma receção de trinta linhas.
+        precos = ultimos_precos_por_codigo(
+            tenant_id=receipt.tenant_id,
+            supplier_id=receipt.supplier_id,
+            codes=[item.supplier_code for item in linhas if item.supplier_code],
+            excepto_receipt_id=receipt.id,
+        )
+
+        embalagens = catalog_api.embalagens_por_id(
+            tenant_id=receipt.tenant_id,
+            ids=[item.packaging_id for item in linhas if item.packaging_id],
+        )
 
         # Compor dados
         dados = {
             "receipt": receipt,
             "produtos": produtos,
             "locais": locais,
-            "linhas": [self._compor_linha(item, produtos, locais) for item in linhas],
+            "linhas": [
+                self._compor_linha(item, produtos, locais, precos, embalagens)
+                for item in linhas
+            ],
         }
 
         return dados
 
-    def _compor_linha(self, linha: ReceiptLine, produtos=None, locais=None) -> dict:
+    def _compor_linha(
+        self, linha: ReceiptLine, produtos=None, locais=None, precos=None, embalagens=None
+    ) -> dict:
         """Compor resposta de linha."""
         from apps.catalog import api as catalog_api
         from apps.inventory import api as inventory_api
@@ -769,11 +841,14 @@ class RececaoViewSet(viewsets.ModelViewSet):
                 linha=linha,
             )
 
-        # Stock quantity
+        # A quantidade que esta linha mete no stock. O `quantity_received` **já
+        # está em unidades base** — é dele que o ledger lê e dele que sai o
+        # `unit_cost = line_total / quantity_received` (ADR 0023, decisão 3) —,
+        # logo multiplicá-lo outra vez pelo `base_per_invoice_unit` dava o
+        # quadrado da conversão: 25 000 g a virarem 625 000 000.
         stock_quantity = None
-        tem_quantidade = bool(linha.base_per_invoice_unit and linha.quantity_received)
-        if linha.kind == "goods" and produto and tem_quantidade:
-            base_qty = linha.quantity_received * linha.base_per_invoice_unit
+        if linha.kind == "goods" and produto and linha.quantity_received:
+            base_qty = linha.quantity_received
             display_qty = base_qty / produto.display_factor if produto.display_factor else base_qty
             stock_quantity = {
                 "base": base_qty,
@@ -782,10 +857,78 @@ class RececaoViewSet(viewsets.ModelViewSet):
                 "display_unit": produto.display_unit,
             }
 
+        # **Plano e com as chaves do `LinhaOutSerializer`.** Até 2026-10-19 esta
+        # função devolvia `{"linha": …, "produto": …}` e o serializer declarava
+        # `id`, `position`, `description`…: o `GET /receipts/<id>/lines` e a
+        # revisão de uma linha respondiam **500** em todas as chamadas, e
+        # nenhum teste os exercitava. O ecrã de revisão lê daqui.
+        local = (locais or {}).get(linha.location_id)
+        embalagem = None
+        if linha.packaging_id:
+            if embalagens is None:
+                embalagens = catalog_api.embalagens_por_id(
+                    tenant_id=linha.tenant_id, ids=[linha.packaging_id]
+                )
+            encontrada = embalagens.get(linha.packaging_id)
+            if encontrada is not None and produto is not None:
+                embalagem = {
+                    "id": encontrada.id,
+                    "label": encontrada.label,
+                    "base_quantity": encontrada.base_quantity,
+                    "base_unit": produto.base_unit,
+                }
         return {
+            # A linha crua fica na chave `linha` porque o `RececaoOutSerializer`
+            # a lê para somar totais e contar o que falta rever. O DRF ignora
+            # chaves que o serializer não declara, logo não sai no payload.
             "linha": linha,
-            "produto": produto,
-            "locais": locais,
+            "id": linha.id,
+            "position": linha.position,
+            "description": linha.description,
+            "product": linha.product_id,
+            "product_name": produto.short_name if produto else None,
+            "kind": linha.kind,
+            "status": linha.status,
+            "conservation": produto.conservation if produto else "ambient",
+            "location": (
+                {"id": local.id, "name": local.name}
+                if local is not None
+                else {"id": linha.location_id, "name": ""}
+            ),
+            "invoice_unit": linha.invoice_unit,
+            "quantity_invoiced": linha.quantity_invoiced,
+            "quantity_received": linha.quantity_received,
+            "packaging": embalagem,
+            "base_per_invoice_unit": linha.base_per_invoice_unit,
+            "variable_weight": linha.variable_weight,
+            "unit_price": linha.unit_price,
+            "discount_pct": linha.discount_pct,
+            "vat_rate": linha.vat_rate,
+            "line_total": linha.line_total,
+            "supplier_code": linha.supplier_code,
+            "ean": linha.ean,
+            "requires_lot": bool(produto.track_lots) if produto else False,
+            "lot_code": linha.lot_code,
+            "expires_at": linha.expires_at,
+            "expiry_kind": (produto.expiry_kind if produto else None) or None,
+            "reviewed_by": linha.reviewed_by_name or None,
+            "reviewed_at": linha.reviewed_at,
+            "movement": linha.movement_id,
             "price_history": price_history,
             "stock_quantity": stock_quantity,
+            "warnings": list(
+                avisos_da_linha(
+                    kind=linha.kind,
+                    quantity_invoiced=linha.quantity_invoiced,
+                    unit_price=linha.unit_price,
+                    line_total=linha.line_total,
+                    vat_rate=linha.vat_rate,
+                    base_per_invoice_unit=linha.base_per_invoice_unit,
+                    extraction_confidence=linha.extraction_confidence,
+                    limiar_de_confianca=Decimal(
+                        settings.AGENTS_EXTRACTION_CONFIDENCE_THRESHOLD
+                    ),
+                    preco_de_referencia=(precos or {}).get(linha.supplier_code),
+                )
+            ),
         }

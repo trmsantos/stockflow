@@ -36,13 +36,19 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from apps.catalog import api as catalog_api
 from apps.inventory import api as inventory_api
-from apps.purchasing.events import DocumentoFechado, StockReceived
+from apps.purchasing.classificacao import (
+    ESPECIE_GOODS,
+    e_linha_de_continuacao,
+    especie_da_linha,
+)
+from apps.purchasing.events import DocumentoFechado, ReleituraPedida, StockReceived
 from apps.purchasing.ficheiros import (
     caminho_da_imagem,
     caminho_dentro_do_media,
@@ -53,21 +59,32 @@ from apps.purchasing.models import (
     PAGINAS_POR_DOCUMENTO,
     DocumentFile,
     DocumentPage,
+    EstadoDaLeitura,
+    EstadoDoDocumento,
     InvoiceDocument,
     OrigemDoDocumento,
     Receipt,
     ReceiptLine,
+    estado_do_documento,
 )
 from apps.purchasing.rasterizacao import ImagemNormalizada
-from apps.purchasing.selectors import DOC_TIPO_QUE_SUBTRAI, slots_expirados
+from apps.purchasing.selectors import (
+    DOC_TIPO_QUE_SUBTRAI,
+    DOC_TIPOS,
+    DOC_TIPOS_DE_NOTA,
+    leitura_do_documento,
+    slots_expirados,
+)
 from apps.shared.outbox import OutboxEvent, publish
 
 __all__ = [
     "CODIGOS_DE_RECUSA_DE_DOCUMENTO",
+    "CODIGO_DOCUMENTO_ANULADO",
     "CODIGO_DOCUMENTO_DESCARTADO",
     "CODIGO_DOCUMENTO_FECHADO",
     "CODIGO_DOCUMENTO_SEM_PAGINAS",
     "CODIGO_PAGINAS_EXCEDIDAS",
+    "CODIGO_RELEITURA_RECUSADA",
     "FicheiroRecebido",
     "RecusaDeDocumento",
     "anexar_ficheiro",
@@ -76,6 +93,7 @@ __all__ = [
     "enfileirar_trabalho_do_documento",
     "fechar_documento",
     "limpar_slots_expirados",
+    "pedir_releitura",
     "registar_normalizacao",
 ]
 
@@ -98,6 +116,14 @@ CODIGO_DOCUMENTO_SEM_PAGINAS = "documento_sem_paginas"
 #: Mais páginas do que o teto do módulo (400).
 CODIGO_PAGINAS_EXCEDIDAS = "paginas_excedidas"
 
+#: O QR deste documento diz que ele foi **anulado** pelo emissor (409). Recusa
+#: e não aviso (ADR 0021, adenda): um documento anulado não dá entrada a nada.
+CODIGO_DOCUMENTO_ANULADO = "documento_anulado"
+
+#: Não se volta a ler um documento que já tem receção confirmada, que está a ser
+#: lido neste momento, ou que já gastou as tentativas (409; ADR 0031, E).
+CODIGO_RELEITURA_RECUSADA = "releitura_recusada"
+
 #: A lista fechada, contra a qual o mapa de status do `views.py` é afirmado por
 #: um teste: um código sem entrada no mapa apareceria como 500.
 CODIGOS_DE_RECUSA_DE_DOCUMENTO: frozenset[str] = frozenset(
@@ -106,6 +132,8 @@ CODIGOS_DE_RECUSA_DE_DOCUMENTO: frozenset[str] = frozenset(
         CODIGO_DOCUMENTO_DESCARTADO,
         CODIGO_DOCUMENTO_SEM_PAGINAS,
         CODIGO_PAGINAS_EXCEDIDAS,
+        CODIGO_DOCUMENTO_ANULADO,
+        CODIGO_RELEITURA_RECUSADA,
     }
 )
 
@@ -117,6 +145,14 @@ DETALHE_DOCUMENTO_SEM_PAGINAS = _(
     "This document has no pages yet, so there is nothing to close."
 )
 DETALHE_PAGINAS_EXCEDIDAS = _("A document takes at most {limite} pages.")
+DETALHE_DOCUMENTO_ANULADO = _(
+    "The QR code on this document says it was cancelled by the issuer, so it "
+    "cannot receive goods."
+)
+DETALHE_RELEITURA_RECUSADA = _(
+    "This document cannot be read again: it is already being read, it has a "
+    "confirmed receipt, or it has used up its reading attempts."
+)
 
 #: Quantos bytes de cada vez ao ler o ficheiro para o disco e para o digest. 64
 #: KiB é o compromisso habitual: grande o suficiente para o syscall não dominar,
@@ -314,6 +350,64 @@ def fechar_documento(*, tenant_id: UUID, documento: InvoiceDocument) -> InvoiceD
 
 
 @transaction.atomic
+def pedir_releitura(*, tenant_id: UUID, documento: InvoiceDocument) -> InvoiceDocument:
+    """Pede que o modelo volte a ler este documento. **Não é repetível.**
+
+    É o corpo do único endpoint novo da ADR 0031 (E), e existe porque o
+    `closing` **não pode** ser o botão de "tentar outra vez": o fecho é
+    deliberadamente não-repetidor de trabalho, para um duplo toque num telemóvel
+    não pagar duas leituras. Este, pelo contrário, é um pedido explícito de uma
+    pessoa — e por isso custa dinheiro de propósito.
+
+    As três recusas, todas 409 e todas com a mesma razão legível:
+
+    * **já há receção confirmada.** O que o documento diz já foi decidido por
+      alguém e já está no ledger; voltar a lê-lo não muda nada e pode confundir;
+    * **já está a ser lido.** Uma leitura em curso (`finished_at` nulo, dentro do
+      relógio de 10 minutos) é trabalho pago a acontecer, e um segundo toque
+      pagava duas;
+    * **as tentativas acabaram.** `AGENTS_EXTRACTION_MAX_ATTEMPTS` por documento
+      (três, pelo dono): um ciclo de reaberturas é um ciclo pago.
+
+    Publica `ReleituraPedida` na outbox, na transação do pedido. A resposta é
+    **202**: o trabalho fica aceite, não feito — quem o faz é o consumidor, e o
+    cliente sabe disso porque já sonda o `GET` do documento a cada 2 s.
+    """
+    bloqueado = _bloquear(tenant_id=tenant_id, documento_id=documento.id)
+    if bloqueado.discarded_at is not None:
+        raise RecusaDeDocumento(CODIGO_DOCUMENTO_DESCARTADO, DETALHE_DOCUMENTO_DESCARTADO)
+    if not bloqueado.pages.exists():
+        raise RecusaDeDocumento(
+            CODIGO_DOCUMENTO_SEM_PAGINAS, DETALHE_DOCUMENTO_SEM_PAGINAS
+        )
+    if Receipt.objects.filter(
+        tenant_id=tenant_id, document_id=bloqueado.id, confirmed_at__isnull=False
+    ).exists():
+        raise RecusaDeDocumento(CODIGO_RELEITURA_RECUSADA, DETALHE_RELEITURA_RECUSADA)
+
+    leitura = leitura_do_documento(tenant_id=tenant_id, documento_id=bloqueado.id)
+    if leitura is not None:
+        estado = estado_do_documento(
+            discarded_at=bloqueado.discarded_at,
+            created_at=bloqueado.created_at,
+            page_count=bloqueado.pages.count(),
+            estado_da_leitura=leitura.state,
+            leitura_desde=leitura.desde,
+        )
+        if estado == EstadoDoDocumento.A_EXTRAIR:
+            raise RecusaDeDocumento(CODIGO_RELEITURA_RECUSADA, DETALHE_RELEITURA_RECUSADA)
+        if leitura.tentativa >= int(settings.AGENTS_EXTRACTION_MAX_ATTEMPTS):
+            raise RecusaDeDocumento(CODIGO_RELEITURA_RECUSADA, DETALHE_RELEITURA_RECUSADA)
+
+    publish(ReleituraPedida(tenant_id=tenant_id, documento_id=bloqueado.id))
+    logger.info(
+        "releitura de documento pedida por uma pessoa",
+        extra={"event": "extracao", "outcome": "releitura_pedida"},
+    )
+    return bloqueado
+
+
+@transaction.atomic
 def descartar_documento(*, tenant_id: UUID, documento: InvoiceDocument) -> None:
     """Descarta o documento. **Só apaga bytes se não houver páginas.**
 
@@ -355,6 +449,19 @@ def registar_normalizacao(
     A ordem é: escrever os bytes, depois a linha. O contrário deixava uma página
     marcada como normalizada a apontar para um ficheiro que ainda não existe, e é
     nessa janela que o ecrã de revisão pede a imagem.
+
+    ## E, quando esta era a última, volta a publicar o fecho
+
+    Porque a leitura precisa de **imagens**, e as duas tarefas do
+    `DocumentoFechado` correm em paralelo: a extração chega quase sempre antes
+    de a rasterização acabar. Sem isto, a extração encontrava páginas sem imagem
+    e o documento ficava parado em `a_normalizar` à espera de um clique.
+
+    Publicar o mesmo evento outra vez é seguro porque os dois handlers são
+    idempotentes e cada um por uma marca que não dessincroniza: a rasterização
+    filtra as páginas `normalized_at IS NULL` (agora não há nenhuma), e a
+    extração pergunta se já houve tentativa. O preço é uma linha de outbox por
+    documento, e o que compra é o fluxo inteiro a correr sozinho.
     """
     pagina = DocumentPage.objects.filter(tenant_id=tenant_id, pk=pagina_id).first()
     if pagina is None:
@@ -370,7 +477,25 @@ def registar_normalizacao(
     pagina.save(
         update_fields=["image_path", "width", "height", "normalized_at", "updated_at"]
     )
+    _avisar_que_as_imagens_estao_prontas(tenant_id=tenant_id, documento_id=pagina.document_id)
     return True
+
+
+def _avisar_que_as_imagens_estao_prontas(*, tenant_id: UUID, documento_id: UUID) -> None:
+    """Republica o `DocumentoFechado` se este documento já está fechado e pronto.
+
+    Fechado **e** sem páginas por normalizar: num documento ainda aberto (uma
+    captura a receber folhas) o fecho é que dispara o trabalho, e publicá-lo
+    antes era inventar um facto que ainda não aconteceu.
+    """
+    documento = InvoiceDocument.objects.filter(tenant_id=tenant_id, pk=documento_id).first()
+    if documento is None or documento.closed_at is None or documento.discarded_at is not None:
+        return
+    if DocumentPage.objects.filter(
+        tenant_id=tenant_id, document_id=documento_id, normalized_at__isnull=True
+    ).exists():
+        return
+    enfileirar_trabalho_do_documento(tenant_id=tenant_id, documento_id=documento_id)
 
 
 @transaction.atomic
@@ -653,9 +778,33 @@ def criar_rececao(
     doc_type: str = "",
     received_at = None,
 ) -> Receipt:
-    """Cria uma receção, opcionalmente semeada com linhas de um documento.
+    """Cria uma receção, **semeada com as linhas lidas** quando há documento.
 
     Repetição com o mesmo `document` devolve 200 com a receção existente.
+
+    ## A sementeira acontece aqui e não na tarefa de extração
+
+    *"O `agents` não escreve linha nenhuma de receção"* (ADR 0031, decisão 5).
+    Quem semeia é esta função, quando uma **pessoa** cria a receção, e lê a
+    leitura pelo porto — o mesmo caminho do `DocumentoOut`, para o ecrã e a
+    sementeira nunca poderem discordar sobre o que o documento diz. Duas
+    propriedades que isto compra: **não existe receção nenhuma até alguém a
+    pedir** (a fotografia de um gato nunca cria um rascunho) e a única aresta do
+    `agents` continua a ser de leitura.
+
+    ## O cabeçalho: o pedido ganha, a leitura preenche o resto
+
+    Os campos de cabeçalho que o pedido traz continuam a ganhar — são o que a
+    pessoa corrigiu no ecrã. O que a leitura preenche é o que o pedido não disse,
+    mais as linhas, que o pedido nunca traz. E quando o QR é legível, o
+    cabeçalho dele já ganhou à leitura do modelo mais acima (ADR 0031, C).
+
+    ## Um documento anulado recusa-se
+
+    `E=A` no QR quer dizer que o emissor anulou o documento. Não dá entrada a
+    mercadoria nenhuma, e isso é uma **recusa e não um aviso** (ADR 0021,
+    adenda): criar o rascunho e pôr lá um triângulo amarelo era deixar o
+    caminho aberto.
     """
     with transaction.atomic():
         # Verificar se já existe receção para este documento
@@ -666,26 +815,242 @@ def criar_rececao(
             except Receipt.DoesNotExist:
                 pass
 
-        # Criar receção
-        received_at = received_at or timezone.now()
+        leitura = (
+            leitura_do_documento(tenant_id=tenant_id, documento_id=document_id)
+            if document_id
+            else None
+        )
+        if leitura is not None and leitura.anulado:
+            raise RecusaDeDocumento(CODIGO_DOCUMENTO_ANULADO, DETALHE_DOCUMENTO_ANULADO)
 
-        receipt = Receipt.objects.create(
-            tenant_id=tenant_id,
-            document_id=document_id,
+        cabecalho = _cabecalho_semeado(
+            leitura=leitura,
             supplier_name=supplier_name,
             supplier_nif=supplier_nif or "",
             doc_number=doc_number or "",
             doc_date=doc_date,
-            customer_name=customer_name,
             customer_nif=customer_nif,
             document_total_eur=document_total_eur,
-            supplier_id=supplier_id,
             doc_type=doc_type,
-            received_at=received_at,
-            location_id=location_id,
+        )
+        fornecedor = supplier_id or _fornecedor_por_nif(
+            tenant_id=tenant_id, nif=cabecalho["supplier_nif"]
         )
 
+        receipt = Receipt.objects.create(
+            tenant_id=tenant_id,
+            document_id=document_id,
+            supplier_name=cabecalho["supplier_name"],
+            supplier_nif=cabecalho["supplier_nif"],
+            doc_number=cabecalho["doc_number"],
+            doc_date=cabecalho["doc_date"],
+            atcud=cabecalho["atcud"],
+            fiscal_space=cabecalho["fiscal_space"],
+            customer_name=customer_name,
+            customer_nif=cabecalho["customer_nif"],
+            document_total_eur=cabecalho["document_total_eur"],
+            supplier_id=fornecedor,
+            doc_type=cabecalho["doc_type"],
+            received_at=received_at or timezone.now(),
+            location_id=location_id,
+        )
+        if leitura is not None and leitura.state == EstadoDaLeitura.LIDO:
+            _semear_linhas(receipt=receipt, leitura=leitura, supplier_id=fornecedor)
         return receipt
+
+
+def _cabecalho_semeado(
+    *,
+    leitura,
+    supplier_name: str,
+    supplier_nif: str,
+    doc_number: str,
+    doc_date,
+    customer_nif: str,
+    document_total_eur: Decimal | None,
+    doc_type: str,
+) -> dict:
+    """O cabeçalho com o pedido por cima da leitura, campo a campo.
+
+    `atcud` e `fiscal_space` vêm **só** da leitura porque só o QR os tem: não
+    há campo no `POST` onde uma pessoa os escreva, e inventar um era pior do que
+    não ter nenhum. O `doc_type` da leitura é texto livre (o papel ganha, ADR
+    0021) e só entra se for um dos seis do enum — a coluna tem dois caracteres e
+    escolhas fechadas, e a pessoa corrige no `PATCH` o que o modelo não soube.
+    """
+    if leitura is None:
+        return {
+            "supplier_name": supplier_name,
+            "supplier_nif": supplier_nif,
+            "doc_number": doc_number,
+            "doc_date": doc_date,
+            "customer_nif": customer_nif,
+            "document_total_eur": document_total_eur,
+            "doc_type": doc_type,
+            "atcud": "",
+            "fiscal_space": "",
+        }
+    lido = (leitura.doc_type or "").strip().upper()
+    return {
+        "supplier_name": supplier_name or leitura.supplier_name,
+        "supplier_nif": supplier_nif or leitura.supplier_nif,
+        "doc_number": doc_number or leitura.doc_number,
+        "doc_date": doc_date or leitura.issued_at,
+        "customer_nif": customer_nif or leitura.customer_nif,
+        "document_total_eur": (
+            document_total_eur if document_total_eur is not None else leitura.total
+        ),
+        "doc_type": doc_type or (lido if lido in DOC_TIPOS else ""),
+        "atcud": leitura.atcud,
+        "fiscal_space": leitura.fiscal_space,
+    }
+
+
+def _fornecedor_por_nif(*, tenant_id: UUID, nif: str) -> UUID | None:
+    """O fornecedor deste NIF, **só se o dígito de controlo bater certo**.
+
+    A chave é exacta e a validação é a rede (ADR 0031, decisão 5): um NIF com um
+    dígito mal lido não dá match nenhum em vez de dar o match **errado**. O match
+    errado liga a fatura ao fornecedor errado, e a memória
+    `(fornecedor, código) → artigo` que a confirmação aprende fica envenenada
+    para todas as faturas seguintes.
+    """
+    if not nif or not catalog_api.nif_valido(nif):
+        return None
+    fornecedor = catalog_api.fornecedor_por_nif(
+        tenant_id=tenant_id, nif=catalog_api.normalizar_nif(nif)
+    )
+    return None if fornecedor is None else fornecedor.id
+
+
+def _semear_linhas(*, receipt: Receipt, leitura, supplier_id: UUID | None) -> None:
+    """Escreve a zona do documento de cada linha lida. **Todas `needs_review`.**
+
+    O que entra é só o que o papel disse mais o que a memória já sabia:
+    `product`, `packaging` e `base_per_invoice_unit` entram **pré-preenchidos**
+    quando o par (fornecedor, código) já é conhecido, e a linha fica
+    `needs_review` com `reviewed_at` a NULL na mesma — pré-preencher não é
+    confirmar, e a pessoa continua a ter de tocar em todas as linhas
+    (CLAUDE.md).
+    """
+    tenant_id = receipt.tenant_id
+    codigos = [linha.supplier_code for linha in leitura.lines if linha.supplier_code]
+    memoria = (
+        catalog_api.correspondencias(
+            tenant_id=tenant_id, supplier_id=supplier_id, codes=codigos
+        )
+        if supplier_id and codigos
+        else {}
+    )
+    produtos = catalog_api.produtos_por_id(
+        tenant_id=tenant_id, ids=[c.product_id for c in memoria.values()]
+    )
+    nota = receipt.doc_type in DOC_TIPOS_DE_NOTA
+
+    linhas: list[ReceiptLine] = []
+    for lida in leitura.lines:
+        if e_linha_de_continuacao(
+            lida.description, quantity=lida.quantity, unit_price=lida.unit_price
+        ):
+            # O prompt já manda deitá-las fora; esta é a segunda rede, e deixa
+            # um buraco na numeração de propósito — a `position` é a do papel.
+            continue
+        kind = especie_da_linha(lida.description, line_total=lida.line_total)
+        correspondencia = memoria.get(lida.supplier_code) if lida.supplier_code else None
+        produto = (
+            produtos.get(correspondencia.product_id) if correspondencia is not None else None
+        )
+        base_por_unidade = _base_por_unidade_de_fatura(unidade=lida.unit, produto=produto)
+        linhas.append(
+            ReceiptLine(
+                tenant_id=tenant_id,
+                receipt=receipt,
+                position=lida.position,
+                description=lida.description,
+                invoice_unit=lida.unit,
+                quantity_invoiced=lida.quantity,
+                unit_price=lida.unit_price,
+                discount_pct=lida.discount_pct,
+                vat_rate=lida.vat_rate,
+                line_total=lida.line_total,
+                supplier_code=lida.supplier_code,
+                ean=lida.ean,
+                variable_weight=_peso_variavel(unidade=lida.unit, produto=produto),
+                extraction_confidence=lida.confidence,
+                product_id=None if correspondencia is None else correspondencia.product_id,
+                packaging_id=(
+                    None if correspondencia is None else correspondencia.packaging_id
+                ),
+                base_per_invoice_unit=base_por_unidade,
+                quantity_received=_quantidade_recebida(
+                    kind=kind,
+                    nota=nota,
+                    quantidade=lida.quantity,
+                    base_por_unidade=base_por_unidade,
+                ),
+                location_id=receipt.location_id,
+                kind=kind,
+                status="needs_review",
+            )
+        )
+    ReceiptLine.objects.bulk_create(linhas)
+
+
+def _base_por_unidade_de_fatura(*, unidade: str, produto) -> Decimal | None:
+    """Quantas unidades base vale **uma** unidade de fatura, ou `None`.
+
+    Sai **só** da tabela fechada do `catalog` (ADR 0022: KG→g ×1000, CL→ml ×10,
+    DZ→un ×12), com verificação de dimensão — `"KG"` num artigo em `ml` devolve
+    `None`, e não um factor. E `None` é a resposta certa para `"CX"`, `"SC"` ou
+    `"EMB"`: isso são **embalagens** e não unidades, e o factor delas é o
+    `base_quantity` de uma embalagem concreta, que é a pessoa que escolhe na
+    revisão. *"Nunca 1 por omissão"* — a conversão em falta é uma ausência, não
+    um palpite, e é por isso que a linha sai marcada com `sem_conversao`.
+    """
+    if produto is None:
+        return None
+    return catalog_api.factor_para_base(unidade, produto.base_unit)
+
+
+def _peso_variavel(*, unidade: str, produto) -> bool:
+    """A fatura pesa e o artigo vende-se à peça: é peso variável. **Nosso.**
+
+    Nunca vem do payload (ADR 0031, G2): o modelo copia o que está impresso e
+    não sabe como é que **este** estabelecimento vende o artigo. A marca nasce
+    do encontro entre a unidade da fatura (de massa) e a unidade base do artigo
+    correspondido (contagem) — queijo faturado a 12,450 kg e vendido à peça —, e
+    é ela que diz à revisão que a quantidade recebida tem de ser contada e não
+    convertida.
+    """
+    if produto is None:
+        return False
+    return (
+        catalog_api.dimensao_da_unidade(unidade) == "massa"
+        and catalog_api.DIMENSAO_DA_BASE.get(produto.base_unit) == "contagem"
+    )
+
+
+def _quantidade_recebida(
+    *,
+    kind: str,
+    nota: bool,
+    quantidade: Decimal | None,
+    base_por_unidade: Decimal | None,
+) -> Decimal:
+    """A quantidade **em unidades base** com que a linha nasce. Nunca negativa.
+
+    Zero em três casos, e nenhum deles é um palpite: uma nota de crédito ou de
+    débito (o sinal é do `doc_type` e quem decide o que volta é a revisão, ADR
+    0022); uma linha que não é mercadoria (vasilhame e encargos não geram
+    movimento, ADR 0021, decisão 6); e uma linha sem quantidade lida ou sem
+    conversão conhecida — onde inventar um número era pôr stock a mais no
+    ledger com ar de certo.
+    """
+    if nota or kind != ESPECIE_GOODS:
+        return Decimal("0")
+    if quantidade is None or base_por_unidade is None:
+        return Decimal("0")
+    return abs(quantidade) * base_por_unidade
 
 
 def rever_linha(
@@ -713,8 +1078,13 @@ def rever_linha(
 
         linha = ReceiptLine.objects.get(pk=linha_id, receipt_id=receipt_id)
 
-        # Determinar o status
-        status = "skipped" if skip else "needs_review"
+        # A revisão de uma linha **confirma-a**. O caminho chama-se
+        # `/lines/<linha>/confirmation` e o contrato di-lo por extenso (*"a que
+        # já está bem manda um corpo vazio e é só um «confirmo»"*); deixá-la em
+        # `needs_review` fazia a receção inteira ser inconfirmável — o
+        # `confirmar_rececao` exige pelo menos uma linha `confirmed` e nenhuma
+        # escrita do sistema produzia esse estado.
+        status = "skipped" if skip else "confirmed"
 
         if kind == "goods":
             if not product_id:
@@ -724,7 +1094,13 @@ def rever_linha(
         linha.product_id = product_id
         linha.packaging_id = packaging_id
         linha.base_per_invoice_unit = base_per_invoice_unit
-        linha.quantity_received = quantity_received or linha.quantity_invoiced or Decimal(0)
+        linha.quantity_received = _quantidade_revista(
+            quantity_received=quantity_received,
+            quantity_invoiced=linha.quantity_invoiced,
+            base_per_invoice_unit=base_per_invoice_unit,
+            kind=kind,
+            doc_type=receipt.doc_type,
+        )
         if location_id:
             linha.location_id = location_id
         linha.kind = kind
@@ -737,6 +1113,52 @@ def rever_linha(
         linha.save()
 
         return linha
+
+
+def _quantidade_revista(
+    *,
+    quantity_received: Decimal | None,
+    quantity_invoiced: Decimal | None,
+    base_per_invoice_unit: Decimal | None,
+    kind: str,
+    doc_type: str,
+) -> Decimal:
+    """A quantidade que a revisão grava, **sempre em unidades base**.
+
+    ## O defeito que esta função corrige
+
+    Até 2026-10-19 lia-se `quantity_received or quantity_invoiced or 0`. O
+    `quantity_invoiced` é a quantidade **na unidade da fatura** (dois sacos) e o
+    `quantity_received` é a quantidade **na unidade base** do artigo — é dele
+    que o ledger lê a quantidade e dele que sai o `unit_cost = line_total /
+    quantity_received` (ADR 0023, decisão 3: *"25 kg a 17,33 € = 0,0006932 €/g"*,
+    que só fecha se o divisor for 25 000 e não 1). Logo, numa revisão que não
+    mandasse quantidade, entravam **dois gramas** de farinha no stock em vez de
+    cinquenta quilos, e o custo unitário saía 12 500 vezes maior. Com peso
+    variável a mesma linha entrava em quilos num artigo vendido à peça.
+
+    O que passa a acontecer quando a revisão não manda quantidade:
+
+    * `quantity_invoiced × base_per_invoice_unit` quando os dois existem — a
+      conversão explícita, com o factor que a própria revisão acabou de fixar;
+    * **zero** quando falta o factor. Nunca `quantity_invoiced` sozinho, e nunca
+      um factor 1 implícito (ADR 0022): sem conversão conhecida a quantidade é
+      uma pergunta por responder, e zero é a única resposta que não mente ao
+      ledger. A linha fica `needs_review` e a pessoa escreve o número.
+
+    Notas de crédito e de débito entram a zero (o que volta decide-se linha a
+    linha), e o que não é mercadoria também — vasilhame e encargos não geram
+    movimento nenhum (ADR 0021, decisão 6).
+    """
+    if doc_type in DOC_TIPOS_DE_NOTA and quantity_received is None:
+        return Decimal("0")
+    if kind != ESPECIE_GOODS and quantity_received is None:
+        return Decimal("0")
+    if quantity_received is not None:
+        return quantity_received
+    if quantity_invoiced is None or base_per_invoice_unit is None:
+        return Decimal("0")
+    return quantity_invoiced * base_per_invoice_unit
 
 
 def registar_temperatura(
@@ -929,7 +1351,13 @@ def confirmar_rececao(
                 kind="goods",
                 product_id__isnull=False,
                 supplier_code__gt="",
-            ).values_list("supplier_code", "description", "product_id", "packaging_id")
+            ).values_list(
+                "supplier_code",
+                "description",
+                "product_id",
+                "packaging_id",
+                "invoice_unit",
+            )
 
             if linhas_confirmed_goods:
                 correspondencias_aprendidas = [
@@ -938,6 +1366,10 @@ def confirmar_rececao(
                         description_raw=row[1],
                         product_id=row[2],
                         packaging_id=row[3],
+                        # A unidade com que este código foi aprendido (ADR 0022):
+                        # sem ela, o mesmo código a mudar de `UN` para `CX` dava
+                        # ×50 em silêncio na fatura seguinte.
+                        invoice_unit=row[4],
                     )
                     for row in linhas_confirmed_goods
                 ]

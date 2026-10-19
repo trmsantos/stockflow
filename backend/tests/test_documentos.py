@@ -307,7 +307,9 @@ def test_o_telemovel_anexa_duas_paginas_e_uma_pessoa_fecha(cenario: Cenario) -> 
     assert [d["id"] for d in cliente.get(URL).json()["results"]] == [documento_id]
 
 
-def test_fechar_e_repetivel_e_nao_agenda_trabalho_duas_vezes(cenario: Cenario) -> None:
+def test_fechar_e_repetivel_e_nao_agenda_trabalho_duas_vezes(
+    cenario: Cenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Dois toques no mesmo botão: 200 nas duas vezes, uma extração só.
 
     A idempotência observável de um duplo toque num telemóvel (ADR 0020, decisão
@@ -320,10 +322,20 @@ def test_fechar_e_repetivel_e_nao_agenda_trabalho_duas_vezes(cenario: Cenario) -
     que transforma os eventos em trabalho, e corrê-la **depois dos dois fechos**
     é o que torna o teste honesto — se o segundo fecho tivesse publicado uma
     segunda linha, haveria duas extrações.
+
+    O rasterizador está substituído porque, desde a ADR 0031, a extração só
+    abre tentativa quando há **imagem** para mandar a um modelo de visão. Sem
+    isto a contagem dava zero e o teste passava a medir outra coisa.
     """
+    import apps.purchasing.tasks as tarefas_do_purchasing
     from apps.agents.models import Extraction
     from apps.shared.consumidor import consumir_outbox
 
+    monkeypatch.setattr(
+        tarefas_do_purchasing,
+        "rasterizar",
+        lambda **_: ImagemNormalizada(webp=b"RIFF-encenado", width=1240, height=1754),
+    )
     cliente = _cliente(cenario.ana, cenario.alfa.id)
     documento_id = _criar(cliente).json()["id"]
     _anexar(cliente, documento_id, JPEG)
@@ -362,6 +374,7 @@ def test_um_documento_de_outro_estabelecimento_da_404_e_nao_403(cenario: Cenario
     assert _fechar(beta, de_alfa["id"]).status_code == 404
     assert beta.delete(f"{URL}/{de_alfa['id']}").status_code == 404
     assert beta.get(f"{URL}/{de_alfa['id']}/pages/1/image").status_code == 404
+    assert beta.post(f"{URL}/{de_alfa['id']}/extraction").status_code == 404
 
     # A lista de Beta não o traz, e a de Alfa continua a trazê-lo: sem o
     # simétrico, o teste passava por vacuidade.
@@ -932,13 +945,17 @@ def test_o_qr_de_uma_pagina_nasce_vazio_e_ninguem_o_escreve(cenario: Cenario) ->
         "apps/purchasing/extracao.py",
         # a declaração da coluna, com a razão de ela entrar hoje
         "apps/purchasing/models.py",
+        # a **interpretação** do texto já descodificado: o parser puro da
+        # ADR 0031 (C), que lê a coluna e nunca lhe escreve
+        "apps/purchasing/qr.py",
         # a **leitura** que preenche esse campo
         "apps/purchasing/selectors.py",
     ], (
         f"a lista de ficheiros que tocam no qr_payload mudou ({mencionam}). As "
-        "três entradas de cima são declarações e leituras; uma escrita quer "
-        "dizer que alguém descodificou um QR, e a biblioteca que o faz é uma "
-        "dependência que ainda não foi decidida — ver a adenda da ADR 0021."
+        "entradas de cima são declarações, leituras e a interpretação do texto; "
+        "uma **escrita** quer dizer que alguém descodificou a imagem de um QR, e "
+        "a biblioteca que o faz é uma dependência que ainda não foi decidida — "
+        "ver a adenda da ADR 0021."
     )
 
 

@@ -74,6 +74,11 @@ def _traduzir(tentativa: Extraction) -> LeituraDeDocumento:
         desde=tentativa.started_at or tentativa.created_at,
         motivo=tentativa.error,
         confidence=tentativa.confidence,
+        # O número da tentativa atravessa a fronteira porque o `purchasing` tem
+        # de o comparar com `AGENTS_EXTRACTION_MAX_ATTEMPTS` no endpoint de
+        # re-extração (ADR 0031, E) — e ler a tabela do `agents` para o saber é
+        # exactamente o que o porto existe para evitar.
+        tentativa=tentativa.attempt,
     )
     if tentativa.status != EstadoDaExtracao.LIDO:
         return base
@@ -90,5 +95,6 @@ def _traduzir(tentativa: Extraction) -> LeituraDeDocumento:
         read_at=base.read_at,
         desde=base.desde,
         motivo=base.motivo,
+        tentativa=base.tentativa,
         confidence=tentativa.confidence or validada.confidence,
     )

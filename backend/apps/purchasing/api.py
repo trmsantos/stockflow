@@ -27,6 +27,8 @@ from apps.accounts import api as accounts_api
 from apps.catalog import api as catalog_api
 from apps.purchasing import selectors as _selectors
 from apps.purchasing.extracao import (
+    ConferenciaDeIva,
+    DivergenciaDoCabecalho,
     FronteiraDaExtracao,
     LeituraDeDocumento,
     LinhaLida,
@@ -34,9 +36,10 @@ from apps.purchasing.extracao import (
     fronteira_da_extracao,
     ligar_fronteira_da_extracao,
 )
+from apps.purchasing.ficheiros import caminho_dentro_do_media
 from apps.purchasing.models import EstadoDaLeitura
 from apps.purchasing.selectors import compras_confirmadas as _compras_confirmadas
-from apps.purchasing.selectors import paginas_do_documento
+from apps.purchasing.selectors import pagina_por_id, paginas_do_documento
 
 __all__ = [
     "DetalheDeRececao",
@@ -51,11 +54,15 @@ __all__ = [
     "ComprasPorArtigo",
     "ComprasPorFornecedor",
     "ComprasResumo",
+    "ConferenciaDeIva",
+    "DivergenciaDoCabecalho",
     "EstadoDaLeitura",
     "FronteiraDaExtracao",
     "LeituraDeDocumento",
     "LinhaLida",
     "PaginaDoDocumento",
+    "TIPO_DA_IMAGEM_DA_PAGINA",
+    "bytes_da_pagina",
     "fronteira_da_extracao",
     "ligar_fronteira_da_extracao",
     "paginas_do_documento",
@@ -64,6 +71,43 @@ __all__ = [
     "criar_receçao",
     "adicionar_linha_recepção",
 ]
+
+
+#: O tipo real dos bytes que `bytes_da_pagina` devolve. É uma constante e não um
+#: campo do DTO porque é verdade por construção: o normalizador da ADR 0021
+#: grava **sempre** WebP, e a view da imagem serve `image/webp`. Quem monta um
+#: `data:` URL para um modelo precisa do tipo, e esta é a linha que lho dá sem o
+#: obrigar a adivinhar.
+TIPO_DA_IMAGEM_DA_PAGINA = "image/webp"
+
+
+def bytes_da_pagina(*, tenant_id: UUID, pagina_id: UUID) -> bytes:
+    """Os bytes da imagem normalizada de uma página. **Uma página de cada vez.**
+
+    É a função que a decisão 1 da ADR 0031 nomeia, e a razão de ela existir está
+    escrita no DTO da página: *"é aqui que se decide se ele recebe bytes ou um
+    caminho — e a resposta certa é bytes, para o `agents` não ter de conhecer o
+    armazenamento do `purchasing`"*. O `PaginaDoDocumento` **não** ganha um campo
+    de bytes: carregar a imagem em todas as listagens para a usar numa tarefa era
+    pagar o ficheiro a cada `GET`.
+
+    Devolve `b""` — e nunca levanta — nos quatro casos que de fora são o mesmo
+    *"não há imagem desta página"*: a página não existe, é de outro
+    estabelecimento, ainda não foi normalizada, ou os bytes desapareceram do
+    disco. Quem chama trata o vazio, e a alternativa (uma excepção nova a
+    atravessar a fronteira do módulo) alargava a porta para nada: o `agents` já
+    tem de tratar o caso de não haver imagem nenhuma.
+    """
+    pagina = pagina_por_id(tenant_id=tenant_id, pagina_id=pagina_id)
+    if pagina is None or not pagina.image_path:
+        return b""
+    try:
+        caminho = caminho_dentro_do_media(pagina.image_path)
+    except ValueError:
+        return b""
+    if not caminho.is_file():
+        return b""
+    return caminho.read_bytes()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

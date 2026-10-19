@@ -676,19 +676,52 @@ MEDIA_ROOT = BASE_DIR / "media"
 MEDIA_URL = None
 
 # ---------------------------------------------------------------------------
-# Extração de faturas (ADR 0021, fatia 1)
+# Extração de faturas (ADR 0021, fatia 1; ADR 0031, decisões 1 e 2)
 # ---------------------------------------------------------------------------
 # O nome do modelo que lê um documento. **Vazio por omissão, e não é um
 # esquecimento**: sem valor, a fronteira de `apps/agents/modelo.py` levanta uma
 # excepção clara e a tarefa grava a tentativa com `status=erro` e uma razão
-# legível. Não há cliente de LLM, nem chave de API, nem rede em nenhum ponto
-# deste repositório — ligar a extração a sério é esta definição, uma credencial
-# e um prompt.
+# legível. Falha **fechada**: sem `AGENTS_EXTRACTION_MODEL` nada muda.
 #
-# Não é lido do ambiente de propósito: uma variável de ambiente que ninguém
-# consome é uma promessa de configuração que não existe. Passa a `env(...)` no
-# dia em que houver cliente.
-AGENTS_EXTRACTION_MODEL = ""
+# A chave e a URL caem para as do chat quando estão vazias (`modelo.py`), e é
+# essa a decisão da ADR 0031: uma credencial hoje, duas no dia em que as faturas
+# tiverem de ir para uma conta diferente da do chat.
+#
+# **Aviso de produto, do dono (2026-10-19):** enquanto a extração correr num
+# nível gratuito, usa-se só com **documentos inventados** — o nível gratuito de
+# um fornecedor costuma treinar com o que lhe entra, e uma fatura traz dois NIF
+# e uma morada. O ecrã do envio tem de o dizer antes do envio.
+AGENTS_EXTRACTION_MODEL = optional(env, "AGENTS_EXTRACTION_MODEL", "")
+AGENTS_EXTRACTION_BASE_URL = optional(env, "AGENTS_EXTRACTION_BASE_URL", "")
+AGENTS_EXTRACTION_API_KEY = optional(env, "AGENTS_EXTRACTION_API_KEY", "")
+# Dez páginas **numa chamada só**: o cabeçalho está na folha 1, as linhas
+# continuam na 2 e os totais estão na última, logo partir por página obrigava a
+# fundir N leituras parciais — e fundir é inferência nossa sobre texto não
+# confiável (ADR 0031, decisão 1). É o mesmo tecto do documento, e este `if` é a
+# rede contra a subcontagem de páginas de um PDF com `/ObjStm`.
+AGENTS_EXTRACTION_MAX_PAGES = env.int("AGENTS_EXTRACTION_MAX_PAGES", default=10)
+# 8000 e não os 1024 do chat: uma fatura de 30 linhas em JSON não cabe em 1024.
+AGENTS_EXTRACTION_MAX_TOKENS = env.int("AGENTS_EXTRACTION_MAX_TOKENS", default=8000)
+# 120 s: dez imagens não é uma chamada de 30 s. Continua muito abaixo do relógio
+# de 10 minutos do estado `a_extrair`, que é contra um worker morto e não contra
+# um modelo lento.
+AGENTS_EXTRACTION_TIMEOUT_S = env.int("AGENTS_EXTRACTION_TIMEOUT_S", default=120)
+# **Por tenant e por dia**, nunca por utilizador: receber mercadoria não é um
+# acto pessoal (ADR 0031, resposta 2 do dono). 1,00 € são ~150 faturas num dia,
+# muito acima do normal numa padaria, e travam um engano em volume.
+AGENTS_EXTRACTION_DAILY_BUDGET_EUR = Decimal(
+    optional(env, "AGENTS_EXTRACTION_DAILY_BUDGET_EUR", "1.00")
+)
+# Três tentativas por documento (resposta 3 do dono): reabrir acrescenta uma
+# linha de extração, e um ciclo de reaberturas é um ciclo pago.
+AGENTS_EXTRACTION_MAX_ATTEMPTS = env.int("AGENTS_EXTRACTION_MAX_ATTEMPTS", default=3)
+# **Hipótese, não medição.** 0,80 é o limiar abaixo do qual uma linha é marcada
+# no ecrã de revisão — e marcar é tudo o que ele faz: a confiança nunca bloqueia
+# uma confirmação, nunca se soma, nunca se medeia e nunca sai como métrica
+# (ADR 0031, decisão 4). Configurável porque ninguém o calibrou.
+AGENTS_EXTRACTION_CONFIDENCE_THRESHOLD = Decimal(
+    optional(env, "AGENTS_EXTRACTION_CONFIDENCE_THRESHOLD", "0.80")
+)
 
 # ---------------------------------------------------------------------------
 # Chat sobre stock (ADR 0027, decisões 7 e 9)

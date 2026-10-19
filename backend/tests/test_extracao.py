@@ -64,7 +64,7 @@ from apps.accounts.models import Papel, Tenant, User
 from apps.accounts.services import BACKEND_DE_SESSAO, conceder_pertenca, criar_tenant
 from apps.agents.fronteira import FronteiraLocalDaExtracao
 from apps.agents.modelo import (
-    ClienteDoModeloInexistente,
+    DocumentoGrandeDemais,
     ModeloNaoConfigurado,
     RespostaDoModelo,
     ler_documento,
@@ -73,12 +73,17 @@ from apps.agents.models import EstadoDaExtracao, Extraction
 from apps.agents.serializers import LeituraDeFaturaSerializer, LinhaDeFaturaSerializer
 from apps.agents.services import chave_de_idempotencia
 from apps.agents.tasks import extrair_documento
-from apps.purchasing.api import EstadoDaLeitura, fronteira_da_extracao
+from apps.purchasing.api import (
+    EstadoDaLeitura,
+    PaginaDoDocumento,
+    fronteira_da_extracao,
+)
 from apps.purchasing.models import (
     JANELA_DA_EXTRACAO,
     EstadoDoDocumento,
     estado_do_documento,
 )
+from apps.purchasing.rasterizacao import ImagemNormalizada
 from apps.shared.consumidor import ENTREGUE, consumir_outbox
 from apps.shared.db import tenant_scope
 
@@ -145,6 +150,25 @@ def _cache_limpa() -> Iterator[None]:
     cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _rasterizador(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A libvips substituída: as páginas ganham imagem sem dependência nativa.
+
+    Autouse porque **toda** a extração passou a precisar de imagem (ADR 0031,
+    decisão 1): o modelo é de visão, e sem bytes não há chamada. Sem isto, nesta
+    máquina sem libvips, nenhuma página normalizava e a tarefa devolvia
+    `paginas_por_normalizar` sem abrir tentativa nenhuma — que é o comportamento
+    certo e tornava este ficheiro inteiro uma medição do vazio.
+    """
+    import apps.purchasing.tasks as tarefas_do_purchasing
+
+    monkeypatch.setattr(
+        tarefas_do_purchasing,
+        "rasterizar",
+        lambda **_: ImagemNormalizada(webp=b"RIFF-encenado", width=1240, height=1754),
+    )
+
+
 @pytest.fixture
 def cenario(transactional_db: None) -> Cenario:
     ana = User.objects.create_user("ana@alfa.pt", CREDENCIAL_VALIDA)
@@ -173,6 +197,11 @@ def _documento_com_pagina(cliente: Client) -> str:
     mais nada. Em produção é o `beat` que faz esta chamada, a cada 5 segundos;
     aqui é o teste, porque o que ele quer medir é o que acontece **depois** de o
     consumidor passar.
+
+    A fixture `_rasterizador` (autouse) faz a página ganhar imagem na mesma
+    passagem, e isso passou a ser **necessário** com a ADR 0031: a extração já
+    não abre tentativa nenhuma quando nenhuma página tem imagem, porque sem
+    imagem não há nada para mandar a um modelo de visão.
     """
     resposta = cliente.post(
         URL, data={"ficheiro": SimpleUploadedFile("fatura.pdf", PDF, "application/pdf")}
@@ -211,7 +240,7 @@ def test_a_extracao_sem_modelo_grava_a_tentativa_com_erro_legivel(cenario: Cenar
     assert tentativa.started_at is not None
     assert tentativa.finished_at is not None
     assert tentativa.model == ""
-    assert tentativa.prompt_version == "0-sem-prompt"
+    assert tentativa.prompt_version == "1-pt-json"
     assert tentativa.payload == {}
     assert tentativa.cost_eur == Decimal("0")
     assert "AGENTS_EXTRACTION_MODEL" in tentativa.error
@@ -290,13 +319,17 @@ def test_um_documento_de_outro_tenant_nao_e_legivel_pela_tarefa(cenario: Cenario
     assert resultado == "sem_paginas"
 
 
-@override_settings(AGENTS_EXTRACTION_MODEL="um-modelo-qualquer")
-def test_com_modelo_configurado_e_sem_cliente_tambem_grava_erro(cenario: Cenario) -> None:
-    """A segunda recusa da fronteira: configuração que promete o que não existe.
+@override_settings(
+    AGENTS_EXTRACTION_MODEL="um-modelo-qualquer",
+    AGENTS_EXTRACTION_API_KEY="",
+    AGENTS_CHAT_API_KEY="",
+)
+def test_com_modelo_configurado_e_sem_chave_grava_erro(cenario: Cenario) -> None:
+    """Modelo configurado e credencial nenhuma: `erro` com a razão, zero rede.
 
-    Levanta de propósito em vez de devolver um documento vazio: um payload vazio
-    parecia uma fatura ilegível, e a diferença entre "não consegui ler" e "não há
-    cliente" é a diferença entre chamar o fornecedor e corrigir o deploy.
+    Falha **fechada** e numa frase que diz o que configurar. A diferença entre
+    "não consegui ler" e "não há chave" é a diferença entre chamar o fornecedor
+    e corrigir o deploy.
     """
     cliente = _cliente(cenario)
     documento_id = _documento_com_pagina(cliente)
@@ -305,16 +338,35 @@ def test_com_modelo_configurado_e_sem_cliente_tambem_grava_erro(cenario: Cenario
 
     assert tentativa.status == EstadoDaExtracao.ERRO
     assert tentativa.model == "um-modelo-qualquer"
-    assert "cliente nenhum" in tentativa.error
+    assert "chave de API" in tentativa.error
 
 
-def test_a_fronteira_do_modelo_levanta_as_duas_recusas(cenario: Cenario) -> None:
-    """As duas excepções, directamente. Zero rede em qualquer dos caminhos."""
+def test_a_fronteira_do_modelo_recusa_sem_modelo_e_acima_do_tecto(
+    cenario: Cenario,
+) -> None:
+    """Duas recusas que acontecem **antes** de qualquer socket. Zero rede.
+
+    A segunda é a da decisão 1 da ADR 0031: acima do tecto de páginas não se
+    chama de todo — a alternativa era pagar uma leitura que já se sabe que vai
+    ser cortada a meio.
+    """
     with pytest.raises(ModeloNaoConfigurado):
-        ler_documento(paginas=())
-    with override_settings(AGENTS_EXTRACTION_MODEL="x"):
-        with pytest.raises(ClienteDoModeloInexistente):
-            ler_documento(paginas=())
+        ler_documento(tenant_id=cenario.alfa.id, paginas=())
+
+    paginas = tuple(
+        PaginaDoDocumento(
+            id=uuid4(),
+            position=i,
+            file_page_number=i,
+            imagem=f"x/{i}.webp",
+            qr_payload="",
+            normalized=True,
+        )
+        for i in range(1, 12)
+    )
+    with override_settings(AGENTS_EXTRACTION_MODEL="x", AGENTS_EXTRACTION_MAX_PAGES=10):
+        with pytest.raises(DocumentoGrandeDemais):
+            ler_documento(tenant_id=cenario.alfa.id, paginas=paginas)
 
 
 # ---------------------------------------------------------------------------

@@ -6,17 +6,24 @@ linha que sabe o fornecedor — trocar de fornecedor é esta fábrica e uma fun�
 não uma reescrita. E só o **worker** a chama: o processo web recusa 503 antes de
 criar linha nenhuma quando falta o modelo ou a chave, e nunca abre socket nenhum.
 
-`ler_documento` **não muda de comportamento**: continua a levantar, porque o que
-lhe falta não é o cliente — é o prompt e o corpo. A mensagem do
-`ClienteDoModeloInexistente` diz-o.
+Desde 2026-10-19 (ADR 0031) `ler_documento` também fala: uma chamada a um modelo
+de **visão**, com as páginas todas em base64 inline, em JSON mode e **sem tools
+nenhumas**. A ausência de tools não é economia — é a defesa estrutural contra uma
+fatura que traga impresso um texto a tentar dar instruções: um modelo convencido
+não tem acção nenhuma para desviar.
 
 ## As recusas, que são situações diferentes
 
-* `ModeloNaoConfigurado` — não há nome de modelo, ou (no chat) não há chave. É
-  o estado de omissão do projecto, e a frase diz o que configurar;
-* `ClienteDoModeloInexistente` — há nome de modelo de extração e o cliente
-  existe, mas a extração não tem prompt nem corpo. Levanta porque é uma
-  configuração que promete uma capacidade que o código não tem;
+* `ModeloNaoConfigurado` — não há nome de modelo, ou não há chave. É o estado de
+  omissão do projecto, e a frase diz o que configurar;
+* `DocumentoGrandeDemais` — o documento tem mais páginas do que
+  `AGENTS_EXTRACTION_MAX_PAGES`. **Não se chama**: acima do tecto não há
+  chamada, há uma razão legível e uma pessoa a partir o documento em dois;
+* `PaginasSemImagem` — nenhuma página tem imagem normalizada para enviar. É o
+  caso de uma extração que chegou antes da rasterização, e melhora com o tempo:
+  a acção é voltar a tentar;
+* `OrcamentoEsgotado` — o tecto diário em euros **deste estabelecimento** já foi
+  atingido. Não é um estado novo (ADR 0031, decisão 7): é um `erro` com razão;
 * `TempoEsgotado` — o fornecedor não respondeu dentro de `timeout`;
 * `RespostaInvalida` — a resposta não tem a forma que se lê (sem `choices`,
   sem `usage`).
@@ -40,23 +47,29 @@ sobre a base deixa acrescentar uma recusa sem tocar na tarefa.
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 
-from apps.purchasing.api import PaginaDoDocumento
+from apps.agents.prompt_extracao import VERSAO_DO_PROMPT_DA_EXTRACAO, prompt_de_extracao
+from apps.purchasing.api import TIPO_DA_IMAGEM_DA_PAGINA, PaginaDoDocumento, bytes_da_pagina
 
 __all__ = [
     "VERSAO_DO_PROMPT",
     "ChamadaATool",
-    "ClienteDoModeloInexistente",
+    "DocumentoGrandeDemais",
     "ErroDoModelo",
     "ModeloNaoConfigurado",
+    "OrcamentoEsgotado",
+    "PaginasSemImagem",
     "RespostaDoModelo",
     "RespostaInvalida",
     "TempoEsgotado",
@@ -64,6 +77,7 @@ __all__ = [
     "cliente",
     "conversar",
     "custo_em_euros",
+    "extracao_configurada",
     "ler_documento",
     "nome_do_modelo",
     "nome_do_modelo_de_chat",
@@ -71,9 +85,10 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: A versão do prompt da **extração**, gravada em cada linha de extração.
-#: `0-sem-prompt` porque não há prompt nenhum (ver `ler_documento`).
-VERSAO_DO_PROMPT = "0-sem-prompt"
+#: A versão do prompt da **extração**, gravada em cada linha de extração. Vive no
+#: `prompt_extracao.py`, ao lado do texto que versiona; reexportada aqui porque é
+#: este o nome que o `services.py` grava desde a fatia 1.
+VERSAO_DO_PROMPT = VERSAO_DO_PROMPT_DA_EXTRACAO
 
 #: Um milhão: a unidade da tabela de preços.
 _MILHAO = Decimal("1000000")
@@ -88,8 +103,22 @@ class ModeloNaoConfigurado(ErroDoModelo):
     """Não há nome de modelo — ou, no chat, não há chave de API."""
 
 
-class ClienteDoModeloInexistente(ErroDoModelo):
-    """Há nome de modelo de extração e não há prompt nem corpo que o chame."""
+class DocumentoGrandeDemais(ErroDoModelo):
+    """Mais páginas do que `AGENTS_EXTRACTION_MAX_PAGES`. Não se chama o modelo."""
+
+
+class PaginasSemImagem(ErroDoModelo):
+    """Nenhuma página tem imagem normalizada para enviar ao modelo.
+
+    A única recusa desta fronteira que melhora com o tempo sem ser do
+    fornecedor: a rasterização corre noutra tarefa, e quando acabar o documento
+    é relido. Por isso a tarefa **não** abre tentativa quando o vê de antemão —
+    esta classe é a rede para a corrida que sobra.
+    """
+
+
+class OrcamentoEsgotado(ErroDoModelo):
+    """O tecto diário de euros deste estabelecimento já foi atingido."""
 
 
 class TempoEsgotado(ErroDoModelo):
@@ -139,7 +168,12 @@ class RespostaDoModelo:
     O resto são métricas da chamada, que o `ARCHITECTURE.md` §6 exige.
     """
 
-    payload: dict[str, Any] = field(default_factory=dict)
+    #: O corpo verbatim de uma leitura de documento. **Não é sempre um `dict`**:
+    #: um modelo que responda em prosa dá uma string, e uma string é o que vai
+    #: para a coluna — guardar o texto tal como veio é o ponto inteiro dela
+    #: (ADR 0021, decisão 4), e um não-objecto não valida contra o schema, que é
+    #: exactamente a fronteira sintáctica entre `ilegivel` e `lido`.
+    payload: Any = field(default_factory=dict)
     texto: str = ""
     chamadas: tuple[ChamadaATool, ...] = ()
     mensagem_verbatim: dict[str, Any] = field(default_factory=dict)
@@ -171,19 +205,44 @@ def _url_base() -> str:
     return str(getattr(settings, "AGENTS_CHAT_BASE_URL", "") or "")
 
 
-def _limite_de_tokens(max_tokens: int) -> dict[str, int]:
+def _chave_de_extracao() -> str:
+    """A chave da extração, **com fallback para a do chat** (ADR 0031, decisão 2).
+
+    Uma credencial hoje; duas no dia em que as faturas tiverem de ir para uma
+    conta diferente da do chat — e esse dia é uma variável de ambiente, não um
+    diff.
+    """
+    return str(getattr(settings, "AGENTS_EXTRACTION_API_KEY", "") or "") or _chave_de_api()
+
+
+def _url_de_extracao() -> str:
+    """A URL base da extração, com o mesmo fallback para a do chat."""
+    return str(getattr(settings, "AGENTS_EXTRACTION_BASE_URL", "") or "") or _url_base()
+
+
+def extracao_configurada() -> bool:
+    """Há modelo de extração, com preço conhecido ou fornecedor gratuito?
+
+    A chave não entra, pela razão do `chat_configurado`: só o worker a tem.
+    """
+    modelo = nome_do_modelo()
+    return bool(modelo) and _modelo_tem_preco(modelo, url_base=_url_de_extracao())
+
+
+def _limite_de_tokens(max_tokens: int, *, url_base: str | None = None) -> dict[str, int]:
     """O parâmetro que limita a resposta, no nome que o destino conhece.
 
     A OpenAI retirou `max_tokens` aos modelos recentes a favor de
     `max_completion_tokens`; os fornecedores compatíveis (Gemini, Groq, GitHub
-    Models) conhecem `max_tokens` e nem todos aceitam o outro. A URL base decide.
+    Models) conhecem `max_tokens` e nem todos aceitam o outro. A URL base decide,
+    e a da extração pode não ser a do chat.
     """
-    if _url_base():
+    if _url_base() if url_base is None else url_base:
         return {"max_tokens": max_tokens}
     return {"max_completion_tokens": max_tokens}
 
 
-def _modelo_tem_preco(modelo: str) -> bool:
+def _modelo_tem_preco(modelo: str, *, url_base: str | None = None) -> bool:
     """O modelo está na tabela de preços, ou o fornecedor é por URL base (gratuito)?
 
     Sem URL base o destino é a OpenAI, que cobra: um modelo sem preço custaria
@@ -191,8 +250,11 @@ def _modelo_tem_preco(modelo: str) -> bool:
     segurança de 2026-10-15). Falha-se fechado. Com URL base aceita-se o 0 €:
     é o nível gratuito que o dono escolheu, e o teto de mensagens por pessoa
     continua a valer.
+
+    `url_base` é argumento porque a extração tem a sua (ADR 0031, decisão 2) e a
+    pergunta é a mesma; sem ele vale a do chat, que é o chamador de origem.
     """
-    if _url_base():
+    if _url_base() if url_base is None else url_base:
         return True
     tabela: Mapping[str, object] = getattr(settings, "AGENTS_MODEL_PRICES_EUR_PER_MTOKEN", {})
     return modelo in tabela
@@ -210,28 +272,38 @@ def chat_configurado() -> bool:
     return bool(modelo) and _modelo_tem_preco(modelo)
 
 
-def cliente() -> Any:
-    """A fábrica do cliente: a única linha que sabe o fornecedor.
+def cliente(
+    *, chave: str | None = None, url: str | None = None, timeout: int | None = None
+) -> Any:
+    """A fábrica do cliente: a **única** linha que sabe o fornecedor.
 
     `max_retries=0` porque nenhuma recusa melhora com o tempo e uma retentativa
-    paga duas vezes (ADR 0027, decisão 9); o `timeout` é por chamada e vem das
-    settings. Os testes substituem esta função por uma que devolve um cliente
-    falso — nenhum teste fala com a rede.
+    paga duas vezes (ADR 0027, decisão 9); as retentativas de sobrecarga são do
+    `conversar`/`ler_documento` e não do SDK. Os testes substituem esta função
+    por uma que devolve um cliente falso — nenhum teste fala com a rede.
+
+    Os três argumentos entram com a ADR 0031 (decisão 2) e **continuam a dar uma
+    fábrica só**: por omissão são os do chat, e a extração passa os seus. Um
+    segundo construtor noutro ficheiro era a propriedade inteira desta fábrica a
+    desaparecer.
 
     Import no corpo: o SDK só é carregado no processo que o usa, que é o worker.
     """
-    chave = _chave_de_api()
+    chave = _chave_de_api() if chave is None else chave
     if not chave:
         raise ModeloNaoConfigurado(
-            "não há chave de API para o assistente: a definição AGENTS_CHAT_API_KEY "
-            "está vazia. Só o worker a recebe, pelo ambiente (ADR 0027)."
+            "não há chave de API: as definições AGENTS_EXTRACTION_API_KEY e "
+            "AGENTS_CHAT_API_KEY estão as duas vazias. Só o worker a recebe, "
+            "pelo ambiente (ADR 0027)."
         )
     import openai
 
     return openai.OpenAI(
         api_key=chave,
-        base_url=_url_base() or None,
-        timeout=int(getattr(settings, "AGENTS_CHAT_TIMEOUT_S", 30)),
+        base_url=(_url_base() if url is None else url) or None,
+        timeout=int(getattr(settings, "AGENTS_CHAT_TIMEOUT_S", 30))
+        if timeout is None
+        else timeout,
         max_retries=0,
     )
 
@@ -437,15 +509,35 @@ def _ler(bruto: Any, *, modelo: str, duracao_ms: int) -> RespostaDoModelo:
     )
 
 
-def ler_documento(*, paginas: Sequence[PaginaDoDocumento]) -> RespostaDoModelo:
-    """Lê as páginas de um documento. **Levanta sempre, hoje.**
+def ler_documento(
+    *, tenant_id: UUID, paginas: Sequence[PaginaDoDocumento]
+) -> RespostaDoModelo:
+    """Lê as páginas de um documento com um modelo de visão. Uma chamada só.
 
     As páginas chegam como DTO congelado do `purchasing.api` (ADR 0020, decisão
-    6), já ordenadas. A assinatura é a que um cliente a sério usaria, e é
-    deliberado: no dia em que houver prompt, o que muda é o corpo desta função e
-    mais nada — nem a tarefa, nem os serviços, nem o contrato. O cliente já
-    existe (`cliente()`, ADR 0027); o que falta é o prompt e a leitura da
-    resposta, e ligar a extração ao modelo está fora de âmbito dessa ADR.
+    6), já ordenadas, e **sem bytes**: os bytes vêm uma página de cada vez por
+    `bytes_da_pagina`, que é a função que impede este módulo de conhecer o
+    `MEDIA_ROOT` do `purchasing` (ADR 0031, decisão 1).
+
+    ## Porque é que vão todas numa chamada
+
+    O cabeçalho está na folha 1, as linhas continuam na 2 e os totais estão na
+    última. Partir por página obrigava-nos a **fundir** N leituras parciais, e
+    fundir é inferência nossa sobre texto não confiável. Dez imagens são ~15 k
+    tokens de entrada; acima do tecto não se chama de todo.
+
+    ## JSON mode, e zero tools
+
+    `response_format={"type": "json_object"}` dá JSON válido sem o custo de um
+    *"Aqui está o JSON:"*, e quem decide se é **este** JSON é o
+    `LeituraDeFaturaSerializer`. Tools nenhumas, e isso é a defesa estrutural
+    contra uma fatura com texto a tentar instruir o modelo: não há acção para
+    desviar (ADR 0031, decisão 6).
+
+    Devolve o `payload` já desserializado e verbatim — o `dict` tal como o
+    modelo o escreveu, sem um campo acrescentado nem retirado. Um corpo que não
+    seja JSON válido vai como `{"texto": …}` para a coluna, onde não valida e
+    dá `ilegivel`, que é exactamente a fronteira sintáctica da decisão 4.
     """
     modelo = nome_do_modelo()
     if not modelo:
@@ -455,9 +547,143 @@ def ler_documento(*, paginas: Sequence[PaginaDoDocumento]) -> RespostaDoModelo:
             f"leitura destas {len(paginas)} página(s). O documento fica com a "
             "tentativa gravada e à espera de revisão à mão."
         )
-    raise ClienteDoModeloInexistente(
-        f"o modelo {modelo!r} está configurado mas a extração não tem cliente "
-        "nenhum ligado: a fábrica `cliente()` existe desde a ADR 0027 e serve o "
-        "chat; ligar a extração a sério é um prompt e o corpo desta função — "
-        "ver o docstring de apps/agents/modelo.py."
+    url = _url_de_extracao()
+    if not _modelo_tem_preco(modelo, url_base=url):
+        raise ModeloNaoConfigurado(
+            f"o modelo {modelo!r} não está em AGENTS_MODEL_PRICES_EUR_PER_MTOKEN e "
+            "o destino é a OpenAI, que cobra: sem preço na tabela o tecto diário "
+            "em euros nunca trava. Falha-se fechado."
+        )
+    tecto = int(getattr(settings, "AGENTS_EXTRACTION_MAX_PAGES", 10))
+    if len(paginas) > tecto:
+        raise DocumentoGrandeDemais(
+            f"este documento tem {len(paginas)} páginas e lêem-se no máximo "
+            f"{tecto} numa leitura. Divide-o em dois documentos."
+        )
+    imagens = _imagens_das_paginas(tenant_id=tenant_id, paginas=paginas)
+    if not imagens:
+        raise PaginasSemImagem(
+            f"nenhuma das {len(paginas)} página(s) deste documento tem imagem "
+            "pronta: a normalização ainda não correu, ou não há rasterizador "
+            "neste ambiente. Volta a tentar quando as imagens aparecerem."
+        )
+
+    timeout = int(getattr(settings, "AGENTS_EXTRACTION_TIMEOUT_S", 120))
+    api = cliente(chave=_chave_de_extracao(), url=url, timeout=timeout)
+    mensagens = [
+        {"role": "system", "content": prompt_de_extracao()},
+        {"role": "user", "content": imagens},
+    ]
+    ultima: ModeloOcupado | None = None
+    for tentativa in range(1, TENTATIVAS_EM_SOBRECARGA + 1):
+        try:
+            return _ler_documento_uma_vez(
+                api=api, modelo=modelo, mensagens=mensagens, url=url, timeout=timeout
+            )
+        except ModeloOcupado as exc:
+            ultima = exc
+            logger.warning(
+                "modelo sobrecarregado a ler um documento; a repetir",
+                extra={"event": "extracao", "outcome": "ocupado", "count": tentativa},
+            )
+            if tentativa < TENTATIVAS_EM_SOBRECARGA:
+                time.sleep(ESPERA_ENTRE_TENTATIVAS_S * tentativa)
+    raise ultima if ultima is not None else ErroDoModelo("o modelo não respondeu")
+
+
+def _imagens_das_paginas(
+    *, tenant_id: UUID, paginas: Sequence[PaginaDoDocumento]
+) -> list[dict[str, Any]]:
+    """As páginas como partes `image_url` em base64 inline, pela ordem do papel.
+
+    **Base64 inline e não upload para o fornecedor** (ADR 0031, decisão 1): uma
+    Files API é específica do fornecedor, e a fábrica `cliente()` é a única
+    linha deste repositório que o sabe. Um upload partia essa propriedade *e*
+    deixava a imagem de uma fatura — com os dois NIF e a morada — no servidor de
+    terceiros mais tempo do que a chamada dura.
+
+    Uma página sem bytes é saltada em silêncio e não rebenta a leitura: é melhor
+    ler nove folhas de dez do que nenhuma, e quem conta as que faltam é quem
+    revê, com a fotografia ao lado.
+    """
+    partes: list[dict[str, Any]] = []
+    for pagina in paginas:
+        dados = bytes_da_pagina(tenant_id=tenant_id, pagina_id=pagina.id)
+        if not dados:
+            continue
+        b64 = base64.b64encode(dados).decode("ascii")
+        partes.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{TIPO_DA_IMAGEM_DA_PAGINA};base64,{b64}"},
+            }
+        )
+    return partes
+
+
+def _ler_documento_uma_vez(
+    *,
+    api: Any,
+    modelo: str,
+    mensagens: Sequence[Mapping[str, Any]],
+    url: str,
+    timeout: int,
+) -> RespostaDoModelo:
+    """Uma chamada só. As retentativas por sobrecarga estão no `ler_documento`."""
+    import openai
+
+    comecou = time.monotonic()
+    try:
+        bruto = api.chat.completions.create(
+            model=modelo,
+            messages=list(mensagens),
+            response_format={"type": "json_object"},
+            **_limite_de_tokens(
+                int(getattr(settings, "AGENTS_EXTRACTION_MAX_TOKENS", 8000)), url_base=url
+            ),
+            timeout=timeout,
+        )
+    except openai.APITimeoutError as exc:
+        raise TempoEsgotado(f"o modelo não respondeu em {timeout} s") from exc
+    except openai.APIStatusError as exc:
+        # Só a classe e o código: a mensagem de um erro do fornecedor pode citar
+        # o corpo do pedido, e o corpo tem as imagens de uma fatura.
+        if exc.status_code in _ESTADOS_DE_SOBRECARGA:
+            raise ModeloOcupado(
+                f"o fornecedor respondeu {exc.status_code} e pediu para esperar"
+            ) from exc
+        raise ErroDoModelo(f"{type(exc).__name__} ao chamar o modelo") from exc
+    except openai.OpenAIError as exc:
+        raise ErroDoModelo(f"{type(exc).__name__} ao chamar o modelo") from exc
+    duracao_ms = int((time.monotonic() - comecou) * 1000)
+
+    resposta = _ler(bruto, modelo=modelo, duracao_ms=duracao_ms)
+    logger.info(
+        "documento lido pelo modelo",
+        extra={
+            "event": "extracao",
+            "outcome": resposta.motivo_de_paragem or "sem_motivo",
+            "duration_ms": duracao_ms,
+            "count": resposta.input_tokens + resposta.output_tokens,
+        },
     )
+    return _com_payload(resposta)
+
+
+def _com_payload(resposta: RespostaDoModelo) -> RespostaDoModelo:
+    """A mesma resposta com o `payload` desserializado do texto, verbatim.
+
+    Um texto que não é JSON fica na coluna **como texto**; um JSON que não é um
+    objecto (uma lista, um número) fica como veio. Nos dois casos não valida
+    contra o schema, logo o estado é `ilegivel` e o verbatim está lá para se
+    poder voltar a ele (ADR 0021, decisão 4).
+
+    **Nunca** se tenta extrair o JSON de dentro da prosa: adivinhar onde começa
+    um objecto é a inferência que o JSON mode existe para tornar desnecessária,
+    e a fronteira entre `ilegivel` e `lido` tem de ser da **forma** para ser
+    testável.
+    """
+    try:
+        return replace(resposta, payload=json.loads(resposta.texto))
+    except (TypeError, ValueError):
+        return replace(resposta, payload=resposta.texto)

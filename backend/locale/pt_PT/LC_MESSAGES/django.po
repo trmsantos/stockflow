@@ -221,6 +221,16 @@ msgstr "Este documento ainda não tem páginas, logo não há nada para fechar."
 msgid "A document takes at most {limite} pages."
 msgstr "Um documento aceita no máximo {limite} páginas."
 
+# As duas da ADR 0031. A do documento anulado é uma **recusa** e não um aviso —
+# o QR é gerado por software certificado e `E=A` quer dizer que o emissor o
+# anulou —, e a frase diz de onde vem a informação para ninguém a confundir com
+# uma leitura do modelo.
+msgid "The QR code on this document says it was cancelled by the issuer, so it cannot receive goods."
+msgstr "O código QR deste documento diz que foi anulado por quem o emitiu, logo não pode dar entrada a mercadoria."
+
+msgid "This document cannot be read again: it is already being read, it has a confirmed receipt, or it has used up its reading attempts."
+msgstr "Este documento não pode ser lido outra vez: já está a ser lido, já tem uma receção confirmada, ou esgotou as tentativas de leitura."
+
 msgid "Only a PDF, a JPEG or a PNG. What decides is the content of the file and never its name or the declared type."
 msgstr "Só um PDF, um JPEG ou um PNG. O que decide é o conteúdo do ficheiro e nunca o seu nome nem o tipo declarado."
 

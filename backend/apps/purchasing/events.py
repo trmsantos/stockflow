@@ -30,7 +30,7 @@ from uuid import UUID
 
 from apps.shared.events import DomainEvent
 
-__all__ = ["DocumentoFechado", "StockReceived"]
+__all__ = ["DocumentoFechado", "ReleituraPedida", "StockReceived"]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -54,6 +54,25 @@ class DocumentoFechado(DomainEvent):
     `tenant_scope(tenant_id)` — e por isso lê as páginas ele mesmo, no instante
     em que vai agir. Uma lista dentro do evento era uma fotografia do estado,
     tirada antes do commit e já velha quando o handler a lesse.
+    """
+
+    documento_id: UUID
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ReleituraPedida(DomainEvent):
+    """Uma **pessoa** pediu que este documento fosse lido outra vez.
+
+    Publicado por `purchasing.services.pedir_releitura`, o corpo do
+    `POST /documents/<id>/extraction` (ADR 0031, E). É um evento separado do
+    `DocumentoFechado` por uma razão de custo, não de arrumação: o handler do
+    `DocumentoFechado` é idempotente *por já haver tentativa*, exactamente para
+    uma segunda entrega do mesmo evento não pagar uma segunda leitura. Uma
+    releitura **quer** pagar outra leitura, e é por isso que tem de ser outro
+    facto.
+
+    Quem o publica já verificou as três recusas (receção confirmada, leitura em
+    curso, tecto de tentativas): este evento é o "sim" e não o pedido.
     """
 
     documento_id: UUID
