@@ -358,11 +358,11 @@ def test_ultima_contagem_ignora_abertas_e_devolve_o_maximo(painel: Ambiente) -> 
         status="closed",
         closed_at=timezone.make_aware(datetime(2026, 5, 18, 9)),
     )
-    # Uma contagem aberta, com `closed_at` por preencher — e outra aberta a que
-    # alguém pôs data sem a fechar: nenhuma das duas conta.
-    StockCount.objects.create(
-        tenant_id=painel.tenant_id, location=armazem, status="open", closed_at=None
-    )
+    # Uma contagem aberta a que alguém pôs data sem a fechar: não conta. Era
+    # **uma segunda** aberta antes da ADR 0030, e agora o estabelecimento só
+    # pode ter uma (`inventory_stockcount_uma_aberta_por_tenant`) — o que o
+    # teste precisa é de uma aberta com `closed_at` preenchido, que é o caso
+    # perverso; a aberta sem data está coberta pelo filtro `status="closed"`.
     StockCount.objects.create(
         tenant_id=painel.tenant_id,
         location=painel.local,

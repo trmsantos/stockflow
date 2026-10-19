@@ -359,15 +359,6 @@ msgstr "Não é possível alterar o controlo por lotes enquanto há stock."
 msgid "There is already an item with this SKU in this establishment."
 msgstr "Já existe um artigo com este SKU neste estabelecimento."
 
-msgid "Cannot close: some lines are not yet counted."
-msgstr "Não é possível fechar: há linhas ainda por contar."
-
-msgid "Count not found or already closed."
-msgstr "Contagem não encontrada ou já fechada."
-
-msgid "Count not found."
-msgstr "Contagem não encontrada."
-
 msgid "Expiry date is required when lot code is provided."
 msgstr "A validade é obrigatória quando se indica o lote."
 
@@ -388,6 +379,30 @@ msgstr "Receita não encontrada ou inativa."
 
 msgid "Recipe yield_factor must be greater than zero."
 msgstr "O factor de rendimento da receita tem de ser maior que zero."
+
+# ---------------------------------------------------------------------------
+# Ligar as contagens (ADR 0030): `apps/inventory/count_services.py` e
+# `apps/inventory/views.py`.
+# ---------------------------------------------------------------------------
+# Os msgid vão numa linha só, como todos os outros deste ficheiro: o parser do
+# `tests/test_i18n.py` lê o par `(msgid, msgstr)` linha a linha, e uma entrada
+# partida em continuações seria lida como msgid vazio — a entrada parecia estar
+# lá e a mensagem saía em inglês.
+
+msgid "Owner or manager"
+msgstr "Dono ou gerente"
+
+msgid "There is already an open count in this establishment."
+msgstr "Já há uma contagem aberta neste estabelecimento."
+
+msgid "This count is already closed."
+msgstr "Esta contagem já foi fechada."
+
+msgid "This item is tracked by lot and has no lot recorded yet. Record the goods receipt before counting it."
+msgstr "Este artigo tem controlo por lotes e ainda não tem nenhum lote registado. Faz primeiro a receção da mercadoria para o poderes contar."
+
+msgid "Write why this count is being closed."
+msgstr "Escreve porque é que esta contagem está a ser fechada."
 
 # ---------------------------------------------------------------------------
 # As recusas do assistente (ADR 0027, decisão 4): `apps/agents/services.py`.

@@ -366,6 +366,24 @@ class StockCount(TenantModel):
     - `status` CharField em ["open", "closed"] — estado da contagem
     - `created_by` FK User — quem criou
     - `closed_by` FK User null — quem fechou
+    - `closing_reason` CharField(200) — a justificação com que foi fechada; `''`
+      enquanto a contagem está aberta. **Obrigatória no fecho e sem limiar**
+      (ADR 0030, segunda ronda de respostas do dono): o limiar de 50 € era uma
+      hipótese por calibrar e o dono preferiu a disciplina de uma frase em todas
+      as contagens.
+
+    ## Uma contagem aberta de cada vez, e porque é um índice
+
+    `UniqueConstraint(tenant, condition=status="open")` — um índice único
+    **parcial**, e não um `filter().exists()` no serviço: dois telemóveis a
+    carregar em "começar" no mesmo instante veem os dois zero abertas e inserem
+    os dois (ADR 0030, decisão 2). É a base que arbitra; o serviço apanha o
+    `IntegrityError` e responde 409 com o id da que já estava aberta.
+
+    Por estabelecimento e não por localização porque o `expected` de cada linha é
+    um instantâneo (ADR 0029): duas contagens abertas sobre stock que se cruza
+    congelam dois instantâneos que divergem, e ao fechar a segunda aplica
+    diferenças contra um nível que a primeira já ajustou.
     """
 
     STATUSES = [
@@ -404,10 +422,23 @@ class StockCount(TenantModel):
         related_name="+",
         verbose_name="fechada por",
     )
+    closing_reason = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        verbose_name="justificação do fecho",
+    )
 
     class Meta(TenantModel.Meta):
         verbose_name = "contagem de stock"
         verbose_name_plural = "contagens de stock"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant"],
+                condition=models.Q(status="open"),
+                name="inventory_stockcount_uma_aberta_por_tenant",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["tenant", "location", "status"], name="inv_count_tenant_loc_status"
@@ -420,17 +451,33 @@ class StockCount(TenantModel):
 
 
 class StockCountLine(TenantModel):
-    """Uma linha da contagem: um artigo/lote com quantidade esperada e contada.
+    """Uma linha da contagem: um artigo com quantidade esperada e contada.
 
     Campos:
     - `stock_count` FK a `StockCount`
     - `product` FK a `catalog_product`
-    - `lot` FK a `inventory_lot` null — lote específico ou None
-    - `quantity_expected` Decimal(12,3) — quantidade em stock no sistema
-    - `quantity_counted` Decimal(12,3) null — quantidade contada (NULL até ser preenchida)
-    - `zone` CharField(100) — zona/secção (ex.: "frio", "prateleira 1"); `''` se não há
-    - `created_at` DateTime — quando foi criada
+    - `lot` FK a `inventory_lot` null — sempre `NULL` nesta fatia: a linha é por
+      **artigo** e o `expected` é a soma dos lotes daquela localização (ADR 0030,
+      decisão 4). A coluna fica porque contar por lote é fatia própria
+    - `quantity_expected` Decimal(12,3) — o que o sistema dizia **no instante em
+      que a linha nasceu**, congelado (ADR 0029)
+    - `quantity_counted` Decimal(12,3) null — quantidade contada; `NULL` é **por
+      contar** e nunca zero (zero é "contei e não havia nada", que é diferença)
+    - `zone` CharField(100) — sem fonte nesta fatia: a zona *é* a localização
+      (ADR 0030, decisão 3) e ninguém escreve esta coluna
     - `counted_at` DateTime null — quando foi contada
+    - `counted_by_name` CharField(150) — o nome de quem contou, **copiado** da
+      pertença como nos movimentos (`created_by_name`): sobrevive à conta ser
+      apagada e nunca é o email, que qualquer colega leria depois
+
+    ## O upsert por artigo, e porque está na base
+
+    `UniqueConstraint(tenant, stock_count, product, lot, nulls_distinct=False)` —
+    o padrão do `Lot`, e o `nulls_distinct=False` é o que o torna real: com o
+    `lot` a `NULL`, sem ele cada `INSERT` seria uma linha nova. Duas pessoas a
+    contar o mesmo artigo deixam **uma** linha com o último valor e o último
+    autor — nunca a soma dos dois —, e repetir o mesmo `POST` depois de um
+    timeout é idempotente, que é o modo de falha real de contar em pé com 3G.
     """
 
     stock_count = models.ForeignKey(
@@ -471,10 +518,23 @@ class StockCountLine(TenantModel):
         default="",
         verbose_name="zona",
     )
+    counted_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="contada em"
+    )
+    counted_by_name = models.CharField(
+        max_length=150, blank=True, default="", verbose_name="contada por"
+    )
 
     class Meta(TenantModel.Meta):
         verbose_name = "linha de contagem"
         verbose_name_plural = "linhas de contagem"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "stock_count", "product", "lot"],
+                name="inventory_stockcountline_uma_por_artigo",
+                nulls_distinct=False,
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["tenant", "stock_count", "product"],

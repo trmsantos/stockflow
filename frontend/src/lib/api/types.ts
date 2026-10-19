@@ -1002,6 +1002,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stock/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Contagens do estabelecimento, da mais recente para a mais antiga
+         * @description Lista paginada de contagens, da mais recente para a mais antiga.
+         */
+        get: operations["contagens_listar"];
+        put?: never;
+        /**
+         * Abrir uma contagem numa localização
+         * @description Abre a contagem de uma localização, com as linhas já materializadas.
+         */
+        post: operations["contagens_abrir"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/counts/{id}/closing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * O que o fecho vai escrever, sem escrever nada
+         * @description A pré-visualização (GET) e o fecho (POST), pelo mesmo algoritmo.
+         */
+        get: operations["contagens_fecho_prever"];
+        put?: never;
+        /**
+         * Fechar a contagem e gravar os ajustes no ledger
+         * @description A pré-visualização (GET) e o fecho (POST), pelo mesmo algoritmo.
+         */
+        post: operations["contagens_fechar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/counts/{id}/lines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * As linhas de uma contagem, na ordem do servidor
+         * @description As linhas da contagem: percorrer a lista (GET) e contar (POST).
+         */
+        get: operations["contagens_linhas_listar"];
+        put?: never;
+        /**
+         * Registar o que se contou de um artigo
+         * @description As linhas da contagem: percorrer a lista (GET) e contar (POST).
+         */
+        post: operations["contagens_linha_registar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stock/movements/adjustment": {
         parameters: {
             query?: never;
@@ -1328,6 +1400,18 @@ export interface components {
             share: string;
         };
         /**
+         * @description O corpo de um 409: `code` para ramificar, `detail` para ler, `id` para navegar.
+         *
+         *     O `id` é o que distingue este 409 de uma mensagem de erro: com ele o ecrã
+         *     leva quem tentou abrir a segunda contagem até à que já está aberta.
+         */
+        ConflitoDeContagemOut: {
+            readonly code?: string;
+            readonly detail?: string;
+            /** Format: uuid */
+            readonly id?: string | null;
+        };
+        /**
          * @description * `ambient` - ambiente
          *     * `chilled` - refrigerado
          *     * `frozen` - congelado
@@ -1340,6 +1424,32 @@ export interface components {
          * @enum {string}
          */
         ConservacaoMedidaEnum: "chilled" | "frozen";
+        /** @description `POST /stock/counts`: contar é sempre contar **uma** localização. */
+        ContagemInRequest: {
+            /**
+             * Format: uuid
+             * @description UUID da localização a contar
+             */
+            location: string;
+        };
+        /** @description Uma contagem como a lista e o cabeçalho do ecrã a mostram. */
+        ContagemOut: {
+            /** Format: date-time */
+            readonly closed_at?: string | null;
+            readonly closing_reason?: string | null;
+            /** @description Rótulo de quem pode fechar. Não é a permissão. */
+            readonly closing_role?: string;
+            readonly counted_lines?: number;
+            readonly current_zone?: components["schemas"]["ProgressoDeZonaOut"] | null;
+            /** Format: uuid */
+            readonly id?: string;
+            readonly location?: components["schemas"]["LocalizacaoReferencia"];
+            /** Format: date-time */
+            readonly started_at?: string;
+            readonly status?: components["schemas"]["EstadoDeContagemEnum"];
+            readonly total_lines?: number;
+            readonly zones?: components["schemas"]["ProgressoDeZonaOut"][];
+        };
         /** @description A conversa inteira, com os turnos por posição (≤ 30). */
         ConversaOut: {
             /** Format: date-time */
@@ -1672,6 +1782,12 @@ export interface components {
          */
         EstadoDaMensagemEnum: "pendente" | "a_responder" | "respondida" | "erro";
         /**
+         * @description * `open` - open
+         *     * `closed` - closed
+         * @enum {string}
+         */
+        EstadoDeContagemEnum: "open" | "closed";
+        /**
          * @description * `aguarda_captura` - slot aberto, à espera da primeira página
          *     * `expirado` - o slot expirou sem página nenhuma
          *     * `a_normalizar` - há páginas e a imagem ainda não está pronta
@@ -1722,6 +1838,39 @@ export interface components {
             supplier_nif: string;
             /** Format: decimal */
             total: string | null;
+        };
+        /**
+         * @description `POST /stock/counts/{id}/closing`: a justificação, **sempre obrigatória**.
+         *
+         *     Texto livre e não um enum: uma contagem não cai nos cinco motivos de um
+         *     desperdício, e a razão de uma diferença é quase sempre uma frase ("faltou
+         *     lançar a transferência"). Sem limiar, por decisão do dono (ADR 0030,
+         *     segunda ronda, nº 5).
+         */
+        FechoDeContagemInRequest: {
+            /** @description Porque é que esta contagem fecha. Obrigatória. */
+            reason: string;
+        };
+        /** @description O fecho: as diferenças em quantidade e em euros, antes e depois de escrever. */
+        FechoDeContagemOut: {
+            readonly closing_reason?: string | null;
+            readonly closing_role?: string;
+            /** Format: uuid */
+            readonly count?: string;
+            readonly counted_lines?: number;
+            readonly differences?: components["schemas"]["LinhaDeContagemOut"][];
+            /** Format: decimal */
+            readonly gain_eur?: string;
+            /** Format: decimal */
+            readonly loss_eur?: string;
+            /** Format: decimal */
+            readonly net_eur?: string;
+            readonly reason_required?: boolean;
+            /** Format: decimal */
+            readonly reason_required_above_eur?: string;
+            readonly status?: components["schemas"]["EstadoDeContagemEnum"];
+            readonly total_lines?: number;
+            readonly uncounted_lines?: components["schemas"]["PorContarOut"];
         };
         /**
          * @description `GET /reporting/month`. A palavra "lucro" não aparece: o campo é `result_eur`.
@@ -1981,6 +2130,50 @@ export interface components {
          */
         LanguageEnum: "pt-pt" | "en";
         /**
+         * @description `POST /stock/counts/{id}/lines`: o artigo e quanto lá está.
+         *
+         *     Sem `sku` (morreu com o contrato do servidor) e sem `unit` — o `unit` era
+         *     pior que morto: era aceite e **silenciosamente ignorado** pelo serviço.
+         */
+        LinhaDeContagemInRequest: {
+            /**
+             * Format: uuid
+             * @description UUID do artigo contado
+             */
+            product: string;
+            /**
+             * Format: decimal
+             * @description Quantidade contada, na unidade base do artigo (≥ 0)
+             */
+            quantity: string;
+        };
+        /**
+         * @description Uma linha: o que o sistema diz, o que se contou e a diferença.
+         *
+         *     `difference_eur` vem a `null` para o `staff` — é a regra dos euros da ADR
+         *     0029 —, e o preço é que `null` passa a dizer duas coisas ("ainda não
+         *     contado" e "não te é mostrado"). É o menor dos males contra negar a lista a
+         *     quem conta.
+         */
+        LinhaDeContagemOut: {
+            readonly count_unit?: string;
+            readonly counted?: components["schemas"]["QuantidadeOut"] | null;
+            /** Format: date-time */
+            readonly counted_at?: string | null;
+            readonly counted_by?: string | null;
+            readonly difference?: components["schemas"]["QuantidadeOut"] | null;
+            /** Format: decimal */
+            readonly difference_eur?: string | null;
+            readonly expected?: components["schemas"]["QuantidadeOut"] | null;
+            /** Format: uuid */
+            readonly id?: string;
+            readonly position?: number;
+            /** Format: uuid */
+            readonly product?: string;
+            readonly short_name?: string;
+            readonly zone?: components["schemas"]["ZonaOut"];
+        };
+        /**
          * @description Uma linha **como o modelo a leu**. Texto não confiável, já validado.
          *
          *     Chega aqui depois de o `agents` a ter validado contra o seu schema à escrita
@@ -2047,6 +2240,12 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /** @description `{id, name}` — a localização como o cliente a lê em todo o lado. */
+        LocalizacaoReferencia: {
+            /** Format: uuid */
+            readonly id?: string;
+            readonly name?: string;
         };
         /**
          * @description O corpo do `POST /auth/login`: um email e uma password, e nada mais.
@@ -2134,6 +2333,21 @@ export interface components {
             position: number;
             width: number | null;
         };
+        PaginatedContagemOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["ContagemOut"][];
+        };
         PaginatedConversaResumoOutList: {
             /** @example 123 */
             count: number;
@@ -2193,6 +2407,21 @@ export interface components {
              */
             previous?: string | null;
             results: components["schemas"]["FornecedorOut"][];
+        };
+        PaginatedLinhaDeContagemOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["LinhaDeContagemOut"][];
         };
         PaginatedLocalizacaoOutList: {
             /** @example 123 */
@@ -2288,6 +2517,17 @@ export interface components {
             share: string;
             /** Format: decimal */
             value_eur: string;
+        };
+        /**
+         * @description As linhas que ficam por contar: quantas e quais.
+         *
+         *     Existe para o ecrã poder dizer "Fechar com 3 por contar" em vez de desligar
+         *     o botão: fechar uma contagem imperfeita tem de ser possível, senão quem
+         *     conta inventa números para o botão acender (guião §4).
+         */
+        PorContarOut: {
+            readonly count?: number;
+            readonly names?: string[];
         };
         /**
          * @description O corpo do `PATCH /auth/preferencias`: o tema que esta pessoa prefere.
@@ -2446,6 +2686,15 @@ export interface components {
             sku?: string;
             track_lots?: boolean;
         };
+        /** @description A mesma zona com o progresso. Vive na contagem, não repetida em cada linha. */
+        ProgressoDeZonaOut: {
+            readonly blind?: boolean;
+            readonly counted_lines?: number;
+            readonly name?: string;
+            readonly position?: number;
+            readonly slug?: string;
+            readonly total_lines?: number;
+        };
         /** @description O painel declara o que não sabe, e a declaração é parte do contrato. */
         QualidadeDosDadosOut: {
             consumption_registered: boolean;
@@ -2456,6 +2705,22 @@ export interface components {
             revenue_source: components["schemas"]["RevenueSourceEnum"];
             unavailable: components["schemas"]["UnavailableEnum"][];
             vat_regime: components["schemas"]["VatRegimeEnum"];
+        };
+        /**
+         * @description Uma quantidade nas duas formas: a do ledger e a de mostrar.
+         *
+         *     O ledger guarda sempre a unidade **base** (g, ml, un) e o ecrã mostra a de
+         *     apresentação (kg, l, un). A conversão é do servidor: converter unidades no
+         *     cliente é a fonte nº 1 de bugs de stock (`inventory-domain` §2), e sem o par
+         *     o ecrã mostra "3400,000 g" a quem diz "3,4 kg".
+         */
+        QuantidadeOut: {
+            /** Format: decimal */
+            readonly base?: string;
+            readonly base_unit?: string;
+            /** Format: decimal */
+            readonly display?: string;
+            readonly display_unit?: string;
         };
         /**
          * @description * `expired` - expired
@@ -3035,6 +3300,18 @@ export interface components {
             reason: components["schemas"]["ReasonEnum"];
             /** @description Detalhes opcionais se reason='other' */
             reason_detail?: string;
+        };
+        /**
+         * @description Uma zona da contagem. Nesta fatia a zona **é** a localização (ADR 0030, d3).
+         *
+         *     `blind` é facto e não marcador de lugar: nenhuma zona é cega porque a
+         *     contagem cega não existe — é sonda do guião §3 e fica fora de âmbito.
+         */
+        ZonaOut: {
+            readonly blind?: boolean;
+            readonly name?: string;
+            readonly position?: number;
+            readonly slug?: string;
         };
     };
     responses: never;
@@ -4499,6 +4776,179 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StockDetail"][];
+                };
+            };
+        };
+    };
+    contagens_listar: {
+        parameters: {
+            query?: {
+                /** @description A page number within the paginated result set. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedContagemOutList"];
+                };
+            };
+        };
+    };
+    contagens_abrir: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContagemInRequest"];
+                "multipart/form-data": components["schemas"]["ContagemInRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContagemOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflitoDeContagemOut"];
+                };
+            };
+        };
+    };
+    contagens_fecho_prever: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this contagem de stock. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FechoDeContagemOut"];
+                };
+            };
+        };
+    };
+    contagens_fechar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this contagem de stock. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FechoDeContagemInRequest"];
+                "multipart/form-data": components["schemas"]["FechoDeContagemInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FechoDeContagemOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflitoDeContagemOut"];
+                };
+            };
+        };
+    };
+    contagens_linhas_listar: {
+        parameters: {
+            query?: {
+                /** @description A page number within the paginated result set. */
+                page?: number;
+                /** @description Filtra pelo `slug` da zona. Um slug desconhecido dá página vazia. */
+                zona?: string;
+            };
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this contagem de stock. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedLinhaDeContagemOutList"];
+                };
+            };
+        };
+    };
+    contagens_linha_registar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this contagem de stock. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinhaDeContagemInRequest"];
+                "multipart/form-data": components["schemas"]["LinhaDeContagemInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinhaDeContagemOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflitoDeContagemOut"];
                 };
             };
         };
