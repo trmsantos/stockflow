@@ -885,7 +885,7 @@ def confirmar_rececao(
                     created_by_id=confirmed_by_id,
                     created_by_name=confirmed_by_name,
                     reference=receipt.reference,
-                    reason=None,
+                    reason="",
                     production_id=None,
                 )
                 movimentos_dtos.append((linha, mvt_dto))

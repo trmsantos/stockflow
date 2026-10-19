@@ -299,8 +299,8 @@ def StockMovementFactory(
     lot: Lot | None = None,
     created_by: User | None = None,
     occurred_at: datetime | None = None,
-    reference: str | None = None,
-    reason: str | None = None,
+    reference: str = "",
+    reason: str = "",
     **kwargs: Any,
 ) -> StockMovement:
     """Cria um movimento de stock (ledger)."""

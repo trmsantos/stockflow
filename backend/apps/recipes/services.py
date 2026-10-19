@@ -227,8 +227,8 @@ def produzir(
                 created_by_id=user.id,
                 created_by_name=user_name,
                 production_id=production_id,
-                reference=None,
-                reason=None,
+                reference="",
+                reason="",
             )
             movements.append(movement_out)
 
@@ -291,8 +291,8 @@ def produzir(
         created_by_id=user.id,
         created_by_name=user_name,
         production_id=production_id,
-        reference=None,
-        reason=None,
+        reference="",
+        reason="",
     )
     movements.append(movement_in)
 

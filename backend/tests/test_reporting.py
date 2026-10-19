@@ -122,7 +122,7 @@ class Ambiente:
         *,
         custo: str = "1.00",
         quando: datetime | None = None,
-        reason: str | None = None,
+        reason: str = "",
         estimado: bool = False,
     ) -> StockMovement:
         """Uma linha no ledger. `quando` é local e ingénuo; aqui torna-se ciente."""

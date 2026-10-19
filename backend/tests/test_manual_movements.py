@@ -110,7 +110,7 @@ class TestWasteMovement:
                 quantity=Decimal("5"),
                 lot_id=lote.id,
                 reason="spoiled",
-                reason_detail=None,
+                reason_detail="",
                 user=user,
             )
 
@@ -168,7 +168,7 @@ class TestWasteMovement:
                     quantity=Decimal("0"),
                     lot_id=lote.id,
                     reason="spoiled",
-                    reason_detail=None,
+                    reason_detail="",
                     user=user,
                 )
 
@@ -210,7 +210,7 @@ class TestWasteMovement:
                     quantity=Decimal("5"),
                     lot_id=lote.id,
                     reason="invalid_reason",
-                    reason_detail=None,
+                    reason_detail="",
                     user=user,
                 )
 
@@ -320,7 +320,7 @@ class TestAdjustmentMovement:
                 quantity=Decimal("-15"),
                 lot_id=lote.id,
                 reason="breakage",
-                reason_detail=None,
+                reason_detail="",
                 user=user,
             )
 

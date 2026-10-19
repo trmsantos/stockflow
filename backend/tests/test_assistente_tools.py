@@ -1240,7 +1240,7 @@ def _contagem_de_stock(
                 stock_count=contagem,
                 product=linha["produto"],
                 lot=linha.get("lote"),
-                zone=linha.get("zona"),
+                zone=linha.get("zona", ""),
                 quantity_expected=Decimal(linha["esperado"]),
                 quantity_counted=(
                     Decimal(linha["contado"]) if linha.get("contado") is not None else None

@@ -331,7 +331,7 @@ class Command(BaseCommand):
             preco_de_apresentacao = Decimal("1.50") if idx % 2 == 0 else Decimal("2.00")
             fator = self._fator_de_apresentacao.get(product_id, Decimal("1"))
             unit_cost = (preco_de_apresentacao / fator).quantize(Decimal("0.000001"))
-            reference = f"DOC-{idx:04d}" if movement_type == "receipt" else None
+            reference = f"DOC-{idx:04d}" if movement_type == "receipt" else ""
             occurred_at = now - timedelta(days=9 - idx)
 
             # Criar movimento via API

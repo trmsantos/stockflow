@@ -53,7 +53,7 @@ def adicionar_linha_contagem(
     stock_count_id: UUID,
     sku: str,
     quantity_counted: Decimal,
-    zone: str | None = None,
+    zone: str = "",
 ) -> StockCountLine:
     """Adiciona uma linha à contagem usando SKU."""
     # Verificar se contagem existe e está aberta
@@ -82,7 +82,7 @@ def adicionar_linha_contagem(
         product_id=produto.id,
         quantity_expected=quantidade_esperada,
         quantity_counted=quantity_counted,
-        zone=zone or "",
+        zone=zone,
     )
     return linha
 

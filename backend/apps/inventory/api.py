@@ -212,8 +212,10 @@ class MovimentoResumido:
     occurred_at: datetime
     location_name: str
     lot_code: str | None
-    reason: str | None
-    reference: str | None
+    #: `""` quando o movimento não tem motivo nem documento: o modelo guarda texto
+    #: vazio e nunca NULL (migração `inventory.0007`).
+    reason: str
+    reference: str
     transfer_id: UUID | None
     #: A localização do outro lado de uma transferência, quando há.
     contraparte: str | None
@@ -783,7 +785,7 @@ def contagem_por_id(
                     if linha.lot is None or selectors.e_lote_sintetico(linha.lot.code)
                     else linha.lot.code
                 ),
-                zone=linha.zone or "",
+                zone=linha.zone,
                 quantity_expected=linha.quantity_expected,
                 quantity_counted=linha.quantity_counted,
                 unit_cost=custos.get((linha.product_id, linha.lot_id), Decimal("0")),

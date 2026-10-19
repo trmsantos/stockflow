@@ -119,18 +119,22 @@ class StockMovement(TenantModel):
     - `cost_is_estimate` bool — se o custo é estimado (A, guia sem fatura) ou
       confirmado (B, com fatura)
     - `reason` CharField com choices enum (waste, adjustment): expired, spoiled,
-      prep_loss, breakage, other
-    - `reason_detail` TextField null — detalhes adicionais quando reason='other'
-    - `reference` CharField(255) null — chave de deduplicação (doc_number_normalized,
-      uuid produção, id contagem)
+      prep_loss, breakage, other; `''` quando o movimento não tem motivo
+    - `reason_detail` TextField — detalhes adicionais quando reason='other'; `''` se não há
+    - `reference` CharField(255) — chave de deduplicação (doc_number_normalized,
+      uuid produção, id contagem); `''` quando o movimento não referencia documento
     - `production_id` UUID null — referência da produção (production_out e
       production_in partilham este id)
     - `transfer_id` UUID null — ID do par transfer_out/transfer_in
     - `occurred_at` DateTime — quando o movimento aconteceu
     - `created_by` FK User SET_NULL, `created_by_name` char(150) — quem criou o movimento
 
+    Os três campos de texto acima são `NOT NULL` com `default=''`: ausência escreve-se `''`
+    e nunca `NULL`, para não haver dois valores a significar "nada" (convenção do Django, a
+    mesma que o `purchasing` segue).
+
     Append-only na BD: REVOKE UPDATE, DELETE; CHECK(quantity != 0).
-    Índice parcial: (tenant_id, reference) WHERE reference IS NOT NULL.
+    Índice parcial: (tenant_id, reference) WHERE reference <> ''.
     """
 
     MOVEMENT_TYPES = [
@@ -191,15 +195,15 @@ class StockMovement(TenantModel):
     reason = models.CharField(
         max_length=20,
         choices=REASON_CHOICES,
-        null=True,
         blank=True,
+        default="",
         verbose_name="motivo",
     )
     reason_detail = models.TextField(
-        blank=True, null=True, verbose_name="detalhes do motivo"
+        blank=True, default="", verbose_name="detalhes do motivo"
     )
     reference = models.CharField(
-        max_length=255, null=True, blank=True, verbose_name="referência de documento"
+        max_length=255, blank=True, default="", verbose_name="referência de documento"
     )
     production_id = models.UUIDField(
         null=True, blank=True, verbose_name="ID da produção"
@@ -233,7 +237,7 @@ class StockMovement(TenantModel):
             models.Index(
                 fields=["tenant", "reference"],
                 name="inv_stockmv_tenant_ref_idx",
-                condition=models.Q(reference__isnull=False),
+                condition=~models.Q(reference=""),
             ),
         ]
 
@@ -424,7 +428,7 @@ class StockCountLine(TenantModel):
     - `lot` FK a `inventory_lot` null — lote específico ou None
     - `quantity_expected` Decimal(12,3) — quantidade em stock no sistema
     - `quantity_counted` Decimal(12,3) null — quantidade contada (NULL até ser preenchida)
-    - `zone` CharField(100) null — zona/secção (ex.: "frio", "prateleira 1")
+    - `zone` CharField(100) — zona/secção (ex.: "frio", "prateleira 1"); `''` se não há
     - `created_at` DateTime — quando foi criada
     - `counted_at` DateTime null — quando foi contada
     """
@@ -463,8 +467,8 @@ class StockCountLine(TenantModel):
     )
     zone = models.CharField(
         max_length=100,
-        null=True,
         blank=True,
+        default="",
         verbose_name="zona",
     )
 

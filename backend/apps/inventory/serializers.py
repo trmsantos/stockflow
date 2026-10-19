@@ -367,7 +367,7 @@ class StockCountLineOutSerializer(serializers.Serializer):
         read_only=True,
         allow_null=True,
     )
-    zone = serializers.CharField(read_only=True, allow_null=True, allow_blank=True)
+    zone = serializers.CharField(read_only=True, allow_blank=True)
     counted_at = serializers.DateTimeField(read_only=True, allow_null=True)
 
 

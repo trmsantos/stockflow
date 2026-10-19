@@ -165,7 +165,7 @@ class MovementDTO:
     - movement_type (um dos 9 tipos)
     - occurred_at (data/hora do movimento)
     - created_by_id, created_by_name (quem criou o movimento)
-    - reference, production_id, reason (opcionais)
+    - reference, production_id, reason (opcionais; texto ausente é `""`, nunca None)
     """
 
     product_id: UUID
@@ -178,9 +178,9 @@ class MovementDTO:
     occurred_at: datetime
     created_by_id: UUID | None
     created_by_name: str
-    reference: str | None = None
+    reference: str = ""
     production_id: UUID | None = None
-    reason: str | None = None
+    reason: str = ""
     #: O par `transfer_out`/`transfer_in` partilha este id, e ele entra **na
     #: criação**: a tabela é append-only (`REVOKE UPDATE`, ADR 0006), logo
     #: escrevê-lo depois, com um `update()`, é `permission denied`.
@@ -484,7 +484,7 @@ def registar_waste(
     quantity: Decimal,
     lot_id: UUID | None,
     reason: str,
-    reason_detail: str | None,
+    reason_detail: str,
     user: Autor,
     user_name: str = "",
 ) -> UUID:
@@ -498,7 +498,7 @@ def registar_waste(
     - quantity: Decimal > 0 (será negativo no movimento)
     - lot_id: UUID ou None (se None, usa FEFO)
     - reason: um de ['expired', 'spoiled', 'prep_loss', 'breakage', 'other']
-    - reason_detail: opcional, para reason='other'
+    - reason_detail: opcional, para reason='other'; ausente é `""`
     - user: User que cria o movimento
 
     Retorna: movement_id
@@ -589,7 +589,7 @@ def registar_adjustment(
     quantity: Decimal,
     lot_id: UUID | None,
     reason: str,
-    reason_detail: str | None,
+    reason_detail: str,
     user: Autor,
     user_name: str = "",
 ) -> UUID:
@@ -785,7 +785,7 @@ def registar_transfer(
         occurred_at=agora,
         created_by_id=user.id,
         created_by_name=user_name or user.email,
-        reason=None,
+        reason="",
         transfer_id=transfer_id,
     )
 
@@ -800,7 +800,7 @@ def registar_transfer(
         occurred_at=agora,
         created_by_id=user.id,
         created_by_name=user_name or user.email,
-        reason=None,
+        reason="",
         transfer_id=transfer_id,
     )
 
