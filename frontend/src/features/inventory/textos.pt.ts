@@ -335,35 +335,40 @@ export const PT = {
     de: "de",
     contados: "contados",
     linhas: "linhas",
-    tudoContado: "tudo contado",
-    zonaPrefixo: "zona:",
+    tudoContado: "Está tudo contado — falta fechar.",
+    /** "A contar" + o nome da localização: é a resposta a "o que é que eu estou a contar?". */
+    aContar: "a contar",
+    /** Só para áudio, entre o nome de quem contou e a hora a que contou. */
+    as: "às",
     zonas: "Zonas da contagem",
     todasAsZonas: "Todas",
     todasAsZonasPista: "Ver as linhas de todas as zonas, na ordem do percurso",
-    zonaCegaPista: (zona: string) => `${zona} — contagem cega: o esperado não aparece`,
-    zonaAbertaPista: (zona: string) => `${zona} — o esperado aparece ao lado do campo`,
-    cegaSrOnly: "(contagem cega)",
+    zonaPista: (zona: string) => `Ver só as linhas de ${zona}`,
     aCarregarContagem: "A carregar a contagem…",
     aCarregarLinhas: "A carregar as linhas…",
     escrevaQuantos: (unidade: string) => `Escreva quantos ${unidade} estão na prateleira.`,
-    /**
-     * A mesma frase em três comprimentos, porque a coluna tem 7rem em desktop e
-     * a 360px não há cabeçalho nenhum a dizer "Esperado": a longa fica para o
-     * telemóvel, a curta para a coluna, e o `title` leva a longa nas duas.
-     */
-    cegaPista: "Contagem cega: o esperado só aparece ao fechar",
-    cegaLonga: "contagem cega: o esperado só aparece ao fechar",
-    cega: "cega",
     esperadoPrefixo: "esperado",
     confere: "confere",
     aGuardar: "a guardar…",
+    /**
+     * Quando a recusa não traz corpo JSON — rede fora, ou um 500 com a página de
+     * erro do Django. O `message` do `ApiError` seria `"500 em /stock/counts/…"`,
+     * que é texto de diagnóstico e não de produto.
+     */
+    naoFoiGuardado: "Não deu para guardar. Verifique a ligação e escreva outra vez.",
     semContagemTitulo: "Nenhuma contagem a decorrer",
     /**
-     * As quatro zonas são um **exemplo** do percurso físico, não dados: por isso
-     * traduzem-se, como os `placeholder` de exemplo do `accounts`.
+     * Há **uma** contagem aberta de cada vez por estabelecimento (ADR 0030): a
+     * frase di-lo antes de alguém tentar abrir a segunda e levar com um
+     * conflito. Conta-se o armazém, fecha-se, conta-se a cozinha.
      */
     semContagemCorpo:
-      "Uma contagem percorre uma loja por zonas, na ordem física: Balcão, Frigorífico, Arca, Armazém. Escolha onde quer contar.",
+      "Conta-se uma localização de cada vez: escolha onde quer contar, conte, feche. Enquanto uma contagem estiver aberta não é possível abrir outra.",
+    /** Quem conta não abre a contagem. A frase diz-lhe o que fazer, não o que falhou. */
+    semContagemCorpoStaff:
+      "Quando alguém abrir uma contagem, os artigos dessa localização aparecem aqui para contar.",
+    soOPapelAbre: "quem abre uma contagem é o dono ou o gerente",
+    erroDasLocalizacoes: "Não foi possível carregar as localizações",
     ondeContar: "Onde quer contar",
     escolhaALoja: "Escolha a loja",
     aComecar: "A começar…",
@@ -375,13 +380,31 @@ export const PT = {
     verAsDiferencas: "Ver as diferenças",
     erroDaContagem: "Não foi possível carregar a contagem",
     erroDasLinhas: "Não foi possível carregar as linhas",
-    zonaVaziaTitulo: "Esta zona não tem nada para contar",
+    zonaVaziaTitulo: "Não há nada para contar aqui",
     zonaVaziaCorpo:
-      "Nenhum artigo desta contagem está nesta zona. As outras zonas continuam no topo.",
-    verTodasAsZonas: "Ver todas as zonas",
-    /** O papel vem do servidor (`closing_role`) e entra por interpolação. */
-    soOPapelFecha: (papel: string) =>
-      `só o ${papel} fecha a contagem, e as diferenças aparecem antes`,
+      "Esta contagem não tem nenhum artigo neste filtro. Os artigos com stock nesta localização aparecem na lista completa.",
+    verTudo: "Ver a contagem toda",
+    /**
+     * O 409 de "já há uma contagem aberta" visto do lado de quem carregou no
+     * botão: a contagem que ela quer já existe, e o ecrã mostra-a. A frase
+     * existe para quem escolheu a Cozinha não ficar a olhar para o Armazém sem
+     * perceber porquê.
+     */
+    jaHaviaAbertaTitulo: "Já havia uma contagem a decorrer",
+    jaHaviaAbertaCorpo: (localizacao: string) =>
+      `É esta, em ${localizacao}. Há uma contagem aberta de cada vez: feche-a antes de começar outra.`,
+    entendido: "Entendido",
+    /** A contagem fechou enquanto esta pessoa contava, noutro telemóvel. */
+    fechouAMeioTitulo: "Esta contagem já foi fechada",
+    fechouAMeioCorpo:
+      "Alguém a fechou enquanto contava. O último número que escreveu não entrou — volte a Contar para ver o estado atual.",
+    /**
+     * O papel vem do servidor (`closing_role`) e entra por interpolação — é um
+     * **rótulo**, não a permissão (essa está em `permission_classes`). Sem
+     * artigo antes dele: o servidor manda "Dono ou gerente" e "só o Dono ou
+     * gerente" não é português.
+     */
+    soOPapelFecha: (papel: string) => `quem fecha a contagem: ${papel}`,
   },
 
   fecho: {
@@ -406,23 +429,32 @@ export const PT = {
     porContarSemAjuste: ". As que ficaram por contar não geram ajuste.",
     /** O número de linhas por contar vai em mono: daí as duas partes. */
     ficam: "Ficam",
-    linhasPorContar: "linhas por contar",
+    linhasPorContar: "por contar",
     porContarCorpo:
-      "O stock delas não muda: sem contagem não há diferença, e sem diferença não há ajuste. Pode fechar assim.",
+      "O stock destes artigos não muda: sem contagem não há diferença, e sem diferença não há ajuste. Não ter contado não é o mesmo que ter contado zero. Pode fechar assim.",
+    /**
+     * O botão **diz** quantas ficam de fora em vez de se desligar — fechar uma
+     * contagem imperfeita tem de ser possível, senão quem conta inventa números
+     * para o botão acender (guião §4).
+     */
+    fecharComPorContar: (quantas: number) =>
+      quantas === 1 ? "Fechar com 1 por contar" : `Fechar com ${String(quantas)} por contar`,
+    semPapelTitulo: "O fecho é do dono ou do gerente",
+    semPapelCorpo:
+      "Fechar grava um ajuste de stock por cada diferença, e esses movimentos não se apagam. Contar é de toda a gente; fechar não.",
     semDiferencas: "Nenhuma diferença até agora. O que está na prateleira é o que o sistema diz.",
     diferencasTitulo: "Diferenças, a maior primeiro",
     contadoPrefixo: "contado",
     esperadoPrefixo: "esperado",
-    motivoObrigatorio: (valor: string) =>
-      `As diferenças somam mais de ${valor} — escreva o que aconteceu.`,
+    /**
+     * Sem limiar na frase, desde a segunda ronda da ADR 0030: a justificação é
+     * sempre obrigatória, e "obrigatório acima de 0 €" não informa ninguém.
+     */
+    motivoObrigatorio: "Escreva o que aconteceu — sem isso a contagem não fecha.",
     oQueAconteceu: "O que aconteceu",
-    opcional: " (opcional)",
     exemploDeMotivo: "por exemplo, faltou lançar a transferência da manhã…",
-    ajudaObrigatoria: (valor: string) =>
-      `Obrigatório: as diferenças somam mais de ${valor}. Vai com o ajuste para o histórico.`,
-    ajudaOpcional: (valor: string) =>
-      `Fica no histórico ao lado do ajuste. Obrigatório acima de ${valor} de diferenças.`,
+    ajudaObrigatoria: "Fica no histórico, ao lado de cada ajuste que este fecho gravar.",
     aFechar: "A fechar…",
-    soOPapelFecha: (papel: string) => `só o ${papel} fecha a contagem`,
+    soOPapelFecha: (papel: string) => `quem fecha a contagem: ${papel}`,
   },
 };

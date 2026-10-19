@@ -836,6 +836,15 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^stock/alerts$",
         "api/v1/^stock/by-location$",
         "api/v1/^stock/by-product$",
+        # As seis rotas da contagem física (ADR 0030). Com âmbito, que é o
+        # default, e **nenhuma** dispensa: contar é o fluxo de campo e corre no
+        # telemóvel do `staff`, logo a tentação era dispensá-la de alguma coisa.
+        # O que a fatia tem de assimétrico é o **papel** (contar é de toda a
+        # gente, abrir e fechar não são), e isso vive em `permission_classes`.
+        # O `fora_do_admin` acima não cresceu com esta feature.
+        "api/v1/^stock/counts$",
+        "api/v1/^stock/counts/(?P<pk>[^/.]+)/closing$",
+        "api/v1/^stock/counts/(?P<pk>[^/.]+)/lines$",
         "api/v1/^stock/movements/adjustment$",
         "api/v1/^stock/movements/transfer$",
         "api/v1/^stock/movements/waste$",

@@ -58,6 +58,37 @@ def _id_da_loja(indice: int) -> UUID:
     return UUID(f"00000000-0000-4000-8000-{indice + 1:012d}")
 
 
+def _custo_por_unidade_base(base: str, *, caro: bool) -> Decimal:
+    """Um custo plausível **por unidade base**, que é o que o ledger guarda.
+
+    A granel compra-se ao quilo ou ao litro e o ledger guarda ao grama ou ao
+    mililitro, logo divide-se por mil; à unidade, o preço é o próprio. Antes
+    desta correção o preço era por unidade de **apresentação**, e um artigo
+    mostrado em gramas ficava a 1,50 €/g — mil vezes o real, o suficiente para
+    o Painel mostrar um valor de stock absurdo.
+    """
+    from apps.catalog.models import UnidadeBase
+
+    if base == UnidadeBase.UNIDADE:
+        return Decimal("0.45") if caro else Decimal("0.30")
+    por_quilo_ou_litro = Decimal("1.50") if caro else Decimal("2.00")
+    return (por_quilo_ou_litro / 1000).quantize(Decimal("0.000001"))
+
+
+def _quantidade_plausivel(base: str, *, entrada: bool) -> Decimal:
+    """Uma quantidade de padaria, na unidade **base** do artigo.
+
+    O ledger conta ao grama e ao mililitro: um "100" sem olhar à unidade são
+    cem gramas de farinha, que é uma receção que ninguém faz. A granel
+    recebem-se sacos (25 kg) e consomem-se quilos; à unidade, dúzias.
+    """
+    from apps.catalog.models import UnidadeBase
+
+    if base == UnidadeBase.UNIDADE:
+        return Decimal("120") if entrada else Decimal("-40")
+    return Decimal("25000") if entrada else Decimal("-8000")
+
+
 @dataclass
 class SeedResult:
     """Resultado de uma semeação."""
@@ -81,7 +112,11 @@ class Command(BaseCommand):
         super().__init__(*args, **kwargs)
         # `display_factor` por artigo, para converter o preço de apresentação
         # (por kg/L) em custo por unidade base (g/mL) — o que o ledger guarda.
-        self._fator_de_apresentacao: dict[UUID, Decimal] = {}
+        # Unidade base por artigo, para o custo semeado ser plausível: o ledger
+        # guarda euros por **unidade base**, e um preço por unidade de
+        # apresentação dava 1,50 €/g num artigo que se mostra em gramas — mil
+        # vezes o preço real (medido a 2026-10-19, antes desta correção).
+        self._base_por_produto: dict[UUID, str] = {}
 
     def add_arguments(self, parser: CommandParser) -> None:
         group = parser.add_mutually_exclusive_group(required=True)
@@ -263,7 +298,7 @@ class Command(BaseCommand):
                 id=None,  # deixar gerar UUID automaticamente
             )
             product_ids.append(produto.id)
-            self._fator_de_apresentacao[produto.id] = produto.display_factor
+            self._base_por_produto[produto.id] = produto.base_unit
 
         return product_ids
 
@@ -321,16 +356,20 @@ class Command(BaseCommand):
         now = timezone.now()
 
         for idx in range(10):
-            product_id = product_ids[idx % len(product_ids)]
-            location_id = location_ids[idx % len(location_ids)]
+            # Dois movimentos por artigo — uma entrada e o consumo dela —, em vez
+            # de dez artigos alternados: assim nenhum artigo nasce só com saída e
+            # fica com saldo negativo, que o ecrã mostra como "esperado −8 kg" e
+            # confunde quem vê a demonstração (ADR 0012: negativo é possível, mas
+            # não deve ser o estado inicial de uma loja de exemplo).
+            product_id = product_ids[idx // 2]
+            # A mesma localização do par: a entrada vai para o Armazém e o
+            # consumo tem de sair de lá, senão consome-se de uma cozinha vazia.
+            location_id = location_ids[(idx // 2) % len(location_ids)]
 
             movement_type = "receipt" if idx % 2 == 0 else "consumption"
-            quantity = Decimal("100" if idx % 2 == 0 else "-50")
-            # O preço é por unidade de apresentação (1,50 €/kg, 2,00 €/L); o ledger
-            # guarda-o por unidade **base** (g, mL), senão 1,1 kg de farinha valem 1650 €.
-            preco_de_apresentacao = Decimal("1.50") if idx % 2 == 0 else Decimal("2.00")
-            fator = self._fator_de_apresentacao.get(product_id, Decimal("1"))
-            unit_cost = (preco_de_apresentacao / fator).quantize(Decimal("0.000001"))
+            base = self._base_por_produto.get(product_id, "")
+            quantity = _quantidade_plausivel(base, entrada=idx % 2 == 0)
+            unit_cost = _custo_por_unidade_base(base, caro=idx % 2 == 0)
             reference = f"DOC-{idx:04d}" if movement_type == "receipt" else ""
             occurred_at = now - timedelta(days=9 - idx)
 

@@ -1732,6 +1732,194 @@ paths:
                 items:
                   $ref: '#/components/schemas/StockDetail'
           description: ''
+  /api/v1/stock/counts:
+    get:
+      operationId: contagens_listar
+      description: Lista paginada de contagens, da mais recente para a mais antiga.
+      summary: Contagens do estabelecimento, da mais recente para a mais antiga
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - stock
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedContagemOutList'
+          description: ''
+    post:
+      operationId: contagens_abrir
+      description: Abre a contagem de uma localização, com as linhas já materializadas.
+      summary: Abrir uma contagem numa localização
+      tags:
+      - stock
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContagemInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ContagemInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContagemOut'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflitoDeContagemOut'
+          description: ''
+  /api/v1/stock/counts/{id}/closing:
+    get:
+      operationId: contagens_fecho_prever
+      description: A pré-visualização (GET) e o fecho (POST), pelo mesmo algoritmo.
+      summary: O que o fecho vai escrever, sem escrever nada
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this contagem de stock.
+        required: true
+      tags:
+      - stock
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FechoDeContagemOut'
+          description: ''
+    post:
+      operationId: contagens_fechar
+      description: A pré-visualização (GET) e o fecho (POST), pelo mesmo algoritmo.
+      summary: Fechar a contagem e gravar os ajustes no ledger
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this contagem de stock.
+        required: true
+      tags:
+      - stock
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FechoDeContagemInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FechoDeContagemInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FechoDeContagemOut'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflitoDeContagemOut'
+          description: ''
+  /api/v1/stock/counts/{id}/lines:
+    get:
+      operationId: contagens_linhas_listar
+      description: 'As linhas da contagem: percorrer a lista (GET) e contar (POST).'
+      summary: As linhas de uma contagem, na ordem do servidor
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this contagem de stock.
+        required: true
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: zona
+        schema:
+          type: string
+        description: Filtra pelo `slug` da zona. Um slug desconhecido dá página vazia.
+      tags:
+      - stock
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedLinhaDeContagemOutList'
+          description: ''
+    post:
+      operationId: contagens_linha_registar
+      description: 'As linhas da contagem: percorrer a lista (GET) e contar (POST).'
+      summary: Registar o que se contou de um artigo
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this contagem de stock.
+        required: true
+      tags:
+      - stock
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinhaDeContagemInRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LinhaDeContagemInRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinhaDeContagemOut'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflitoDeContagemOut'
+          description: ''
   /api/v1/stock/movements/adjustment:
     post:
       operationId: stock_movements_adjustment
@@ -2220,6 +2408,25 @@ components:
       - is_part_of_total
       - part_of
       - share
+    ConflitoDeContagemOut:
+      type: object
+      description: |-
+        O corpo de um 409: `code` para ramificar, `detail` para ler, `id` para navegar.
+
+        O `id` é o que distingue este 409 de uma mensagem de erro: com ele o ecrã
+        leva quem tentou abrir a segunda contagem até à que já está aberta.
+      properties:
+        code:
+          type: string
+          readOnly: true
+        detail:
+          type: string
+          readOnly: true
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
     ConservacaoEnum:
       enum:
       - ambient
@@ -2238,6 +2445,65 @@ components:
       description: |-
         * `chilled` - chilled
         * `frozen` - frozen
+    ContagemInRequest:
+      type: object
+      description: '`POST /stock/counts`: contar é sempre contar **uma** localização.'
+      properties:
+        location:
+          type: string
+          format: uuid
+          description: UUID da localização a contar
+      required:
+      - location
+    ContagemOut:
+      type: object
+      description: Uma contagem como a lista e o cabeçalho do ecrã a mostram.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        location:
+          allOf:
+          - $ref: '#/components/schemas/LocalizacaoReferencia'
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/EstadoDeContagemEnum'
+          readOnly: true
+        started_at:
+          type: string
+          format: date-time
+          readOnly: true
+        closed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        counted_lines:
+          type: integer
+          readOnly: true
+        total_lines:
+          type: integer
+          readOnly: true
+        current_zone:
+          allOf:
+          - $ref: '#/components/schemas/ProgressoDeZonaOut'
+          readOnly: true
+          nullable: true
+        zones:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressoDeZonaOut'
+          readOnly: true
+        closing_role:
+          type: string
+          readOnly: true
+          description: Rótulo de quem pode fechar. Não é a permissão.
+        closing_reason:
+          type: string
+          readOnly: true
+          nullable: true
     ConversaOut:
       type: object
       description: A conversa inteira, com os turnos por posição (≤ 30).
@@ -2756,6 +3022,14 @@ components:
         * `a_responder` - o modelo está a responder
         * `respondida` - respondida
         * `erro` - a resposta falhou
+    EstadoDeContagemEnum:
+      enum:
+      - open
+      - closed
+      type: string
+      description: |-
+        * `open` - open
+        * `closed` - closed
     EstadoDoDocumentoEnum:
       enum:
       - aguarda_captura
@@ -2856,6 +3130,81 @@ components:
       - supplier_name
       - supplier_nif
       - total
+    FechoDeContagemInRequest:
+      type: object
+      description: |-
+        `POST /stock/counts/{id}/closing`: a justificação, **sempre obrigatória**.
+
+        Texto livre e não um enum: uma contagem não cai nos cinco motivos de um
+        desperdício, e a razão de uma diferença é quase sempre uma frase ("faltou
+        lançar a transferência"). Sem limiar, por decisão do dono (ADR 0030,
+        segunda ronda, nº 5).
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          description: Porque é que esta contagem fecha. Obrigatória.
+          maxLength: 200
+      required:
+      - reason
+    FechoDeContagemOut:
+      type: object
+      description: 'O fecho: as diferenças em quantidade e em euros, antes e depois
+        de escrever.'
+      properties:
+        count:
+          type: string
+          format: uuid
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/EstadoDeContagemEnum'
+          readOnly: true
+        counted_lines:
+          type: integer
+          readOnly: true
+        total_lines:
+          type: integer
+          readOnly: true
+        differences:
+          type: array
+          items:
+            $ref: '#/components/schemas/LinhaDeContagemOut'
+          readOnly: true
+        uncounted_lines:
+          allOf:
+          - $ref: '#/components/schemas/PorContarOut'
+          readOnly: true
+        loss_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          readOnly: true
+        gain_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          readOnly: true
+        net_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          readOnly: true
+        reason_required_above_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          readOnly: true
+        reason_required:
+          type: boolean
+          readOnly: true
+        closing_role:
+          type: string
+          readOnly: true
+        closing_reason:
+          type: string
+          readOnly: true
+          nullable: true
     FechoDoMesOut:
       type: object
       description: |-
@@ -3346,6 +3695,89 @@ components:
       description: |-
         * `pt-pt` - Português (Portugal)
         * `en` - English
+    LinhaDeContagemInRequest:
+      type: object
+      description: |-
+        `POST /stock/counts/{id}/lines`: o artigo e quanto lá está.
+
+        Sem `sku` (morreu com o contrato do servidor) e sem `unit` — o `unit` era
+        pior que morto: era aceite e **silenciosamente ignorado** pelo serviço.
+      properties:
+        product:
+          type: string
+          format: uuid
+          description: UUID do artigo contado
+        quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          description: 'Quantidade contada, na unidade de contagem da linha (`count_unit`,
+            que é a de apresentação do artigo: kg, L, un). O servidor converte para
+            a unidade base — converter no cliente é o que o domínio proíbe.'
+      required:
+      - product
+      - quantity
+    LinhaDeContagemOut:
+      type: object
+      description: |-
+        Uma linha: o que o sistema diz, o que se contou e a diferença.
+
+        `difference_eur` vem a `null` para o `staff` — é a regra dos euros da ADR
+        0029 —, e o preço é que `null` passa a dizer duas coisas ("ainda não
+        contado" e "não te é mostrado"). É o menor dos males contra negar a lista a
+        quem conta.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        product:
+          type: string
+          format: uuid
+          readOnly: true
+        short_name:
+          type: string
+          readOnly: true
+        zone:
+          allOf:
+          - $ref: '#/components/schemas/ZonaOut'
+          readOnly: true
+        position:
+          type: integer
+          readOnly: true
+        count_unit:
+          type: string
+          readOnly: true
+        expected:
+          allOf:
+          - $ref: '#/components/schemas/QuantidadeOut'
+          readOnly: true
+          nullable: true
+        counted:
+          allOf:
+          - $ref: '#/components/schemas/QuantidadeOut'
+          readOnly: true
+          nullable: true
+        difference:
+          allOf:
+          - $ref: '#/components/schemas/QuantidadeOut'
+          readOnly: true
+          nullable: true
+        difference_eur:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          readOnly: true
+          nullable: true
+        counted_by:
+          type: string
+          readOnly: true
+          nullable: true
+        counted_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
     LinhaLidaOut:
       type: object
       description: |-
@@ -3487,6 +3919,17 @@ components:
       required:
       - id
       - name
+    LocalizacaoReferencia:
+      type: object
+      description: '`{id, name}` — a localização como o cliente a lê em todo o lado.'
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
     LoginInRequest:
       type: object
       description: |-
@@ -3653,6 +4096,29 @@ components:
       - normalized
       - position
       - width
+    PaginatedContagemOutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContagemOut'
     PaginatedConversaResumoOutList:
       type: object
       required:
@@ -3745,6 +4211,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FornecedorOut'
+    PaginatedLinhaDeContagemOutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/LinhaDeContagemOut'
     PaginatedLocalizacaoOutList:
       type: object
       required:
@@ -3903,6 +4392,23 @@ components:
       required:
       - share
       - value_eur
+    PorContarOut:
+      type: object
+      description: |-
+        As linhas que ficam por contar: quantas e quais.
+
+        Existe para o ecrã poder dizer "Fechar com 3 por contar" em vez de desligar
+        o botão: fechar uma contagem imperfeita tem de ser possível, senão quem
+        conta inventa números para o botão acender (guião §4).
+      properties:
+        count:
+          type: integer
+          readOnly: true
+        names:
+          type: array
+          items:
+            type: string
+          readOnly: true
     PreferenciasInRequest:
       type: object
       description: |-
@@ -4182,6 +4688,29 @@ components:
           $ref: '#/components/schemas/ConservacaoEnum'
         is_active:
           type: boolean
+    ProgressoDeZonaOut:
+      type: object
+      description: A mesma zona com o progresso. Vive na contagem, não repetida em
+        cada linha.
+      properties:
+        slug:
+          type: string
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        position:
+          type: integer
+          readOnly: true
+        blind:
+          type: boolean
+          readOnly: true
+        counted_lines:
+          type: integer
+          readOnly: true
+        total_lines:
+          type: integer
+          readOnly: true
     QualidadeDosDadosOut:
       type: object
       description: O painel declara o que não sabe, e a declaração é parte do contrato.
@@ -4211,6 +4740,32 @@ components:
       - revenue_source
       - unavailable
       - vat_regime
+    QuantidadeOut:
+      type: object
+      description: |-
+        Uma quantidade nas duas formas: a do ledger e a de mostrar.
+
+        O ledger guarda sempre a unidade **base** (g, ml, un) e o ecrã mostra a de
+        apresentação (kg, l, un). A conversão é do servidor: converter unidades no
+        cliente é a fonte nº 1 de bugs de stock (`inventory-domain` §2), e sem o par
+        o ecrã mostra "3400,000 g" a quem diz "3,4 kg".
+      properties:
+        base:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          readOnly: true
+        base_unit:
+          type: string
+          readOnly: true
+        display:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          readOnly: true
+        display_unit:
+          type: string
+          readOnly: true
     ReasonEnum:
       enum:
       - expired
@@ -5254,6 +5809,26 @@ components:
       - product_id
       - quantity
       - reason
+    ZonaOut:
+      type: object
+      description: |-
+        Uma zona da contagem. Nesta fatia a zona **é** a localização (ADR 0030, d3).
+
+        `blind` é facto e não marcador de lugar: nenhuma zona é cega porque a
+        contagem cega não existe — é sonda do guião §3 e fica fora de âmbito.
+      properties:
+        slug:
+          type: string
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        position:
+          type: integer
+          readOnly: true
+        blind:
+          type: boolean
+          readOnly: true
   securitySchemes:
     cookieAuth:
       type: apiKey

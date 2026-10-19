@@ -1342,12 +1342,17 @@ def test_um_colaborador_ve_a_diferenca_e_nao_o_valor(loja: Loja) -> None:
 
 def test_por_contar_nao_e_zero_e_as_contagens_listam_se_por_estado(loja: Loja) -> None:
     farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    # Dois **artigos** e não duas linhas do mesmo: desde a ADR 0030 a linha é
+    # por artigo e a chave `(contagem, artigo, lote)` é única na base, que é o
+    # que torna o `POST /lines` um upsert. O que este teste precisa é de uma
+    # linha contada e outra por contar.
+    acucar = _produto(loja.tenant, "Açúcar", track_lots=False)
     aberta = _contagem_de_stock(
         loja.tenant,
         loja.loja,
         linhas=(
             {"produto": farinha, "esperado": "1000", "contado": None, "zona": "frio"},
-            {"produto": farinha, "esperado": "500", "contado": "0"},
+            {"produto": acucar, "esperado": "500", "contado": "0"},
         ),
     )
     fechada = _contagem_de_stock(

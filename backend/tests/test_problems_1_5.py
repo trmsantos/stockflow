@@ -25,13 +25,7 @@ from apps.accounts.models import Papel, User
 from apps.accounts.services import conceder_pertenca, criar_tenant
 from apps.catalog.models import UnidadeBase
 from apps.catalog.services import actualizar_produto, criar_produto
-from apps.inventory.count_services import (
-    abrir_contagem,
-    adicionar_linha_contagem,
-    fechar_contagem,
-    resumo_contagem,
-)
-from apps.inventory.models import Location, StockCount, StockLevel, StockMovement
+from apps.inventory.models import Location
 from apps.inventory.services import MovementDTO, record_movements
 from apps.purchasing.serializers import RevisaoDeLinhaInSerializer
 from apps.shared.db import tenant_scope
@@ -299,155 +293,11 @@ class TestTrackLotsImmutable:
         assert "track_lots" in exc.value.error_dict
 
 
-@pytest.mark.django_db
-class TestStockCount:
-    """Problema 5: Contagem de stock."""
-
-    def test_open_count(self, tenant_uuid, tenant_ctx):
-        """Abre uma contagem."""
-        loc = Location.objects.create(
-            tenant_id=tenant_uuid, name="Frio", position=0
-        )
-
-        with tenant_ctx(tenant_uuid):
-            contagem = abrir_contagem(tenant_id=tenant_uuid, location_id=loc.pk)
-
-        assert contagem.status == "open"
-        assert contagem.location_id == loc.pk
-
-    def test_add_line_to_count(self, tenant_uuid, tenant_ctx):
-        """Adiciona linha à contagem com SKU."""
-        loc = Location.objects.create(
-            tenant_id=tenant_uuid, name="Prateleira", position=0
-        )
-        contagem = StockCount.objects.create(
-            tenant_id=tenant_uuid, location=loc, status="open"
-        )
-        produto = criar_produto(
-            tenant_id=tenant_uuid,
-            short_name="Leite Integral",
-            base_unit=UnidadeBase.MILILITRO,
-            display_unit="l",
-            display_factor=Decimal("1000"),
-            sku="LEITE001",
-        )
-
-        with tenant_ctx(tenant_uuid):
-            linha = adicionar_linha_contagem(
-                tenant_id=tenant_uuid,
-                stock_count_id=contagem.pk,
-                sku="LEITE001",
-                quantity_counted=Decimal("50"),
-            )
-
-        assert linha.product_id == produto.pk
-        assert linha.quantity_counted == Decimal("50")
-
-    def test_count_summary(self, tenant_uuid, tenant_ctx):
-        """Resumo de contagem."""
-        loc = Location.objects.create(
-            tenant_id=tenant_uuid, name="Congelador", position=0
-        )
-        contagem = StockCount.objects.create(
-            tenant_id=tenant_uuid, location=loc, status="open"
-        )
-
-        resumo = resumo_contagem(tenant_id=tenant_uuid, stock_count_id=contagem.pk)
-        assert resumo["total_lines"] == 0
-        assert resumo["lines_counted"] == 0
-        assert resumo["can_close"] is True  # Sem linhas = pode fechar
-
-    def test_close_count_empty(self, tenant_uuid, tenant_ctx):
-        """Fecha contagem vazia."""
-        loc = Location.objects.create(
-            tenant_id=tenant_uuid, name="Armazém B", position=0
-        )
-        contagem = StockCount.objects.create(
-            tenant_id=tenant_uuid, location=loc, status="open"
-        )
-
-        with tenant_ctx(tenant_uuid):
-            contagem_fechada = fechar_contagem(tenant_id=tenant_uuid, stock_count_id=contagem.pk)
-
-        assert contagem_fechada.status == "closed"
-        assert contagem_fechada.closed_at is not None
-
-    def test_close_count_with_variance_writes_an_adjustment(self, tenant_uuid, tenant_ctx):
-        """Fechar com diferença grava um `adjustment` no ledger e o nível segue-o.
-
-        O stock é um ledger (CLAUDE.md): a diferença entre o contado e o
-        esperado nunca se escreve no `StockLevel`. O que se afirma é que o
-        movimento existe, com a diferença e a referência da contagem, e que o
-        nível recalculado a partir dos movimentos é o que se contou.
-        """
-        loc = Location.objects.create(tenant_id=tenant_uuid, name="Despensa", position=0)
-        produto = criar_produto(
-            tenant_id=tenant_uuid,
-            short_name="Azeite",
-            base_unit=UnidadeBase.MILILITRO,
-            display_unit="l",
-            display_factor=Decimal("1000"),
-            sku="AZEITE001",
-        )
-        with tenant_ctx(tenant_uuid):
-            _receber(
-                tenant_id=tenant_uuid,
-                product_id=produto.pk,
-                location_id=loc.pk,
-                quantidade=Decimal("100"),
-            )
-            contagem = abrir_contagem(tenant_id=tenant_uuid, location_id=loc.pk)
-            linha = adicionar_linha_contagem(
-                tenant_id=tenant_uuid,
-                stock_count_id=contagem.pk,
-                sku="azeite001",
-                quantity_counted=Decimal("94"),
-            )
-            assert linha.quantity_expected == Decimal("100")
-
-            fechada = fechar_contagem(
-                tenant_id=tenant_uuid, stock_count_id=contagem.pk, user_name="Dono"
-            )
-
-            ajuste = StockMovement.objects.get(
-                tenant_id=tenant_uuid, product_id=produto.pk, movement_type="adjustment"
-            )
-            nivel = StockLevel.objects.get(
-                tenant_id=tenant_uuid, product_id=produto.pk, location_id=loc.pk, lot=None
-            )
-
-        assert fechada.status == "closed"
-        assert ajuste.quantity == Decimal("-6")
-        assert ajuste.reference == str(contagem.pk)
-        assert ajuste.created_by_name == "Dono"
-        assert nivel.quantity == Decimal("94")
-
-    def test_close_count_with_uncounted_line_is_refused(self, tenant_uuid, tenant_ctx):
-        """Uma linha por contar impede o fecho — e nada vai ao ledger."""
-        loc = Location.objects.create(tenant_id=tenant_uuid, name="Bar", position=0)
-        produto = criar_produto(
-            tenant_id=tenant_uuid,
-            short_name="Vinho",
-            base_unit=UnidadeBase.MILILITRO,
-            display_unit="l",
-            display_factor=Decimal("1000"),
-            sku="VINHO001",
-        )
-        with tenant_ctx(tenant_uuid):
-            contagem = abrir_contagem(tenant_id=tenant_uuid, location_id=loc.pk)
-            adicionar_linha_contagem(
-                tenant_id=tenant_uuid,
-                stock_count_id=contagem.pk,
-                sku="VINHO001",
-                quantity_counted=None,
-            )
-            with pytest.raises(ValidationError) as exc:
-                fechar_contagem(tenant_id=tenant_uuid, stock_count_id=contagem.pk)
-            assert not StockMovement.objects.filter(
-                tenant_id=tenant_uuid, product_id=produto.pk
-            ).exists()
-
-        assert "stock_count" in exc.value.error_dict
+# O `TestStockCount` que vivia aqui saiu a 2026-10-19 com a ADR 0030: o contrato
+# que ele media — `abrir_contagem` sem linhas, `adicionar_linha_contagem` por
+# `sku`, `can_close`, o fecho a recusar contagens incompletas — deixou de
+# existir. As contagens passaram a ter ficheiro próprio, `tests/test_contagens.py`,
+# com as catorze regras do `domain-expert` e as seis rotas.
 
 
 @pytest.mark.django_db

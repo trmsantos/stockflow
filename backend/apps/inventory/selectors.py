@@ -34,6 +34,7 @@ from django.utils import timezone
 
 from apps.inventory.models import (
     Location,
+    Lot,
     ProductCost,
     StockCount,
     StockCountLine,
@@ -43,8 +44,13 @@ from apps.inventory.models import (
 
 __all__ = [
     "ajustes_da_contagem",
+    "artigo_tem_lote",
     "artigos_abaixo_do_minimo",
+    "contagem_aberta",
+    "contagens_com_progresso",
     "contagens_do_ambito",
+    "progresso_da_contagem",
+    "custos_de_artigo_na_localizacao",
     "custos_dos_niveis",
     "custos_medios_do_artigo",
     "desperdicio_agregado_por_motivo",
@@ -55,14 +61,19 @@ __all__ = [
     "listar_localizacoes",
     "localizacoes_do_ambito",
     "lotes_a_vencer",
+    "lotes_dos_artigos",
     "movimentos_agregados_por_dia_de_negocio",
     "movimentos_agregados_por_tipo",
     "movimentos_do_periodo",
     "movimentos_resumidos",
+    "niveis_para_contagem",
     "producoes_por_periodo",
+    "saldo_do_artigo_na_localizacao",
     "saldos_do_artigo",
+    "saldos_por_artigo_na_localizacao",
     "ultima_contagem_fechada_em",
     "valor_de_stock",
+    "valor_dos_ajustes_por_artigo",
     "stock_alerts",
     "stock_summary",
     "stock_by_location",
@@ -548,13 +559,196 @@ def listar_contagens(
     return list(contagens[: limite + 1])
 
 
+def contagens_com_progresso(*, tenant_id: UUID) -> QuerySet[StockCount]:
+    """A lista do `GET /stock/counts`: a mais recente primeiro, com o progresso.
+
+    O "12 de 34" do topo vem de duas agregações sobre o mesmo `LEFT JOIN` e não
+    de uma query por contagem — uma lista de vinte contagens não paga vinte
+    idas à base. O `id` desempata para a paginação não repetir linhas.
+    """
+    return (
+        contagens_do_ambito(tenant_id=tenant_id)
+        .annotate(
+            n_linhas=Count("lines"),
+            n_contadas=Count("lines", filter=Q(lines__quantity_counted__isnull=False)),
+        )
+        .order_by("-started_at", "-id")
+    )
+
+
+def progresso_da_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> dict[str, int]:
+    """Quantas linhas tem esta contagem e quantas já foram contadas."""
+    agregado = StockCountLine.objects.filter(
+        tenant_id=tenant_id, stock_count_id=stock_count_id
+    ).aggregate(
+        n_linhas=Count("id"),
+        n_contadas=Count("id", filter=Q(quantity_counted__isnull=False)),
+    )
+    return {
+        "n_linhas": agregado["n_linhas"] or 0,
+        "n_contadas": agregado["n_contadas"] or 0,
+    }
+
+
+def contagem_aberta(*, tenant_id: UUID) -> StockCount | None:
+    """A contagem aberta do estabelecimento, se houver — e há no máximo uma.
+
+    O máximo é da base e não desta função: `inventory_stockcount_uma_aberta_por_tenant`
+    é um índice único parcial (ADR 0030, decisão 2). Aqui serve para dizer ao
+    ecrã **qual** é a que já está aberta quando a segunda tentativa dá 409.
+    """
+    return contagens_do_ambito(tenant_id=tenant_id).filter(status="open").first()
+
+
 def linhas_da_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> list[StockCountLine]:
-    """As linhas de uma contagem, com artigo e lote carregados, por zona e nome."""
+    """As linhas de uma contagem, com artigo e lote carregados, pelo nome do artigo.
+
+    A ordem é a do **catálogo** e é ela que dá o `position` de cada linha na
+    resposta: o `position` não é coluna, é o índice nesta ordenação (ADR 0030,
+    decisão 4). É dívida nomeada — o guião diz "nunca alfabética" e a ordem do
+    percurso só existe quando as zonas existirem.
+
+    A `zone` saiu da ordenação porque ninguém a escreve: nesta fatia a zona *é*
+    a localização (decisão 3), e ordenar por uma coluna constante é ruído.
+    """
     return list(
         StockCountLine.objects.filter(tenant_id=tenant_id, stock_count_id=stock_count_id)
         .select_related("product", "lot")
-        .order_by("zone", "product__short_name", "id")
+        .order_by("product__short_name", "id")
     )
+
+
+def niveis_para_contagem(
+    *, tenant_id: UUID, location_id: UUID, product_ids: Sequence[UUID]
+) -> dict[UUID, list[StockLevel]]:
+    """Os níveis de cada artigo **nesta localização**, por lote e em ordem FEFO.
+
+    Sem `exclude(quantity=0)`: um nível a zero não recebe nem dá quantidade, mas
+    é ele que traz o `unit_cost` com que uma sobra nesse lote se valoriza — e
+    excluí-lo era voltar a valorizar a zero em silêncio, que é o defeito que a
+    ADR 0030 manda corrigir.
+
+    A ordem é a do FEFO (validade primeiro, `NULLS LAST`, depois a data de
+    receção), que é a ordem por que uma falta sai. Quem precisa do "mais
+    recente" para uma sobra reordena a lista — a chave é a mesma e está aqui
+    numa query só.
+    """
+    if not product_ids:
+        return {}
+    niveis = (
+        StockLevel.objects.filter(
+            tenant_id=tenant_id, location_id=location_id, product_id__in=product_ids
+        )
+        .select_related("lot")
+        .order_by(
+            F("lot__expires_at").asc(nulls_last=True), "lot__received_at", "lot_id", "id"
+        )
+    )
+    por_artigo: dict[UUID, list[StockLevel]] = {}
+    for nivel in niveis:
+        por_artigo.setdefault(nivel.product_id, []).append(nivel)
+    return por_artigo
+
+
+def lotes_dos_artigos(
+    *, tenant_id: UUID, product_ids: Sequence[UUID]
+) -> dict[UUID, list[Lot]]:
+    """Os lotes de cada artigo, do mais recente para o mais antigo.
+
+    É a rede de recurso de uma sobra: um artigo cujo lote não tem nível **nesta**
+    localização (entrou noutra, ou o nível foi para zero e desapareceu) continua
+    a ter lote, e inventar um sintético por cima de um lote a sério partia a
+    rastreabilidade. Os sintéticos ficam de fora porque não são lote nenhum.
+    """
+    if not product_ids:
+        return {}
+    lotes = Lot.objects.filter(tenant_id=tenant_id, product_id__in=product_ids).order_by(
+        "-received_at", "-id"
+    )
+    por_artigo: dict[UUID, list[Lot]] = {}
+    for lote in lotes:
+        if e_lote_sintetico(lote.code):
+            continue
+        por_artigo.setdefault(lote.product_id, []).append(lote)
+    return por_artigo
+
+
+def artigo_tem_lote(*, tenant_id: UUID, product_id: UUID) -> bool:
+    """O artigo tem algum lote **a sério** registado neste estabelecimento?
+
+    Os sintéticos (`__<product_id>__`) não contam: eles existem para o ledger ter
+    uma chave num artigo sem rastreio, e um artigo com `track_lots=True` que só
+    os tenha não tem rastreabilidade nenhuma. É esta a pergunta que o `POST
+    /lines` faz antes de recusar contar (ADR 0030, segunda ronda, resposta 4).
+    """
+    codigos = Lot.objects.filter(tenant_id=tenant_id, product_id=product_id).values_list(
+        "code", flat=True
+    )
+    return any(not e_lote_sintetico(codigo) for codigo in codigos)
+
+
+def custos_de_artigo_na_localizacao(
+    *, tenant_id: UUID, location_id: UUID, product_ids: Sequence[UUID]
+) -> dict[UUID, Decimal]:
+    """O `ProductCost` de cada artigo nesta localização, numa query.
+
+    O segundo degrau do custo de um ajuste de contagem: sem nível para o lote
+    escolhido, vale a média ponderada de `(artigo, localização)` (ADR 0023,
+    decisão 1). Sem ela, o custo é zero — e aí o movimento vai marcado como
+    estimativa, porque zero euros de diferença é uma afirmação e não um facto.
+    """
+    if not product_ids:
+        return {}
+    custos = ProductCost.objects.filter(
+        tenant_id=tenant_id, location_id=location_id, product_id__in=product_ids
+    ).values_list("product_id", "unit_cost")
+    return dict(custos)
+
+
+def saldos_por_artigo_na_localizacao(
+    *, tenant_id: UUID, location_id: UUID
+) -> list[dict[str, Any]]:
+    """Os artigos com stock **nesta** localização e o saldo somado de cada um.
+
+    É a lista com que uma contagem nasce (ADR 0030, decisão 4). Entra o artigo
+    que tem pelo menos um nível com quantidade diferente de zero; o `expected`
+    é a soma de **todos** os seus níveis nesta localização, incluindo os que
+    estão a zero e os negativos — a soma é o que o sistema diz que lá está.
+
+    Um artigo sem nível nenhum não entra: nunca passou por aqui, e uma linha a
+    zero para cada artigo do catálogo faria da contagem um inventário do
+    catálogo em vez do da prateleira. Quem conta um artigo que não está na lista
+    acrescenta-o pelo `POST /lines`.
+    """
+    com_movimento = (
+        StockLevel.objects.filter(tenant_id=tenant_id, location_id=location_id)
+        .exclude(quantity=Decimal("0"))
+        .values_list("product_id", flat=True)
+        .distinct()
+    )
+    return list(
+        StockLevel.objects.filter(
+            tenant_id=tenant_id, location_id=location_id, product_id__in=com_movimento
+        )
+        .values("product_id")
+        .annotate(saldo=Sum("quantity"))
+        .order_by("product_id")
+    )
+
+
+def saldo_do_artigo_na_localizacao(
+    *, tenant_id: UUID, location_id: UUID, product_id: UUID
+) -> Decimal:
+    """A soma dos níveis de um artigo nesta localização. `0` se nunca entrou.
+
+    O `expected` de uma linha que nasce no `POST /lines` — o artigo que apareceu
+    e não estava na lista. Zero é o que o ledger diz de um artigo que nunca
+    entrou, e é por isso que a diferença dele é um `adjustment` positivo e nunca
+    um `receipt`: uma receção tem fornecedor, documento e preço.
+    """
+    return StockLevel.objects.filter(
+        tenant_id=tenant_id, location_id=location_id, product_id=product_id
+    ).aggregate(saldo=Sum("quantity"))["saldo"] or Decimal("0")
 
 
 def custos_dos_niveis(
@@ -596,6 +790,31 @@ def ajustes_da_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> dict[str, A
         if quando is None or linha["occurred_at"] > quando:
             quando = linha["occurred_at"]
     return {"n": n, "valor_eur": valor, "ultimo_em": quando}
+
+
+def valor_dos_ajustes_por_artigo(
+    *, tenant_id: UUID, stock_count_id: UUID
+) -> dict[UUID, Decimal]:
+    """O valor com sinal dos `adjustment` que o fecho gravou, por artigo.
+
+    Depois de fechar, o `difference_eur` de uma linha deixa de ser uma previsão:
+    é o que ficou no ledger, e lê-se de lá pela `reference`. Recalculá-lo contra
+    os níveis de hoje daria um número diferente do que foi gravado, e a
+    divergência só apareceria a quem fosse somar as duas coisas à mão.
+
+    Por artigo e não por linha porque o movimento não guarda o id da linha — a
+    ligação é `(contagem, artigo)`, que é única desde a ADR 0030.
+    """
+    linhas = StockMovement.objects.filter(
+        tenant_id=tenant_id, movement_type="adjustment", reference=str(stock_count_id)
+    ).values("product_id", "quantity", "unit_cost")
+    por_artigo: dict[UUID, Decimal] = {}
+    for linha in linhas:
+        valor = linha["quantity"] * linha["unit_cost"]
+        por_artigo[linha["product_id"]] = por_artigo.get(
+            linha["product_id"], Decimal("0")
+        ) + valor
+    return por_artigo
 
 
 def desperdicio_por_artigo_e_motivo(

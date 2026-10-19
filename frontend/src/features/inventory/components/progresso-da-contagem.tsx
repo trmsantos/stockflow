@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { EyeOff } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,22 +7,31 @@ import type { Contagem, ProgressoDeZona } from "../schemas";
 import { textos } from "../textos";
 
 /**
- * O topo do ecrã Contar: **progresso** e **zona actual** (guião §1).
+ * O topo do ecrã Contar: **progresso** e **onde se está a contar** (guião §1).
  *
  * Duas decisões de orçamento, que num 360×640 são a mesma decisão:
  *
- *  - **não há barra de progresso.** O "3 de 9" é o progresso, e as pastilhas
- *    das zonas repetem-no zona a zona — uma barra acrescentava 12px e nenhuma
- *    informação. Gráficos decorativos estão proibidos (guião §4, nº 14) e uma
- *    barra que diz o mesmo que o número ao lado é decoração;
- *  - **as pastilhas são links e levam o `?zona=` ao URL.** Contar é andar de
- *    zona em zona: recarregar o telemóvel no meio da arca tem de devolver a
- *    arca, e é por isso que o estado está no URL e não num `useState` (ADR
- *    0008, decisão 1).
+ *  - **não há barra de progresso.** O "3 de 9" é o progresso — uma barra
+ *    acrescentava 12px e nenhuma informação. Gráficos decorativos estão
+ *    proibidos (guião §4, nº 14) e uma barra que diz o mesmo que o número ao
+ *    lado é decoração;
+ *  - **as pastilhas das zonas são links e levam o `?zona=` ao URL.** Recarregar
+ *    o telemóvel a meio tem de devolver a mesma zona, e é por isso que o estado
+ *    está no URL e não num `useState` (ADR 0008, decisão 1).
  *
- * A zona cega diz que é cega, aqui e na linha: é a sonda do guião §3 e tem de
- * ser visível antes de ele começar a contar, não depois de estranhar a falta do
- * número.
+ * ## A zona é a localização, e por isso quase nunca há pastilhas
+ *
+ * Nesta fatia há **uma** zona por contagem: a localização contada (ADR 0030,
+ * decisão 3, confirmada pelo dono — "contei a câmara fria" é uma contagem da
+ * câmara fria). Uma régua de um segmento é um controlo que não escolhe, e duas
+ * pastilhas ("Todas" e a única zona) seriam cromado a ocupar uma das sete
+ * linhas do orçamento de um 360×640. Por isso a navegação só aparece quando há
+ * **mais do que uma** zona — o que hoje não acontece, e no dia em que as zonas
+ * existirem acontece sem esta linha mudar.
+ *
+ * O nome da localização fica sempre à vista, porque é a resposta a "o que é que
+ * eu estou a contar?" — e com uma contagem aberta por estabelecimento, quem
+ * chega pode não ter sido quem a abriu.
  */
 
 function Pastilha({
@@ -62,9 +70,10 @@ export function ProgressoDaContagem({
 }) {
   const zonaMostrada: ProgressoDeZona | null =
     contagem.zones.find((zona) => zona.slug === zonaAtiva) ?? contagem.current_zone;
+  const temVariasZonas = contagem.zones.length > 1;
 
   return (
-    <div className="flex flex-col gap-2 border-b border-border px-4 pt-3 pb-2">
+    <div className="flex flex-col gap-2 border-b border-border px-celula-x pt-3 pb-2">
       <div className="flex items-baseline justify-between gap-3">
         {/* O progresso muda a cada número escrito, e quem está a contar pode
             não estar a olhar para o topo do ecrã: tem de o ouvir. */}
@@ -78,48 +87,42 @@ export function ProgressoDaContagem({
           </span>
         </p>
         <p className="min-w-0 truncate text-sm">
-          {zonaMostrada === null ? (
-            <span className="text-muted-foreground">{textos.contagem.tudoContado}</span>
-          ) : (
-            <>
-              <span className="text-muted-foreground">{textos.contagem.zonaPrefixo}{" "}</span>
-              <span className="font-medium">{zonaMostrada.name}</span>
-            </>
-          )}
+          <span className="text-muted-foreground">{textos.contagem.aContar} </span>
+          <span className="font-medium">{contagem.location.name}</span>
         </p>
       </div>
+
+      {zonaMostrada === null ? (
+        <p className="text-xs text-muted-foreground">{textos.contagem.tudoContado}</p>
+      ) : null}
 
       {/* `flex-wrap` e não um carrossel horizontal: com quatro zonas a 360px a
           quarta ficaria fora do ecrã, e uma zona escondida é uma zona que não
           se conta. */}
-      <nav aria-label={textos.contagem.zonas} className="flex flex-wrap gap-1.5">
-        <Pastilha
-          ativa={zonaAtiva === undefined}
-          para={undefined}
-          titulo={textos.contagem.todasAsZonasPista}
-        >
-          {textos.contagem.todasAsZonas}
-        </Pastilha>
-        {contagem.zones.map((zona) => (
+      {temVariasZonas ? (
+        <nav aria-label={textos.contagem.zonas} className="flex flex-wrap gap-1.5">
           <Pastilha
-            key={zona.slug}
-            ativa={zona.slug === zonaAtiva}
-            para={zona.slug}
-            titulo={
-              zona.blind
-                ? textos.contagem.zonaCegaPista(zona.name)
-                : textos.contagem.zonaAbertaPista(zona.name)
-            }
+            ativa={zonaAtiva === undefined}
+            para={undefined}
+            titulo={textos.contagem.todasAsZonasPista}
           >
-            {zona.blind ? <EyeOff aria-hidden="true" className="size-3.5 shrink-0" /> : null}
-            <span>{zona.name}</span>
-            <span data-numeric className="text-muted-foreground">
-              {zona.counted_lines}/{zona.total_lines}
-            </span>
-            {zona.blind ? <span className="sr-only">{textos.contagem.cegaSrOnly}</span> : null}
+            {textos.contagem.todasAsZonas}
           </Pastilha>
-        ))}
-      </nav>
+          {contagem.zones.map((zona) => (
+            <Pastilha
+              key={zona.slug}
+              ativa={zona.slug === zonaAtiva}
+              para={zona.slug}
+              titulo={textos.contagem.zonaPista(zona.name)}
+            >
+              <span>{zona.name}</span>
+              <span data-numeric className="text-muted-foreground">
+                {zona.counted_lines}/{zona.total_lines}
+              </span>
+            </Pastilha>
+          ))}
+        </nav>
+      ) : null}
     </div>
   );
 }
@@ -129,18 +132,14 @@ export function EsqueletoDoProgresso() {
   return (
     <div
       aria-busy="true"
-      className="flex flex-col gap-2 border-b border-border px-4 pt-3 pb-2"
+      className="flex flex-col gap-2 border-b border-border px-celula-x pt-3 pb-2"
     >
       <span className="sr-only">{textos.contagem.aCarregarContagem}</span>
       <div className="flex items-center justify-between gap-3">
         <Skeleton className="h-7 w-32" />
         <Skeleton className="h-4 w-24" />
       </div>
-      <div className="flex gap-1.5">
-        <Skeleton className="h-11 w-20" />
-        <Skeleton className="h-11 w-24" />
-        <Skeleton className="h-11 w-24" />
-      </div>
+      <Skeleton className="h-3 w-28" />
     </div>
   );
 }

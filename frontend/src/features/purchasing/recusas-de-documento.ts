@@ -1,4 +1,5 @@
 import { ApiError, mensagemDeErro } from "@/lib/api/errors";
+import { erroDoCampo } from "@/lib/api/erros-por-campo";
 
 import { textos } from "./textos";
 
@@ -18,15 +19,20 @@ import { textos } from "./textos";
  * das duas formas é garantida por um status; o que falta é a outra metade, e é
  * ela que está aqui.
  *
- * ## Porquê uma cópia e não o `errosPorCampo` do `accounts`
+ * ## A cópia morreu, e foi o gatilho que esta secção declarava
  *
- * Porque a fronteira do frontend só deixa importar `@/features/<módulo>/api` de
- * outra feature (ADR 0008, decisão 2), e um leitor de erros não é um hook de
- * dados — pô-lo na porta pública do `accounts` para poupar quinze linhas era
- * alargar uma interface pública por arrumação. A alternativa honesta é a descida
+ * Esta secção explicava porque é que isto era uma cópia e não o `errosPorCampo`
+ * do `accounts`: a fronteira do frontend só deixa importar
+ * `@/features/<módulo>/api` de outra feature (ADR 0008, decisão 2), e pôr um
+ * leitor de erros na porta pública do `accounts` era alargar uma interface
+ * pública por arrumação. E nomeava a saída: *"a alternativa honesta é a descida
  * para `src/lib/api/`, e ela tem um gatilho: o **terceiro** módulo a precisar
- * disto. Hoje são dois, e a função deste é mais estreita — um campo só, e é
- * sempre o mesmo.
+ * disto. Hoje são dois"*.
+ *
+ * O terceiro chegou a 2026-10-19 — as contagens, onde o `POST` de uma linha
+ * recusa um artigo com controlo por lotes e sem lote em `{"product": ["…"]}`.
+ * A leitura está em `@/lib/api/erros-por-campo` e o que fica aqui é o que é
+ * deste módulo: **qual** o campo, e o que se faz com a frase.
  *
  * ## Os códigos são por endpoint, de propósito
  *
@@ -93,19 +99,7 @@ export function codigoDaRecusaDeDocumento(erro: unknown): string | null {
  * `security/detect-object-injection`, que esta casa não suprime (CLAUDE.md).
  */
 export function erroDoCampoFicheiro(erro: unknown): string | null {
-  if (!(erro instanceof ApiError)) return null;
-
-  const payload: unknown = erro.payload;
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    return null;
-  }
-
-  const valor: unknown = new Map<string, unknown>(Object.entries(payload)).get("ficheiro");
-  if (typeof valor === "string" && valor !== "") return valor;
-  if (!Array.isArray(valor)) return null;
-
-  const frases = valor.filter((linha): linha is string => typeof linha === "string");
-  return frases.length === 0 ? null : frases.join(" ");
+  return erroDoCampo(erro, "ficheiro");
 }
 
 /**

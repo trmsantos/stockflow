@@ -1,11 +1,18 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback } from "react";
 
+import { useSessao } from "@/features/accounts/api";
 import { apiRequest } from "@/lib/api/http";
+import type { components } from "@/lib/api/types";
 import { paginated, type Paginated } from "@/lib/api/pagination";
 import { queryKeys } from "@/lib/api/query-keys";
 import { tenantDaCache } from "@/lib/api/tenant";
 
+import {
+  CODIGO_CONTAGEM_FECHADA,
+  CODIGO_CONTAGEM_JA_ABERTA,
+  codigoDaRecusaDeContagem,
+} from "./recusas-de-contagem";
 import {
   alertaSchema,
   contagemDeLinhaSchema,
@@ -324,9 +331,67 @@ export function useLinhasDeContagem(
   });
 }
 
-/** O fecho, antes de o ser: as diferenças em quantidade e em euros, e o limiar. */
+/**
+ * Quem está nesta sessão **abre e fecha** contagens?
+ *
+ * **Não é autorização, e é por isso que aceita a ausência de papel.** Quem
+ * autoriza é o servidor: abrir e fechar são de `owner|manager`, impostos em
+ * `permission_classes`, e o `GET /closing` responde **403** a quem conta. Isto é
+ * a mesma verdade usada para duas coisas de apresentação — não desenhar um
+ * botão que vai dar 403, e não disparar o pedido da pré-visualização que já se
+ * sabe recusado. Esconder é apresentação, não autorização (ADR 0009).
+ *
+ * A assimetria não é de ecrã: contar não toca no ledger e **fechar escreve N
+ * movimentos irreversíveis**; abrir entra do lado restrito por ocupar a única
+ * contagem aberta do estabelecimento.
+ *
+ * Lê a **única** cache que existe, pela porta que a ADR 0008 (decisão 2) deixa
+ * aberta entre features. Não faz pedido nenhum. Enquanto a sessão não chegou o
+ * papel é `undefined` e a resposta é `false`: na prática é imediato, porque o
+ * `beforeLoad` da rota do shell já leu a sessão antes de montar o invólucro.
+ */
+/**
+ * Quais os papéis que abrem e fecham, **tipado contra o enum gerado**.
+ *
+ * O `Record` é a garantia e é exaustivo nos dois sentidos: se o backend ganhar
+ * um quarto papel, isto não compila e alguém tem de decidir se ele conta ou se
+ * ele fecha. Uma lista de strings que por acaso coincide com a do servidor
+ * ficava em silêncio nesse dia — e o silêncio aqui é um botão a aparecer a quem
+ * vai levar 403, ou a desaparecer a quem podia carregar nele.
+ *
+ * O `Map` é por onde se lê, porque o `security/detect-object-injection` recusa —
+ * e bem — um `OBJETO[chave]` com chave dinâmica. É o mesmo par do
+ * `PROJECCAO_DO_PAPEL` do `reporting` e do `NOME_DO_PAPEL` do `accounts`. E o
+ * tipo vem do `types.ts` (que é `@/lib/*`, usado de cima para baixo) e não do
+ * `papelSchema` do `accounts`, que não atravessa a fronteira da ADR 0008.
+ */
+const GERE_CONTAGENS: Record<components["schemas"]["PapelEnum"], boolean> = {
+  owner: true,
+  manager: true,
+  staff: false,
+};
+
+const QUEM_GERE = new Map<string, boolean>(Object.entries(GERE_CONTAGENS));
+
+export function usePodeGerirContagens(): boolean {
+  const sessao = useSessao();
+  const papel = sessao.data?.tenant_ativo?.papel;
+  return papel !== undefined && (QUEM_GERE.get(papel) ?? false);
+}
+
+/**
+ * O fecho, antes de o ser: as diferenças em quantidade e em euros, e o que fica
+ * por contar. O `GET` **não escreve nada**.
+ *
+ * O `ativo` existe porque um hook não se chama condicionalmente e porque este
+ * endpoint é de `owner|manager`: sem ele, o ecrã de quem conta disparava um
+ * pedido que já se sabe que responde 403, e o 403 chegava à barra de erro de um
+ * ecrã onde não há nada a corrigir. Não é controlo de acesso — é não bater numa
+ * porta fechada.
+ */
 export function useFechoDeContagem(
   contagem: string | undefined,
+  ativo: boolean,
 ): UseQueryResult<FechoDeContagem> {
   const tenant = tenantDaCache();
 
@@ -336,11 +401,29 @@ export function useFechoDeContagem(
       apiRequest(`${CAMINHO_CONTAGENS}/${String(contagem)}/closing`, fechoDeContagemSchema, {
         signal,
       }),
-    enabled: contagem !== undefined,
+    enabled: contagem !== undefined && ativo,
   });
 }
 
-/** Começar a contar uma localização. É a ação do estado vazio do ecrã. */
+/**
+ * Começar a contar uma localização. É a ação do estado vazio do ecrã, e é de
+ * `owner|manager`.
+ *
+ * **O 409 não é tratado como erro, e é essa a decisão.** Só pode haver uma
+ * contagem aberta por estabelecimento (ADR 0030, decisão 2), logo a segunda
+ * tentativa responde `contagem_ja_aberta` com o `id` da que já está aberta. O
+ * que isso quer dizer, do lado de quem carregou no botão, é que **a contagem
+ * que ela quer já existe** — e a reacção certa é mostrá-la, não dizer "erro".
+ *
+ * Aqui a recusa releva a lista: o `onError` invalida as contagens, a entrada de
+ * cache que o `useContagemAberta` lê volta com a aberta lá dentro, e o ecrã
+ * troca o estado vazio pela contagem a decorrer sem navegação nenhuma. O ecrã
+ * acrescenta a frase que explica a troca — sem ela, quem escolheu a Cozinha
+ * ficava a olhar para o Armazém sem perceber porquê.
+ *
+ * As linhas entram na mesma invalidação porque o `POST` as materializa: uma por
+ * artigo com nível não-zero naquela localização (decisão 4).
+ */
 export function useIniciarContagem() {
   const queryClient = useQueryClient();
   const tenant = tenantDaCache();
@@ -352,6 +435,12 @@ export function useIniciarContagem() {
         body: contagemParaIniciarSchema.parse(pedido),
       }),
     onSuccess: async () => {
+      await invalidarRecursos(queryClient, tenant, [RECURSO_CONTAGENS, RECURSO_LINHAS]);
+    },
+    onError: async (erro) => {
+      // O conflito é informação: há uma contagem aberta que esta cache ainda não
+      // viu (foi outra pessoa, noutro telemóvel). Reler é o que a faz aparecer.
+      if (codigoDaRecusaDeContagem(erro) !== CODIGO_CONTAGEM_JA_ABERTA) return;
       await invalidarRecursos(queryClient, tenant, [RECURSO_CONTAGENS, RECURSO_LINHAS]);
     },
   });
@@ -404,6 +493,13 @@ export function useRegistarContagemDeLinha() {
         }),
       ]);
     },
+    onError: async (erro) => {
+      // A contagem fechou debaixo dos pés de quem estava a contar — outra
+      // pessoa, noutro telemóvel. O número **não entrou**, e o que o ecrã tem de
+      // fazer é deixar de mostrar uma contagem a decorrer que já não decorre.
+      if (codigoDaRecusaDeContagem(erro) !== CODIGO_CONTAGEM_FECHADA) return;
+      await invalidarRecursos(queryClient, tenant, [RECURSO_CONTAGENS, RECURSO_LINHAS]);
+    },
   });
 }
 
@@ -411,6 +507,17 @@ export function useRegistarContagemDeLinha() {
  * Fechar a contagem: é **aqui** que o ledger muda, com um `adjustment` por
  * diferença. Invalida tudo, porque muda tudo — níveis, números do topo,
  * histórico e alertas.
+ *
+ * Sem update optimista, e pela razão mais forte que existe nesta casa: os
+ * movimentos são append-only na própria base de dados (ADR 0006), logo isto é
+ * **irreversível** e não há nada que se desfaça se o servidor recusar. Mostrar
+ * o resultado antes de ele existir era mostrar um ledger que pode nunca ter
+ * acontecido.
+ *
+ * A `reason` vai sempre, porque o contrato a exige sempre (ADR 0030, segunda
+ * ronda, nº 5) — e o `fechoParaRegistarSchema.parse` do corpo é o que faz um
+ * pedido sem ela falhar **aqui**, com o campo nomeado, em vez de voltar do
+ * servidor como um 400 por campo.
  */
 export function useFecharContagem() {
   const queryClient = useQueryClient();

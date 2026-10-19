@@ -448,6 +448,13 @@ SPECTACULAR_SETTINGS = {
             "other",
         ],
         "IdDeSerieEnum": ["revenue", "purchases"],
+        # O estado de uma contagem (ADR 0030). O campo chama-se `status` como o
+        # da receção e o das linhas, e sem o nome aqui a colisão resolvia-se com
+        # um sufixo de hash (`StatusFf1Enum`) — um nome que muda sozinho quando
+        # qualquer um dos outros conjuntos mudar, e um warning que é exit 1 no
+        # `pnpm gen:api`. O nome é o que o `estadoDeContagemSchema` do cliente
+        # já usa.
+        "EstadoDeContagemEnum": ["open", "closed"],
         "IdDeParteDeSalariosEnum": [
             "base",
             "social_security",
