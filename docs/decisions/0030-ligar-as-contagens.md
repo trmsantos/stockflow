@@ -134,6 +134,15 @@ agora: é mais rápido e tem menos erros de digitação, e é o que o ecrã já 
 nomeado — quem vê o número tende a confirmá-lo em vez de contar —, e a **contagem cega** fica como
 candidata a fatia própria, não esquecida.
 
+**Segunda ronda de respostas do dono (2026-10-19), depois do `domain-expert`.** (4) Um artigo com
+`track_lots=True` **sem lote registado** não se conta: o `POST /lines` **recusa** e manda fazer a
+receção. O dono preferiu o rigor ao desbloqueio — um lote "por identificar" entraria no stock sem
+validade e a rastreabilidade do artigo nasceria já partida. Custo assumido: quem está a contar não
+regista o que tem à frente e tem de passar pela receção. (5) A justificação do fecho é **sempre
+obrigatória**, sem limiar: o limiar de 50 € era uma hipótese por calibrar, e o dono prefere a
+disciplina de uma frase em todas as contagens. Risco nomeado: frases vazias ("ok", "normal") que
+ninguém lê — se acontecer, volta-se ao limiar.
+
 **Fora de âmbito, por extenso.** Zonas como entidade (tabela, ordem do percurso, atribuição artigo→zona,
 o ecrã que as declara) e com elas a coluna `zone`; contagem cega e o `blind: true`; contar por lote;
 procurar no ecrã um artigo que não está na lista; offline, fila local e `POST` em lote; uma contagem
