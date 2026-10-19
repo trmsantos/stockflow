@@ -36,7 +36,14 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
-**Estado atual (2026-10-15):** `main` está **19 commits à frente do `origin/main` sem PR** — o CI
+**Estado atual (2026-10-19):** o **Painel está ligado** (ADR 0029): três endpoints só-dono sobre o
+ledger, com receita e salários declarados ausentes em vez de zeros, e os fixtures do painel mortos.
+Antes disso, o **assistente cobre a app** (ADR 0028): 20 tools de leitura, ajuda curada e botões para
+o ecrã certo, derivados no servidor. Suite: **703 passed**; `security-check` PASS nas duas fatias.
+Por fazer: repor os dados de demo (o seed antigo gravou custo por grama — `681e027` corrige, mas o
+ledger é append-only); os 4 `DJ001`; abrir o PR, que o CI nunca correu sobre nada disto.
+
+**Estado anterior (2026-10-15):** `main` está **19 commits à frente do `origin/main` sem PR** — o CI
 só corre em PR, logo nada disto passou por ele ainda. Suite do backend: **645 passed** (corrida
 sozinha; dois `pytest` ao mesmo tempo colidem na BD de teste). `ruff check .` tem **4 `DJ001`
 pré-existentes** em `apps/inventory/models.py` (`null=True` em CharField) que exigem ADR + migração
@@ -58,7 +65,7 @@ Dev local: `backend/.env` é a única fonte de variáveis (o Django lê-o sozinh
 `DATABASE_URL="$MIGRATION_DATABASE_URL"`; `uv run manage.py seed_demo --create-tenant` cria três
 lojas com `owner@demo.pt` / `manager@demo.pt` / `staff@demo.pt` (`DemoPassword123!`).
 
-**Por decidir / por fazer a seguir:** ligar o Painel (rotas + `summary`); os 4 `DJ001`; validades
+**Por decidir / por fazer a seguir:** os 4 `DJ001`; validades
 do painel em calendário civil vs dia de negócio no chat (incoerência a nomear ao `domain-expert`);
 abrir o PR para o CI correr sobre os 19 commits.
 
