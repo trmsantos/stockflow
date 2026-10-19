@@ -156,6 +156,58 @@ export const desperdicioPorMotivoSchema = z.object({
 /** Como a receita foi registada: nenhuma, à mão, ou vinda de um POS. */
 export const origemDaReceitaSchema = z.enum(["none", "manual", "pos"]);
 
+/* ---------------------------------------------------------------------------
+ * O que o servidor **ainda não sabe**, e o regime fiscal do estabelecimento —
+ * os dois campos que a ADR 0029 (decisão 1) acrescentou ao `DataQualityOut`.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * As três famílias sem fonte de dados (ADR 0029, decisão 1).
+ *
+ * Um `null` campo a campo diz "não sei" e **não** diz porquê; esta lista diz a
+ * razão **uma vez**, e é ela que o ecrã traduz para a frase de dono ("ainda não
+ * há vendas registadas nesta aplicação"). Os ids nunca aparecem no ecrã: são
+ * chave de um `Record` no `vocabulario.ts`, como todo o resto deste módulo.
+ */
+export const indisponibilidadeSchema = z.enum(["revenue", "payroll", "other_costs"]);
+
+export type Indisponibilidade = z.output<typeof indisponibilidadeSchema>;
+
+const INDISPONIBILIDADES = new Set<string>(indisponibilidadeSchema.options);
+
+/**
+ * A lista é **lida com tolerância**, e é a única excepção à regra de falhar
+ * alto deste ficheiro.
+ *
+ * A razão é o que esta lista faz: ela não transporta valor nenhum — explica
+ * `null`s que o ecrã já sabe desenhar sem ela. Se o servidor ganhar uma quarta
+ * família (`sales_channels`, digamos) antes de este catálogo ter a palavra, a
+ * escolha é entre um painel **inteiro** em branco e um painel que mostra tudo o
+ * que sabe e escreve a frase genérica no sítio do campo ausente. A segunda é a
+ * honesta, e é a que a decisão 7 da ADR 0013 pede: o ecrã continua a declarar
+ * que não sabe, só não sabe dizer porquê.
+ *
+ * Em todos os outros campos um valor inesperado continua a rebentar a
+ * validação, que é onde essa regra se paga.
+ */
+const listaDeIndisponibilidades = z
+  .array(z.string())
+  .transform((ids) => ids.filter((id): id is Indisponibilidade => INDISPONIBILIDADES.has(id)));
+
+/**
+ * O regime de IVA do estabelecimento — **um id, não uma frase** (ADR 0029).
+ *
+ * Em `isento_art_53` o IVA suportado nas compras **é** custo e não é dedutível,
+ * logo os euros deste painel são valores sem IVA que ficam abaixo do que a
+ * empresa pagou de facto. Quem escreve essa frase é o rodapé do ecrã, em cada
+ * língua; o servidor manda o id.
+ *
+ * O `.catch` cai no regime **normal**, que é o que não faz afirmação nenhuma: um
+ * regime desconhecido não pode levar o ecrã a escrever uma nota fiscal errada,
+ * e também não pode rebentar o painel inteiro.
+ */
+export const regimeDeIvaSchema = z.enum(["normal", "isento_art_53"]);
+
 /**
  * Qual dos dois valores de receita é o **registado** e qual é o derivado.
  *
@@ -180,6 +232,9 @@ export const qualidadeDosDadosSchema = z.object({
   /** `null` = nunca houve contagem. Um zero sem contagem é mentira. */
   last_count_at: z.iso.datetime({ offset: true }).nullable(),
   revenue_source: origemDaReceitaSchema,
+  /** A razão dos `null`, uma vez e não campo a campo (ADR 0029, decisão 1). */
+  unavailable: listaDeIndisponibilidades,
+  vat_regime: regimeDeIvaSchema.catch("normal"),
 });
 
 /**
@@ -200,9 +255,17 @@ export const qualidadeDosDadosSchema = z.object({
  */
 export const resumoDoPeriodoSchema = z.object({
   period: periodoResolvidoSchema,
-  revenue_net_eur: decimal,
-  revenue_gross_eur: decimal,
-  revenue_basis: baseDaReceitaSchema,
+  /**
+   * **`null` é "não sei", e nunca zero** (ADR 0029, decisão 1).
+   *
+   * Sem o módulo `sales` não existe fonte de receita: um `"0.00"` seria um
+   * facto — e o painel desenhava-o, com uma barra a zero e um rácio a 0% —,
+   * logo o campo é anulável e a razão viaja em `data_quality.unavailable`. Onde
+   * estes três estariam, o ecrã escreve uma frase.
+   */
+  revenue_net_eur: decimal.nullable(),
+  revenue_gross_eur: decimal.nullable(),
+  revenue_basis: baseDaReceitaSchema.nullable(),
   /** Líquido de IVA dedutível e de notas de crédito. */
   purchases_eur: decimal,
   /** Contém o desperdício (ADR 0014). */
@@ -222,6 +285,13 @@ export const resumoDoPeriodoSchema = z.object({
   /** Consumo sobre vendas, em pontos percentuais. `null` quando vendas == 0. */
   goods_cost_ratio_pct: decimal.nullable(),
   stock_value_eur: decimal,
+  /**
+   * **Quando** o valor de stock foi lido, e não a fronteira da janela: o stock
+   * é um saldo de agora e não um agregado do período (ADR 0029). O rodapé do
+   * ecrã escreve-o — "valor de stock a 19/10 às 14:30" — porque um saldo sem
+   * instante ao lado parece ser do fim do período que está escolhido.
+   */
+  stock_value_as_of: z.iso.datetime({ offset: true }),
   costs: z.array(componenteDeCustoSchema),
   /** Ordenada pelo servidor, a maior parcela primeiro. */
   waste_by_reason: z.array(desperdicioPorMotivoSchema),
@@ -393,19 +463,25 @@ export const fechoDoMesSchema = z.object({
 
   // Os mesmos campos de mercadoria do `SummaryOut`, com o grão do mês de
   // negócio (ADR 0013, decisão 5).
-  revenue_net_eur: decimal,
-  revenue_gross_eur: decimal,
-  revenue_basis: baseDaReceitaSchema,
+  revenue_net_eur: decimal.nullable(),
+  revenue_gross_eur: decimal.nullable(),
+  revenue_basis: baseDaReceitaSchema.nullable(),
   purchases_eur: decimal,
   goods_consumed_eur: decimal,
   stock_change_eur: decimal,
   waste_eur: decimal,
   unknown_shrinkage_eur: decimal,
   stock_value_eur: decimal,
+  stock_value_as_of: z.iso.datetime({ offset: true }),
 
-  payroll_eur: decimal,
-  payroll_basis: baseDosSalariosSchema,
-  payroll_source: origemDosSalariosSchema,
+  /**
+   * **Metade do fecho é `null` enquanto não existir o módulo `people`** (ADR
+   * 0029, decisão 1), e as quatro listas vêm vazias: uma lista de exclusões de
+   * um número que não existe é ruído.
+   */
+  payroll_eur: decimal.nullable(),
+  payroll_basis: baseDosSalariosSchema.nullable(),
+  payroll_source: origemDosSalariosSchema.nullable(),
   payroll_breakdown: z.array(parteDeSalariosSchema),
   roles: z.array(custoPorCargoSchema),
   other_costs: z.array(outroCustoSchema),
@@ -418,9 +494,9 @@ export const fechoDoMesSchema = z.object({
    * é a leitura fiel, e está no relatório como inferência.
    */
   costs: z.array(componenteDeCustoSchema),
-  /** Só aqui, porque só aqui há salários. */
-  cost_total_eur: decimal,
-  result_eur: decimal,
+  /** Só aqui, porque só aqui há salários — e `null` enquanto não os houver. */
+  cost_total_eur: decimal.nullable(),
+  result_eur: decimal.nullable(),
   result_excludes: z.array(exclusaoDoResultadoSchema),
   goods_cost_ratio_pct: decimal.nullable(),
   labour_cost_ratio_pct: decimal.nullable(),
@@ -451,6 +527,23 @@ export function eZero(valor: string): boolean {
   return /^-?0+$|^-?0+\.0+$/.test(valor);
 }
 
+/**
+ * A mesma string **sem o sinal** — e isto é a terceira leitura e não uma conta.
+ *
+ * Existe para uma regra do domínio: quando o líquido dos ajustes é a favor da
+ * casa, a linha chama-se "Excedente de contagem" (ADR 0013, decisão 7) e o que
+ * se encontrou a mais é `120,00 €`. Um `−120,00 €` debaixo desse rótulo é uma
+ * dupla negação com cara de erro — o leitor vê o vermelho do menos antes de ler
+ * a palavra, e conclui que alguma coisa está partida.
+ *
+ * Tirar o `-` de uma string não é `Math.abs`: não converte, não arredonda e não
+ * perde casas. É a regra da casa cumprida no sítio onde era mais fácil
+ * quebrá-la.
+ */
+export function semSinal(valor: string): string {
+  return valor.startsWith("-") ? valor.slice(1) : valor;
+}
+
 export type Periodo = z.output<typeof periodoSchema>;
 export type PeriodoResolvido = z.output<typeof periodoResolvidoSchema>;
 export type IdDeCusto = z.output<typeof idDeCustoSchema>;
@@ -458,6 +551,7 @@ export type ComponenteDeCusto = z.output<typeof componenteDeCustoSchema>;
 export type MotivoDeQuebra = z.output<typeof motivoDeQuebraSchema>;
 export type DesperdicioPorMotivo = z.output<typeof desperdicioPorMotivoSchema>;
 export type OrigemDaReceita = z.output<typeof origemDaReceitaSchema>;
+export type RegimeDeIva = z.output<typeof regimeDeIvaSchema>;
 export type BaseDaReceita = z.output<typeof baseDaReceitaSchema>;
 export type QualidadeDosDados = z.output<typeof qualidadeDosDadosSchema>;
 export type ResumoDoPeriodo = z.output<typeof resumoDoPeriodoSchema>;

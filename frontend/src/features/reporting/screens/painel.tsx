@@ -35,12 +35,14 @@ import { EsqueletoDasPerdas, PerdasDoPeriodo } from "../components/perdas-do-per
 import { CargosDoMes, NumerosDoMes } from "../components/pessoal-do-mes";
 import { QualidadeDosDadosDoPainel } from "../components/qualidade-dos-dados";
 import { ResultadoDoMes } from "../components/resultado-do-mes";
+import { RodapeDoPainel } from "../components/rodape-do-painel";
 import { EsqueletoDaVariacao, VariacaoNoPeriodo } from "../components/variacao-no-periodo";
 import { mesCorrente, mesDeFechoPorOmissao } from "../meses";
 import {
   eZero,
   type FechoDoMes,
   type Periodo,
+  type QualidadeDosDados,
   type ResumoDoPeriodo,
   type SeriesDoPeriodo,
 } from "../schemas";
@@ -111,26 +113,33 @@ import { rotuloDaGranularidade, rotuloDoPeriodo } from "../vocabulario";
  */
 
 /**
- * O ecrã do sistema visual, só em desenvolvimento.
+ * **Nada aconteceu nesta janela**, e os zeros são todos do servidor.
  *
- * Numa constante e não escrito duas vezes porque **é o mesmo caminho** no `href`
- * e no texto do link, e um caminho não é copy: não tem tradução e não entra no
- * catálogo. A constante é também o que o impede de divergir entre os dois sítios.
+ * As vendas saíram desta conta a 2026-10-19 e **tinham de sair**: elas vêm a
+ * `null` enquanto não houver o módulo `sales` (ADR 0029, decisão 1), e um
+ * `eZero(null)` não existe. Mais fundo do que isso, incluí-las era perguntar "não
+ * vendeu nada?" a um painel que não sabe o que se vendeu — o que torna esta
+ * condição verdadeira por ignorância e não por ausência de movimento.
+ *
+ * O que fica são os três termos que o ledger **sabe**. Também é o que responde
+ * ao estabelecimento acabado de criar, com o ledger vazio: três zeros a sério,
+ * que não são um erro e têm um ecrã próprio.
  */
-const CAMINHO_DOS_TOKENS = "/dev/tokens";
-
-/** Nada aconteceu nesta janela: três zeros, e os três do servidor. */
 function semAtividade(resumo: ResumoDoPeriodo): boolean {
   return (
-    eZero(resumo.revenue_gross_eur) &&
     eZero(resumo.purchases_eur) &&
-    eZero(resumo.goods_consumed_eur)
+    eZero(resumo.goods_consumed_eur) &&
+    eZero(resumo.waste_eur)
   );
 }
 
-/** Nada registado neste mês: as duas pontas da conta a zero. */
+/**
+ * Nada registado neste mês — pela mesma lista, e pela mesma razão: as duas
+ * pontas da conta antiga (vendas e total de gastos) são hoje as duas que vêm a
+ * `null`, logo a pergunta tinha de passar a ser feita ao ledger.
+ */
 function mesSemNada(mes: FechoDoMes): boolean {
-  return eZero(mes.revenue_net_eur) && eZero(mes.cost_total_eur);
+  return eZero(mes.purchases_eur) && eZero(mes.goods_consumed_eur) && eZero(mes.waste_eur);
 }
 
 /** Um 403 é a recusa de papel do servidor; qualquer outro erro tem retry. */
@@ -161,6 +170,10 @@ export function EcraDoPainel() {
   // `DataQualityOut` nas três, e pedir um quarto recurso para o mostrar seria
   // inventar um pedido que o contrato não precisa.
   const qualidade = abaDeMes ? fecho.data?.data_quality : resumo.data?.data_quality;
+  // O instante em que o valor de stock foi lido vem na mesma resposta, e é o
+  // rodapé que o escreve: um saldo de **agora** debaixo de um seletor que diz
+  // "últimos 7 dias" lê-se como o stock de há sete dias.
+  const stockEm = (abaDeMes ? fecho.data?.stock_value_as_of : resumo.data?.stock_value_as_of) ?? null;
 
   const recusado =
     (projeccao !== null && !dono) ||
@@ -237,21 +250,14 @@ export function EcraDoPainel() {
         </>
       )}
 
-      {import.meta.env.DEV ? (
-        // Em desenvolvimento os dados de domínio vêm do servidor de fixtures
-        // (ADR 0008, decisão 3) — a autenticação, não: essa é o backend a sério.
-        // Em produção este ramo não existe no bundle.
-        <p className="px-celula-x py-3 text-xs text-muted-foreground">
-          {textos.painel.demonstracao}{" "}
-          <a
-            href={CAMINHO_DOS_TOKENS}
-            className="text-primary underline underline-offset-4 hover:no-underline"
-          >
-            {CAMINHO_DOS_TOKENS}
-          </a>
-          .
-        </p>
-      ) : null}
+      {/* **O rodapé não é letra miúda, e não está dentro das abas**: delimita o
+          que as três mostram. Uma afirmação sobre o que "compras" significa que
+          só aparecesse numa aba era uma afirmação que metade das leituras não
+          encontra. Não aparece na recusa, onde não há números para delimitar,
+          nem antes de a primeira resposta chegar. */}
+      {recusado || qualidade === undefined ? null : (
+        <RodapeDoPainel qualidade={qualidade} valorDeStockEm={stockEm} />
+      )}
     </section>
   );
 }
@@ -285,6 +291,9 @@ function AbaDoDinheiro({
   readonly explicar: boolean;
 }) {
   const dados = resumo.data;
+  // A razão pela qual uma série não está no gráfico vive no **resumo**: o
+  // `/reporting/series` não traz `data_quality`. Dois pedidos, uma declaração.
+  const qualidade: QualidadeDosDados | null = dados?.data_quality ?? null;
 
   // O pendente desenha a **forma do ecrã** e não um spinner (DESIGN.md §3): a
   // régua, a tabela com as suas quatro linhas de 44px e o gráfico com a sua
@@ -298,7 +307,7 @@ function AbaDoDinheiro({
           <BlocoDoPainel titulo={textos.painel.dinheiroEMercadoria}>
             <EsqueletoDoDinheiro />
           </BlocoDoPainel>
-          <BlocoDoPainel titulo={textos.painel.vendasECompras}>
+          <BlocoDoPainel titulo={textos.painel.aoLongoDoPeriodo}>
             <EsqueletoDaVariacao />
           </BlocoDoPainel>
         </FilaDePaineis>
@@ -350,7 +359,7 @@ function AbaDoDinheiro({
         </BlocoDoPainel>
 
         <BlocoDoPainel
-          titulo={textos.painel.vendasECompras}
+          titulo={textos.painel.aoLongoDoPeriodo}
           nota={
             series.data === undefined
               ? undefined
@@ -375,7 +384,9 @@ function AbaDoDinheiro({
               />
             </div>
           ) : null}
-          {series.data === undefined ? null : <VariacaoNoPeriodo series={series.data} />}
+          {series.data === undefined ? null : (
+            <VariacaoNoPeriodo series={series.data} qualidade={qualidade} />
+          )}
         </BlocoDoPainel>
       </FilaDePaineis>
     </>

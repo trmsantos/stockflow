@@ -4,8 +4,13 @@ import { formatMoney, formatMoneyChange } from "@/lib/format";
 import { COLUNAS_DE_RUBRICA, LARGURA_MINIMA_DE_RUBRICA } from "../colunas";
 import type { ResumoDoPeriodo } from "../schemas";
 import { textos } from "../textos";
-import { notaDaVariacaoDeStock, notaDeCusto, rotuloDoPeriodo } from "../vocabulario";
-import { LinhaDeRubrica } from "./linha-de-rubrica";
+import {
+  ausenciaDe,
+  notaDaVariacaoDeStock,
+  notaDeCusto,
+  rotuloDoPeriodo,
+} from "../vocabulario";
+import { LinhaDeAusencia, LinhaDeRubrica } from "./linha-de-rubrica";
 
 /**
  * **As quatro linhas, e a conta a fechar à vista.** É o bloco mais importante
@@ -65,6 +70,8 @@ export function DinheiroDoPeriodo({
   readonly explicar: boolean;
 }) {
   const semConsumo = !resumo.data_quality.consumption_registered;
+  const vendas = resumo.revenue_net_eur;
+  const vendasComIva = resumo.revenue_gross_eur;
 
   return (
     <>
@@ -74,12 +81,25 @@ export function DinheiroDoPeriodo({
         rotulo={textos.dinheiro.tabela}
       >
         <tbody>
-          <LinhaDeRubrica
-            rubrica={textos.rubricas.vendasSemIva}
-            valor={formatMoney(resumo.revenue_net_eur)}
-            nota={textos.rubricas.comIva(formatMoney(resumo.revenue_gross_eur))}
-            explicar={explicar}
-          />
+          {/* A primeira linha da conta **continua a estar aqui** quando não há
+              vendas — só deixa de ser um número e passa a ser a razão. Tirá-la
+              deixava quem procura o seu valor a pensar que o ecrã se esqueceu
+              dela; pôr lá um zero era afirmar que não se vendeu nada. */}
+          {vendas === null || vendasComIva === null ? (
+            <LinhaDeAusencia
+              frase={textos.falta.frase(
+                textos.rubricas.vendasSemIva,
+                ausenciaDe("revenue", resumo.data_quality.unavailable),
+              )}
+            />
+          ) : (
+            <LinhaDeRubrica
+              rubrica={textos.rubricas.vendasSemIva}
+              valor={formatMoney(vendas)}
+              nota={textos.rubricas.comIva(formatMoney(vendasComIva))}
+              explicar={explicar}
+            />
+          )}
           <LinhaDeRubrica
             rubrica={textos.custos.comprasRotulo}
             valor={formatMoney(resumo.purchases_eur)}

@@ -61,11 +61,11 @@ export const EN: typeof PT = {
     vazioStock: "no stock recorded",
 
     painel: "Dashboard",
-    aCarregarGrafico: "Loading the sales and purchases chart…",
+    aCarregarGrafico: "Loading the purchases chart…",
     vazioSemAcesso: "no access to the dashboard",
     vazioUmIntervalo: "a single interval — nothing to compare",
     rotuloDoGrafico: (maximo: string) =>
-      `Sales and purchases over the last seven days, with the axis maximum at ${maximo}`,
+      `Purchases over the last seven days, with the axis maximum at ${maximo}`,
   },
 
   painel: {
@@ -73,13 +73,13 @@ export const EN: typeof PT = {
     naoSabe: "What this dashboard does not know",
     aCarregarDeclaracoes: "Loading what the dashboard declares…",
     dinheiroEMercadoria: "Money and goods",
-    vendasECompras: "Sales and purchases",
+    aoLongoDoPeriodo: "Over the period",
     notaDoGrafico: (grao: string, maximo: string) => `${grao} · up to ${maximo}`,
     erroDoGrafico: "Could not load the chart",
     nadaRegistado: (periodo: string) => `Nothing recorded ${periodo}`,
-    vazioTitulo: "No sales, no purchases and no consumption in this window",
+    vazioTitulo: "No purchases and no consumption in this window",
     vazioCorpo:
-      "There are no four rows of zeros here because zeros answer nothing. Start by booking in the goods that arrived: purchases appear on the dashboard on the day the receipt is confirmed.",
+      "There are no rows of zeros here because zeros answer nothing. Start by booking in the goods that arrived: purchases appear on the dashboard on the day the receipt is confirmed.",
     receberMercadoria: "Receive goods",
     perdas: "Waste and unknown shrinkage",
     fechoDe: (mes: string) => `${mes} close`,
@@ -88,7 +88,39 @@ export const EN: typeof PT = {
       `Nothing is recorded in ${mes}. Use the month navigation, in the bar above, to reach a month with activity.`,
     resultadoDe: (mes: string) => `${mes} result`,
     custoPorCargo: "Cost by role",
-    demonstracao: "The dashboard figures are for demonstration. The visual system is at",
+  },
+
+  falta: {
+    campo: "not yet included",
+    lista: (nomes: readonly string[]) => {
+      const ultima = nomes.at(-1) ?? "";
+      return nomes.length <= 1 ? ultima : `${nomes.slice(0, -1).join(", ")} and ${ultima}`;
+    },
+    vendasCampo: "Sales",
+    vendasCurto: "no sales are recorded in this application yet",
+    vendasFrase:
+      "No sales are recorded in this application yet. Without them there is no revenue, no margin and no food cost ratio — and a zero in their place would be a false statement about the business.",
+    pessoalCampo: "Payroll cost",
+    pessoalCurto: "wages arrive once there is a people area",
+    pessoalFrase:
+      "Wages arrive once there is a people area. Until then there is no payroll cost, no total cost and no result for the month.",
+    fixosCampo: "Fixed costs",
+    fixosCurto: "rent, energy and the other fixed costs are not recorded here yet",
+    fixosFrase:
+      "Rent, energy, water, gas, the card terminal, licences and the accountant are not recorded in this application yet, so they count towards no cost on this screen.",
+    semRazao: "not known yet — the server does not say why",
+    frase: (campo: string, razao: string) => `${campo}: ${razao}.`,
+  },
+
+  rodape: {
+    rotulo: "How to read these figures",
+    valorDeStock: (dia: string, hora: string) => `Stock value as of ${dia} at ${hora}.`,
+    ultimaContagem: (dia: string) => `Last stocktake: ${dia}.`,
+    nuncaSeContou: "Never counted.",
+    baseDasCompras:
+      "Purchases is what came into stock, at the cost recorded on each movement — not what the invoices added up to.",
+    semIva:
+      "Figures exclude VAT; under this regime the VAT paid on purchases is not included in the cost.",
   },
 
   abas: {
@@ -197,6 +229,7 @@ export const EN: typeof PT = {
 
   perdas: {
     excedenteDeContagem: "Stocktake surplus",
+    excedenteNota: "more was found than the system said — the net of the stocktakes in the house's favour",
     tabela: "The two losses for the period: waste and unknown shrinkage",
     vazio:
       "Nothing thrown away in this period. Waste appears here by reason, from the largest to the smallest, as it is recorded.",
@@ -220,7 +253,9 @@ export const EN: typeof PT = {
     avisoDoRacio:
       "This ratio is not comparable with the ones in the trade: the owner's pay does not count towards payroll costs. When the owner works in the business without paying themselves, the real payroll cost is 4 to 5 points higher than this figure.",
     cargosVazio:
-      "There are no roles with a cost this month. Cost by role appears here as pay is recorded.",
+      "Cost by role appears once there is a people area: it is what holds who works, in which job, and on what pay.",
+    semRacios:
+      "The month ratios compare costs with sales, and the payroll ones also need wages. While both sources are missing, none of the three exists.",
     cargoNaoEPapel: "A role is the job someone does, not the access they have to the application.",
     campoCargo: "Role",
     custo: "Cost",
@@ -275,11 +310,13 @@ export const EN: typeof PT = {
     totalDeGastosNota: "goods, losses, payroll and fixed costs — added up by the server",
     notaFechado: "sales excluding VAT minus the total costs",
     notaACorrer: "month in progress: payroll and fixed costs are for the whole month",
+    dependeDoPessoal:
+      "only exists once there is a payroll cost and fixed costs — adding up goods alone and calling it a total would treat the sum as settled",
+    semResultado: "without a total cost there is no result, and what the total is missing is two whole items",
     negativo: "Negative result this month. ",
     comExclusoes: (exclusoes: string) =>
       `${exclusoes} It is what is left of what is in this table, and nothing else.`,
-    notaDasBarras:
-      "Breakdown of the costs that add up to the total, from the largest to the smallest.",
+    notaDasBarras: "Breakdown of the costs already recorded, from the largest to the smallest.",
     campoGasto: "Cost item",
     rotuloDasBarras: "Month costs by category, from the largest to the smallest",
   },
@@ -325,8 +362,12 @@ export const EN: typeof PT = {
     umSoIntervalo:
       "A single interval in this period: there is no variation to draw. The totals are above, and the other periods in the top bar give seven days or more.",
     rotuloDaSerie: (serie: string, total: string) => `${serie} — ${total} in total`,
-    rotulo: (grao: string, maximo: string) =>
-      `Sales and purchases ${grao}, with the axis maximum at ${maximo}`,
+    rotulo: (series: readonly string[], grao: string, maximo: string) => {
+      const ultima = series.at(-1) ?? "";
+      const lista =
+        series.length <= 1 ? ultima : `${series.slice(0, -1).join(", ")} and ${ultima}`;
+      return `${lista}, ${grao}, with the axis maximum at ${maximo}`;
+    },
     aCarregar: "Loading the period chart…",
   },
 

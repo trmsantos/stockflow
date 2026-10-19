@@ -103,3 +103,43 @@ export function LinhaDeRubrica({
     </>
   );
 }
+
+/**
+ * A linha de uma rubrica que o servidor **não sabe** — e que por isso não tem
+ * valor nenhum para pôr na coluna da direita (ADR 0029, decisão 1).
+ *
+ * ## Porque é uma célula só e não um "—" na coluna do valor
+ *
+ * Três razões, e as três são de leitura. Um travessão alinhado à direita em mono
+ * lê-se como um número ilegível e não como uma ausência; um `0,00 €` seria uma
+ * afirmação falsa sobre o negócio, que é o painel optimista que a ADR 0013
+ * (decisão 7) existe para proibir; e uma frase inteira enfiada numa coluna de
+ * 160px parte em quatro linhas e desfaz o ritmo de 44px da tabela.
+ *
+ * Com `colSpan` a frase tem a largura toda, lê-se de uma vez, e **fica na
+ * posição da rubrica** — "Vendas, sem IVA" continua a ser a primeira linha da
+ * conta, que é onde o dono a procura. Tirar a linha era deixá-lo a pensar que o
+ * ecrã se esqueceu dela.
+ *
+ * Não leva `h-linha`: isto não é uma linha de dados e não finge ser uma. Leva a
+ * mesma régua de baixo, porque continua a ser uma linha da mesma tabela.
+ */
+export function LinhaDeAusencia({ frase }: { readonly frase: string }) {
+  return (
+    <tr className="border-b border-border last:border-b-0">
+      {/* **Sem cor de estado, e isso é a decisão.** Medido no ecrã: a aba do
+          pessoal tem quatro destas seguidas, e quatro linhas âmbar coladas são
+          uma parede de alarme por uma coisa que não é um alarme — é uma
+          funcionalidade que ainda não existe. "A cor nesta identidade é sinal e
+          não ênfase" (DESIGN.md §2), e o sinal já está dado uma vez, em âmbar,
+          na declaração do topo do ecrã. Aqui o que fala é a palavra.
+
+          A frase vem do catálogo já com o nome da rubrica à cabeça — "Vendas,
+          sem IVA: ainda não há vendas registadas nesta aplicação" —, e por isso
+          não há uma segunda célula a repeti-lo. */}
+      <td colSpan={2} className="px-celula-x py-2 text-xs leading-snug text-muted-foreground">
+        {frase}
+      </td>
+    </tr>
+  );
+}

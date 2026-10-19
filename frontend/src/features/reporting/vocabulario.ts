@@ -7,6 +7,7 @@ import type {
   IdDeCusto,
   IdDeParteDeSalarios,
   IdDeSerie,
+  Indisponibilidade,
   MotivoDeQuebra,
   OrigemDaReceita,
   OrigemDosSalarios,
@@ -141,6 +142,33 @@ export function rotuloDeSerie(id: IdDeSerie): string {
   return ROTULOS_DE_SERIE.get(id) ?? id;
 }
 
+/**
+ * De que família de dados depende cada série do gráfico — `null` quando ela não
+ * depende de nada que possa faltar.
+ *
+ * Existe para a legenda poder dizer **porquê** quando uma série não vem: a
+ * resposta do `/reporting/series` não traz `data_quality`, logo o id da série
+ * tem de saber para que declaração olhar. O `Record` sobre a união falha nos
+ * dois sentidos, como o resto deste ficheiro: uma série nova sem família
+ * declarada não compila.
+ */
+const FAMILIA_DA_SERIE: Record<IdDeSerie, Indisponibilidade | null> = {
+  revenue: "revenue",
+  purchases: null,
+};
+
+const FAMILIAS_DAS_SERIES = new Map<string, Indisponibilidade | null>(
+  Object.entries(FAMILIA_DA_SERIE),
+);
+
+export function razaoDaSerieEmFalta(
+  id: IdDeSerie,
+  declaradas: readonly Indisponibilidade[],
+): string {
+  const familia = FAMILIAS_DAS_SERIES.get(id) ?? null;
+  return familia === null ? textos.falta.semRazao : ausenciaDe(familia, declaradas);
+}
+
 const ROTULO_DA_GRANULARIDADE: Record<Granularidade, string> = {
   day: textos.grafico.diaADia,
   week: textos.grafico.semanaASemana,
@@ -195,6 +223,15 @@ export function rotuloDaQuebraDesconhecida(valor: string): string {
   return eNegativo(valor) ? textos.perdas.excedenteDeContagem : textos.custos.quebraRotulo;
 }
 
+/**
+ * A nota da mesma linha, e muda pela mesma razão: sob "Excedente de contagem" a
+ * frase "o líquido das contagens" não diz o que aconteceu. O que aconteceu é
+ * que se encontrou mais do que o sistema dizia.
+ */
+export function notaDaQuebraDesconhecida(valor: string): string {
+  return eNegativo(valor) ? textos.perdas.excedenteNota : textos.custos.quebraNota;
+}
+
 /* ---------------------------------------------------------------------------
  * A variação de stock — a afirmação mais visível do ecrã.
  * ------------------------------------------------------------------------- */
@@ -227,6 +264,67 @@ const NOTAS_DA_BASE = new Map<string, string>(Object.entries(NOTA_DA_BASE_DA_REC
 
 export function notaDaBaseDaReceita(base: BaseDaReceita): string {
   return NOTAS_DA_BASE.get(base) ?? "";
+}
+
+/* ---------------------------------------------------------------------------
+ * O que o painel **ainda não sabe** — os três ids do `unavailable` e as
+ * palavras com que o ecrã os diz (ADR 0029, decisão 1).
+ *
+ * Os ids nunca chegam ao ecrã. Um `revenue` impresso cru seria um rótulo técnico
+ * vindo do arame, que é exactamente o que a decisão 5 da ADR 0013 proíbe — e,
+ * pior, seria a palavra errada: o dono não perguntou por um campo, perguntou
+ * quanto vendeu.
+ * ------------------------------------------------------------------------- */
+
+const NOME_DO_QUE_FALTA: Record<Indisponibilidade, string> = {
+  revenue: textos.falta.vendasCampo,
+  payroll: textos.falta.pessoalCampo,
+  other_costs: textos.falta.fixosCampo,
+};
+
+const NOMES_DO_QUE_FALTA = new Map<string, string>(Object.entries(NOME_DO_QUE_FALTA));
+
+export function nomeDoQueFalta(id: Indisponibilidade): string {
+  return NOMES_DO_QUE_FALTA.get(id) ?? id;
+}
+
+/** A frase inteira: vai ao `title` e à camada do `?explicar=1`. */
+const FRASE_DO_QUE_FALTA: Record<Indisponibilidade, string> = {
+  revenue: textos.falta.vendasFrase,
+  payroll: textos.falta.pessoalFrase,
+  other_costs: textos.falta.fixosFrase,
+};
+
+const FRASES_DO_QUE_FALTA = new Map<string, string>(Object.entries(FRASE_DO_QUE_FALTA));
+
+export function fraseDoQueFalta(id: Indisponibilidade): string {
+  return FRASES_DO_QUE_FALTA.get(id) ?? "";
+}
+
+/** A forma curta, para o sítio exacto onde o número estaria. */
+const AUSENCIA_CURTA: Record<Indisponibilidade, string> = {
+  revenue: textos.falta.vendasCurto,
+  payroll: textos.falta.pessoalCurto,
+  other_costs: textos.falta.fixosCurto,
+};
+
+const AUSENCIAS_CURTAS = new Map<string, string>(Object.entries(AUSENCIA_CURTA));
+
+/**
+ * **A frase que substitui um número ausente**, e a razão vem da lista do
+ * servidor — não de um `if` escrito aqui.
+ *
+ * Um campo a `null` e a família **não** declarada é um estado possível e não é
+ * um erro do ecrã: o servidor pode vir a ter uma razão que este catálogo ainda
+ * não sabe dizer. Aí escreve-se que não se sabe, sem inventar o porquê. Entre
+ * um traço e uma meia-verdade, isto é a terceira hipótese.
+ */
+export function ausenciaDe(
+  id: Indisponibilidade,
+  declaradas: readonly Indisponibilidade[],
+): string {
+  if (!declaradas.includes(id)) return textos.falta.semRazao;
+  return AUSENCIAS_CURTAS.get(id) ?? textos.falta.semRazao;
 }
 
 const ROTULO_DA_ORIGEM_DA_RECEITA: Record<OrigemDaReceita, string> = {

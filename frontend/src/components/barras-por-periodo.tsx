@@ -108,7 +108,13 @@ export function BarrasPorPeriodo({
 }) {
   const idDaTabela = useId();
   const passo = passoDosRotulos(intervalos.length);
-  const comLegenda = series.length > 1 && !compacto;
+  // **`> 0` e não `> 1`, desde que há gráficos de uma série.** A legenda não
+  // existe para distinguir duas cores: existe para dizer o que a barra é. Com a
+  // regra anterior, um gráfico de uma série desenhava barras cinzentas sem nome
+  // — e o nome do que está desenhado não pode viver só no `aria-label`, que
+  // ninguém vê. O `compacto` continua a não ter legenda, por medida: à largura
+  // de um cartão do Início ela parte em quatro linhas.
+  const comLegenda = series.length > 0 && !compacto;
 
   return (
     <figure className="m-0 flex flex-col gap-2" aria-labelledby={idDaTabela}>

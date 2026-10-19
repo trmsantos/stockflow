@@ -31,10 +31,11 @@ const API_ORIGIN = process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8090";
  * meio. Não é fingir uma sessão — é o contrário, e a razão está no
  * `fixtures/servidor.ts`.
  *
- * E um quinto, da mesma família: `FIXTURES_RESTRITO=/api/v1/reporting/month`
- * responde o **403 de papel** daquele caminho — o painel do dono visto por quem
- * não é dono (ADR 0013, decisão 6). Só as rotas que declaram a variante
- * `restrito` o conhecem, e hoje é uma.
+ * **Não há um quinto.** Havia — `FIXTURES_RESTRITO` respondia o 403 de papel do
+ * painel —, e saiu a 2026-10-19 com o `apps.reporting` ligado (ADR 0029): a
+ * recusa passou a ser a do Django, decidida pelo `permission_classes` da view.
+ * Uma imitação de autorização ao lado da autorização a sério é um caminho que
+ * nunca mais corre.
  */
 const ATRASO_DE_FIXTURES = Number(process.env.FIXTURES_ATRASO_MS ?? 250);
 
@@ -50,14 +51,10 @@ export default defineConfig({
     react(),
     tailwindcss(),
     servidorDeFixtures({
-      // A mesma origem do proxy, para não haver duas definições de onde está o
-      // Django: é dela que o servidor de fixtures pergunta o papel da sessão.
-      origemDoBackend: API_ORIGIN,
       atrasoMs: ATRASO_DE_FIXTURES,
       vazios: caminhos(process.env.FIXTURES_VAZIO),
       erros: caminhos(process.env.FIXTURES_ERRO),
       semSessao: caminhos(process.env.FIXTURES_SEM_SESSAO),
-      restritos: caminhos(process.env.FIXTURES_RESTRITO),
     }),
   ],
   resolve: {
