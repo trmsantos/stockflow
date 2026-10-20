@@ -432,6 +432,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{id}/extraction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Voltar a pedir a leitura deste documento ao modelo
+         * @description O botão *tentar outra vez* do ramo de erro. **202**: a leitura fica aceite e não feita — quem a faz é o worker, e o cliente já sonda o `GET` do documento. Não é o `closing`, de propósito: o fecho é repetível para um duplo toque não pagar duas leituras, e este pedido **quer** pagar outra. 409 se já houver receção confirmada, se o documento já estiver a ser lido, ou se as tentativas tiverem acabado.
+         */
+        post: operations["documentos_reextrair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/{id}/files": {
         parameters: {
             query?: never;
@@ -1400,6 +1420,35 @@ export interface components {
             share: string;
         };
         /**
+         * @description Σ das linhas lidas numa taxa contra a base dessa taxa no QR.
+         *
+         *     `matches` falso é o sinal mais forte que esta feature produz sobre a
+         *     qualidade de uma leitura — mais forte do que a `confidence`, que o modelo
+         *     reporta de si próprio.
+         *
+         *     **As três bases são dinheiro; a taxa e o `matches` não.** A decisão não é
+         *     automática e vale a pena dizê-la: `lines_base` e `qr_base` são valores
+         *     **fiscais** do documento, não preços de compra, e podia defender-se que não
+         *     são "quanto custou". Mas a soma delas *é* o total da fatura — a identidade
+         *     que a ADR 0021 nomeia — e `lines_base` é literalmente a Σ dos `line_total`
+         *     que a linha acima esconde: deixá-las visíveis reconstruía por adição o que
+         *     se tira por ausência. Ficam `rate` e `matches`, que são a **marcação
+         *     qualitativa** desta leitura e exactamente o trabalho de quem recebe, pela
+         *     mesma razão pela qual os `warnings` e a `vat_rate` continuam a sair para
+         *     toda a gente (ADR 0031, adenda dos euros).
+         */
+        ConferenciaDeIvaOut: {
+            /** Format: decimal */
+            difference?: string | null;
+            /** Format: decimal */
+            lines_base?: string;
+            matches: boolean;
+            /** Format: decimal */
+            qr_base?: string | null;
+            /** Format: decimal */
+            rate: string;
+        };
+        /**
          * @description O corpo de um 409: `code` para ramificar, `detail` para ler, `id` para navegar.
          *
          *     O `id` é o que distingue este 409 de uma mensagem de erro: com ele o ecrã
@@ -1580,6 +1629,17 @@ export interface components {
             share: string;
         };
         /**
+         * @description Um campo em que o papel e o QR não dizem o mesmo. Três strings, para ler.
+         *
+         *     O valor servido no cabeçalho é sempre o do QR; isto é a prova de que ele
+         *     ganhou, e o que o ecrã mostra como *"o papel diz X, o QR diz Y"*.
+         */
+        DivergenciaOut: {
+            field: string;
+            paper: string;
+            qr: string;
+        };
+        /**
          * @description * `FT` - FT
          *     * `FR` - FR
          *     * `FS` - FS
@@ -1673,6 +1733,15 @@ export interface components {
              */
             ean: string | null;
             /** @description Rótulo único por artigo (sem caixa) */
+            label: string;
+        };
+        /** @description Referência a uma embalagem (para LinhaOut). */
+        EmbalagemReference: {
+            /** Format: decimal */
+            base_quantity: string;
+            base_unit: string;
+            /** Format: uuid */
+            id: string;
             label: string;
         };
         /**
@@ -1820,16 +1889,30 @@ export interface components {
          *     `ExtracaoOut` da ADR** — é um campo aditivo, e o nome vai em inglês como os
          *     vizinhos (decisão 9), apesar de o campo do DTO interno se chamar `motivo`
          *     como o resto do Python deste repositório.
+         *
+         *     ## O `total` é dinheiro, e sai por ausência
+         *
+         *     É o mesmo número que o `document_total` de uma receção — a adenda dos euros
+         *     da ADR 0031 tirou-o lá e tem de o tirar aqui, ou a decisão do dono vivia
+         *     numa rota e não na outra. As quantidades, a `unit` do papel, a
+         *     `description`, o `supplier_code`, o `ean`, a `vat_rate` e a `confidence`
+         *     continuam a sair para toda a gente: nenhum deles diz quanto custou nada.
          */
         ExtracaoOut: {
+            atcud: string;
+            attempt: number;
+            cancelled: boolean;
             /** Format: decimal */
             confidence: string | null;
             customer_nif: string;
+            divergences: components["schemas"]["DivergenciaOut"][];
             doc_number: string;
             doc_type: string;
+            fiscal_space: string;
             /** Format: date */
             issued_at: string | null;
             lines: components["schemas"]["LinhaLidaOut"][];
+            qr_read: boolean;
             /** Format: date-time */
             read_at: string | null;
             reason: string;
@@ -1837,7 +1920,8 @@ export interface components {
             supplier_name: string;
             supplier_nif: string;
             /** Format: decimal */
-            total: string | null;
+            total?: string | null;
+            vat_checks: components["schemas"]["ConferenciaDeIvaOut"][];
         };
         /**
          * @description `POST /stock/counts/{id}/closing`: a justificação, **sempre obrigatória**.
@@ -2124,6 +2208,14 @@ export interface components {
          */
         KeyEnum: "today" | "7d" | "30d" | "month" | "prev_month";
         /**
+         * @description * `goods` - goods
+         *     * `deposit` - deposit
+         *     * `charge` - charge
+         *     * `document_ref` - document_ref
+         * @enum {string}
+         */
+        KindEnum: "goods" | "deposit" | "charge" | "document_ref";
+        /**
          * @description * `pt-pt` - Português (Portugal)
          *     * `en` - English
          * @enum {string}
@@ -2174,6 +2266,58 @@ export interface components {
             readonly zone?: components["schemas"]["ZonaOut"];
         };
         /**
+         * @description Entrada para criar linha de receção (à mão).
+         *
+         *     Os três campos de referência chamam-se `product`, `packaging` e `location`
+         *     no contrato e `*_id` do lado de dentro — e a tradução **faltava aqui**,
+         *     exactamente como faltava no `RevisaoDeLinhaInSerializer` até 2026-10-19. A
+         *     consequência era a mesma com outro nome: a view entregava o
+         *     `validated_data` ao Django, que recusa um `UUID` onde a descritora de uma
+         *     chave estrangeira quer uma instância (*"Cannot assign UUID(...):
+         *     ReceiptLine.location must be a Location instance"*) — **500 em todos os
+         *     `POST /receipts/<id>/lines`**, que é o caminho de acrescentar uma linha à
+         *     mão a uma receção.
+         *
+         *     Os três têm `required=False` e isso continua a ser o contrato: uma linha
+         *     acrescentada à mão nasce por rever, e é a revisão que lhe escolhe o artigo.
+         *     Quem resolve a ausência de `location` é o `services.acrescentar_linha`,
+         *     porque a coluna é `NOT NULL` e o default certo — a localização da receção —
+         *     é um facto do domínio e não do transporte.
+         */
+        LinhaInRequest: {
+            /** Format: decimal */
+            base_per_invoice_unit?: string | null;
+            description: string;
+            /** Format: decimal */
+            discount_pct?: string | null;
+            ean?: string;
+            /** Format: date */
+            expires_at?: string | null;
+            invoice_unit: string;
+            /** @default goods */
+            kind: components["schemas"]["KindEnum"];
+            /** Format: decimal */
+            line_total?: string | null;
+            /** Format: uuid */
+            location?: string;
+            lot_code?: string;
+            /** Format: uuid */
+            packaging?: string | null;
+            /** Format: uuid */
+            product?: string | null;
+            /** Format: decimal */
+            quantity_invoiced: string;
+            /** Format: decimal */
+            quantity_received?: string;
+            supplier_code?: string;
+            /** Format: decimal */
+            unit_price?: string | null;
+            /** @default false */
+            variable_weight: boolean;
+            /** Format: decimal */
+            vat_rate?: string | null;
+        };
+        /**
          * @description Uma linha **como o modelo a leu**. Texto não confiável, já validado.
          *
          *     Chega aqui depois de o `agents` a ter validado contra o seu schema à escrita
@@ -2185,21 +2329,103 @@ export interface components {
          *     Os números são `Decimal` com `coerce_to_string` implícito (o default do DRF):
          *     saem como string no JSON, que é a única forma de um preço não passar por um
          *     `float` do JavaScript.
+         *
+         *     **Os euros só saem para `owner|manager`** — é a mesma decisão do dono e a
+         *     mesma mecânica do `LinhaOutSerializer`, aplicada ao caminho irmão. A ADR
+         *     0031 (adenda dos euros) fechou a receção e deixou esta janela aberta sobre
+         *     **a mesma fatura e os mesmos preços**: um colaborador que abrisse o
+         *     documento via o painel de leitura inteiro.
          */
         LinhaLidaOut: {
             /** Format: decimal */
             confidence: string | null;
             description: string;
             /** Format: decimal */
-            line_total: string | null;
+            discount_pct?: string | null;
+            ean: string;
+            /** Format: decimal */
+            line_total?: string | null;
             position: number;
             /** Format: decimal */
             quantity: string | null;
+            supplier_code: string;
             unit: string;
             /** Format: decimal */
-            unit_price: string | null;
+            unit_price?: string | null;
             /** Format: decimal */
             vat_rate: string | null;
+        };
+        /** @description Saída de linha de receção. Os euros só saem para `owner|manager`. */
+        LinhaOut: {
+            /** Format: decimal */
+            base_per_invoice_unit: string | null;
+            conservation: components["schemas"]["LinhaOutConservationEnum"];
+            description: string;
+            /** Format: decimal */
+            discount_pct?: string | null;
+            ean: string;
+            /** Format: date */
+            expires_at: string | null;
+            expiry_kind: string | null;
+            /** Format: uuid */
+            id: string;
+            invoice_unit: string;
+            kind: components["schemas"]["KindEnum"];
+            /** Format: decimal */
+            line_total?: string | null;
+            location: components["schemas"]["LocalizacaoReference"];
+            lot_code: string;
+            /** Format: uuid */
+            movement: string | null;
+            packaging: components["schemas"]["EmbalagemReference"] | null;
+            position: number;
+            price_history?: components["schemas"]["PriceHistory"] | null;
+            /** Format: uuid */
+            product: string | null;
+            product_name: string | null;
+            /** Format: decimal */
+            quantity_invoiced: string | null;
+            /** Format: decimal */
+            quantity_received: string;
+            requires_lot: boolean;
+            /** Format: date-time */
+            reviewed_at: string | null;
+            reviewed_by: string | null;
+            status: components["schemas"]["LinhaOutStatusEnum"];
+            stock_quantity: components["schemas"]["StockQuantity"] | null;
+            supplier_code: string;
+            /** Format: decimal */
+            unit_price?: string | null;
+            variable_weight: boolean;
+            /** Format: decimal */
+            vat_rate: string | null;
+            warnings: components["schemas"]["WarningsEnum"][];
+        };
+        /**
+         * @description * `ambient` - ambient
+         *     * `chilled` - chilled
+         *     * `frozen` - frozen
+         * @enum {string}
+         */
+        LinhaOutConservationEnum: "ambient" | "chilled" | "frozen";
+        /**
+         * @description * `needs_review` - needs_review
+         *     * `confirmed` - confirmed
+         *     * `skipped` - skipped
+         * @enum {string}
+         */
+        LinhaOutStatusEnum: "needs_review" | "confirmed" | "skipped";
+        /**
+         * @description O corpo do `GET /receipts/<id>/lines`: a contagem e as linhas.
+         *
+         *     Existe para o `schema.yml` dizer a verdade. Sem ela, o `get_serializer_class`
+         *     da view devolvia o `RececaoOutSerializer` para esta acção e o contrato
+         *     prometia um cabeçalho de receção onde serve uma lista de linhas — o cliente
+         *     gerado não conhecia campo nenhum da linha, incluindo os `warnings`.
+         */
+        LinhasOut: {
+            count: number;
+            results: components["schemas"]["LinhaOut"][];
         };
         /** @description Localização nova. */
         LocalizacaoIn: {
@@ -2549,6 +2775,15 @@ export interface components {
         PreferenciasInRequest: {
             tema: components["schemas"]["TemaEnum"];
         };
+        /** @description Histórico de preço (para LinhaOut). */
+        PriceHistory: {
+            change_pct: number;
+            /** Format: decimal */
+            last_price: string | null;
+            reference: string;
+            threshold_pct: number;
+            unit_label: string;
+        };
         /** @description Produto novo com embalagem opcional aninhada. */
         ProdutoIn: {
             /**
@@ -2773,7 +3008,7 @@ export interface components {
             supplier_name?: string;
             supplier_nif?: string;
         };
-        /** @description Saída de receção. */
+        /** @description Saída de receção. Os totais em euros só saem para `owner|manager`. */
         RececaoOut: {
             readonly awaiting_invoice?: boolean;
             readonly cold_chain?: boolean;
@@ -2791,7 +3026,7 @@ export interface components {
             /** Format: uuid */
             document: string | null;
             /** Format: decimal */
-            document_total: string | null;
+            document_total?: string | null;
             /** Format: uuid */
             id: string;
             readonly line_count?: number;
@@ -2810,7 +3045,7 @@ export interface components {
             readonly temperatures?: components["schemas"]["TemperaturaRegistadaOut"][];
             readonly vat_breakdown?: components["schemas"]["VatBreakdown"][];
         };
-        /** @description Saída de receção. */
+        /** @description Saída de receção. Os totais em euros só saem para `owner|manager`. */
         RececaoOutRequest: {
             /** Format: date-time */
             confirmed_at: string | null;
@@ -2824,7 +3059,7 @@ export interface components {
             /** Format: uuid */
             document: string | null;
             /** Format: decimal */
-            document_total: string | null;
+            document_total?: string | null;
             /** Format: uuid */
             id: string;
             /** Format: date-time */
@@ -2933,6 +3168,25 @@ export interface components {
          * @enum {string}
          */
         RevenueSourceEnum: "none" | "manual" | "pos";
+        /** @description Entrada para rever linha. */
+        RevisaoDeLinhaInRequest: {
+            /** Format: decimal */
+            base_per_invoice_unit?: string | null;
+            /** Format: date */
+            expires_at?: string | null;
+            kind?: components["schemas"]["KindEnum"];
+            /** Format: uuid */
+            location?: string;
+            lot_code?: string;
+            /** Format: uuid */
+            packaging?: string | null;
+            /** Format: uuid */
+            product?: string | null;
+            /** Format: decimal */
+            quantity_received?: string;
+            /** @default false */
+            skip: boolean;
+        };
         /**
          * @description Uma rota do **registo**: o que existe para configurar, e os seus defaults.
          *
@@ -3102,6 +3356,15 @@ export interface components {
             /** Format: decimal */
             readonly unit_cost?: string;
         };
+        /** @description Quantidade em stock após receção. */
+        StockQuantity: {
+            /** Format: decimal */
+            base: string;
+            base_unit: string;
+            /** Format: decimal */
+            display: string;
+            display_unit: string;
+        };
         /** @description Resumo de stock agregado por produto (painel, fatia 4). */
         StockSummary: {
             /** Format: uuid */
@@ -3266,6 +3529,17 @@ export interface components {
          * @enum {string}
          */
         VatRegimeEnum: "normal" | "isento_art_53";
+        /**
+         * @description * `total_nao_bate` - total_nao_bate
+         *     * `taxa_desconhecida` - taxa_desconhecida
+         *     * `sem_taxa` - sem_taxa
+         *     * `sem_quantidade` - sem_quantidade
+         *     * `sem_conversao` - sem_conversao
+         *     * `preco_desviado` - preco_desviado
+         *     * `confianca_baixa` - confianca_baixa
+         * @enum {string}
+         */
+        WarningsEnum: "total_nao_bate" | "taxa_desconhecida" | "sem_taxa" | "sem_quantidade" | "sem_conversao" | "preco_desviado" | "confianca_baixa";
         /** @description Entrada de desperdício (POST /stock/movements/waste). */
         WasteRequest: {
             /**
@@ -3903,6 +4177,36 @@ export interface operations {
             };
         };
     };
+    documentos_reextrair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this documento de fornecedor. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentoOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecusaDeDocumentoOut"];
+                };
+            };
+        };
+    };
     documentos_anexar_ficheiro: {
         parameters: {
             query?: never;
@@ -4503,7 +4807,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RececaoOut"];
+                    "application/json": components["schemas"]["LinhasOut"];
                 };
             };
         };
@@ -4520,17 +4824,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RececaoOutRequest"];
-                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
+                "application/json": components["schemas"]["LinhaInRequest"];
+                "multipart/form-data": components["schemas"]["LinhaInRequest"];
             };
         };
         responses: {
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RececaoOut"];
+                    "application/json": components["schemas"]["LinhaOut"];
                 };
             };
         };
@@ -4546,19 +4850,19 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
+        requestBody?: {
             content: {
-                "application/json": components["schemas"]["RececaoOutRequest"];
-                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
+                "application/json": components["schemas"]["RevisaoDeLinhaInRequest"];
+                "multipart/form-data": components["schemas"]["RevisaoDeLinhaInRequest"];
             };
         };
         responses: {
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RececaoOut"];
+                    "application/json": components["schemas"]["LinhaOut"];
                 };
             };
         };

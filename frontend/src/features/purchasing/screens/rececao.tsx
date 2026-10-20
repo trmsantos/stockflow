@@ -26,6 +26,7 @@ import {
   TabelaDeLinhasDeFatura,
 } from "../components/tabela-de-linhas-de-fatura";
 import { TemperaturaAEntrega } from "../components/temperatura-a-entrega";
+import { rececaoMostraEuros } from "../euros-do-papel";
 import type { LinhaDeRececao } from "../schemas";
 import { textos } from "../textos";
 import { textoNaUnidadeBase } from "../vocabulario";
@@ -111,6 +112,12 @@ export function EcraDeRececao() {
   const dados = documento.data;
   const resultados = linhas.data?.results;
   const porRever = dados?.status === "needs_review";
+  // **Quem vê euros lê-se do cabeçalho, não do papel da sessão** (ver
+  // `euros-do-papel.ts`), e lê-se **uma vez por ecrã**: a tabela e o esqueleto
+  // dela têm de ter as mesmas colunas, senão o layout salta no instante em que
+  // as linhas chegam. O cabeçalho chega primeiro — vem da mesma entrada de cache
+  // que a lista —, logo o esqueleto já sabe a resposta.
+  const comEuros = dados !== null && dados !== undefined && rececaoMostraEuros(dados);
 
   const entram = entramNoStock(resultados ?? []);
   const foram = ficamDeFora(resultados ?? []);
@@ -220,7 +227,7 @@ export function EcraDeRececao() {
             {ultimo}
           </p>
 
-          {linhas.isPending ? <EsqueletoDaTabelaDeLinhas /> : null}
+          {linhas.isPending ? <EsqueletoDaTabelaDeLinhas comEuros={comEuros} /> : null}
 
           {linhas.isError ? (
             <ErroAoCarregar
@@ -248,6 +255,7 @@ export function EcraDeRececao() {
             <>
               <TabelaDeLinhasDeFatura
                 linhas={resultados}
+                comEuros={comEuros}
                 abertaEm={aberta}
                 aoAlternar={(linhaId) => {
                   setAberta((atual) => (atual === linhaId ? null : linhaId));

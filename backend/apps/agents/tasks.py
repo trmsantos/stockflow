@@ -6,19 +6,20 @@ argumento obrigatório e o corpo corre dentro de `tenant_scope(tenant_id)`. O
 quem a enfileira é o adaptador do porto, chamado de dentro do âmbito do pedido, e
 o valor viaja como argumento.
 
-## A tarefa faz tudo menos a chamada ao modelo
+## A tarefa orquestra; a chamada vive atrás do `modelo.py`
 
-E isso é deliberado, não incompleto: a chamada vive atrás de
-`apps/agents/modelo.py`, que levanta uma excepção clara quando não há modelo
-configurado. Aqui apanha-se essa excepção, grava-se a tentativa com `status=erro`
-e uma razão legível, e **não se rebenta a tarefa** — um worker a falhar em
-retentativas por uma configuração que não existe é ruído, e a informação útil
-(que o documento não foi lido, e porquê) tem de estar na base de dados e não num
-log.
+A chamada ao modelo vive atrás de `apps/agents/modelo.py`, que levanta uma
+excepção clara por cada razão de não ter lido — sem modelo, documento grande
+demais, orçamento esgotado, tempo esgotado. Aqui apanha-se a base dessas
+excepções, grava-se a tentativa com `status=erro` e uma razão legível, e **não
+se rebenta a tarefa**: um worker a falhar em retentativas por uma configuração
+que não existe é ruído, e a informação útil (que o documento não foi lido, e
+porquê) tem de estar na base de dados e não num log.
 
 O que esta tarefa **não** faz, e tem de continuar a não fazer: escrever linhas de
-receção. Isso é da fatia 2 e entra pelo `purchasing.api` (ADR 0020, decisão 6) —
-nunca pelos models do `purchasing`, que o import-linter já proíbe.
+receção. Quem semeia é o `purchasing.services.criar_rececao`, quando uma pessoa
+cria a receção (ADR 0031, decisão 5) — nenhuma fotografia cria um rascunho
+sozinha, e o `agents` continua a ter uma aresta só, de leitura.
 
 ## As três do chat
 
@@ -53,6 +54,7 @@ from apps.agents.services import (
     fechar_com_resposta,
     purgar_conversas_do_tenant,
     responder,
+    verificar_orcamento_de_extracao,
 )
 from apps.purchasing.api import paginas_do_documento
 from apps.shared.db import system_scope
@@ -72,18 +74,26 @@ logger = logging.getLogger(__name__)
 def extrair_documento(*, tenant_id: str, documento_id: str) -> str:
     """Lê um documento e grava a tentativa. Devolve o estado em que ela ficou.
 
-    Quatro saídas, e as quatro são normais:
+    Cinco saídas, e as cinco são normais:
 
     * `sem_paginas` — o documento não tem páginas (foi descartado, ou o slot
       expirou entre o fecho e a execução). **Não** se abre tentativa nenhuma:
       uma linha de extração de um documento sem páginas era um custo a fingir;
-    * `erro` — a fronteira do modelo levantou. **É a saída de hoje**, e a razão
-      fica na coluna `error`, legível, ao lado do `status`;
+    * `paginas_por_normalizar` — há páginas e nenhuma tem imagem ainda. Também
+      **não** abre tentativa, e é isso que faz o documento continuar em
+      `a_normalizar` em vez de cair num `erro` que só diz "chegaste cedo": a
+      rasterização corre noutra tarefa, e quando a última página ficar pronta o
+      `registar_normalizacao` volta a publicar `DocumentoFechado` e esta tarefa
+      corre outra vez — desta vez com imagens;
+    * `erro` — a fronteira do modelo levantou (sem modelo, documento grande
+      demais, orçamento esgotado, tempo esgotado). A razão fica na coluna
+      `error`, legível, ao lado do `status`;
     * `ilegivel` — houve resposta e ela não valida contra o schema;
     * `lido` — houve resposta e ela valida.
 
-    As páginas vêm pelo `purchasing.api`, como DTO congelado: esta tarefa nunca
-    abre um PDF e nunca conhece o armazenamento do `purchasing`.
+    As páginas vêm pelo `purchasing.api`, como DTO congelado, e os **bytes** de
+    cada imagem vêm um de cada vez por `bytes_da_pagina`: esta tarefa nunca abre
+    um PDF e nunca conhece o armazenamento do `purchasing`.
     """
     tenant = UUID(tenant_id)
     documento = UUID(documento_id)
@@ -94,19 +104,29 @@ def extrair_documento(*, tenant_id: str, documento_id: str) -> str:
             extra={"event": "extracao", "outcome": "sem_paginas"},
         )
         return "sem_paginas"
+    if not any(pagina.normalized for pagina in paginas):
+        logger.info(
+            "extração à espera da imagem das páginas",
+            extra={"event": "extracao", "outcome": "paginas_por_normalizar"},
+        )
+        return "paginas_por_normalizar"
 
     tentativa = abrir_tentativa(
         tenant_id=tenant, documento_id=documento, modelo=nome_do_modelo()
     )
     try:
-        resposta = ler_documento(paginas=paginas)
+        # O tecto diário é verificado **depois** de a tentativa existir e antes
+        # de qualquer byte sair: a linha é a prova de que se tentou, e a razão
+        # fica legível ao lado dela (ADR 0031, decisão 7).
+        verificar_orcamento_de_extracao(tenant_id=tenant)
+        resposta = ler_documento(tenant_id=tenant, paginas=paginas)
     except ErroDoModelo as erro:
         # Só a mensagem, nunca o traceback (SECURITY.md §1). E sem `self.retry`:
         # nenhuma das recusas desta fronteira melhora com o tempo.
         fechar_com_erro(tentativa=tentativa, razao=str(erro))
         logger.warning(
-            "extração sem modelo para chamar",
-            extra={"event": "extracao", "outcome": "erro"},
+            "extração fechada com erro",
+            extra={"event": "extracao", "outcome": type(erro).__name__},
         )
         return "erro"
     fechada = fechar_com_resposta(tentativa=tentativa, resposta=resposta)

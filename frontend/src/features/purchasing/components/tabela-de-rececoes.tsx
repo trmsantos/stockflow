@@ -10,6 +10,7 @@ import {
 } from "@/components/tabela";
 import { formatDate, formatDayMonth, formatMoney, formatTime } from "@/lib/format";
 
+import { rececaoMostraEuros } from "../euros-do-papel";
 import type { Rececao } from "../schemas";
 import { textos } from "../textos";
 import { tintaDoTextoDoEstado, tintaDoTrilhoDoEstado } from "../tinta-do-estado";
@@ -77,8 +78,8 @@ import {
  */
 
 /**
- * As oito colunas. Seis levam largura escrita; duas — o fornecedor e o "onde" —
- * repartem o que sobra.
+ * As colunas: **oito com euros, sete sem eles**. Todas menos duas — o fornecedor
+ * e o "onde" — levam largura escrita, e essas duas repartem o que sobra.
  *
  * **As larguras são escritas porque numa coluna numérica o conteúdo mais largo é
  * o cabeçalho**, não o dado: "DOCUMENTO" em caixa alta com tracking de 0.08em é
@@ -93,19 +94,28 @@ import {
  * cada uma das duas colunas de texto, e a 1440px ~230px. O nome do fornecedor
  * trunca no primeiro caso e está inteiro no `title` do link.
  */
-const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "fornecedor", rotulo: textos.tabela.colunas.fornecedor },
-  { chave: "tipo", rotulo: textos.tabela.colunas.tipo, classe: "w-20" },
-  // `w-32` e não `w-40`: medido, "FT 2026/4471" precisa de 132px dos 160 que a
-  // coluna tinha, e os 32 de folga eram a largura que faltava ao fornecedor e ao
-  // "onde" — os dois truncavam.
-  { chave: "documento", rotulo: textos.tabela.colunas.documento, classe: "w-32" },
-  { chave: "chegou", rotulo: textos.tabela.colunas.chegou, classe: "w-32 text-right" },
-  { chave: "total", rotulo: textos.tabela.colunas.total, classe: "w-28 text-right" },
-  { chave: "linhas", rotulo: textos.tabela.colunas.linhas, classe: "w-28 text-right" },
-  { chave: "estado", rotulo: textos.tabela.colunas.estado, classe: "w-32" },
-  { chave: "onde", rotulo: textos.tabela.colunas.onde },
-];
+function colunasDasRececoes(comEuros: boolean): readonly ColunaDeTabela[] {
+  return [
+    { chave: "fornecedor", rotulo: textos.tabela.colunas.fornecedor },
+    { chave: "tipo", rotulo: textos.tabela.colunas.tipo, classe: "w-20" },
+    // `w-32` e não `w-40`: medido, "FT 2026/4471" precisa de 132px dos 160 que a
+    // coluna tinha, e os 32 de folga eram a largura que faltava ao fornecedor e ao
+    // "onde" — os dois truncavam.
+    { chave: "documento", rotulo: textos.tabela.colunas.documento, classe: "w-32" },
+    { chave: "chegou", rotulo: textos.tabela.colunas.chegou, classe: "w-32 text-right" },
+    // **A coluna do total só existe se algum documento trouxer o total.** Para
+    // quem não vê euros ela estaria vazia de alto a baixo, e uma coluna "TOTAL"
+    // com oito traços é uma afirmação sobre as faturas em vez de uma sobre o
+    // papel de quem olha. Os 112px vão para as duas colunas de texto, que são as
+    // que truncam a 1280px.
+    ...(comEuros
+      ? [{ chave: "total", rotulo: textos.tabela.colunas.total, classe: "w-28 text-right" }]
+      : []),
+    { chave: "linhas", rotulo: textos.tabela.colunas.linhas, classe: "w-28 text-right" },
+    { chave: "estado", rotulo: textos.tabela.colunas.estado, classe: "w-32" },
+    { chave: "onde", rotulo: textos.tabela.colunas.onde },
+  ];
+}
 
 /**
  * `min-w-5xl` (64rem) é o que impede as oito colunas de se esmagarem. A 1280px
@@ -119,7 +129,14 @@ const LARGURA_MINIMA = "min-w-5xl";
 
 const ROTULO = textos.tabela.rotulo;
 
-function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
+function LinhaDeRececao({
+  rececao,
+  comEuros,
+}: {
+  readonly rececao: Rececao;
+  /** Esta lista traz totais. Decide a célula do total, não o conteúdo dela. */
+  readonly comEuros: boolean;
+}) {
   const porRever = rececao.status === "needs_review";
   const nifDiferente =
     rececao.customer_nif !== null && rececao.customer_nif !== rececao.company_nif;
@@ -137,9 +154,15 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
           // voltar devolve a lista como estava, sem depender do histórico.
           search={true}
           className="block truncate hover:underline group-hover:underline"
-          title={rececao.supplier.name}
+          title={rececao.supplier.name ?? textos.comuns.semFornecedor}
         >
-          {rececao.supplier.name}
+          {/* O nome vem vazio num documento que ainda não o tem, e um `<Link>`
+              sem texto não tem nome acessível — a palavra entra no lugar, em
+              itálico e a cinzento para não se ler como um nome de fornecedor.
+              É o mesmo tratamento do "sem número" na coluna ao lado. */}
+          {rececao.supplier.name ?? (
+            <span className="italic text-muted-foreground">{textos.comuns.semFornecedor}</span>
+          )}
         </Link>
       </th>
 
@@ -194,27 +217,38 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
         {formatDayMonth(rececao.received_at)} {formatTime(rececao.received_at)}
       </td>
 
-      {rececao.document_total === null ? (
-        // A guia de remessa não traz preços: a mercadoria entra antes de existir
-        // fatura. Dizê-lo é mais honesto do que um "0,00 €".
-        <td className={`${CLASSE_CELULA} w-28 text-right text-xs text-muted-foreground`}>
-          {textos.tabela.semValor}
-        </td>
-      ) : (
-        // O total é exacto e por isso leva cêntimos: é um total de fatura, não
-        // uma estimativa de custo médio. Arredondá-lo esconderia o número que
-        // ele vai comparar com o papel que tem na mão.
-        <td data-numeric className={`${CLASSE_CELULA} w-28 text-right`}>
-          {formatMoney(rececao.document_total)}
-        </td>
-      )}
+      {/* A célula só existe se a coluna existir — e a coluna só existe se os
+          euros vierem. Dentro dela ficam os dois estados que **são** sobre o
+          documento: o total impresso, e a guia que não traz preços. */}
+      {comEuros ? (
+        rececao.document_total === null || rececao.document_total === undefined ? (
+          // A guia de remessa não traz preços: a mercadoria entra antes de existir
+          // fatura. Dizê-lo é mais honesto do que um "0,00 €".
+          <td className={`${CLASSE_CELULA} w-28 text-right text-xs text-muted-foreground`}>
+            {textos.tabela.semValor}
+          </td>
+        ) : (
+          // O total é exacto e por isso leva cêntimos: é um total de fatura, não
+          // uma estimativa de custo médio. Arredondá-lo esconderia o número que
+          // ele vai comparar com o papel que tem na mão.
+          <td data-numeric className={`${CLASSE_CELULA} w-28 text-right`}>
+            {formatMoney(rececao.document_total)}
+          </td>
+        )
+      ) : null}
 
       <td data-numeric className={`${CLASSE_CELULA} w-28 text-right`}>
         {String(rececao.line_count)}
         {rececao.lines_to_review === 0 ? null : (
           // O número que o badge antigo trazia, agora debaixo do total de linhas
           // que ele qualifica: "2 por rever" de 5 é outra coisa que "2" de 2.
-          <span className={`block text-xs ${tintaDoTextoDoEstado(rececao.status)}`}>
+          // `font-sans`: a célula é `data-numeric` e a sub-linha herdava o mono,
+          // onde "3 por rever" precisa de mais do que os 112px da coluna e
+          // passava a linha a duas — a sub-linha de 13px a crescer uma linha de
+          // 44px é o defeito que o DESIGN.md §4 nomeia.
+          <span
+            className={`block font-sans text-xs ${tintaDoTextoDoEstado(rececao.status)}`}
+          >
             {textos.tabela.porRever(rececao.lines_to_review)}
           </span>
         )}
@@ -253,16 +287,22 @@ function LinhaDeRececao({ rececao }: { readonly rececao: Rececao }) {
 }
 
 export function TabelaDeRececoes({ rececoes }: { readonly rececoes: readonly Rececao[] }) {
+  // Lida da **resposta** e não do papel da sessão: é o servidor que decide quem
+  // vê euros, e a forma do payload não pode divergir de si própria (ver
+  // `euros-do-papel.ts`). `some` e não `every`: se um documento trouxer o total,
+  // a coluna existe e os outros dizem "sem valor" — que é o que já faziam.
+  const comEuros = rececoes.some(rececaoMostraEuros);
+
   return (
     <MolduraDeTabela
-      colunas={COLUNAS}
+      colunas={colunasDasRececoes(comEuros)}
       larguraMinima={LARGURA_MINIMA}
       comTrilho
       rotulo={ROTULO}
     >
       <tbody>
         {rececoes.map((rececao) => (
-          <LinhaDeRececao key={rececao.id} rececao={rececao} />
+          <LinhaDeRececao key={rececao.id} rececao={rececao} comEuros={comEuros} />
         ))}
       </tbody>
     </MolduraDeTabela>
@@ -281,7 +321,12 @@ export function TabelaDeRececoes({ rececoes }: { readonly rececoes: readonly Rec
 export function EsqueletoDaTabelaDeRececoes() {
   return (
     <EsqueletoDeTabela
-      colunas={COLUNAS}
+      // Com a coluna do total, que é a forma que vem para quem gere. É um
+      // palpite declarado e não um descuido: antes da primeira resposta ninguém
+      // sabe quantas colunas vêm, e a alternativa — perguntar o papel à sessão —
+      // era escrever a política de euros uma segunda vez no cliente. O custo é
+      // uma coluna a menos no primeiro desenho de quem não vê euros.
+      colunas={colunasDasRececoes(true)}
       larguraMinima={LARGURA_MINIMA}
       comTrilho
       rotulo={textos.tabela.aCarregar}

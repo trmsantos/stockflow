@@ -39,8 +39,8 @@ import { textos } from "./textos";
  * O `RecusaDeDocumentoOut` declara `code` como string e não como enum fechado
  * porque o conjunto é **por endpoint**: `paginas_excedidas` só no anexar,
  * `documento_sem_paginas` só no fechar. Um enum com a união de todos sugeria ao
- * ecrã ramos que aquele endpoint nunca devolve. Os quatro estão aqui porque os
- * quatro mudam o **desenho** deste ecrã; qualquer outro cai no ramo genérico,
+ * ecrã ramos que aquele endpoint nunca devolve. Os cinco estão aqui porque os
+ * cinco mudam o **desenho** deste ecrã; qualquer outro cai no ramo genérico,
  * que mostra o `detail` e mais nada.
  */
 
@@ -66,6 +66,17 @@ export const CODIGO_DOCUMENTO_SEM_PAGINAS = "documento_sem_paginas";
 
 /** `paginas_excedidas` — 400. Mais páginas do que o `page_limit` do documento. */
 export const CODIGO_PAGINAS_EXCEDIDAS = "paginas_excedidas";
+
+/**
+ * `releitura_recusada` — 409. O `POST /documents/<id>/extraction` não aceita.
+ *
+ * **Três situações num código só**, e é o servidor que assim o decide: já há
+ * receção confirmada, o documento está a ser lido neste momento, ou as três
+ * tentativas acabaram (ADR 0031, decisão 7). O `detail` cobre as três numa frase
+ * e o ecrã mostra-a sem a reescrever — distinguir as três aqui era inventar
+ * ramos que o contrato não dá.
+ */
+export const CODIGO_RELEITURA_RECUSADA = "releitura_recusada";
 
 /**
  * O `code` de uma recusa, ou `null`.
@@ -122,6 +133,10 @@ export function erroDoCampoFicheiro(erro: unknown): string | null {
  *  - `fecho` — `documento_sem_paginas`. Nasce no botão de fechar e fica **ao
  *    lado dele**, e não num banner no topo que faria alguém procurar o problema
  *    no sítio errado;
+ *  - `releitura` — `releitura_recusada`. Nasce no botão de *tentar outra vez* e
+ *    fica ao lado dele, pela mesma razão do `fecho`. O desenho tem uma segunda
+ *    metade: a frase aparece **e o botão desaparece**, porque as três situações
+ *    que o servidor cobre com este código não mudam por se voltar a carregar;
  *  - `generico` — tudo o resto, incluindo o que não tem corpo JSX nenhum (uma
  *    falha de rede, ou o teto de 12 MiB do proxy, que responde antes do Django).
  *    Banner com a frase e com retry.
@@ -130,7 +145,13 @@ export function erroDoCampoFicheiro(erro: unknown): string | null {
  * dava um campo activo a dizer "escolhe outro" sobre um documento que não aceita
  * mais nenhum.
  */
-export type DesenhoDaRecusa = "campo" | "limite" | "documento_perdido" | "fecho" | "generico";
+export type DesenhoDaRecusa =
+  | "campo"
+  | "limite"
+  | "documento_perdido"
+  | "fecho"
+  | "releitura"
+  | "generico";
 
 export function desenhoDaRecusa(erro: unknown): DesenhoDaRecusa {
   if (erro === null || erro === undefined) return "generico";
@@ -144,6 +165,8 @@ export function desenhoDaRecusa(erro: unknown): DesenhoDaRecusa {
       return "documento_perdido";
     case CODIGO_DOCUMENTO_SEM_PAGINAS:
       return "fecho";
+    case CODIGO_RELEITURA_RECUSADA:
+      return "releitura";
     default:
       return "generico";
   }

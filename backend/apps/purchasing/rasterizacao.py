@@ -49,13 +49,28 @@ apanha-a, deixa a página sem imagem e regista a razão; o documento fica em
 isto, recebe bytes e geometria, e entrega-os a `services.registar_normalizacao`,
 que é quem escreve. Em teste, é esta função que se substitui para exercitar o
 caminho completo sem dependência nenhuma.
+
+## O QR lê-se aqui, e por uma razão de custo
+
+Desde 2026-10-19 esta função devolve também o `qr_payload` da página
+(`descodificacao.py`, a outra fronteira nativa). Lê-se **aqui** porque é aqui
+que a imagem está aberta e **já encolhida**: descodificar noutro sítio obrigava
+a abrir o ficheiro uma segunda vez e a renderizar outra vez um PDF, que é a
+parte cara disto. O que a `zxing-cpp` vê é a mesma imagem que o ecrã mostra, em
+cinzentos.
+
+A leitura **nunca** faz uma página ser ilegível: `PaginaIlegivel` continua a
+querer dizer "a libvips recusou este ficheiro" e mais nada. Sem QR a coluna fica
+vazia, a página normaliza na mesma e o cabeçalho vem da extração, como vinha.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
+from apps.purchasing.descodificacao import payload_da_at
 from apps.purchasing.ficheiros import caminho_dentro_do_media
 
 __all__ = [
@@ -65,6 +80,8 @@ __all__ = [
     "ha_rasterizador",
     "rasterizar",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: O lado maior de uma página normalizada, em pixéis.
 #:
@@ -123,11 +140,17 @@ class ImagemNormalizada:
     Congelado e com `slots` como todos os DTO deste repositório. `webp` porque é
     o único formato que o endpoint da imagem serve, e tê-lo no nome do campo é o
     que impede alguém de lhe passar um JPEG e o servir com o tipo errado.
+
+    `qr_payload` é o texto do QR da AT que esta página traz, vazio quando não
+    traz nenhum. **Tem omissão** porque a página é o que ela é com ou sem QR, e
+    porque o campo entrou depois dos outros três: um teste que encene a
+    fronteira continua a dizer apenas o que lhe interessa.
     """
 
     webp: bytes
     width: int
     height: int
+    qr_payload: str = ""
 
 
 def rasterizar(*, caminho: str, numero_da_pagina: int) -> ImagemNormalizada:
@@ -147,6 +170,10 @@ def rasterizar(*, caminho: str, numero_da_pagina: int) -> ImagemNormalizada:
     **já na escala pedida** em vez de renderizar grande e encolher — é o que
     limita a memória de uma página A0 — e o `size="down"` é o que garante que
     nada é ampliado.
+
+    O QR sai da mesma imagem, depois de o WebP estar feito e **fora** do `try`
+    que traduz um erro da libvips em `PaginaIlegivel`: uma página que se
+    rasteriza não passa a não servir por causa de um QR.
     """
     pyvips = _biblioteca()
     origem = caminho_dentro_do_media(caminho)
@@ -168,6 +195,16 @@ def rasterizar(*, caminho: str, numero_da_pagina: int) -> ImagemNormalizada:
         # a fotografia de uma fatura tirada num telemóvel traz EXIF com GPS, e a
         # imagem é servida a qualquer membro do estabelecimento. O que se guarda
         # é a página, não o sítio onde ela foi fotografada.
+        #
+        # **A imagem materializa-se aqui, e isto não é optimização.** O que o
+        # `thumbnail` devolve é um pipeline de acesso **sequencial**, que só se
+        # consome uma vez: com dois consumidores — o WebP e os cinzentos do QR —
+        # o segundo morria com `unable to write to memory: out of order read`, e
+        # morria *dentro* deste `try`, logo uma página perfeitamente legível
+        # passava a `PaginaIlegivel`. Medido dentro da imagem de runtime, que é
+        # onde há libvips. O preço é a página descodificada em RAM, limitada
+        # pelo `LADO_MAXIMO` (≤ 12 MB a 2000×2000 RGB) e libertada a seguir.
+        imagem = imagem.copy_memory()
         bytes_webp = imagem.write_to_buffer(".webp", Q=QUALIDADE, strip=True)
     except pyvips.Error as erro:
         raise PaginaIlegivel(
@@ -176,7 +213,49 @@ def rasterizar(*, caminho: str, numero_da_pagina: int) -> ImagemNormalizada:
         ) from erro
 
     return ImagemNormalizada(
-        webp=bytes(bytes_webp), width=imagem.width, height=imagem.height
+        webp=bytes(bytes_webp),
+        width=imagem.width,
+        height=imagem.height,
+        qr_payload=_qr_da_imagem(pyvips, imagem),
+    )
+
+
+def _qr_da_imagem(pyvips: Any, imagem: Any) -> str:
+    """O QR da AT desta página, lido na imagem já encolhida, ou `""`.
+
+    `colourspace("b-w")` é luminância a sério e não a primeira banda: um QR
+    impresso a cor sobre fundo claro perde contraste quando se deita fora o
+    verde e o azul. O `cast("uchar")` é a rede contra uma origem de 16 bits por
+    banda, que daria dois bytes por pixel e uma vista desalinhada.
+
+    O `write_to_memory()` custa um byte por pixel — 4 MB no tecto de 2000×2000,
+    libertados a seguir — e é o preço de não voltar a abrir o ficheiro. Só
+    funciona porque quem chama já materializou a imagem (`copy_memory`): o
+    pipeline do `thumbnail` lê-se uma vez, e o WebP foi o primeiro a lê-lo.
+
+    O `bytes(...)` não é cosmética: o que a libvips devolve é um buffer dela, e a
+    vista que a `zxing-cpp` constrói **não é dona** da memória que lê. O que
+    atravessa a fronteira é um objecto Python normal, com um nome vivo do outro
+    lado durante toda a leitura.
+
+    Um erro da libvips aqui é **só** falta de QR: o WebP já está feito e a
+    página serve. Por isso este ramo regista e devolve vazio em vez de levantar
+    `PaginaIlegivel`.
+    """
+    try:
+        cinzentos = imagem.colourspace("b-w").cast("uchar")
+        luminancia = bytes(cinzentos.write_to_memory())
+    except pyvips.Error as erro:
+        logger.warning(
+            "página normalizada sem leitura de QR: a libvips não deu os cinzentos (%s)",
+            erro,
+            extra={"event": "documento.qr", "outcome": "sem_cinzentos"},
+        )
+        return ""
+    return payload_da_at(
+        luminancia=luminancia,
+        largura=cinzentos.width,
+        altura=cinzentos.height,
     )
 
 

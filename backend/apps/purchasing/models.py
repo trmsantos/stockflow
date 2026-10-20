@@ -362,24 +362,31 @@ class DocumentPage(TenantModel):
     documento com duas fotografias era uma query sobre duas tabelas; sem o
     `file`, a retentativa não tinha como não duplicar a página.
 
-    ## `qr_payload` entra hoje e não tem descodificador
+    ## `qr_payload`, e quem o escreve desde 2026-10-19
 
     Desde 1/1/2023 toda a fatura portuguesa imprime um QR que traz, legível por
     máquina e **sem erro de OCR**, os dois NIF, o tipo e o estado do documento, a
     data, o ATCUD, o espaço fiscal e as bases e o IVA por taxa. Logo **o QR é a
     verdade do cabeçalho e o LLM só serve para as linhas** (ADR 0021, adenda).
 
-    A coluna entra agora porque é grátis; a leitura **não**, porque a biblioteca
-    que descodifica um QR é uma dependência que ainda não foi decidida. Até lá o
-    campo fica nulo e o cabeçalho vem da extração, como a ADR já previa. Não
-    existe neste repositório nenhum código que escreva aqui — e é deliberado: o
-    dia em que existir, é um diff visível com esta secção ao lado.
+    A coluna entrou antes da leitura, porque era grátis e porque a biblioteca que
+    descodifica um QR era uma dependência por decidir. **O dono decidiu a
+    2026-10-19: `zxing-cpp`** — instala-se como qualquer pacote Python, não
+    acrescenta nada à imagem Docker, e lê QR fotografados de lado. Desde então há
+    exactamente **um** sítio que escreve aqui: a `services.registar_normalizacao`,
+    com o texto que a `rasterizacao.rasterizar` leu da mesma imagem que
+    normalizou, na mesma transação que a largura e a altura. Não há endpoint nem
+    revisão que mexa nisto: o que está nesta coluna foi lido de uma imagem.
+
+    Vazio continua a ser um caso normal e **não um erro**: uma página sem QR, um
+    QR dobrado, uma fotografia tremida. Aí o cabeçalho vem da extração, como
+    vinha antes de a coluna ter quem a escrevesse.
 
     **A coluna é texto vazio e não NULL, contra o que a ADR escreve**, e a razão
     é o lint: o `DJ001` do ruff recusa `null=True` num campo de texto e o
-    `CLAUDE.md` não deixa suprimir uma regra. Não se perde informação — nada
-    escreve aqui, logo `""` significa exactamente "não houve leitura", e um QR
-    que descodifique para a string vazia não existe.
+    `CLAUDE.md` não deixa suprimir uma regra. Não se perde informação: `""`
+    significa "não houve leitura", e um QR que descodifique para a string vazia
+    não existe.
     """
 
     document = models.ForeignKey(

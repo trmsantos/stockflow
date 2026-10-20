@@ -35,13 +35,15 @@ tudo o que este módulo faz aos bytes é comparar prefixos e contar um token.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, ClassVar
 
 from django.core.files.uploadedfile import UploadedFile
 from django.utils.translation import gettext_lazy as _
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from apps.purchasing.classificacao import AVISOS
 from apps.purchasing.ficheiros import (
     BYTES_PARA_DECIDIR,
     TAMANHO_MAXIMO_DO_FICHEIRO,
@@ -54,9 +56,14 @@ from apps.purchasing.models import (
     EstadoDoDocumento,
     OrigemDoDocumento,
 )
+from apps.purchasing.qr import CAMPOS_DE_CABECALHO_EM_EUROS
 from apps.purchasing.services import FicheiroRecebido
 
 __all__ = [
+    "CHAVE_DE_EUROS",
+    "SemEurosParaQuemNaoVe",
+    "ConferenciaDeIvaOutSerializer",
+    "DivergenciaOutSerializer",
     "DocumentoInSerializer",
     "DocumentoOutSerializer",
     "ExtracaoOutSerializer",
@@ -69,6 +76,7 @@ __all__ = [
     "CabecalhoInSerializer",
     "LinhaInSerializer",
     "LinhaOutSerializer",
+    "LinhasOutSerializer",
     "RececaoInSerializer",
     "RececaoOutSerializer",
     "ResumoDeRececoesOutSerializer",
@@ -141,6 +149,68 @@ def _validar(ficheiro: UploadedFile) -> FicheiroRecebido:
         byte_size=ficheiro.size,
         paginas=paginas,
     )
+
+
+def _euros(valor: Decimal | None) -> str | None:
+    """Um valor em euros na forma do contrato: **string** com duas casas.
+
+    Um `SerializerMethodField` devolve o que quiser e nada o coage: o
+    `COERCE_DECIMAL_TO_STRING` vive no `DecimalField`, que aqui não corre. Sem
+    esta função, o `JSONEncoder` do DRF transformava o `Decimal` num `float`
+    (`rest_framework/utils/encoders.py`) — dinheiro em vírgula flutuante no
+    payload, contra o CLAUDE.md, e um `100.0` onde o `schema.yml` promete
+    `"100.00"`: o Zod do cliente recusa-o.
+    """
+    if valor is None:
+        return None
+    return str(Decimal(valor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _taxa(valor: Decimal) -> str:
+    """Uma taxa de IVA na forma do contrato: string com três casas."""
+    return str(Decimal(valor).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
+
+
+#: A chave do `context` por onde a view diz se este pedido vê euros. O valor
+#: vem do `ve_euros` do `accounts.api` e o default é **falso**: um serializer
+#: instanciado sem contexto não mostra dinheiro a ninguém, que é o lado certo
+#: para falhar.
+CHAVE_DE_EUROS = "ve_euros"
+
+
+class SemEurosParaQuemNaoVe:
+    """Tira do payload os campos de dinheiro quando o papel não os vê.
+
+    **Chave ausente, nunca zero e nunca `null`** — é o reflexo do `_dinheiro`
+    do porto do `agents` (`apps/agents/tools.py`), e a forma importa: um zero é
+    uma afirmação falsa sobre o preço, e um `null` convida o ecrã a imprimir
+    "—" como se o valor não existisse. Ausente é "não te compete", e é o que o
+    cliente gerado vê como campo opcional.
+
+    Decisão do dono de 2026-10-19: *"só owner e manager"* veem dinheiro numa
+    receção. Até à fatia da extração (ADR 0031) a questão era quase teórica —
+    uma receção nascia sem linhas —, mas o `criar_rececao` passou a semeá-las a
+    partir da fatura, e com elas os preços de compra de um documento inteiro.
+    Os endpoints continuam sem `TemPapel` (ADR 0021, decisão 9: *"receber
+    mercadoria é trabalho de quem está lá"*): o colaborador continua a receber,
+    a conferir quantidades, a marcar linhas e a confirmar. Só não vê quanto
+    custou.
+
+    Mistura-se **antes** do `serializers.Serializer` para o `to_representation`
+    chegar primeiro ao `super()` certo.
+    """
+
+    #: Os campos a retirar. São nomes do **contrato** (o que sai no JSON) e não
+    #: nomes de colunas: é o payload que se filtra.
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = ()
+
+    def to_representation(self, instance: Any) -> Any:
+        dados = super().to_representation(instance)
+        if self.context.get(CHAVE_DE_EUROS, False):
+            return dados
+        for chave in self.CAMPOS_DE_DINHEIRO:
+            dados.pop(chave, None)
+        return dados
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +302,7 @@ class FicheiroOutSerializer(serializers.Serializer):
     received_at = serializers.DateTimeField(source="created_at")
 
 
-class LinhaLidaOutSerializer(serializers.Serializer):
+class LinhaLidaOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
     """Uma linha **como o modelo a leu**. Texto não confiável, já validado.
 
     Chega aqui depois de o `agents` a ter validado contra o seu schema à escrita
@@ -244,19 +314,98 @@ class LinhaLidaOutSerializer(serializers.Serializer):
     Os números são `Decimal` com `coerce_to_string` implícito (o default do DRF):
     saem como string no JSON, que é a única forma de um preço não passar por um
     `float` do JavaScript.
+
+    **Os euros só saem para `owner|manager`** — é a mesma decisão do dono e a
+    mesma mecânica do `LinhaOutSerializer`, aplicada ao caminho irmão. A ADR
+    0031 (adenda dos euros) fechou a receção e deixou esta janela aberta sobre
+    **a mesma fatura e os mesmos preços**: um colaborador que abrisse o
+    documento via o painel de leitura inteiro.
     """
+
+    #: Os mesmos três da linha de receção, menos o `price_history`, que não
+    #: existe no que o modelo leu. O `discount_pct` entra pela razão escrita no
+    #: `LinhaOutSerializer`: é a condição comercial, que é o preço por outro
+    #: caminho.
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = (
+        "unit_price",
+        "discount_pct",
+        "line_total",
+    )
 
     position = serializers.IntegerField()
     description = serializers.CharField(max_length=500, allow_blank=True)
     quantity = serializers.DecimalField(max_digits=12, decimal_places=3, allow_null=True)
     unit = serializers.CharField(max_length=20, allow_blank=True)
-    unit_price = serializers.DecimalField(max_digits=12, decimal_places=4, allow_null=True)
+    unit_price = serializers.DecimalField(
+        max_digits=12, decimal_places=4, allow_null=True, required=False
+    )
     vat_rate = serializers.DecimalField(max_digits=6, decimal_places=3, allow_null=True)
-    line_total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
+    line_total = serializers.DecimalField(
+        max_digits=12, decimal_places=2, allow_null=True, required=False
+    )
     confidence = serializers.DecimalField(max_digits=4, decimal_places=3, allow_null=True)
+    supplier_code = serializers.CharField(max_length=50, allow_blank=True)
+    ean = serializers.CharField(max_length=14, allow_blank=True)
+    discount_pct = serializers.DecimalField(
+        max_digits=6, decimal_places=3, allow_null=True, required=False
+    )
 
 
-class ExtracaoOutSerializer(serializers.Serializer):
+class DivergenciaOutSerializer(serializers.Serializer):
+    """Um campo em que o papel e o QR não dizem o mesmo. Três strings, para ler.
+
+    O valor servido no cabeçalho é sempre o do QR; isto é a prova de que ele
+    ganhou, e o que o ecrã mostra como *"o papel diz X, o QR diz Y"*.
+    """
+
+    field = serializers.CharField(source="campo")
+    paper = serializers.CharField(source="papel")
+    qr = serializers.CharField()
+
+
+class ConferenciaDeIvaOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
+    """Σ das linhas lidas numa taxa contra a base dessa taxa no QR.
+
+    `matches` falso é o sinal mais forte que esta feature produz sobre a
+    qualidade de uma leitura — mais forte do que a `confidence`, que o modelo
+    reporta de si próprio.
+
+    **As três bases são dinheiro; a taxa e o `matches` não.** A decisão não é
+    automática e vale a pena dizê-la: `lines_base` e `qr_base` são valores
+    **fiscais** do documento, não preços de compra, e podia defender-se que não
+    são "quanto custou". Mas a soma delas *é* o total da fatura — a identidade
+    que a ADR 0021 nomeia — e `lines_base` é literalmente a Σ dos `line_total`
+    que a linha acima esconde: deixá-las visíveis reconstruía por adição o que
+    se tira por ausência. Ficam `rate` e `matches`, que são a **marcação
+    qualitativa** desta leitura e exactamente o trabalho de quem recebe, pela
+    mesma razão pela qual os `warnings` e a `vat_rate` continuam a sair para
+    toda a gente (ADR 0031, adenda dos euros).
+    """
+
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = (
+        "lines_base",
+        "qr_base",
+        "difference",
+    )
+
+    rate = serializers.DecimalField(max_digits=6, decimal_places=3, source="vat_rate")
+    lines_base = serializers.DecimalField(
+        max_digits=12, decimal_places=2, source="base_lida", required=False
+    )
+    qr_base = serializers.DecimalField(
+        max_digits=12, decimal_places=2, source="base_qr", allow_null=True, required=False
+    )
+    difference = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        source="diferenca",
+        allow_null=True,
+        required=False,
+    )
+    matches = serializers.BooleanField(source="bate")
+
+
+class ExtracaoOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
     """O que o modelo leu, num painel **só de leitura**.
 
     É a entrega da fatia 1 ao dono: *"arrastar um PDF no desktop, ver as páginas,
@@ -270,7 +419,20 @@ class ExtracaoOutSerializer(serializers.Serializer):
     `ExtracaoOut` da ADR** — é um campo aditivo, e o nome vai em inglês como os
     vizinhos (decisão 9), apesar de o campo do DTO interno se chamar `motivo`
     como o resto do Python deste repositório.
+
+    ## O `total` é dinheiro, e sai por ausência
+
+    É o mesmo número que o `document_total` de uma receção — a adenda dos euros
+    da ADR 0031 tirou-o lá e tem de o tirar aqui, ou a decisão do dono vivia
+    numa rota e não na outra. As quantidades, a `unit` do papel, a
+    `description`, o `supplier_code`, o `ean`, a `vat_rate` e a `confidence`
+    continuam a sair para toda a gente: nenhum deles diz quanto custou nada.
     """
+
+    #: Só o `total`. As outras duas famílias de euros deste payload escondem-se
+    #: cada uma no seu serializer filho (`LinhaLidaOut`, `ConferenciaDeIvaOut`),
+    #: que é o que lhes dá a chave ausente em vez de uma lista truncada.
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = ("total",)
 
     state = serializers.ChoiceField(choices=EstadoDaLeitura.choices)
     confidence = serializers.DecimalField(
@@ -284,8 +446,44 @@ class ExtracaoOutSerializer(serializers.Serializer):
     doc_number = serializers.CharField(max_length=100, allow_blank=True)
     issued_at = serializers.DateField(allow_null=True)
     customer_nif = serializers.CharField(max_length=20, allow_blank=True)
-    total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
+    total = serializers.DecimalField(
+        max_digits=12, decimal_places=2, allow_null=True, required=False
+    )
+    attempt = serializers.IntegerField(source="tentativa")
+    #: Os seis campos do QR (ADR 0031, C). `qr_read` é como o cliente sabe que o
+    #: cabeçalho é certificado e não leitura de uma fotografia; `cancelled` é
+    #: `E=A`, que é recusa e não aviso.
+    atcud = serializers.CharField(max_length=50, allow_blank=True)
+    fiscal_space = serializers.CharField(max_length=10, allow_blank=True)
+    qr_read = serializers.BooleanField(source="qr_lido")
+    cancelled = serializers.BooleanField(source="anulado")
+    divergences = DivergenciaOutSerializer(source="divergencias", many=True)
+    vat_checks = ConferenciaDeIvaOutSerializer(source="iva_por_taxa", many=True)
     lines = LinhaLidaOutSerializer(many=True)
+
+    def to_representation(self, instance: Any) -> Any:
+        """O payload do mixin, menos as divergências que **são** dinheiro.
+
+        Uma divergência serve `paper` e `qr` como texto, e a do `total` diz o
+        total do documento duas vezes — a chave `total` saía pela porta e
+        voltava a entrar pela janela do lado. A lista fechada dos campos em
+        euros vive no `qr.py`, onde as divergências nascem.
+
+        Tira-se a **linha inteira** e não as duas colunas: `{"field": "total"}`
+        sem valores é um aviso sobre nada, e o contrato de uma divergência
+        continua a ser três strings para toda a gente que a receba. As outras
+        divergências — NIF, tipo, número, data — continuam a sair: são
+        exactamente o que diz a quem recebe que a fotografia tem dois papéis.
+        """
+        dados = super().to_representation(instance)
+        if self.context.get(CHAVE_DE_EUROS, False):
+            return dados
+        dados["divergences"] = [
+            divergencia
+            for divergencia in dados["divergences"]
+            if divergencia["field"] not in CAMPOS_DE_CABECALHO_EM_EUROS
+        ]
+        return dados
 
 
 class DocumentoOutSerializer(serializers.Serializer):
@@ -468,7 +666,24 @@ class CabecalhoInSerializer(serializers.Serializer):
 
 
 class LinhaInSerializer(serializers.Serializer):
-    """Entrada para criar linha de receção (à mão)."""
+    """Entrada para criar linha de receção (à mão).
+
+    Os três campos de referência chamam-se `product`, `packaging` e `location`
+    no contrato e `*_id` do lado de dentro — e a tradução **faltava aqui**,
+    exactamente como faltava no `RevisaoDeLinhaInSerializer` até 2026-10-19. A
+    consequência era a mesma com outro nome: a view entregava o
+    `validated_data` ao Django, que recusa um `UUID` onde a descritora de uma
+    chave estrangeira quer uma instância (*"Cannot assign UUID(...):
+    ReceiptLine.location must be a Location instance"*) — **500 em todos os
+    `POST /receipts/<id>/lines`**, que é o caminho de acrescentar uma linha à
+    mão a uma receção.
+
+    Os três têm `required=False` e isso continua a ser o contrato: uma linha
+    acrescentada à mão nasce por rever, e é a revisão que lhe escolhe o artigo.
+    Quem resolve a ausência de `location` é o `services.acrescentar_linha`,
+    porque a coluna é `NOT NULL` e o default certo — a localização da receção —
+    é um facto do domínio e não do transporte.
+    """
 
     description = serializers.CharField(max_length=500)
     invoice_unit = serializers.CharField(max_length=20)
@@ -504,6 +719,22 @@ class LinhaInSerializer(serializers.Serializer):
     lot_code = serializers.CharField(max_length=40, required=False, allow_blank=True)
     expires_at = serializers.DateField(required=False, allow_null=True)
 
+    def to_internal_value(self, data: Any) -> Any:
+        """Os nomes do contrato para os nomes que o serviço espera.
+
+        O mesmo que os três serializers de entrada vizinhos fazem, e pela razão
+        escrita no docstring da classe: sem isto, o endpoint responde 500.
+        """
+        ret = super().to_internal_value(data)
+        for contrato, servico in (
+            ("product", "product_id"),
+            ("packaging", "packaging_id"),
+            ("location", "location_id"),
+        ):
+            if contrato in ret:
+                ret[servico] = ret.pop(contrato)
+        return ret
+
 
 class RevisaoDeLinhaInSerializer(serializers.Serializer):
     """Entrada para rever linha."""
@@ -524,13 +755,33 @@ class RevisaoDeLinhaInSerializer(serializers.Serializer):
     expires_at = serializers.DateField(required=False, allow_null=True)
     skip = serializers.BooleanField(required=False, default=False)
 
+    def to_internal_value(self, data):
+        """Os nomes do contrato para os nomes que o serviço espera.
+
+        O mesmo que o `RececaoInSerializer` faz, e pela mesma razão — o contrato
+        diz `product` e a coluna chama-se `product_id`. **Faltava aqui**, e a
+        consequência era um 500 em todas as revisões de linha: a view passa
+        `**validated_data` ao `rever_linha`, que não tem parâmetro `product`.
+        """
+        ret = super().to_internal_value(data)
+        for contrato, servico in (
+            ("product", "product_id"),
+            ("packaging", "packaging_id"),
+            ("location", "location_id"),
+        ):
+            if contrato in ret:
+                ret[servico] = ret.pop(contrato)
+        return ret
+
     def validate(self, data):
         """Validações entre campos."""
         # If kind is "goods" and product is provided, check track_lots requirement
         kind = data.get("kind", "goods")
         lot_code = data.get("lot_code", "").strip()
         expires_at = data.get("expires_at")
-        product_id = data.get("product")
+        # Já renomeado pelo `to_internal_value`; o `product` fica como segunda
+        # leitura para quem instancie este serializer com dados já internos.
+        product_id = data.get("product_id") or data.get("product")
 
         if kind == "goods" and product_id:
             from apps.catalog.api import produto_por_id
@@ -553,8 +804,28 @@ class RevisaoDeLinhaInSerializer(serializers.Serializer):
         return data
 
 
-class LinhaOutSerializer(serializers.Serializer):
-    """Saída de linha de receção."""
+# Os quatro campos de dinheiro da linha são `required=False` no contrato porque
+# podem **não vir**: ver o `SemEurosParaQuemNaoVe`. O que continua a vir para
+# toda a gente são as quantidades, a unidade, o lote, a validade e os
+# `warnings` — `preco_desviado` e `total_nao_bate` são marcações qualitativas, e
+# marcar uma linha é exactamente o trabalho de quem recebe a mercadoria. O
+# `vat_rate` também fica: uma taxa de IVA é 6, 13 ou 23 e está impressa em
+# qualquer talão — não diz quanto custou nada.
+#
+# (Fora do docstring de propósito: o drf-spectacular copia-o para a descrição do
+# componente no `schema.yml`, e isto é a razão de uma decisão, não contrato.)
+class LinhaOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
+    """Saída de linha de receção. Os euros só saem para `owner|manager`."""
+
+    #: `discount_pct` entra aqui apesar de ser uma percentagem: é a condição
+    #: comercial negociada com o fornecedor, que é a mesma informação que o
+    #: preço por outro caminho.
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = (
+        "unit_price",
+        "discount_pct",
+        "line_total",
+        "price_history",
+    )
 
     id = serializers.UUIDField()
     position = serializers.IntegerField()
@@ -574,13 +845,19 @@ class LinhaOutSerializer(serializers.Serializer):
     )
     stock_quantity = StockQuantitySerializer(allow_null=True)
     variable_weight = serializers.BooleanField()
-    unit_price = serializers.DecimalField(max_digits=12, decimal_places=4, allow_null=True)
-    discount_pct = serializers.DecimalField(max_digits=6, decimal_places=3, allow_null=True)
+    unit_price = serializers.DecimalField(
+        max_digits=12, decimal_places=4, allow_null=True, required=False
+    )
+    discount_pct = serializers.DecimalField(
+        max_digits=6, decimal_places=3, allow_null=True, required=False
+    )
     vat_rate = serializers.DecimalField(max_digits=6, decimal_places=3, allow_null=True)
-    line_total = serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
+    line_total = serializers.DecimalField(
+        max_digits=12, decimal_places=2, allow_null=True, required=False
+    )
     supplier_code = serializers.CharField(max_length=50, allow_blank=True)
     ean = serializers.CharField(max_length=14, allow_blank=True)
-    price_history = PriceHistorySerializer(allow_null=True)
+    price_history = PriceHistorySerializer(allow_null=True, required=False)
     requires_lot = serializers.BooleanField()
     lot_code = serializers.CharField(max_length=40, allow_blank=True)
     expires_at = serializers.DateField(allow_null=True)
@@ -588,6 +865,27 @@ class LinhaOutSerializer(serializers.Serializer):
     reviewed_by = serializers.CharField(max_length=150, allow_null=True)
     reviewed_at = serializers.DateTimeField(allow_null=True)
     movement = serializers.UUIDField(allow_null=True)
+    #: **Marcação, nunca correcção** (ADR 0031, D). Lista fechada e derivada à
+    #: leitura — não há coluna nenhuma por trás —, e nenhum destes avisos
+    #: bloqueia a confirmação: o portão é humano e já existe. `ChoiceField` para
+    #: o `types.ts` sair como união e um aviso novo ser um erro de compilação do
+    #: lado do cliente em vez de uma string que ninguém trata.
+    warnings = serializers.ListField(
+        child=serializers.ChoiceField(choices=[(a, a) for a in AVISOS])
+    )
+
+
+class LinhasOutSerializer(serializers.Serializer):
+    """O corpo do `GET /receipts/<id>/lines`: a contagem e as linhas.
+
+    Existe para o `schema.yml` dizer a verdade. Sem ela, o `get_serializer_class`
+    da view devolvia o `RececaoOutSerializer` para esta acção e o contrato
+    prometia um cabeçalho de receção onde serve uma lista de linhas — o cliente
+    gerado não conhecia campo nenhum da linha, incluindo os `warnings`.
+    """
+
+    count = serializers.IntegerField()
+    results = LinhaOutSerializer(many=True)
 
 
 class VatBreakdownSerializer(serializers.Serializer):
@@ -598,8 +896,21 @@ class VatBreakdownSerializer(serializers.Serializer):
     vat = serializers.DecimalField(max_digits=12, decimal_places=2)
 
 
-class RececaoOutSerializer(serializers.Serializer):
-    """Saída de receção."""
+# Os três acumulados em euros do cabeçalho podem **não vir** — ver o
+# `SemEurosParaQuemNaoVe`. No contrato, o `document_total` passou a
+# `required=False`; os outros dois já eram opcionais por serem
+# `SerializerMethodField`, que o drf-spectacular marca `readOnly` e o
+# `COMPONENT_NO_READ_ONLY_REQUIRED` do `base.py` deixa fora dos obrigatórios. O
+# `vat_breakdown` está na lista porque é uma tabela de euros (`base` e `vat`) e
+# não por causa da taxa.
+class RececaoOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
+    """Saída de receção. Os totais em euros só saem para `owner|manager`."""
+
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = (
+        "document_total",
+        "lines_total",
+        "vat_breakdown",
+    )
 
     id = serializers.UUIDField(source="receipt.id")
     document = serializers.UUIDField(source="receipt.document_id", allow_null=True)
@@ -631,7 +942,11 @@ class RececaoOutSerializer(serializers.Serializer):
     company_nif = serializers.SerializerMethodField()
     awaiting_invoice = serializers.SerializerMethodField()
     document_total = serializers.DecimalField(
-        source="receipt.document_total_eur", max_digits=12, decimal_places=2, allow_null=True
+        source="receipt.document_total_eur",
+        max_digits=12,
+        decimal_places=2,
+        allow_null=True,
+        required=False,
     )
     lines_total = serializers.SerializerMethodField()
     vat_breakdown = serializers.SerializerMethodField()
@@ -683,12 +998,16 @@ class RececaoOutSerializer(serializers.Serializer):
         serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True)
     )
     def get_lines_total(self, obj):
-        """Soma dos totais das linhas."""
+        """Soma dos totais das linhas. `None` — e não zero — quando não há preços.
+
+        Uma guia de remessa não traz preços, e um zero ali lia-se como "esta
+        entrega não custou nada".
+        """
         total = Decimal(0)
         for linha_data in obj["linhas"]:
             if linha_data["linha"].line_total:
                 total += linha_data["linha"].line_total
-        return total if total else None
+        return _euros(total) if total else None
 
     @extend_schema_field(VatBreakdownSerializer(many=True))
     def get_vat_breakdown(self, obj):
@@ -708,11 +1027,11 @@ class RececaoOutSerializer(serializers.Serializer):
 
         return [
             {
-                "rate": Decimal(rate),
-                "base": value["base"],
-                "vat": value["vat"],
+                "rate": _taxa(Decimal(rate)),
+                "base": _euros(value["base"]),
+                "vat": _euros(value["vat"]),
             }
-            for rate, value in sorted(vat_map.items())
+            for rate, value in sorted(vat_map.items(), key=lambda par: Decimal(par[0]))
         ]
 
     @extend_schema_field(TemperaturaRegistadaOutSerializer(many=True))

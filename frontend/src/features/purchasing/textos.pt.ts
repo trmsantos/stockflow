@@ -46,6 +46,12 @@ export const PT = {
     verAsRececoes: "Ver as receções",
     aGuardar: "A guardar…",
     semNumero: "sem número",
+    /**
+     * O fornecedor de um documento que ainda não tem nome — a fatura
+     * manuscrita por ler, ou a receção aberta a partir de uma fotografia. Entra
+     * no `h1` e no link da lista: um `<Link>` sem texto não tem nome acessível.
+     */
+    semFornecedor: "fornecedor por identificar",
     outroAdquirente: "outro adquirente",
     /**
      * A preposição entre uma data e uma hora, em três sítios. É uma parte
@@ -160,7 +166,19 @@ export const PT = {
         "Passaram quinze minutos sem chegar nenhuma página, e o documento expirou. Nada se perdeu: abra outro e envie o ficheiro.",
       aNormalizar:
         "As páginas chegaram e estão a ser preparadas para leitura. Pode sair deste ecrã — o documento fica na lista.",
-      aExtrair: "As páginas estão preparadas e o modelo está a ler o documento.",
+      /**
+       * **Diz quanto costuma demorar**, e não só o que está a acontecer.
+       *
+       * Até à ADR 0031 este estado durava zero — chegava-se a ele e caía-se logo
+       * em `erro`, porque não havia modelo configurado —, logo a frase não
+       * precisava de falar de tempo. Agora dura, e uma espera sem ordem de
+       * grandeza é uma espera em que a pessoa recarrega a página ao fim de
+       * quinze segundos. Os números são os medidos na ADR: uma fatura de duas
+       * folhas é uma chamada curta; dez folhas numa chamada só aproximam-se dos
+       * dois minutos do `AGENTS_EXTRACTION_TIMEOUT_S`.
+       */
+      aExtrair:
+        "As páginas estão preparadas e o modelo está a ler o documento. Uma fatura de duas folhas são segundos; um documento de dez folhas pode levar até dois minutos. Pode sair deste ecrã — o resultado fica guardado no documento.",
       lido:
         "O modelo leu o documento. O que ele leu está abaixo, só de leitura: nada entra no stock sem alguém confirmar as linhas.",
       ilegivel:
@@ -245,6 +263,39 @@ export const PT = {
         "O código foi aberto num estabelecimento a que esta conta não tem acesso. Entre com a conta certa, ou peça a quem abriu o documento para o abrir onde você trabalha.",
     },
 
+    /**
+     * **O aviso de privacidade, antes do envio.** É o requisito mais forte desta
+     * fatia, e a ADR 0031 escreve-o sem margem: *"O ecrã onde se envia um
+     * documento tem de dizer, antes do envio e em português simples, para onde
+     * vai a imagem e o que o fornecedor pode fazer com ela — uma pessoa não pode
+     * descobrir isso depois."*
+     *
+     * ## As quatro escolhas desta frase
+     *
+     * **Em português de cozinha e não de jurista.** Nada de "processamos os seus
+     * dados nos termos de": quem lê isto está em pé num armazém com uma fatura
+     * na mão. "Sai do nosso servidor", "outra empresa", "plano gratuito",
+     * "treinar" — palavras que não precisam de ser traduzidas de cabeça.
+     *
+     * **Sem nome de fornecedor.** Dizer qual é seria uma afirmação sobre a
+     * configuração do servidor que este lado não verifica (o modelo e a base URL
+     * são settings). O que é verdade e chega: um serviço de IA de outra empresa,
+     * no escalão gratuito.
+     *
+     * **O NIF e a morada estão lá por extenso**, porque é o que torna a frase
+     * concreta. "Os seus dados" não assusta ninguém; "o NIF do seu
+     * estabelecimento e uma morada" é o que uma pessoa reconhece como seu.
+     *
+     * **Acaba com o que fazer**, e não com um aviso: só documentos de
+     * demonstração, por agora. Um aviso sem instrução deixa a decisão a quem não
+     * tem a informação toda.
+     */
+    privacidade: {
+      titulo: "Antes de enviar: para onde vai a imagem",
+      corpo:
+        "Para ler o documento, a imagem sai do nosso servidor para um serviço de inteligência artificial de outra empresa. Estamos no plano gratuito desse serviço, e num plano gratuito a imagem pode ficar guardada lá e servir para treinar o modelo. Uma fatura mostra o NIF do fornecedor, o NIF deste estabelecimento e uma morada — por isso, por enquanto, envie só faturas de demonstração e nunca uma verdadeira.",
+    },
+
     zona: {
       rotulo: "Ficheiro ou fotografia do documento",
       rotuloParaSlot: "Juntar a página seguinte",
@@ -299,16 +350,21 @@ export const PT = {
       aindaAceitaPaginas:
         "O documento está aberto e já tem páginas. Junte as folhas que faltam e diga que acabou — é esse toque que o manda para leitura.",
       desistiuTitulo: "Deixei de perguntar",
-      desistiuCorpo:
-        "Passaram três minutos e o documento continua a ser preparado. O trabalho não se perdeu — quando ficar pronto aparece na lista de documentos, aqui abaixo. Recarregar esta página volta a perguntar.",
+      /**
+       * Os minutos **vêm do teto da sondagem** e não estão escritos na frase: o
+       * número vivia aqui em duas línguas e no `api-de-documentos.ts`, e três
+       * cópias de um número divergem na primeira que alguém ajustar.
+       */
+      desistiuCorpo: (minutos: number) =>
+        `Passaram ${String(minutos)} minutos e o documento continua a ser preparado. O trabalho não se perdeu — quando ficar pronto aparece na lista de documentos, aqui abaixo. Recarregar esta página volta a perguntar.`,
       /**
        * A mesma desistência, no estado em que a frase de cima seria **falsa**: um
        * documento à espera de páginas e ainda vazio nunca aparece na lista (o
        * servidor esconde os slots sem páginas), logo não se pode prometer que
        * aparece lá.
        */
-      desistiuCorpoDaCaptura:
-        "Passaram três minutos e não chegou nenhuma página. Nada se perdeu: as páginas que o telemóvel já enviou estão abaixo, e o documento aceita mais até expirar. Recarregar esta página volta a acompanhar.",
+      desistiuCorpoDaCaptura: (minutos: number) =>
+        `Passaram ${String(minutos)} minutos e não chegou nenhuma página. Nada se perdeu: as páginas que o telemóvel já enviou estão abaixo, e o documento aceita mais até expirar. Recarregar esta página volta a acompanhar.`,
       abrirOutro: "Abrir outro documento",
       aCarregar: "A carregar o documento…",
       erroAoCarregar: "Não foi possível carregar este documento",
@@ -367,8 +423,102 @@ export const PT = {
         confianca: "Confiança",
       },
       tabela: "Linhas que o modelo leu, na ordem em que estão no documento",
-      semLinhas:
-        "O modelo não devolveu nenhuma linha. Um documento sem linhas nunca pode dar entrada de mercadoria.",
+      /** O ramo de erro sem razão nenhuma: o relógio do servidor passou e ninguém escreveu porquê. */
+      semRazao:
+        "A leitura não chegou ao fim e o servidor não deixou razão nenhuma. Pode pedir outra leitura, ou dar entrada à mercadoria à mão.",
+      /**
+       * **O vazio de um documento lido sem linhas**, que não é um erro.
+       *
+       * Diz as duas situações que o produzem sem acusar nenhuma: a fotografia que
+       * não era uma fatura, e a nota de crédito que legitimamente não tem linhas
+       * de mercadoria (ADR 0031, decisão 3). Chamar erro ao segundo caso era o
+       * produto a discordar do papel.
+       */
+      semLinhasTitulo: "O modelo não encontrou linhas nesta imagem",
+      semLinhasCorpo:
+        "A leitura correu, e não há nada a mostrar: ou a imagem não é uma fatura com linhas, ou é um documento que legitimamente não as tem, como uma nota de crédito só com valores. Um documento sem linhas não dá entrada a mercadoria nenhuma.",
+      /** A palavra do marcador de confiança baixa, dentro da célula. Curta: cabe em 44px. */
+      confirmar: "confirmar",
+      /**
+       * A frase que substitui o preço, o total e o campo do cabeçalho a quem não
+       * vê euros — **uma vez por documento**, no rodapé do painel.
+       *
+       * É irmã do `cabecalho.eurosDeQuemGere` da receção e diz a mesma coisa
+       * pela mesma razão: de quem são os valores, e o que fica para conferir.
+       * Não pede desculpa e não fala em permissões — receber mercadoria é
+       * trabalho de quem está lá (ADR 0021, decisão 9), e o que falta é só o
+       * dinheiro.
+       */
+      eurosDeQuemGere:
+        "Os valores em euros deste documento são de quem gere o estabelecimento. As quantidades, as unidades e as taxas de IVA são as que o modelo leu — é o que há para conferir contra o papel.",
+      legendaDoMarcador: (quantas: number) =>
+        quantas === 1
+          ? "Uma linha está marcada porque o modelo leu-a com pouca confiança, ou não disse nenhuma. A marca não impede nada — confirme-a contra o papel, como todas as outras."
+          : `${String(quantas)} linhas estão marcadas porque o modelo leu-as com pouca confiança, ou não disse nenhuma. A marca não impede nada — confirme-as contra o papel, como todas as outras.`,
+    },
+
+    /**
+     * **O QR: o que o papel diz contra o que o QR diz.**
+     *
+     * O tom destas frases é deliberado: o QR **ganha** e isso é uma boa notícia —
+     * é a única coisa neste ecrã que não é opinião de um modelo. As divergências
+     * não se escrevem como problemas a resolver, porque o valor certo já está
+     * mostrado: escrevem-se como prova.
+     *
+     * A excepção é o IVA que não bate, e aí o tom muda de propósito: a soma das
+     * linhas contra uma base certificada é aritmética, e quando ela falha o que
+     * falta quase sempre é uma linha inteira.
+     */
+    qr: {
+      /**
+       * Sem QR legível. **Uma linha e não um painel**, porque isto é o caso
+       * normal e não um defeito deste documento. O que a linha compra é a
+       * diferença entre um cabeçalho certificado e um adivinhado de uma
+       * fotografia — sem ela os dois são indistinguíveis no ecrã.
+       */
+      semQr:
+        "Este documento não traz um código QR legível, o que é normal. O cabeçalho acima é o que o modelo leu da imagem, e não um dado certificado.",
+      titulo: "O código QR",
+      oQrGanha:
+        "O código QR é gerado por software certificado, por isso o cabeçalho acima é o dele. Onde o papel dizia outra coisa, fica escrito abaixo.",
+      atcud: "ATCUD",
+      espacoFiscal: "Espaço fiscal",
+      anuladoTitulo: "O emissor anulou este documento",
+      anuladoCorpo:
+        "O código QR diz que este documento foi anulado por quem o emitiu, por isso não dá entrada a mercadoria nenhuma. Peça o documento correto ao fornecedor.",
+      ivaNaoBateTitulo: "As linhas não somam o que o QR diz",
+      ivaNaoBateCorpo:
+        "A soma das linhas lidas não bate com a base tributável do código QR, que é um valor certificado. Quase sempre falta uma linha inteira, ou há um valor mal lido.",
+      taxa: (percentagem: string) => `IVA ${percentagem}`,
+      /**
+       * O veredicto **sem os números**, para quem não vê euros: "IVA 23 % — não
+       * bate". A taxa e o `matches` continuam a ser servidos de propósito, e
+       * esta é a palavra que os torna legíveis sem uma base tributável ao lado.
+       */
+      naoBate: "— não bate",
+      somaDasLinhas: "soma das linhas",
+      baseDoQr: "base do QR",
+      diferenca: "diferença",
+      divergenciasTitulo: "Onde o papel e o QR não dizem o mesmo",
+      oPapelDiz: "o papel diz",
+      oQrDiz: "o QR diz",
+    },
+
+    /**
+     * As duas saídas de uma leitura que não serviu. Nenhuma delas é um beco —
+     * essa é a função deste par (ADR 0031, decisão 7).
+     */
+    saida: {
+      tentarOutraVez: "Tentar ler outra vez",
+      aPedir: "A pedir…",
+      reverAMao: "Dar entrada à mão",
+      /**
+       * A frase que **substitui** o botão quando as tentativas acabaram. O botão
+       * desaparece em vez de ficar desactivado, e esta frase é o que impede isso
+       * de ser um beco: diz o que aconteceu, e a outra saída continua ao lado.
+       */
+      semTentativas: (maximo: number) =>
+        `Este documento já foi lido ${String(maximo)} vezes, que é o máximo. Dê entrada à mercadoria à mão, ou envie uma fotografia melhor num documento novo.`,
     },
 
     lista: {
@@ -501,6 +651,16 @@ export const PT = {
     notaDeCredito: "Uma nota de crédito credita valor; não dá entrada de mercadoria.",
     guiaSemPrecos:
       "Esta guia não traz preços — não há totais para conferir. O valor chega com a fatura.",
+    /**
+     * A frase que substitui os totais a quem não vê euros, **uma vez por
+     * documento** e no sítio onde eles estariam.
+     *
+     * Diz de quem são os valores e o que fica para fazer, e não o que lhe
+     * falta: receber mercadoria é trabalho de quem está lá (ADR 0021, decisão
+     * 9), e o ecrã não tem de pedir desculpa por uma decisão do dono.
+     */
+    eurosDeQuemGere:
+      "Os valores em euros deste documento são de quem gere o estabelecimento. As quantidades, os lotes e as validades estão todos acima — é o que há para conferir.",
     baseAIva: "base a IVA",
     total: "total",
     taxasDaLinha: "as taxas são as de cada linha da fatura — não são deduzidas do artigo",

@@ -28,10 +28,10 @@ import logging
 from django.db import transaction
 
 from apps.agents.selectors import ja_houve_tentativa
-from apps.purchasing.events import DocumentoFechado
+from apps.purchasing.events import DocumentoFechado, ReleituraPedida
 from apps.shared.handlers import EventoEntregue, subscrever
 
-__all__ = ["pedir_extracao", "registar_handlers"]
+__all__ = ["pedir_extracao", "registar_handlers", "releitura_pedida"]
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 def registar_handlers() -> None:
     """Liga os handlers deste módulo. Chamado no `ready()` do `AgentsConfig`."""
     subscrever(DocumentoFechado, pedir_extracao)
+    subscrever(ReleituraPedida, releitura_pedida)
 
 
 def pedir_extracao(evento: EventoEntregue) -> None:
@@ -56,9 +57,9 @@ def pedir_extracao(evento: EventoEntregue) -> None:
     impede repetir a *mesma* tentativa, não impede abrir a seguinte.
 
     O que esta verificação deliberadamente **não** impede é uma re-extração
-    pedida por uma pessoa. Isso não passa por aqui — não há hoje endpoint que o
-    faça, e quando houver entra pelo `services.py` do `agents`, onde a intenção é
-    explícita e o custo é de quem clicou.
+    pedida por uma pessoa. Isso não passa por aqui: entra pelo `ReleituraPedida`
+    e pelo `releitura_pedida` lá em baixo, onde a intenção é explícita e o custo
+    é de quem carregou no botão (ADR 0031, E).
 
     ## O `on_commit`, e a janela que ele deixa aberta
 
@@ -96,6 +97,40 @@ def pedir_extracao(evento: EventoEntregue) -> None:
         extra={
             "event": "extracao",
             "outcome": "enfileirada",
+            "event_id": str(evento.event_id),
+        },
+    )
+
+
+def releitura_pedida(evento: EventoEntregue) -> None:
+    """Enfileira **outra** leitura deste documento, porque uma pessoa a pediu.
+
+    O contrário do `pedir_extracao`: aqui não há verificação de "já houve
+    tentativa", e é esse o ponto. As três recusas (receção confirmada, leitura
+    em curso, tecto de tentativas) foram feitas no `purchasing.services`, onde a
+    intenção é explícita e o custo é de quem carregou no botão — e o tecto
+    diário em euros é verificado outra vez dentro da tarefa, imediatamente antes
+    da chamada.
+
+    O `on_commit` é obrigatório pela mesma razão do irmão: o consumidor abriu uma
+    transação, e enfileirar antes do commit é publicar um facto que pode
+    desaparecer.
+    """
+    tenant_id = evento.tenant_id
+    documento_id = evento.uuid_do_payload("documento_id")
+
+    from apps.agents.tasks import extrair_documento
+
+    transaction.on_commit(
+        lambda: extrair_documento.delay(
+            tenant_id=str(tenant_id), documento_id=str(documento_id)
+        )
+    )
+    logger.info(
+        "releitura pedida para um documento",
+        extra={
+            "event": "extracao",
+            "outcome": "releitura_enfileirada",
             "event_id": str(evento.event_id),
         },
     )

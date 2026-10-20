@@ -1,6 +1,6 @@
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, FilePlus2, Truck } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { ErroAoCarregar } from "@/components/erro-ao-carregar";
 import { EstadoVazio } from "@/components/estado-vazio";
@@ -21,7 +21,9 @@ import {
   useDocumento,
   useDocumentos,
   useFecharDocumento,
+  usePedirNovaLeitura,
 } from "../api-de-documentos";
+import { AvisoDePrivacidade } from "../components/aviso-de-privacidade";
 import { PainelDeLeitura } from "../components/painel-de-leitura";
 import { PainelDoDocumento } from "../components/painel-do-documento";
 import { PonteDeCaptura } from "../components/ponte-de-captura";
@@ -32,6 +34,7 @@ import {
 import { TrocaDeEstabelecimento } from "../components/troca-de-estabelecimento";
 import { ZonaDeFicheiro } from "../components/zona-de-ficheiro";
 import { urlDaPonte } from "../ponte-de-captura";
+import { tentativasEsgotadas } from "../qualidade-da-leitura";
 // `fraseDaRecusa` e não o `mensagemDeErro` do `lib/api/errors` em **nenhum** dos
 // quatro sítios, e foi medido: com o `mensagemDeErro`, um 500 sem corpo JSON
 // punha "500 em /documents" dentro do banner de erro deste ecrã. O leitor desta
@@ -161,6 +164,16 @@ export function EcraDeFotografar() {
   const [ondeAbriu, setOndeAbriu] = useState<"campo" | "ponte">("campo");
 
   /**
+   * O `id` do aviso de privacidade, para o `aria-describedby` do campo.
+   *
+   * Nasce **aqui** e não dentro do aviso porque quem precisa dele é o campo de
+   * ficheiro, que é outro componente: o aviso é do ecrã e cobre as duas entradas
+   * (o ficheiro e o documento de várias folhas), e um `useId` dentro dele não
+   * chegaria ao campo sem passar por aqui à mesma.
+   */
+  const idDoAviso = useId();
+
+  /**
    * O estabelecimento que o código QR nomeia, ou `null` quando se chegou aqui
    * pelo menu.
    *
@@ -210,6 +223,7 @@ export function EcraDeFotografar() {
   const anexar = useAnexarFicheiro();
   const fechar = useFecharDocumento();
   const descartar = useDescartarDocumento();
+  const pedirNovaLeitura = usePedirNovaLeitura();
 
   /**
    * O slot **ainda está vazio**: zero páginas e dentro dos quinze minutos. É o
@@ -268,6 +282,34 @@ export function EcraDeFotografar() {
 
   const documentoPerdido =
     desenhoDoFicheiro === "documento_perdido" || desenhoDoDocumento === "documento_perdido";
+
+  /**
+   * **O ramo de erro da leitura**, que é do *documento* e não da extração.
+   *
+   * `erro` e `ilegivel` são os dois estados em que o que o modelo fez não serve
+   * e uma pessoa tem de escolher o que fazer a seguir. Vem do estado do
+   * documento e não do `extraction.state` de propósito: o `erro` do documento
+   * inclui o relógio de 10 minutos a passar sobre uma extração que ficou
+   * `pendente`, e aí a leitura não diz `erro` nenhum.
+   */
+  const ramoDeErro = documento?.state === "erro" || documento?.state === "ilegivel";
+
+  /**
+   * **Oferece-se o botão de voltar a ler?**
+   *
+   * Duas condições, e as duas existem para o mesmo: não oferecer um botão que o
+   * servidor vai recusar com 409 (ADR 0031, decisão 7).
+   *
+   *  1. o `attempt` do DTO ainda não chegou ao tecto. É o que o cliente consegue
+   *     saber **antes** de perguntar;
+   *  2. o servidor ainda não recusou esta. As outras duas razões de 409 — receção
+   *     já confirmada, documento a ser lido neste momento — não viajam no
+   *     contrato, logo só se sabem pela resposta; quando ela chega, o botão sai
+   *     e a frase do servidor fica no lugar dele.
+   */
+  const recusouReleitura = desenhoDaRecusa(pedirNovaLeitura.error) === "releitura";
+  const podeTentarOutraLeitura =
+    !tentativasEsgotadas(documento?.extraction ?? null) && !recusouReleitura;
 
   /**
    * O endereço que o código QR transporta, ou `null` quando não há nada para
@@ -423,6 +465,24 @@ export function EcraDeFotografar() {
               largura que tem: o código à esquerda e o texto ao lado dele. */}
           <div className="flex flex-col border-y border-border bg-surface">
             <div className="flex flex-col gap-3 px-celula-x py-4">
+              {/* **O aviso de privacidade, acima de tudo o que envia.**
+
+                  É o requisito mais forte desta fatia (ADR 0031, resposta do
+                  dono de 2026-10-19): para onde vai a imagem e o que o
+                  fornecedor pode fazer com ela têm de estar ditos **antes** de
+                  alguém escolher o ficheiro. Não num tooltip, não atrás de um
+                  "saber mais", não depois do envio.
+
+                  Fica **aqui** e não dentro da zona de ficheiro porque cobre as
+                  duas entradas deste ecrã — o campo e o botão de documento de
+                  várias folhas — e porque é a primeira coisa do bloco, no DOM e
+                  no ecrã. A quem ouve o ecrã chega pela mesma ordem: o `id` dele
+                  é o primeiro do `aria-describedby` do campo.
+
+                  E aparece **também** a quem chegou pelo código QR: quem está no
+                  armazém a fotografar é exactamente quem tem a fatura na mão. */}
+              <AvisoDePrivacidade id={idDoAviso} />
+
               <ZonaDeFicheiro
                 paraDocumentoAberto={aceitaPaginas}
                 aEnviar={abrirComFicheiro.isPending || anexar.isPending}
@@ -438,6 +498,7 @@ export function EcraDeFotografar() {
                     ? fraseDaRecusa(erroDoFicheiro)
                     : null
                 }
+                idDoAviso={idDoAviso}
                 chave={envios}
                 aoEscolher={aoEscolherFicheiro}
               />
@@ -603,7 +664,28 @@ export function EcraDeFotografar() {
                   computador que ela se faz. Quem está no armazém a fotografar
                   não precisa de rolar por uma tabela de linhas lidas para chegar
                   ao botão de terminar. */}
-              {soCaptura ? null : <PainelDeLeitura extracao={documento.extraction} />}
+              {soCaptura ? null : (
+                <PainelDeLeitura
+                  extracao={documento.extraction}
+                  ramoDeErro={ramoDeErro}
+                  saida={{
+                    aPedir: pedirNovaLeitura.isPending,
+                    podeTentar: podeTentarOutraLeitura,
+                    recusa: pedirNovaLeitura.isError
+                      ? fraseDaRecusa(pedirNovaLeitura.error)
+                      : null,
+                    aoTentarOutraVez: () => {
+                      // O mesmo `reset` cruzado das outras acções: no máximo uma
+                      // recusa a falar no ecrã de cada vez.
+                      abrirComFicheiro.reset();
+                      anexar.reset();
+                      fechar.reset();
+                      descartar.reset();
+                      pedirNovaLeitura.mutate(documento.id);
+                    },
+                  }}
+                />
+              )}
             </>
           )}
         </div>

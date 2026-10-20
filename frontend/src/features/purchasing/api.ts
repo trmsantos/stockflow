@@ -17,7 +17,6 @@ import {
   revisaoDeLinhaSchema,
   temperaturaSchema,
   type CabecalhoParaRever,
-  type LinhaDeRececao,
   type LinhaParaCriar,
   type Rececao,
   type RececaoParaCriar,
@@ -134,16 +133,35 @@ export function useRececao(rececao: string): UseQueryResult<Rececao | null> {
   });
 }
 
+/**
+ * O corpo do `GET /receipts/<id>/lines`: a contagem e as linhas, e **mais
+ * nada**.
+ *
+ * Não é um envelope de paginação, e a diferença não é cosmética: as linhas de
+ * um documento são um todo — confirmar metade de uma fatura não quer dizer nada
+ * —, logo o `LinhasOutSerializer` não serve páginas e não há `next` nem
+ * `previous` para onde ir. O `paginated()` exigia os dois, o servidor nunca os
+ * mandou, e a tabela de linhas **não carregava em nenhum dos três papéis** —
+ * medido a 2026-10-20, com a recusa a dizer "a resposta de
+ * /receipts/<id>/lines não tem a forma esperada". É a mesma falha de fundo que
+ * os euros opcionais: um validador escrito à mão que não acompanhou o contrato
+ * gerado (`LinhasOut` no `types.ts` tem duas chaves).
+ */
+const linhasDaRececaoSchema = z.object({
+  count: z.number().int().nonnegative(),
+  results: z.array(linhaDeRececaoSchema),
+});
+
+export type LinhasDaRececao = z.output<typeof linhasDaRececaoSchema>;
+
 /** As linhas do documento, na ordem em que estão impressas nele. */
-export function useLinhasDaRececao(
-  rececao: string,
-): UseQueryResult<Paginated<LinhaDeRececao>> {
+export function useLinhasDaRececao(rececao: string): UseQueryResult<LinhasDaRececao> {
   const tenant = tenantDaCache();
 
   return useQuery({
     queryKey: queryKeys.list(tenant, RECURSO_LINHAS, { rececao }),
     queryFn: ({ signal }) =>
-      apiRequest(`${CAMINHO_RECECOES}/${rececao}/lines`, paginated(linhaDeRececaoSchema), {
+      apiRequest(`${CAMINHO_RECECOES}/${rececao}/lines`, linhasDaRececaoSchema, {
         signal,
       }),
   });

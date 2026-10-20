@@ -59,6 +59,8 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 __all__ = [
+    "ConferenciaDeIva",
+    "DivergenciaDoCabecalho",
     "FronteiraDaExtracao",
     "LeituraDeDocumento",
     "LinhaLida",
@@ -78,7 +80,8 @@ class PaginaDoDocumento:
 
     `imagem` é o caminho relativo ao `MEDIA_ROOT` e está vazio enquanto não
     houver rasterização. `qr_payload` é o que o QR da fatura diz — a verdade do
-    cabeçalho (ADR 0021, adenda) — e está vazio porque não há descodificador.
+    cabeçalho (ADR 0021, adenda) — e preenche-se na normalização, quando a
+    página traz um QR que se leia; vazio é o caso normal de uma página sem QR.
 
     Não leva bytes: quem precisar deles abre o caminho, e hoje ninguém precisa
     porque não há imagem nenhuma. No dia em que o `agents` chamar um modelo a
@@ -117,6 +120,54 @@ class LinhaLida:
     vat_rate: Decimal | None
     line_total: Decimal | None
     confidence: Decimal | None
+    #: Os três campos que a ADR 0031 (decisão 5) acrescentou, cada um com coluna
+    #: à espera no `purchasing_receiptline`: sem `supplier_code`/`ean` a memória
+    #: do match não existe e cada fatura é a primeira; sem `discount_pct` o custo
+    #: derivaria do preço bruto, que é o bug clássico desta família. Com default
+    #: porque uma fatura que não os imprime continua a ser uma leitura legítima.
+    supplier_code: str = ""
+    ean: str = ""
+    discount_pct: Decimal | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DivergenciaDoCabecalho:
+    """Um campo em que o papel lido pelo modelo e o QR não dizem o mesmo.
+
+    Guarda-se e mostra-se (*"o papel diz X, o QR diz Y"*), nunca se esconde: o
+    QR ganha no valor servido, e a divergência é a prova de que ele ganhou. Uma
+    divergência grande é quase sempre a fotografia de **dois** papéis
+    diferentes, ou um QR de outro documento — e isso é exactamente o que uma
+    pessoa tem de ver antes de dar entrada a mercadoria.
+
+    As três colunas são texto porque isto é para ler: um `Decimal` e uma `date`
+    já vêm formatados de quem os compara.
+    """
+
+    campo: str
+    papel: str
+    qr: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ConferenciaDeIva:
+    """A soma das linhas lidas numa taxa, contra a base dessa taxa no QR.
+
+    É a melhor validação que esta feature tem de graça (ADR 0031): o QR é gerado
+    por software certificado e traz a base tributável por taxa; as linhas são
+    leitura de um modelo. Se as duas somas batem, as linhas daquela taxa estão
+    quase de certeza bem lidas — e isso vale mais do que qualquer `confidence`
+    auto-reportada.
+
+    `base_qr` é `None` quando o QR não tem escalão nenhum com aquela taxa, que é
+    o caso de uma taxa que o modelo leu mal (ou de um documento sem QR).
+    """
+
+    vat_rate: Decimal
+    base_lida: Decimal
+    base_qr: Decimal | None
+    diferenca: Decimal | None
+    bate: bool
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -134,6 +185,18 @@ class LeituraDeDocumento:
 
     O cabeçalho e as linhas ficam **vazios** quando o estado não é `lido`: é o
     que torna impossível servir um número que o modelo não disse.
+
+    ## O cabeçalho pode não ser do modelo, e isso é a decisão com mais valor
+
+    Quando o QR da fatura é legível, **ganha sempre** no cabeçalho (ADR 0031,
+    decisão C): é gerado por software certificado e não passa por OCR nenhum.
+    Os campos continuam a chamar-se o mesmo — o que muda é a **fonte**, e
+    `qr_lido` é como quem lê sabe qual foi. Ao modelo ficam as linhas, o nome e
+    a morada do fornecedor, e as referências a guias.
+
+    `tentativa` é o `attempt` da linha de extração: é o que o endpoint de
+    re-extração compara com `AGENTS_EXTRACTION_MAX_ATTEMPTS` sem ter de ler uma
+    tabela de outro módulo.
     """
 
     state: str
@@ -141,6 +204,7 @@ class LeituraDeDocumento:
     read_at: datetime | None = None
     desde: datetime | None = None
     motivo: str = ""
+    tentativa: int = 0
     supplier_name: str = ""
     supplier_nif: str = ""
     doc_type: str = ""
@@ -148,6 +212,15 @@ class LeituraDeDocumento:
     issued_at: date | None = None
     customer_nif: str = ""
     total: Decimal | None = None
+    atcud: str = ""
+    fiscal_space: str = ""
+    #: O QR desta fatura foi lido e descodificado? É o que distingue um
+    #: cabeçalho certificado de um cabeçalho que saiu de uma fotografia.
+    qr_lido: bool = False
+    #: `E=A` no QR: documento **anulado**. Recusa, não aviso (ADR 0021, adenda).
+    anulado: bool = False
+    divergencias: tuple[DivergenciaDoCabecalho, ...] = field(default_factory=tuple)
+    iva_por_taxa: tuple[ConferenciaDeIva, ...] = field(default_factory=tuple)
     lines: tuple[LinhaLida, ...] = field(default_factory=tuple)
 
 

@@ -42,8 +42,11 @@ from apps.purchasing.models import (
     ReceiptLine,
     estado_do_documento,
 )
+from apps.purchasing.qr import aplicar_qr
 
 __all__ = [
+    "DOC_TIPOS",
+    "DOC_TIPOS_DE_NOTA",
     "DocumentoCompleto",
     "com_paginas",
     "compor",
@@ -52,13 +55,17 @@ __all__ = [
     "documentos_do_ambito",
     "documentos_visiveis",
     "inicio_do_dia_de_negocio",
+    "leitura_do_documento",
     "linhas_com_preco_confirmado",
     "linhas_da_rececao",
+    "pagina_por_id",
     "pagina_por_posicao",
     "paginas_do_documento",
+    "qrs_por_documento",
     "rececao_do_ambito",
     "rececoes_por_estado",
     "slots_expirados",
+    "ultimos_precos_por_codigo",
 ]
 
 
@@ -185,6 +192,16 @@ def paginas_do_documento(
     )
 
 
+def pagina_por_id(*, tenant_id: UUID, pagina_id: UUID) -> DocumentPage | None:
+    """A página por `id`, dentro do âmbito, ou `None`.
+
+    Serve o `bytes_da_pagina` do `api.py`, que é a forma de o `agents` chegar à
+    imagem sem conhecer o `MEDIA_ROOT`. `None` cobre "não existe" e "é de outro
+    estabelecimento", que de fora têm de ser indistinguíveis.
+    """
+    return DocumentPage.objects.filter(tenant_id=tenant_id, pk=pagina_id).first()
+
+
 def pagina_por_posicao(
     *, tenant_id: UUID, documento_id: UUID, posicao: int
 ) -> DocumentPage | None:
@@ -205,14 +222,67 @@ def pagina_por_posicao(
 # ---------------------------------------------------------------------------
 # Composição com a extração, que atravessa o porto
 # ---------------------------------------------------------------------------
+def qrs_por_documento(
+    *, tenant_id: UUID, documento_ids: Sequence[UUID]
+) -> Mapping[UUID, str]:
+    """O primeiro `qr_payload` não vazio de cada documento, numa query.
+
+    **O primeiro** e não todos: o QR de uma fatura é um só, repetido ou não nas
+    folhas, e a folha 1 é a que o traz. Em lote pela mesma razão das leituras —
+    uma query por documento numa listagem de 50 é o N+1 clássico.
+
+    Vazio para quem não tem QR, e isso é um caso normal: uma página sem QR, um
+    QR dobrado, uma fotografia tremida. A coluna preenche-se na normalização,
+    pela `descodificacao.py` (ADR 0021, adenda; dependência decidida a
+    2026-10-19), e onde ficou vazia o cabeçalho vem do modelo.
+    """
+    if not documento_ids:
+        return {}
+    linhas = (
+        DocumentPage.objects.filter(tenant_id=tenant_id, document_id__in=list(documento_ids))
+        .exclude(qr_payload="")
+        .order_by("document_id", "position")
+        .values_list("document_id", "qr_payload")
+    )
+    primeiros: dict[UUID, str] = {}
+    for documento_id, payload in linhas:
+        primeiros.setdefault(documento_id, payload)
+    return primeiros
+
+
 def _leituras(
     *, tenant_id: UUID, documento_ids: Sequence[UUID]
 ) -> Mapping[UUID, LeituraDeDocumento]:
-    """As últimas leituras, pelo porto, ou vazio se não houver adaptador ligado."""
+    """As últimas leituras, pelo porto, **com o QR por cima do cabeçalho**.
+
+    O porto devolve o que o modelo leu; o QR é nosso (é coluna do
+    `purchasing_documentpage`) e ganha sempre nos campos que traz (ADR 0031, C).
+    A junção acontece aqui, num sítio só, porque é aqui que a listagem e o
+    detalhe passam — e porque o `agents` não tem de saber que o QR existe.
+    """
     fronteira = fronteira_da_extracao()
     if fronteira is None or not documento_ids:
         return {}
-    return fronteira.leituras(tenant_id=tenant_id, documento_ids=documento_ids)
+    lidas = fronteira.leituras(tenant_id=tenant_id, documento_ids=documento_ids)
+    if not lidas:
+        return {}
+    qrs = qrs_por_documento(tenant_id=tenant_id, documento_ids=list(lidas))
+    return {
+        documento_id: aplicar_qr(leitura, qrs.get(documento_id))
+        for documento_id, leitura in lidas.items()
+    }
+
+
+def leitura_do_documento(
+    *, tenant_id: UUID, documento_id: UUID
+) -> LeituraDeDocumento | None:
+    """A última leitura de **um** documento, já com o QR aplicado, ou `None`.
+
+    O mesmo caminho do `DocumentoOut` (ADR 0031, decisão 5: *"lê o porto, o
+    mesmo caminho do `DocumentoOut`"*), para a sementeira de uma receção e o
+    ecrã nunca poderem discordar sobre o que o documento diz.
+    """
+    return _leituras(tenant_id=tenant_id, documento_ids=[documento_id]).get(documento_id)
 
 
 def compor_muitos(
@@ -512,6 +582,13 @@ MESES_MAXIMOS_DE_PRECOS = 12
 DOC_TIPOS_SEM_PRECO_DE_COMPRA = ("GR",)
 DOC_TIPOS_DE_NOTA = ("NC", "ND")
 
+#: Os seis tipos que a coluna `purchasing_receipt.doc_type` aceita. **O papel
+#: ganha sempre** na leitura do modelo (ADR 0021, adenda) e por isso o
+#: `doc_type` do schema da extração é texto livre; esta é a lista fechada do
+#: lado de cá, e é contra ela que a sementeira decide se copia a sigla lida ou
+#: se deixa o campo vazio para a pessoa escolher.
+DOC_TIPOS = ("FT", "FR", "FS", "NC", "ND", "GR")
+
 
 def inicio_do_dia_de_negocio(*, tenant_id: UUID, agora: datetime | None = None) -> datetime:
     """O instante em que o dia de negócio **em curso** começou.
@@ -615,3 +692,42 @@ def linhas_com_preco_confirmado(
         .order_by("receipt__received_at", "id")[:limite]
     )
     return list(linhas)
+
+
+def ultimos_precos_por_codigo(
+    *,
+    tenant_id: UUID,
+    supplier_id: UUID | None,
+    codes: Sequence[str],
+    excepto_receipt_id: UUID | None = None,
+) -> Mapping[str, Decimal]:
+    """O último `unit_price` confirmado de cada (fornecedor, código), em lote.
+
+    É o que alimenta o aviso `preco_desviado` da revisão: *"a manteiga a 9,40 €
+    quando a última foi a 7,80 €"*. Compara-se o preço **impresso** por unidade
+    de fatura, que é o que está nas duas linhas lado a lado — o histórico por
+    unidade base vive no `precos_confirmados_por_artigo` e serve outra pergunta.
+
+    Em lote e com uma query só: a alternativa era uma por linha de receção, e
+    uma receção do Makro tem trinta. Sem fornecedor ligado devolve vazio — a
+    chave é `(fornecedor, código)` e meia chave não é chave.
+    """
+    if supplier_id is None or not codes:
+        return {}
+    linhas = (
+        ReceiptLine.objects.filter(
+            tenant_id=tenant_id,
+            receipt__supplier_id=supplier_id,
+            receipt__confirmed_at__isnull=False,
+            status="confirmed",
+            supplier_code__in=list(codes),
+            unit_price__isnull=False,
+        )
+        .exclude(receipt_id=excepto_receipt_id)
+        .order_by("supplier_code", "-receipt__received_at")
+        .values_list("supplier_code", "unit_price")
+    )
+    ultimos: dict[str, Decimal] = {}
+    for codigo, preco in linhas:
+        ultimos.setdefault(codigo, preco)
+    return ultimos

@@ -50,6 +50,7 @@ export const EN: typeof PT = {
     aCarregarRececoes: "Loading what is waiting to be booked in…",
     vazioRececoes: "nothing waiting to be booked in",
     semValor: "no amount",
+    semFornecedor: "supplier not identified yet",
 
     contar: "Stocktake",
     aCarregarContagem: "Loading the stocktake in progress…",

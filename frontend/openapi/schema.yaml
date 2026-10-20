@@ -688,6 +688,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/RecusaDeDocumentoOut'
           description: ''
+  /api/v1/documents/{id}/extraction:
+    post:
+      operationId: documentos_reextrair
+      description: 'O botão *tentar outra vez* do ramo de erro. **202**: a leitura
+        fica aceite e não feita — quem a faz é o worker, e o cliente já sonda o `GET`
+        do documento. Não é o `closing`, de propósito: o fecho é repetível para um
+        duplo toque não pagar duas leituras, e este pedido **quer** pagar outra. 409
+        se já houver receção confirmada, se o documento já estiver a ser lido, ou
+        se as tentativas tiverem acabado.'
+      summary: Voltar a pedir a leitura deste documento ao modelo
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this documento de fornecedor.
+        required: true
+      tags:
+      - documents
+      security:
+      - cookieAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentoOut'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecusaDeDocumentoOut'
+          description: ''
   /api/v1/documents/{id}/files:
     post:
       operationId: documentos_anexar_ficheiro
@@ -1442,7 +1477,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RececaoOut'
+                $ref: '#/components/schemas/LinhasOut'
           description: ''
     post:
       operationId: receipts_lines_create
@@ -1461,19 +1496,19 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
+              $ref: '#/components/schemas/LinhaInRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
+              $ref: '#/components/schemas/LinhaInRequest'
         required: true
       security:
       - cookieAuth: []
       responses:
-        '200':
+        '201':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RececaoOut'
+                $ref: '#/components/schemas/LinhaOut'
           description: ''
   /api/v1/receipts/{id}/lines/{linha_id}/confirmation:
     post:
@@ -1499,19 +1534,18 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
+              $ref: '#/components/schemas/RevisaoDeLinhaInRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
-        required: true
+              $ref: '#/components/schemas/RevisaoDeLinhaInRequest'
       security:
       - cookieAuth: []
       responses:
-        '200':
+        '201':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RececaoOut'
+                $ref: '#/components/schemas/LinhaOut'
           description: ''
   /api/v1/receipts/{id}/temperature:
     post:
@@ -2408,6 +2442,49 @@ components:
       - is_part_of_total
       - part_of
       - share
+    ConferenciaDeIvaOut:
+      type: object
+      description: |-
+        Σ das linhas lidas numa taxa contra a base dessa taxa no QR.
+
+        `matches` falso é o sinal mais forte que esta feature produz sobre a
+        qualidade de uma leitura — mais forte do que a `confidence`, que o modelo
+        reporta de si próprio.
+
+        **As três bases são dinheiro; a taxa e o `matches` não.** A decisão não é
+        automática e vale a pena dizê-la: `lines_base` e `qr_base` são valores
+        **fiscais** do documento, não preços de compra, e podia defender-se que não
+        são "quanto custou". Mas a soma delas *é* o total da fatura — a identidade
+        que a ADR 0021 nomeia — e `lines_base` é literalmente a Σ dos `line_total`
+        que a linha acima esconde: deixá-las visíveis reconstruía por adição o que
+        se tira por ausência. Ficam `rate` e `matches`, que são a **marcação
+        qualitativa** desta leitura e exactamente o trabalho de quem recebe, pela
+        mesma razão pela qual os `warnings` e a `vat_rate` continuam a sair para
+        toda a gente (ADR 0031, adenda dos euros).
+      properties:
+        rate:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,3})?$
+        lines_base:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        qr_base:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        difference:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        matches:
+          type: boolean
+      required:
+      - matches
+      - rate
     ConflitoDeContagemOut:
       type: object
       description: |-
@@ -2721,6 +2798,24 @@ components:
       - movements
       - reason
       - share
+    DivergenciaOut:
+      type: object
+      description: |-
+        Um campo em que o papel e o QR não dizem o mesmo. Três strings, para ler.
+
+        O valor servido no cabeçalho é sempre o do QR; isto é a prova de que ele
+        ganhou, e o que o ecrã mostra como *"o papel diz X, o QR diz Y"*.
+      properties:
+        field:
+          type: string
+        paper:
+          type: string
+        qr:
+          type: string
+      required:
+      - field
+      - paper
+      - qr
     DocTypeEnum:
       enum:
       - FT
@@ -2875,6 +2970,28 @@ components:
           maxLength: 14
       required:
       - base_quantity
+      - label
+    EmbalagemReference:
+      type: object
+      description: Referência a uma embalagem (para LinhaOut).
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          maxLength: 60
+        base_quantity:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        base_unit:
+          type: string
+          maxLength: 2
+      required:
+      - base_quantity
+      - base_unit
+      - id
       - label
     ErroOut:
       type: object
@@ -3075,6 +3192,14 @@ components:
         `ExtracaoOut` da ADR** — é um campo aditivo, e o nome vai em inglês como os
         vizinhos (decisão 9), apesar de o campo do DTO interno se chamar `motivo`
         como o resto do Python deste repositório.
+
+        ## O `total` é dinheiro, e sai por ausência
+
+        É o mesmo número que o `document_total` de uma receção — a adenda dos euros
+        da ADR 0031 tirou-o lá e tem de o tirar aqui, ou a decisão do dono vivia
+        numa rota e não na outra. As quantidades, a `unit` do papel, a
+        `description`, o `supplier_code`, o `ean`, a `vat_rate` e a `confidence`
+        continuam a sair para toda a gente: nenhum deles diz quanto custou nada.
       properties:
         state:
           $ref: '#/components/schemas/EstadoDaLeituraEnum'
@@ -3113,23 +3238,49 @@ components:
           format: decimal
           pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
           nullable: true
+        attempt:
+          type: integer
+        atcud:
+          type: string
+          maxLength: 50
+        fiscal_space:
+          type: string
+          maxLength: 10
+        qr_read:
+          type: boolean
+        cancelled:
+          type: boolean
+        divergences:
+          type: array
+          items:
+            $ref: '#/components/schemas/DivergenciaOut'
+        vat_checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConferenciaDeIvaOut'
         lines:
           type: array
           items:
             $ref: '#/components/schemas/LinhaLidaOut'
       required:
+      - atcud
+      - attempt
+      - cancelled
       - confidence
       - customer_nif
+      - divergences
       - doc_number
       - doc_type
+      - fiscal_space
       - issued_at
       - lines
+      - qr_read
       - read_at
       - reason
       - state
       - supplier_name
       - supplier_nif
-      - total
+      - vat_checks
     FechoDeContagemInRequest:
       type: object
       description: |-
@@ -3687,6 +3838,18 @@ components:
         * `30d` - 30d
         * `month` - month
         * `prev_month` - prev_month
+    KindEnum:
+      enum:
+      - goods
+      - deposit
+      - charge
+      - document_ref
+      type: string
+      description: |-
+        * `goods` - goods
+        * `deposit` - deposit
+        * `charge` - charge
+        * `document_ref` - document_ref
     LanguageEnum:
       enum:
       - pt-pt
@@ -3778,6 +3941,103 @@ components:
           format: date-time
           readOnly: true
           nullable: true
+    LinhaInRequest:
+      type: object
+      description: |-
+        Entrada para criar linha de receção (à mão).
+
+        Os três campos de referência chamam-se `product`, `packaging` e `location`
+        no contrato e `*_id` do lado de dentro — e a tradução **faltava aqui**,
+        exactamente como faltava no `RevisaoDeLinhaInSerializer` até 2026-10-19. A
+        consequência era a mesma com outro nome: a view entregava o
+        `validated_data` ao Django, que recusa um `UUID` onde a descritora de uma
+        chave estrangeira quer uma instância (*"Cannot assign UUID(...):
+        ReceiptLine.location must be a Location instance"*) — **500 em todos os
+        `POST /receipts/<id>/lines`**, que é o caminho de acrescentar uma linha à
+        mão a uma receção.
+
+        Os três têm `required=False` e isso continua a ser o contrato: uma linha
+        acrescentada à mão nasce por rever, e é a revisão que lhe escolhe o artigo.
+        Quem resolve a ausência de `location` é o `services.acrescentar_linha`,
+        porque a coluna é `NOT NULL` e o default certo — a localização da receção —
+        é um facto do domínio e não do transporte.
+      properties:
+        description:
+          type: string
+          minLength: 1
+          maxLength: 500
+        invoice_unit:
+          type: string
+          minLength: 1
+          maxLength: 20
+        quantity_invoiced:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        unit_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,4})?$
+          nullable: true
+        discount_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,3})?$
+          nullable: true
+        vat_rate:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,3})?$
+          nullable: true
+        line_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        supplier_code:
+          type: string
+          maxLength: 50
+        ean:
+          type: string
+          maxLength: 14
+        variable_weight:
+          type: boolean
+          default: false
+        kind:
+          allOf:
+          - $ref: '#/components/schemas/KindEnum'
+          default: goods
+        product:
+          type: string
+          format: uuid
+          nullable: true
+        packaging:
+          type: string
+          format: uuid
+          nullable: true
+        base_per_invoice_unit:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          nullable: true
+        quantity_received:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        location:
+          type: string
+          format: uuid
+        lot_code:
+          type: string
+          maxLength: 40
+        expires_at:
+          type: string
+          format: date
+          nullable: true
+      required:
+      - description
+      - invoice_unit
+      - quantity_invoiced
     LinhaLidaOut:
       type: object
       description: |-
@@ -3792,6 +4052,12 @@ components:
         Os números são `Decimal` com `coerce_to_string` implícito (o default do DRF):
         saem como string no JSON, que é a única forma de um preço não passar por um
         `float` do JavaScript.
+
+        **Os euros só saem para `owner|manager`** — é a mesma decisão do dono e a
+        mesma mecânica do `LinhaOutSerializer`, aplicada ao caminho irmão. A ADR
+        0031 (adenda dos euros) fechou a receção e deixou esta janela aberta sobre
+        **a mesma fatura e os mesmos preços**: um colaborador que abrisse o
+        documento via o painel de leitura inteiro.
       properties:
         position:
           type: integer
@@ -3826,15 +4092,207 @@ components:
           format: decimal
           pattern: ^-?\d{0,1}(?:\.\d{0,3})?$
           nullable: true
+        supplier_code:
+          type: string
+          maxLength: 50
+        ean:
+          type: string
+          maxLength: 14
+        discount_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,3})?$
+          nullable: true
       required:
       - confidence
       - description
-      - line_total
+      - ean
       - position
       - quantity
+      - supplier_code
       - unit
-      - unit_price
       - vat_rate
+    LinhaOut:
+      type: object
+      description: Saída de linha de receção. Os euros só saem para `owner|manager`.
+      properties:
+        id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        description:
+          type: string
+          maxLength: 500
+        product:
+          type: string
+          format: uuid
+          nullable: true
+        product_name:
+          type: string
+          nullable: true
+          maxLength: 80
+        kind:
+          $ref: '#/components/schemas/KindEnum'
+        status:
+          $ref: '#/components/schemas/LinhaOutStatusEnum'
+        conservation:
+          $ref: '#/components/schemas/LinhaOutConservationEnum'
+        location:
+          $ref: '#/components/schemas/LocalizacaoReference'
+        invoice_unit:
+          type: string
+          maxLength: 20
+        quantity_invoiced:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          nullable: true
+        quantity_received:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        packaging:
+          allOf:
+          - $ref: '#/components/schemas/EmbalagemReference'
+          nullable: true
+        base_per_invoice_unit:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          nullable: true
+        stock_quantity:
+          allOf:
+          - $ref: '#/components/schemas/StockQuantity'
+          nullable: true
+        variable_weight:
+          type: boolean
+        unit_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,4})?$
+          nullable: true
+        discount_pct:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,3})?$
+          nullable: true
+        vat_rate:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,3})?$
+          nullable: true
+        line_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        supplier_code:
+          type: string
+          maxLength: 50
+        ean:
+          type: string
+          maxLength: 14
+        price_history:
+          allOf:
+          - $ref: '#/components/schemas/PriceHistory'
+          nullable: true
+        requires_lot:
+          type: boolean
+        lot_code:
+          type: string
+          maxLength: 40
+        expires_at:
+          type: string
+          format: date
+          nullable: true
+        expiry_kind:
+          type: string
+          nullable: true
+          maxLength: 20
+        reviewed_by:
+          type: string
+          nullable: true
+          maxLength: 150
+        reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        movement:
+          type: string
+          format: uuid
+          nullable: true
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/WarningsEnum'
+      required:
+      - base_per_invoice_unit
+      - conservation
+      - description
+      - ean
+      - expires_at
+      - expiry_kind
+      - id
+      - invoice_unit
+      - kind
+      - location
+      - lot_code
+      - movement
+      - packaging
+      - position
+      - product
+      - product_name
+      - quantity_invoiced
+      - quantity_received
+      - requires_lot
+      - reviewed_at
+      - reviewed_by
+      - status
+      - stock_quantity
+      - supplier_code
+      - variable_weight
+      - vat_rate
+      - warnings
+    LinhaOutConservationEnum:
+      enum:
+      - ambient
+      - chilled
+      - frozen
+      type: string
+      description: |-
+        * `ambient` - ambient
+        * `chilled` - chilled
+        * `frozen` - frozen
+    LinhaOutStatusEnum:
+      enum:
+      - needs_review
+      - confirmed
+      - skipped
+      type: string
+      description: |-
+        * `needs_review` - needs_review
+        * `confirmed` - confirmed
+        * `skipped` - skipped
+    LinhasOut:
+      type: object
+      description: |-
+        O corpo do `GET /receipts/<id>/lines`: a contagem e as linhas.
+
+        Existe para o `schema.yml` dizer a verdade. Sem ela, o `get_serializer_class`
+        da view devolvia o `RececaoOutSerializer` para esta acção e o contrato
+        prometia um cabeçalho de receção onde serve uma lista de linhas — o cliente
+        gerado não conhecia campo nenhum da linha, incluindo os `warnings`.
+      properties:
+        count:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/LinhaOut'
+      required:
+      - count
+      - results
     LocalizacaoIn:
       type: object
       description: Localização nova.
@@ -4432,6 +4890,31 @@ components:
           $ref: '#/components/schemas/TemaEnum'
       required:
       - tema
+    PriceHistory:
+      type: object
+      description: Histórico de preço (para LinhaOut).
+      properties:
+        last_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,4})?$
+          nullable: true
+        unit_label:
+          type: string
+          maxLength: 20
+        change_pct:
+          type: integer
+        reference:
+          type: string
+          maxLength: 120
+        threshold_pct:
+          type: integer
+      required:
+      - change_pct
+      - last_price
+      - reference
+      - threshold_pct
+      - unit_label
     ProdutoIn:
       type: object
       description: Produto novo com embalagem opcional aninhada.
@@ -4874,7 +5357,7 @@ components:
       - location
     RececaoOut:
       type: object
-      description: Saída de receção.
+      description: Saída de receção. Os totais em euros só saem para `owner|manager`.
       properties:
         id:
           type: string
@@ -4982,14 +5465,13 @@ components:
       - doc_number
       - doc_type
       - document
-      - document_total
       - id
       - received_at
       - reference
       - supplier_id
     RececaoOutRequest:
       type: object
-      description: Saída de receção.
+      description: Saída de receção. Os totais em euros só saem para `owner|manager`.
       properties:
         id:
           type: string
@@ -5046,7 +5528,6 @@ components:
       - doc_number
       - doc_type
       - document
-      - document_total
       - id
       - received_at
       - reference
@@ -5226,6 +5707,42 @@ components:
         * `none` - none
         * `manual` - manual
         * `pos` - pos
+    RevisaoDeLinhaInRequest:
+      type: object
+      description: Entrada para rever linha.
+      properties:
+        product:
+          type: string
+          format: uuid
+          nullable: true
+        packaging:
+          type: string
+          format: uuid
+          nullable: true
+        base_per_invoice_unit:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+          nullable: true
+        quantity_received:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        location:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/KindEnum'
+        lot_code:
+          type: string
+          maxLength: 40
+        expires_at:
+          type: string
+          format: date
+          nullable: true
+        skip:
+          type: boolean
+          default: false
     RotaDeMenuOut:
       type: object
       description: |-
@@ -5527,6 +6044,29 @@ components:
           type: string
           format: date-time
           readOnly: true
+    StockQuantity:
+      type: object
+      description: Quantidade em stock após receção.
+      properties:
+        base:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        base_unit:
+          type: string
+          maxLength: 2
+        display:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,9}(?:\.\d{0,3})?$
+        display_unit:
+          type: string
+          maxLength: 20
+      required:
+      - base
+      - base_unit
+      - display
+      - display_unit
     StockSummary:
       type: object
       description: Resumo de stock agregado por produto (painel, fatia 4).
@@ -5767,6 +6307,24 @@ components:
       description: |-
         * `normal` - Regime normal
         * `isento_art_53` - Isento (art. 53.º)
+    WarningsEnum:
+      enum:
+      - total_nao_bate
+      - taxa_desconhecida
+      - sem_taxa
+      - sem_quantidade
+      - sem_conversao
+      - preco_desviado
+      - confianca_baixa
+      type: string
+      description: |-
+        * `total_nao_bate` - total_nao_bate
+        * `taxa_desconhecida` - taxa_desconhecida
+        * `sem_taxa` - sem_taxa
+        * `sem_quantidade` - sem_quantidade
+        * `sem_conversao` - sem_conversao
+        * `preco_desviado` - preco_desviado
+        * `confianca_baixa` - confianca_baixa
     WasteRequest:
       type: object
       description: Entrada de desperdício (POST /stock/movements/waste).

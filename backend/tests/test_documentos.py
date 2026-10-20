@@ -114,6 +114,15 @@ PDF_DE_UMA_PAGINA = (
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 128
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 128
 
+#: O texto de um QR de fatura portuguesa, tal como a `descodificacao.py` o
+#: devolve à normalização. Aqui é um valor e não uma imagem: o que estes testes
+#: medem é a **escrita** da coluna, e a leitura de pixéis está no
+#: `tests/test_leitor_de_qr.py`.
+QR_DA_FATURA = (
+    "A:500000001*B:999999990*C:PT*D:FT*E:N*F:20261006*G:FT A/1174*"
+    "H:JFBD7CJ9-1174*I1:PT*I7:100.00*I8:23.00*N:23.00*O:123.00"
+)
+
 #: Um executável de Windows: `MZ` e mais nada. Serve o teste do `.exe` renomeado.
 EXECUTAVEL = b"MZ\x90\x00\x03" + b"\x00" * 128
 
@@ -307,7 +316,9 @@ def test_o_telemovel_anexa_duas_paginas_e_uma_pessoa_fecha(cenario: Cenario) -> 
     assert [d["id"] for d in cliente.get(URL).json()["results"]] == [documento_id]
 
 
-def test_fechar_e_repetivel_e_nao_agenda_trabalho_duas_vezes(cenario: Cenario) -> None:
+def test_fechar_e_repetivel_e_nao_agenda_trabalho_duas_vezes(
+    cenario: Cenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Dois toques no mesmo botão: 200 nas duas vezes, uma extração só.
 
     A idempotência observável de um duplo toque num telemóvel (ADR 0020, decisão
@@ -320,10 +331,20 @@ def test_fechar_e_repetivel_e_nao_agenda_trabalho_duas_vezes(cenario: Cenario) -
     que transforma os eventos em trabalho, e corrê-la **depois dos dois fechos**
     é o que torna o teste honesto — se o segundo fecho tivesse publicado uma
     segunda linha, haveria duas extrações.
+
+    O rasterizador está substituído porque, desde a ADR 0031, a extração só
+    abre tentativa quando há **imagem** para mandar a um modelo de visão. Sem
+    isto a contagem dava zero e o teste passava a medir outra coisa.
     """
+    import apps.purchasing.tasks as tarefas_do_purchasing
     from apps.agents.models import Extraction
     from apps.shared.consumidor import consumir_outbox
 
+    monkeypatch.setattr(
+        tarefas_do_purchasing,
+        "rasterizar",
+        lambda **_: ImagemNormalizada(webp=b"RIFF-encenado", width=1240, height=1754),
+    )
     cliente = _cliente(cenario.ana, cenario.alfa.id)
     documento_id = _criar(cliente).json()["id"]
     _anexar(cliente, documento_id, JPEG)
@@ -362,6 +383,7 @@ def test_um_documento_de_outro_estabelecimento_da_404_e_nao_403(cenario: Cenario
     assert _fechar(beta, de_alfa["id"]).status_code == 404
     assert beta.delete(f"{URL}/{de_alfa['id']}").status_code == 404
     assert beta.get(f"{URL}/{de_alfa['id']}/pages/1/image").status_code == 404
+    assert beta.post(f"{URL}/{de_alfa['id']}/extraction").status_code == 404
 
     # A lista de Beta não o traz, e a de Alfa continua a trazê-lo: sem o
     # simétrico, o teste passava por vacuidade.
@@ -903,13 +925,84 @@ def test_o_nome_do_cliente_nunca_chega_ao_disco(cenario: Cenario) -> None:
     assert (Path(settings.MEDIA_ROOT) / ficheiro.path).is_file()
 
 
-def test_o_qr_de_uma_pagina_nasce_vazio_e_ninguem_o_escreve(cenario: Cenario) -> None:
-    """A coluna existe, está vazia, e não há código que lhe escreva.
+def test_o_qr_de_uma_pagina_por_normalizar_nasce_vazio(cenario: Cenario) -> None:
+    """A coluna nasce vazia: o QR entra na normalização e não no upload.
 
-    A coluna é grátis hoje; a descodificação é uma dependência que ainda não foi
-    decidida (ADR 0021, adenda). A segunda metade da asserção é uma varredura do
-    código: o dia em que alguém escrever no `qr_payload` é um diff que faz este
-    teste falhar, e é onde a decisão da dependência tem de ser tomada.
+    Nenhum decoder nativo corre no processo que serve pedidos (ADR 0020, decisão
+    4), e isso vale para a `zxing-cpp` como vale para a libvips. Entre o `POST` e
+    a passagem do worker a página existe sem imagem e sem QR, que é o estado que
+    o ecrã de revisão mostra como "a normalizar".
+    """
+    cliente = _cliente(cenario.ana, cenario.alfa.id)
+    documento_id = _criar(cliente, PDF_DE_UMA_PAGINA).json()["id"]
+
+    with tenant_scope(cenario.alfa.id):
+        pagina = DocumentPage.objects.get(document_id=documento_id)
+    assert pagina.qr_payload == ""
+    assert pagina.normalized_at is None
+
+
+def test_a_normalizacao_grava_o_qr_na_mesma_escrita_que_a_geometria(
+    cenario: Cenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Um `UPDATE` só, com o QR, a geometria e o `normalized_at` lá dentro.
+
+    É a propriedade que interessa e não um detalhe de implementação: enquanto
+    `normalized_at` for nulo não há imagem nem QR, e no instante em que deixa de
+    o ser **as duas coisas já lá estão**. Duas escritas abriam uma janela em que
+    a extração — que corre a seguir, e que a própria normalização destranca —
+    lia um cabeçalho que ainda não tinha chegado.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    import apps.purchasing.tasks as tarefas
+    from apps.purchasing.tasks import normalizar_pagina
+
+    monkeypatch.setattr(
+        tarefas,
+        "rasterizar",
+        lambda **_: ImagemNormalizada(
+            webp=b"RIFF-encenado", width=1240, height=1754, qr_payload=QR_DA_FATURA
+        ),
+    )
+
+    cliente = _cliente(cenario.ana, cenario.alfa.id)
+    documento_id = _criar(cliente, PDF_DE_UMA_PAGINA).json()["id"]
+    with tenant_scope(cenario.alfa.id):
+        pagina_id = DocumentPage.objects.get(document_id=documento_id).id
+
+    with CaptureQueriesContext(connection) as queries:
+        assert normalizar_pagina(
+            tenant_id=str(cenario.alfa.id), pagina_id=str(pagina_id)
+        ) == "normalizada"
+
+    escritas = [
+        consulta["sql"]
+        for consulta in queries.captured_queries
+        if "UPDATE" in consulta["sql"] and "purchasing_documentpage" in consulta["sql"]
+    ]
+    assert len(escritas) == 1, escritas
+    for coluna in ("qr_payload", "width", "height", "normalized_at"):
+        assert coluna in escritas[0], (coluna, escritas[0])
+
+    with tenant_scope(cenario.alfa.id):
+        assert DocumentPage.objects.get(pk=pagina_id).qr_payload == QR_DA_FATURA
+
+
+def test_so_a_normalizacao_escreve_o_qr_de_uma_pagina(cenario: Cenario) -> None:
+    """A lista fechada de quem toca no `qr_payload`, e falha nos dois sentidos.
+
+    Até 2026-10-19 esta lista provava que **ninguém** escrevia na coluna, porque
+    a biblioteca que descodifica a imagem era uma dependência por decidir. O dono
+    decidiu-a (`zxing-cpp`), e a lista passou a provar outra coisa, mais útil:
+    que a escrita continua a ter **um sítio só**, o da normalização, onde a
+    imagem já está aberta e a transação é a mesma que grava a geometria.
+
+    Um ficheiro novo aqui é uma das duas coisas, e as duas querem revisão: um
+    segundo caminho a escrever o cabeçalho certificado (e aí há dois sítios a
+    poder discordar), ou um leitor novo da coluna (e aí a pergunta é se ele a
+    está a tratar como texto de fora, que é o que ela é).
     """
     import pathlib
 
@@ -929,16 +1022,29 @@ def test_o_qr_de_uma_pagina_nasce_vazio_e_ninguem_o_escreve(cenario: Cenario) ->
     assert mencionam == [
         # o campo do DTO que atravessa a fronteira para o `agents`
         "apps/catalog/models.py",  # comentário na fatia 2, sem código real
+        # a fronteira nativa que tira o texto da imagem (ADR 0031, decisão 8,
+        # com a dependência decidida a 2026-10-19)
+        "apps/purchasing/descodificacao.py",
         "apps/purchasing/extracao.py",
-        # a declaração da coluna, com a razão de ela entrar hoje
+        # a declaração da coluna, com a razão de ela existir
         "apps/purchasing/models.py",
-        # a **leitura** que preenche esse campo
+        # a **interpretação** do texto já descodificado: o parser puro da
+        # ADR 0031 (C), que lê a coluna e nunca lhe escreve
+        "apps/purchasing/qr.py",
+        # quem lê os cinzentos da imagem já encolhida e chama a fronteira
+        "apps/purchasing/rasterizacao.py",
+        # a **leitura** que preenche o DTO da página
         "apps/purchasing/selectors.py",
+        # a **única escrita**: `registar_normalizacao`, na mesma transação que a
+        # geometria
+        "apps/purchasing/services.py",
     ], (
-        f"a lista de ficheiros que tocam no qr_payload mudou ({mencionam}). As "
-        "três entradas de cima são declarações e leituras; uma escrita quer "
-        "dizer que alguém descodificou um QR, e a biblioteca que o faz é uma "
-        "dependência que ainda não foi decidida — ver a adenda da ADR 0021."
+        f"a lista de ficheiros que tocam no qr_payload mudou ({mencionam}). A "
+        "escrita tem um sítio só — `services.registar_normalizacao`, com o texto "
+        "que a `rasterizacao.rasterizar` leu da mesma imagem que normalizou. Um "
+        "segundo sítio a escrever o cabeçalho certificado são dois sítios a "
+        "poder discordar; um leitor novo é texto de fora a chegar a mais um "
+        "lado. Ver a secção `qr_payload` do `purchasing/models.py`."
     )
 
 

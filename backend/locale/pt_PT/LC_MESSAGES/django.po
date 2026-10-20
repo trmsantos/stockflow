@@ -221,6 +221,16 @@ msgstr "Este documento ainda não tem páginas, logo não há nada para fechar."
 msgid "A document takes at most {limite} pages."
 msgstr "Um documento aceita no máximo {limite} páginas."
 
+# As duas da ADR 0031. A do documento anulado é uma **recusa** e não um aviso —
+# o QR é gerado por software certificado e `E=A` quer dizer que o emissor o
+# anulou —, e a frase diz de onde vem a informação para ninguém a confundir com
+# uma leitura do modelo.
+msgid "The QR code on this document says it was cancelled by the issuer, so it cannot receive goods."
+msgstr "O código QR deste documento diz que foi anulado por quem o emitiu, logo não pode dar entrada a mercadoria."
+
+msgid "This document cannot be read again: it is already being read, it has a confirmed receipt, or it has used up its reading attempts."
+msgstr "Este documento não pode ser lido outra vez: já está a ser lido, já tem uma receção confirmada, ou esgotou as tentativas de leitura."
+
 msgid "Only a PDF, a JPEG or a PNG. What decides is the content of the file and never its name or the declared type."
 msgstr "Só um PDF, um JPEG ou um PNG. O que decide é o conteúdo do ficheiro e nunca o seu nome nem o tipo declarado."
 
@@ -421,3 +431,16 @@ msgstr "O assistente ainda está a responder à pergunta anterior desta conversa
 
 msgid "This conversation has reached its limit of questions. Start a new one."
 msgstr "Esta conversa chegou ao limite de perguntas. Começa uma nova."
+
+# ---------------------------------------------------------------------------
+# O portão humano da revisão de linhas (ADR 0031): `apps/purchasing/services.py`.
+# ---------------------------------------------------------------------------
+# A linha de mercadoria por casar é o estado **normal** da primeira fatura de um
+# fornecedor novo — a correspondência é por chave exacta e não há correspondência
+# difusa por descrição (decisão 5) —, e confirmar antes de escolher o artigo
+# respondia 500. A frase diz o que fazer e dá as duas saídas do ecrã: escolher o
+# artigo, ou deixar a linha fora da entrada. Sem `kind`, sem `goods` e sem o nome
+# de exceção nenhuma: quem a lê está a conferir mercadoria com a fatura na mão.
+
+msgid "Choose the item for this line before confirming it, or leave the line out of this entry."
+msgstr "Escolha o artigo desta linha antes de a confirmar, ou deixe a linha fora desta entrada."

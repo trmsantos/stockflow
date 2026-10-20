@@ -19,6 +19,7 @@ from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 
+from apps.accounts.api import nomes_de_membros
 from apps.inventory import selectors
 from apps.inventory.models import Location, StockCountLine, StockLevel
 from apps.inventory.services import (
@@ -715,10 +716,40 @@ def _gravidade_da_validade(lote: LoteAVencer, *, hoje: date) -> str:
     return "info"
 
 
+def _nomes_de_quem_age(contagens: Sequence[object], *, tenant_id: UUID) -> dict[UUID, str]:
+    """Quem abriu e quem fechou cada contagem, pelo nome **da pertença**.
+
+    Em lote: uma query para a página toda, e não uma por contagem.
+
+    A tabela `inventory_stockcount` não tem colunas `..._by_name` — só os dois
+    FKs — e até 2026-10-19 este ficheiro resolvia-os com
+    `getattr(contagem.created_by, "email", "")`. O `ContagemResumo` ia parar ao
+    assistente, que o serve a qualquer um dos três papéis: era o email de um
+    colega a sair numa resposta sobre uma contagem. O nome de uma pessoa neste
+    estabelecimento é o `display_name` da pertença (ADR 0007), e é esse que sai.
+
+    Quem já não tem pertença aqui (conta apagada, pertença removida) fica sem
+    nome, e isso é a decisão — o email não é um nome e usá-lo como recurso era
+    repor o defeito.
+    """
+    ids = {
+        getattr(contagem, campo)
+        for contagem in contagens
+        for campo in ("created_by_id", "closed_by_id")
+        if getattr(contagem, campo, None) is not None
+    }
+    return nomes_de_membros(tenant_id=tenant_id, user_ids=ids)
+
+
 def _resumo_de_contagem(
-    contagem: object, *, linhas: list[StockCountLine] | None = None
+    contagem: object,
+    *,
+    linhas: list[StockCountLine] | None = None,
+    nomes: Mapping[UUID, str] | None = None,
 ) -> ContagemResumo:
     """O `ContagemResumo` de uma linha, com as contagens de linhas já feitas."""
+    if nomes is None:
+        nomes = _nomes_de_quem_age([contagem], tenant_id=contagem.tenant_id)
     if linhas is None:
         agregado = StockCountLine.objects.filter(
             tenant_id=contagem.tenant_id, stock_count_id=contagem.id
@@ -737,8 +768,8 @@ def _resumo_de_contagem(
         status=contagem.status,
         started_at=contagem.started_at,
         closed_at=contagem.closed_at,
-        created_by_name=getattr(contagem.created_by, "email", "") or "",
-        closed_by_name=getattr(contagem.closed_by, "email", "") or "",
+        created_by_name=nomes.get(contagem.created_by_id, ""),
+        closed_by_name=nomes.get(contagem.closed_by_id, ""),
         n_linhas=total,
         n_contadas=contadas,
         n_por_contar=total - contadas,
@@ -751,7 +782,9 @@ def listar_contagens(
     """As contagens por estado (`open`/`closed`), e se a lista cortou."""
     contagens = selectors.listar_contagens(tenant_id=tenant_id, estado=estado, limite=limite)
     truncado = len(contagens) > limite
-    return tuple(_resumo_de_contagem(c) for c in contagens[:limite]), truncado
+    pagina = contagens[:limite]
+    nomes = _nomes_de_quem_age(pagina, tenant_id=tenant_id)
+    return tuple(_resumo_de_contagem(c, nomes=nomes) for c in pagina), truncado
 
 
 def contagem_por_id(

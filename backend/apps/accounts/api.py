@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from apps.accounts.services import DemonstracaoSemeada
 
 __all__ = [
+    "PAPEIS_QUE_VEEM_EUROS",
     "ConvitePendente",
     "ConvitesPendentes",
     "DefinicoesDoAmbito",
@@ -63,6 +64,7 @@ __all__ = [
     "convites_pendentes_do_ambito",
     "definicoes_do_ambito",
     "membros_do_ambito",
+    "nomes_de_membros",
     "papeis_da_rota",
     "MembershipInfo",
     "Papel",
@@ -85,6 +87,7 @@ __all__ = [
     "tenant_scope_exempt",
     "tenants_dos_utilizadores_ativos",
     "utilizador_atual",
+    "ve_euros",
 ]
 
 #: Nome do atributo que declara a dispensa, igual ao do `TenantTask` da ADR
@@ -313,6 +316,30 @@ def utilizador_atual(request: HttpRequest) -> UserOut | None:
         is_staff=user.is_staff,
         tema=user.tema,
     )
+
+
+#: Quem vê euros: o dono e o gerente. É a fronteira do `/reporting/summary`
+#: (ADR 0013) e a que o assistente já usava por dentro das suas tools
+#: (`_pode_ver_euros`, ADR 0028); a fatia das contagens repetiu-a em
+#: `inventory/views.py` e a das receções ia repeti-la uma terceira vez. Vive
+#: aqui pela mesma razão que o `PertenceAoTenant`: uma regra de autorização
+#: escrita em três sítios é uma que um dia só se corrige em dois.
+PAPEIS_QUE_VEEM_EUROS: frozenset[str] = frozenset({Papel.OWNER.value, Papel.MANAGER.value})
+
+
+def ve_euros(request: HttpRequest) -> bool:
+    """Este pedido pode ver dinheiro? A regra é do **papel** e não do ecrã.
+
+    Lê o papel da pertença que o middleware já confirmou neste pedido, logo não
+    faz query. `False` num pedido sem âmbito — falha fechada, que é o lado certo
+    para uma pergunta sobre dinheiro.
+
+    Quem não vê euros não recebe zeros nem nulos: recebe a **chave ausente**,
+    que é o reflexo do `_dinheiro` do `agents`. Um zero é uma afirmação falsa
+    sobre o preço e um `null` lê-se no ecrã como "não existe valor".
+    """
+    pertenca = membership_atual(request)
+    return pertenca is not None and pertenca.role in PAPEIS_QUE_VEEM_EUROS
 
 
 def opcao_de_tenant(user_id: UUID, tenant_id: UUID) -> TenantOption | None:
@@ -578,6 +605,30 @@ def membros_do_ambito(*, tenant_id: UUID, user_id: UUID, papel: str) -> EquipaDo
         n_ativos=len(ativos),
         n_inativos=len(linhas) - len(ativos),
     )
+
+
+def nomes_de_membros(*, tenant_id: UUID, user_ids: Iterable[UUID]) -> dict[UUID, str]:
+    """O `display_name` de cada utilizador **neste** estabelecimento, em lote.
+
+    Para outro módulo pôr um nome ao lado de uma linha que só guardou a chave
+    estrangeira de quem agiu — é o caso das contagens, cuja tabela não tem
+    coluna `..._by_name`. Devolve o nome da **pertença** e nunca o email: um
+    email é a credencial de login de alguém e não o nome dela aqui (é a regra do
+    `membros_do_ambito`, que só o mostra ao dono).
+
+    Uma query só, e um `id` sem pertença neste tenant simplesmente não aparece
+    no resultado — quem lê decide o que fazer com a ausência. Uma pertença com
+    `display_name` vazio também não aparece, pela mesma razão: uma string vazia
+    não é um nome, e devolvê-la fazia um ecrã imprimir "por " e um espaço.
+    """
+    procurados = {uid for uid in user_ids if uid is not None}
+    if not procurados:
+        return {}
+    return {
+        membro.user_id: membro.display_name
+        for membro in selectors.membros_do_ambito(tenant_id=tenant_id)
+        if membro.user_id in procurados and membro.display_name
+    }
 
 
 def convites_pendentes_do_ambito(*, tenant_id: UUID, papel: str) -> ConvitesPendentes:

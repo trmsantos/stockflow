@@ -7,6 +7,7 @@ POST   /api/v1/documents/<id>/closing         200 DocumentoOut  (repetível)
 GET    /api/v1/documents                      lista paginada
 GET    /api/v1/documents/<id>                 200 DocumentoOut  (o alvo do polling, ADR 0020 d.3)
 GET    /api/v1/documents/<id>/pages/<n>/image 200 image/webp    (inline, nosniff, com âmbito)
+POST   /api/v1/documents/<id>/extraction      202 DocumentoOut  (voltar a ler; ADR 0031, E)
 DELETE /api/v1/documents/<id>                 204               (descarta)
 ```
 
@@ -51,6 +52,9 @@ polling comer o orçamento dos uploads.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+from django.conf import settings
 from django.db.models import QuerySet
 from django.http import FileResponse, Http404
 from drf_spectacular.types import OpenApiTypes
@@ -63,7 +67,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
-from apps.accounts.api import PertenceAoTenant, membership_atual, utilizador_atual
+from apps.accounts.api import (
+    PertenceAoTenant,
+    membership_atual,
+    utilizador_atual,
+    ve_euros,
+)
+from apps.purchasing.classificacao import avisos_da_linha
 from apps.purchasing.ficheiros import caminho_dentro_do_media
 from apps.purchasing.models import InvoiceDocument, Receipt, ReceiptLine
 from apps.purchasing.selectors import (
@@ -76,14 +86,17 @@ from apps.purchasing.selectors import (
     pagina_por_posicao,
     preco_historico,
     resumo_de_recebidas,
+    ultimos_precos_por_codigo,
 )
 from apps.purchasing.serializers import (
+    CHAVE_DE_EUROS,
     CabecalhoInSerializer,
     DocumentoInSerializer,
     DocumentoOutSerializer,
     FicheiroDeDocumentoInSerializer,
     LinhaInSerializer,
     LinhaOutSerializer,
+    LinhasOutSerializer,
     RececaoInSerializer,
     RececaoOutSerializer,
     RecusaDeDocumentoOutSerializer,
@@ -92,13 +105,20 @@ from apps.purchasing.serializers import (
     TemperaturaInSerializer,
 )
 from apps.purchasing.services import (
+    CODIGO_DOCUMENTO_ANULADO,
     CODIGO_DOCUMENTO_DESCARTADO,
     CODIGO_DOCUMENTO_FECHADO,
     CODIGO_DOCUMENTO_SEM_PAGINAS,
+    CODIGO_LINHA_SEM_ARTIGO,
     CODIGO_PAGINAS_EXCEDIDAS,
+    CODIGO_RELEITURA_RECUSADA,
+    DETALHE_LINHA_SEM_ARTIGO,
     CriacaoDeRececaoJaExiste,
+    RececaoConfirmada,
     RecusaDeDocumento,
+    SemArtigo,
     SemLinhasRevistas,
+    acrescentar_linha,
     anexar_ficheiro,
     apagar_rascunho,
     confirmar_rececao,
@@ -106,6 +126,7 @@ from apps.purchasing.services import (
     criar_rececao,
     descartar_documento,
     fechar_documento,
+    pedir_releitura,
     registar_temperatura,
     rever_linha,
 )
@@ -120,11 +141,35 @@ STATUS_DA_RECUSA_DE_DOCUMENTO: dict[str, int] = {
     CODIGO_DOCUMENTO_DESCARTADO: status.HTTP_409_CONFLICT,
     CODIGO_DOCUMENTO_SEM_PAGINAS: status.HTTP_409_CONFLICT,
     CODIGO_PAGINAS_EXCEDIDAS: status.HTTP_400_BAD_REQUEST,
+    CODIGO_DOCUMENTO_ANULADO: status.HTTP_409_CONFLICT,
+    CODIGO_RELEITURA_RECUSADA: status.HTTP_409_CONFLICT,
 }
 
 #: O balde do throttle das escritas. Nome em português porque é um nome interno e
 #: não contrato; o limite está no `DEFAULT_THROTTLE_RATES` do `base.py`.
 AMBITO_DO_THROTTLE = "documentos"
+
+
+def _nome_de_quem_age(request: Request) -> str:
+    """O nome com que se carimba um registo: o da **pertença**, nunca o email.
+
+    As colunas `..._by_name` deste módulo são servidas a **qualquer** membro do
+    estabelecimento — incluindo o `staff` que só recebe mercadoria. Gravar lá o
+    `request.user.email` punha o endereço de um colega na resposta de um `GET`,
+    exactamente a fuga que o `accounts.api` evita ao servir o email só ao
+    `OWNER`. O que se grava é o `display_name` da pertença, que é o nome da
+    pessoa **naquele** tenant (ADR 0007) e o que o `criar_documento` já usava.
+
+    **Sem nome, fica vazio**, e isso é a decisão: o email não é um nome e usá-lo
+    como recurso era repor o defeito; inventar um ("Utilizador", o id) era pior,
+    porque uma string fabricada parece um nome a quem lê a linha. A ausência
+    lê-se como ausência — o `GET` serve `null` — e quem agiu continua gravado na
+    coluna de chave estrangeira ao lado, que não sai no payload. Um
+    `display_name` vazio é, de resto, uma pertença mal criada: o `accounts`
+    pede-o em todos os caminhos que a criam.
+    """
+    pertenca = membership_atual(request)
+    return "" if pertenca is None else pertenca.display_name
 
 
 @extend_schema_view(
@@ -227,6 +272,28 @@ class DocumentoViewSet(
             return documentos_visiveis(tenant_id=self.request.tenant.id)
         return documentos_do_ambito(tenant_id=self.request.tenant.id)
 
+    def get_serializer_context(self) -> dict:
+        """O contexto do DRF, mais a resposta a "este pedido vê euros?".
+
+        A mesma linha da `RececaoViewSet`, e por uma razão que custou uma fuga:
+        a adenda dos euros da ADR 0031 fechou os preços de uma **receção** e
+        deixou aberto o painel do **documento**, que serve a mesma fatura e os
+        mesmos preços — o `ExtracaoOut` leva o `total`, e cada `LinhaLidaOut`
+        leva `unit_price`, `line_total` e `discount_pct`. Fechar uma porta e
+        deixar a janela não é uma decisão parcial: é a decisão contornada.
+
+        Chega a **todas** as rotas que servem um `DocumentoOut` — as cinco da
+        decisão 9 (criar, anexar, fechar, ler, listar) mais o 202 da
+        re-extração — porque as duas únicas construções do serializer
+        (`list` e `_resposta`) passam por aqui. Sem esta função o default do
+        `SemEurosParaQuemNaoVe` é **falso**, logo a omissão esconde os euros a
+        toda a gente, incluindo ao dono: falha fechado, e o sintoma é um gerente
+        a deixar de ver preços e nunca um colaborador a vê-los.
+        """
+        contexto = super().get_serializer_context()
+        contexto[CHAVE_DE_EUROS] = ve_euros(self.request)
+        return contexto
+
     # -----------------------------------------------------------------------
     # Leitura
     # -----------------------------------------------------------------------
@@ -264,12 +331,11 @@ class DocumentoViewSet(
         corpo = DocumentoInSerializer(data=request.data)
         corpo.is_valid(raise_exception=True)
         utilizador = utilizador_atual(request)
-        pertenca = membership_atual(request)
         try:
             documento = criar_documento(
                 tenant_id=request.tenant.id,
                 created_by_id=None if utilizador is None else utilizador.id,
-                created_by_name="" if pertenca is None else pertenca.display_name,
+                created_by_name=_nome_de_quem_age(request),
                 ficheiro=corpo.validated_data.get("ficheiro"),
             )
         except RecusaDeDocumento as recusa:
@@ -334,6 +400,35 @@ class DocumentoViewSet(
         except RecusaDeDocumento as recusa:
             return _resposta_de_recusa(recusa)
         return self._resposta(documento, status.HTTP_200_OK)
+
+    @extend_schema(
+        operation_id="documentos_reextrair",
+        summary="Voltar a pedir a leitura deste documento ao modelo",
+        description=(
+            "O botão *tentar outra vez* do ramo de erro. **202**: a leitura "
+            "fica aceite e não feita — quem a faz é o worker, e o cliente já "
+            "sonda o `GET` do documento. Não é o `closing`, de propósito: o "
+            "fecho é repetível para um duplo toque não pagar duas leituras, e "
+            "este pedido **quer** pagar outra. 409 se já houver receção "
+            "confirmada, se o documento já estiver a ser lido, ou se as "
+            "tentativas tiverem acabado."
+        ),
+        request=None,
+        responses={
+            status.HTTP_202_ACCEPTED: DocumentoOutSerializer,
+            status.HTTP_409_CONFLICT: RecusaDeDocumentoOutSerializer,
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="extraction", url_name="extracao")
+    def extracao(self, request: Request, pk: str | None = None) -> Response:
+        """Pede ao modelo que volte a ler o documento."""
+        try:
+            documento = pedir_releitura(
+                tenant_id=request.tenant.id, documento=self.get_object()
+            )
+        except RecusaDeDocumento as recusa:
+            return _resposta_de_recusa(recusa)
+        return self._resposta(documento, status.HTTP_202_ACCEPTED)
 
     def perform_destroy(self, instance: InvoiceDocument) -> None:
         """O `DELETE` descarta; não apaga a linha."""
@@ -467,6 +562,75 @@ def _resposta_de_recusa(recusa: RecusaDeDocumento) -> Response:
 # ============================================================================
 
 
+# ---------------------------------------------------------------------------
+# As recusas de uma receção, com a mesma forma das do documento
+#
+# `{code, detail}` e um status, que é o contrato que o `RecusaDeDocumentoOut`
+# descreve e o que o frontend já lê: o `code` é para o ecrã **ramificar**, o
+# `detail` é a frase que se mostra sem reescrever. A diferença para o
+# `_resposta_de_recusa` é só de origem — ali o código vem dentro da exceção e
+# tem um mapa fechado, aqui cada exceção de domínio tem a sua função. **São as
+# duas o mesmo caminho e não um terceiro.**
+#
+# Toda a exceção de domínio que um serviço desta secção levanta tem de ter aqui
+# a sua tradução: sem ela, o que o cliente recebe é um 500, e um portão humano
+# que rebenta não é um portão.
+# ---------------------------------------------------------------------------
+
+
+def _resposta_de_rececao_confirmada() -> Response:
+    """409. Escrever numa receção que já está no ledger.
+
+    Os serviços levantam `RececaoConfirmada` e as views verificam o mesmo antes
+    de chamar — a verificação poupa o trabalho, a exceção fecha a **corrida**:
+    entre a leitura da view e a escrita do serviço cabe a confirmação de outra
+    pessoa, e sem esta tradução essa corrida saía 500.
+    """
+    return Response(
+        {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
+def _resposta_de_linha_sem_artigo() -> Response:
+    """400. A linha é mercadoria e ninguém disse qual é o artigo.
+
+    Não é um erro do servidor: é **a pergunta que falta responder** no ecrã de
+    revisão, e desde a fatia da extração (ADR 0031, decisão 5) é o estado normal
+    da primeira fatura de um fornecedor novo. O `str()` resolve a frase aqui,
+    dentro do pedido, com a língua que o `LocaleMiddleware` activou.
+    """
+    return Response(
+        {"code": CODIGO_LINHA_SEM_ARTIGO, "detail": str(DETALHE_LINHA_SEM_ARTIGO)},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Quem recebe mercadoria e quem vê quanto ela custou são duas perguntas
+#
+# As permissões da `RececaoViewSet` continuam `IsAuthenticated +
+# PertenceAoTenant`, **sem `TemPapel`** (ADR 0021, decisão 9): receber
+# mercadoria é trabalho de quem está lá, e o colaborador continua a conferir
+# quantidades, a marcar linhas, a registar temperaturas e a confirmar.
+#
+# O que mudou a 2026-10-19, por decisão do dono — *"só owner e manager"* —, é o
+# **dinheiro**: até à fatia da extração (ADR 0031) uma receção nascia sem linhas
+# e não havia euros lá dentro; desde que o `criar_rececao` passou a semeá-las a
+# partir da fatura, um `staff` via os preços de compra de um documento inteiro
+# sem ninguém os ter escrito. Os campos de euros saem do payload por **ausência
+# da chave** (`SemEurosParaQuemNaoVe`), e quem decide é o `ve_euros` do
+# `accounts.api` — o mesmo predicado das contagens.
+#
+# É por isso que **todas** as respostas desta classe são serializadas com o
+# `get_serializer_context()`: um serializer sem contexto falha fechado e não
+# mostra euros a ninguém, incluindo ao dono. Construir um destes serializers sem
+# `context` é o bug a procurar se um gerente deixar de ver preços.
+#
+# (O texto vive aqui e não no docstring da classe porque o drf-spectacular usa o
+# docstring como **descrição da operação** no `schema.yml`, e vinte linhas sobre
+# autorização não são contrato — é a mesma razão do `extend_schema_view` abaixo.)
+# ---------------------------------------------------------------------------
 @extend_schema_view(
     list=extend_schema(
         parameters=[
@@ -493,6 +657,17 @@ class RececaoViewSet(viewsets.ModelViewSet):
         """Filtrado por tenant."""
         return Receipt.objects.filter(tenant_id=self.request.tenant.id).prefetch_related("lines")
 
+    def get_serializer_context(self) -> dict:
+        """O contexto do DRF, mais a resposta a "este pedido vê euros?".
+
+        Chega a **todos** os serializers desta classe, incluindo os filhos (o
+        `LinhaOutSerializer` dentro do `LinhasOutSerializer`): o `context` de um
+        serializer aninhado é o da raiz.
+        """
+        contexto = super().get_serializer_context()
+        contexto[CHAVE_DE_EUROS] = ve_euros(self.request)
+        return contexto
+
     def get_serializer_class(self):
         """Serializers por ação."""
         if self.action in ["create"]:
@@ -505,7 +680,9 @@ class RececaoViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """GET /receipts/{id} — retorna uma receção com estrutura completa."""
         receipt = self.get_object()
-        output = RececaoOutSerializer(self._compor_rececao(receipt))
+        output = RececaoOutSerializer(
+            self._compor_rececao(receipt), context=self.get_serializer_context()
+        )
         return Response(output.data)
 
     def list(self, request, *args, **kwargs):
@@ -553,23 +730,29 @@ class RececaoViewSet(viewsets.ModelViewSet):
                 tenant_id=request.tenant.id,
                 **serializer.validated_data,
             )
-            output = RececaoOutSerializer(self._compor_rececao(receipt))
+            output = RececaoOutSerializer(
+                self._compor_rececao(receipt), context=self.get_serializer_context()
+            )
             return Response(output.data, status=status.HTTP_201_CREATED)
         except CriacaoDeRececaoJaExiste as e:
             # Repetição com documento já existente
             receipt = Receipt.objects.get(pk=e.receipt_id)
-            output = RececaoOutSerializer(self._compor_rececao(receipt))
+            output = RececaoOutSerializer(
+                self._compor_rececao(receipt), context=self.get_serializer_context()
+            )
             return Response(output.data, status=status.HTTP_200_OK)
+        except RecusaDeDocumento as recusa:
+            # Hoje só uma: o QR diz que o documento foi **anulado** pelo
+            # emissor, e um documento anulado não dá entrada a mercadoria
+            # nenhuma (ADR 0021, adenda). Recusa e não aviso.
+            return _resposta_de_recusa(recusa)
 
     def partial_update(self, request, pk=None, *args, **kwargs):
         """PATCH /receipts/{id} — atualiza cabeçalho."""
         receipt = self.get_object()
 
         if receipt.confirmed_at:
-            return Response(
-                {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
-                status=status.HTTP_409_CONFLICT,
-            )
+            return _resposta_de_rececao_confirmada()
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -580,7 +763,9 @@ class RececaoViewSet(viewsets.ModelViewSet):
                 setattr(receipt, field, serializer.validated_data[field])
         receipt.save()
 
-        output = RececaoOutSerializer(self._compor_rececao(receipt))
+        output = RececaoOutSerializer(
+            self._compor_rececao(receipt), context=self.get_serializer_context()
+        )
         return Response(output.data)
 
     def destroy(self, request, pk=None, *args, **kwargs):
@@ -588,14 +773,27 @@ class RececaoViewSet(viewsets.ModelViewSet):
         receipt = self.get_object()
 
         if receipt.confirmed_at:
-            return Response(
-                {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
-                status=status.HTTP_409_CONFLICT,
-            )
+            return _resposta_de_rececao_confirmada()
 
-        apagar_rascunho(receipt_id=receipt.id)
+        try:
+            apagar_rascunho(receipt_id=receipt.id)
+        except RececaoConfirmada:
+            # A corrida: alguém confirmou a receção entre a leitura acima e a
+            # releitura do serviço. O serviço recusa — o que não existia era a
+            # tradução, e sem ela a corrida saía 500.
+            return _resposta_de_rececao_confirmada()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @extend_schema(
+        methods=["GET"],
+        responses={status.HTTP_200_OK: LinhasOutSerializer},
+    )
+    @extend_schema(
+        methods=["POST"],
+        request=LinhaInSerializer,
+        responses={status.HTTP_201_CREATED: LinhaOutSerializer},
+    )
     @action(detail=True, methods=["get", "post"])
     def lines(self, request, pk=None):
         """GET/POST /receipts/{id}/lines — lista/cria linhas."""
@@ -605,32 +803,32 @@ class RececaoViewSet(viewsets.ModelViewSet):
             serializer = LinhaInSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
 
-            # Criar linha
-            position = receipt.lines.count() + 1
-            linha = ReceiptLine.objects.create(
-                tenant_id=request.tenant.id,
-                receipt_id=receipt.id,
-                position=position,
-                **serializer.validated_data,
-            )
+            try:
+                linha = acrescentar_linha(
+                    receipt_id=receipt.id, **serializer.validated_data
+                )
+            except RececaoConfirmada:
+                return _resposta_de_rececao_confirmada()
 
-            output = LinhaOutSerializer(self._compor_linha(linha))
+            output = LinhaOutSerializer(
+                self._compor_linha(linha), context=self.get_serializer_context()
+            )
             return Response(output.data, status=status.HTTP_201_CREATED)
 
-        # GET
-        linhas = receipt.lines.all()
+        # GET, **em lote**: sem isto eram cinco queries por linha, duas delas a
+        # atravessar a fronteira de um módulo.
+        compostas = self._compor_rececao(receipt)["linhas"]
         serializer = LinhaOutSerializer(
-            [self._compor_linha(item) for item in linhas], many=True
+            compostas, many=True, context=self.get_serializer_context()
         )
-        return Response({
-            "count": linhas.count(),
-            "results": serializer.data
-        })
+        return Response({"count": len(compostas), "results": serializer.data})
 
     @extend_schema(
         parameters=[
             OpenApiParameter("linha_id", OpenApiTypes.UUID, OpenApiParameter.PATH, required=True),
-        ]
+        ],
+        request=RevisaoDeLinhaInSerializer,
+        responses={status.HTTP_201_CREATED: LinhaOutSerializer},
     )
     @action(detail=True, methods=["post"], url_path=r"lines/(?P<linha_id>[^/.]+)/confirmation")
     def line_confirmation(self, request, pk=None, linha_id=None):
@@ -638,10 +836,7 @@ class RececaoViewSet(viewsets.ModelViewSet):
         receipt = self.get_object()
 
         if receipt.confirmed_at:
-            return Response(
-                {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
-                status=status.HTTP_409_CONFLICT,
-            )
+            return _resposta_de_rececao_confirmada()
 
         try:
             linha = ReceiptLine.objects.get(pk=linha_id, receipt_id=receipt.id)
@@ -651,16 +846,30 @@ class RececaoViewSet(viewsets.ModelViewSet):
         serializer = RevisaoDeLinhaInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Rever linha
-        linha = rever_linha(
-            receipt_id=receipt.id,
-            linha_id=linha.id,
-            reviewed_by_id=request.user.id,
-            reviewed_by_name=request.user.email,
-            **serializer.validated_data,
-        )
+        # Rever linha. As duas exceções de domínio do `rever_linha` são
+        # traduzidas aqui, e é esta tradução que faltava: sem ela, uma linha de
+        # mercadoria por casar — o estado normal da primeira fatura de um
+        # fornecedor novo (ADR 0031, decisão 5) — respondia 500 ao gesto de
+        # confirmar, e um portão humano que rebenta não é um portão.
+        try:
+            linha = rever_linha(
+                receipt_id=receipt.id,
+                linha_id=linha.id,
+                reviewed_by_id=request.user.id,
+                reviewed_by_name=_nome_de_quem_age(request),
+                **serializer.validated_data,
+            )
+        except SemArtigo:
+            return _resposta_de_linha_sem_artigo()
+        except RececaoConfirmada:
+            # A mesma corrida do `destroy`: a verificação acima lê a receção
+            # antes de o serviço a reler, e entre as duas cabe a confirmação de
+            # outra pessoa.
+            return _resposta_de_rececao_confirmada()
 
-        output = LinhaOutSerializer(self._compor_linha(linha))
+        output = LinhaOutSerializer(
+            self._compor_linha(linha), context=self.get_serializer_context()
+        )
         return Response(output.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
@@ -669,21 +878,20 @@ class RececaoViewSet(viewsets.ModelViewSet):
         receipt = self.get_object()
 
         if receipt.confirmed_at:
-            return Response(
-                {"code": "rececao_confirmada", "detail": "Receipt is already confirmed"},
-                status=status.HTTP_409_CONFLICT,
-            )
+            return _resposta_de_rececao_confirmada()
 
         serializer = TemperaturaInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         receipt = registar_temperatura(
             receipt_id=receipt.id,
-            measured_by_name=request.user.get_full_name() or request.user.username,
+            measured_by_name=_nome_de_quem_age(request),
             **serializer.validated_data,
         )
 
-        output = RececaoOutSerializer(self._compor_rececao(receipt))
+        output = RececaoOutSerializer(
+            self._compor_rececao(receipt), context=self.get_serializer_context()
+        )
         return Response(output.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
@@ -695,9 +903,11 @@ class RececaoViewSet(viewsets.ModelViewSet):
             receipt = confirmar_rececao(
                 receipt_id=receipt.id,
                 confirmed_by_id=request.user.id,
-                confirmed_by_name=request.user.email,
+                confirmed_by_name=_nome_de_quem_age(request),
             )
-            output = RececaoOutSerializer(self._compor_rececao(receipt))
+            output = RececaoOutSerializer(
+                self._compor_rececao(receipt), context=self.get_serializer_context()
+            )
             return Response(output.data, status=status.HTTP_201_CREATED)
         except SemLinhasRevistas:
             return Response(
@@ -733,18 +943,37 @@ class RececaoViewSet(viewsets.ModelViewSet):
 
         produtos = catalog_api.produtos_por_id(tenant_id=receipt.tenant_id, ids=product_ids)
         locais = inventory_api.localizacoes_por_id(tenant_id=receipt.tenant_id, ids=location_ids)
+        # Os últimos preços por código, **em lote**: o aviso `preco_desviado` é
+        # por linha e a alternativa era uma query por linha a atravessar o
+        # histórico inteiro de uma receção de trinta linhas.
+        precos = ultimos_precos_por_codigo(
+            tenant_id=receipt.tenant_id,
+            supplier_id=receipt.supplier_id,
+            codes=[item.supplier_code for item in linhas if item.supplier_code],
+            excepto_receipt_id=receipt.id,
+        )
+
+        embalagens = catalog_api.embalagens_por_id(
+            tenant_id=receipt.tenant_id,
+            ids=[item.packaging_id for item in linhas if item.packaging_id],
+        )
 
         # Compor dados
         dados = {
             "receipt": receipt,
             "produtos": produtos,
             "locais": locais,
-            "linhas": [self._compor_linha(item, produtos, locais) for item in linhas],
+            "linhas": [
+                self._compor_linha(item, produtos, locais, precos, embalagens)
+                for item in linhas
+            ],
         }
 
         return dados
 
-    def _compor_linha(self, linha: ReceiptLine, produtos=None, locais=None) -> dict:
+    def _compor_linha(
+        self, linha: ReceiptLine, produtos=None, locais=None, precos=None, embalagens=None
+    ) -> dict:
         """Compor resposta de linha."""
         from apps.catalog import api as catalog_api
         from apps.inventory import api as inventory_api
@@ -769,11 +998,14 @@ class RececaoViewSet(viewsets.ModelViewSet):
                 linha=linha,
             )
 
-        # Stock quantity
+        # A quantidade que esta linha mete no stock. O `quantity_received` **já
+        # está em unidades base** — é dele que o ledger lê e dele que sai o
+        # `unit_cost = line_total / quantity_received` (ADR 0023, decisão 3) —,
+        # logo multiplicá-lo outra vez pelo `base_per_invoice_unit` dava o
+        # quadrado da conversão: 25 000 g a virarem 625 000 000.
         stock_quantity = None
-        tem_quantidade = bool(linha.base_per_invoice_unit and linha.quantity_received)
-        if linha.kind == "goods" and produto and tem_quantidade:
-            base_qty = linha.quantity_received * linha.base_per_invoice_unit
+        if linha.kind == "goods" and produto and linha.quantity_received:
+            base_qty = linha.quantity_received
             display_qty = base_qty / produto.display_factor if produto.display_factor else base_qty
             stock_quantity = {
                 "base": base_qty,
@@ -782,10 +1014,78 @@ class RececaoViewSet(viewsets.ModelViewSet):
                 "display_unit": produto.display_unit,
             }
 
+        # **Plano e com as chaves do `LinhaOutSerializer`.** Até 2026-10-19 esta
+        # função devolvia `{"linha": …, "produto": …}` e o serializer declarava
+        # `id`, `position`, `description`…: o `GET /receipts/<id>/lines` e a
+        # revisão de uma linha respondiam **500** em todas as chamadas, e
+        # nenhum teste os exercitava. O ecrã de revisão lê daqui.
+        local = (locais or {}).get(linha.location_id)
+        embalagem = None
+        if linha.packaging_id:
+            if embalagens is None:
+                embalagens = catalog_api.embalagens_por_id(
+                    tenant_id=linha.tenant_id, ids=[linha.packaging_id]
+                )
+            encontrada = embalagens.get(linha.packaging_id)
+            if encontrada is not None and produto is not None:
+                embalagem = {
+                    "id": encontrada.id,
+                    "label": encontrada.label,
+                    "base_quantity": encontrada.base_quantity,
+                    "base_unit": produto.base_unit,
+                }
         return {
+            # A linha crua fica na chave `linha` porque o `RececaoOutSerializer`
+            # a lê para somar totais e contar o que falta rever. O DRF ignora
+            # chaves que o serializer não declara, logo não sai no payload.
             "linha": linha,
-            "produto": produto,
-            "locais": locais,
+            "id": linha.id,
+            "position": linha.position,
+            "description": linha.description,
+            "product": linha.product_id,
+            "product_name": produto.short_name if produto else None,
+            "kind": linha.kind,
+            "status": linha.status,
+            "conservation": produto.conservation if produto else "ambient",
+            "location": (
+                {"id": local.id, "name": local.name}
+                if local is not None
+                else {"id": linha.location_id, "name": ""}
+            ),
+            "invoice_unit": linha.invoice_unit,
+            "quantity_invoiced": linha.quantity_invoiced,
+            "quantity_received": linha.quantity_received,
+            "packaging": embalagem,
+            "base_per_invoice_unit": linha.base_per_invoice_unit,
+            "variable_weight": linha.variable_weight,
+            "unit_price": linha.unit_price,
+            "discount_pct": linha.discount_pct,
+            "vat_rate": linha.vat_rate,
+            "line_total": linha.line_total,
+            "supplier_code": linha.supplier_code,
+            "ean": linha.ean,
+            "requires_lot": bool(produto.track_lots) if produto else False,
+            "lot_code": linha.lot_code,
+            "expires_at": linha.expires_at,
+            "expiry_kind": (produto.expiry_kind if produto else None) or None,
+            "reviewed_by": linha.reviewed_by_name or None,
+            "reviewed_at": linha.reviewed_at,
+            "movement": linha.movement_id,
             "price_history": price_history,
             "stock_quantity": stock_quantity,
+            "warnings": list(
+                avisos_da_linha(
+                    kind=linha.kind,
+                    quantity_invoiced=linha.quantity_invoiced,
+                    unit_price=linha.unit_price,
+                    line_total=linha.line_total,
+                    vat_rate=linha.vat_rate,
+                    base_per_invoice_unit=linha.base_per_invoice_unit,
+                    extraction_confidence=linha.extraction_confidence,
+                    limiar_de_confianca=Decimal(
+                        settings.AGENTS_EXTRACTION_CONFIDENCE_THRESHOLD
+                    ),
+                    preco_de_referencia=(precos or {}).get(linha.supplier_code),
+                )
+            ),
         }

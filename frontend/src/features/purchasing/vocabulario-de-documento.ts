@@ -148,3 +148,30 @@ const ESTADO_DA_LEITURA = new Map<EstadoDaLeitura, string>([
 export function rotuloDeEstadoDaLeitura(estado: EstadoDaLeitura): string {
   return ESTADO_DA_LEITURA.get(estado) ?? estado;
 }
+
+/**
+ * O nome de um campo do cabeçalho, para a lista de divergências do QR.
+ *
+ * O `field` de uma `DivergenciaOut` é o identificador do serializer
+ * (`supplier_nif`, `doc_number`, …) e não copy — o servidor não manda rótulos
+ * nossos no arame (DESIGN.md §4). As palavras são **as mesmas** que a régua do
+ * cabeçalho já usa, de propósito: quem lê *"o papel diz X, o QR diz Y"* tem de
+ * encontrar o campo lá em cima sem traduzir nada de cabeça.
+ *
+ * Ao contrário dos enums acima, este conjunto **não** é fechado pelo contrato: o
+ * `field` é uma string livre e o servidor pode acrescentar um campo sem mudar o
+ * tipo. A queda devolve o identificador tal como veio — feio de propósito, pela
+ * mesma razão dos outros mapas deste ficheiro.
+ */
+const CAMPO_DO_CABECALHO = new Map<string, string>([
+  ["supplier_nif", textos.documento.leitura.campos.nif],
+  ["customer_nif", textos.documento.leitura.campos.adquirente],
+  ["doc_type", textos.documento.leitura.campos.tipo],
+  ["doc_number", textos.documento.leitura.campos.numero],
+  ["issued_at", textos.documento.leitura.campos.emitidaA],
+  ["total", textos.documento.leitura.campos.total],
+]);
+
+export function rotuloDoCampoDoCabecalho(campo: string): string {
+  return CAMPO_DO_CABECALHO.get(campo) ?? campo;
+}

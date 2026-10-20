@@ -1034,3 +1034,77 @@ class TestRotas:
         vazia = dono.get(f"/api/v1/stock/counts/{contagem_id}/lines?zona=camara-fria")
         assert vazia.json()["count"] == 0
         assert vazia.json()["results"] == []
+
+
+# ---------------------------------------------------------------------------
+# O nome de quem age é o da pertença, nunca o email (2026-10-19)
+#
+# A mesma classe de fuga que se corrigiu nas receções, do outro lado: o
+# `inventory` gravava (nos movimentos manuais) e derivava (no resumo de uma
+# contagem) o **email** de quem agiu. Esse resumo é servido pelo assistente a
+# qualquer dos três papéis, logo era o endereço de um colega a sair numa
+# resposta sobre uma contagem. Um email é a credencial de login de alguém e não
+# o nome dela neste estabelecimento.
+#
+# Os valores já gravados ficam como estão — é uma coluna de histórico, e
+# reescrevê-la era mentir sobre o passado (a mesma regra do ledger). Por isso
+# não há migração de dados, e o que estes testes medem é a escrita nova.
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db(transaction=True)
+class TestONomeDeQuemAgeNaoEUmEmail:
+    """O `display_name` da pertença, e nada quando ele não existe."""
+
+    def test_o_resumo_de_uma_contagem_traz_o_nome_da_pertenca(self):
+        from apps.inventory.api import contagem_por_id, listar_contagens
+
+        casa = _casa(nome="Contagem com nome")
+        with tenant_scope(casa.tenant.id):
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id,
+                location_id=casa.armazem.id,
+                user_id=casa.dono.id,
+            )
+            fechar_contagem(
+                tenant_id=casa.tenant.id,
+                contagem=contagem,
+                reason="conferido ao cêntimo",
+                user_id=casa.colaborador.id,
+                user_name="João Colaborador",
+            )
+            resumos, _ = listar_contagens(tenant_id=casa.tenant.id)
+            detalhe = contagem_por_id(
+                tenant_id=casa.tenant.id, stock_count_id=contagem.id
+            )
+
+        assert resumos[0].created_by_name == "Ana Dona"
+        assert resumos[0].closed_by_name == "João Colaborador"
+        assert detalhe.resumo.created_by_name == "Ana Dona"
+        for nome in (resumos[0].created_by_name, resumos[0].closed_by_name):
+            assert "@" not in nome, "o email de quem agiu não sai no resumo"
+
+    def test_um_movimento_manual_sem_nome_fica_sem_nome_e_nunca_com_o_email(self):
+        """Sem `user_name` fica vazio: o email não é um nome e não serve de recurso."""
+        from apps.inventory.services import registar_waste
+
+        casa = _casa(nome="Movimento sem nome")
+        produto = _artigo(casa)
+
+        with tenant_scope(casa.tenant.id):
+            lote = _lote(casa, produto, codigo=f"__{produto.id}__", dias=30)
+            _receber(
+                casa, produto, casa.armazem, lote, quantidade=Decimal("1000"), custo=Decimal("2")
+            )
+            movimento_id = registar_waste(
+                tenant_id=casa.tenant.id,
+                product_id=produto.id,
+                location_id=casa.armazem.id,
+                quantity=Decimal("100"),
+                lot_id=None,
+                reason="spoiled",
+                reason_detail="",
+                user=casa.colaborador,
+            )
+            movimento = StockMovement.objects.get(pk=movimento_id)
+
+        assert movimento.created_by_name == ""
+        assert casa.colaborador.email not in movimento.created_by_name
