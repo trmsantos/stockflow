@@ -799,15 +799,22 @@ def test_o_chat_nunca_escreve_no_ledger(cenario: Cenario, falso: ClienteFalso) -
 def test_o_teto_de_iteracoes_fecha_o_turno_com_erro(
     cenario: Cenario, falso: ClienteFalso
 ) -> None:
-    """Um modelo que só pede tools pára ao sexto pedido — e a conta está gravada."""
+    """Um modelo que só pede tools pára ao sexto pedido — e a conta está gravada.
+
+    O seis vai fixado e não herdado: `AGENTS_CHAT_MAX_TOOL_ITERATIONS` lê-se do
+    ambiente, e um teste que afirma o número da omissão passa a medir o `.env`
+    de quem corre a suite em vez de medir o tecto.
+    """
     falso.respostas = [pede_tools(("procurar_artigos", {"q": "farinha"})) for _ in range(10)]
 
-    conversa_id = _perguntar(_cliente(cenario.ana, cenario.alfa)).json()["id"]
+    with override_settings(AGENTS_CHAT_MAX_TOOL_ITERATIONS=6):
+        conversa_id = _perguntar(_cliente(cenario.ana, cenario.alfa)).json()["id"]
+        tecto = settings.AGENTS_CHAT_MAX_TOOL_ITERATIONS
 
     turno = _mensagens(cenario.alfa.id, conversa_id)[0]
     assert turno.status == EstadoDaMensagem.ERRO
     assert turno.error_code == CodigoDeErroDaMensagem.TETO_DE_ITERACOES
-    assert turno.iterations == settings.AGENTS_CHAT_MAX_TOOL_ITERATIONS == 6
+    assert turno.iterations == tecto == 6
     assert len(falso.chamadas) == 6
     assert len(turno.chamadas_validadas) == 6
     assert turno.input_tokens == 6 * 150
@@ -1088,6 +1095,10 @@ def test_a_purga_apaga_so_as_expiradas_tenant_a_tenant_e_em_lotes(
     O guarda de âmbito do `conftest.py` está montado: uma leitura do
     `accounts_tenant` dentro de `system_scope()` levantaria `LeituraSemAmbito`.
     Passar é a prova de que a descoberta dos tenants vai pelo `tenant_ids`.
+
+    Os 90 dias vão fixados: `AGENTS_CHAT_RETENTION_DAYS` lê-se do ambiente, e as
+    idades aqui em baixo (89 dias fica, 91 vai) só querem dizer alguma coisa
+    contra um prazo conhecido.
     """
     monkeypatch.setattr("apps.agents.services.LOTE_DA_PURGA", 1)
     expiradas = {
@@ -1098,16 +1109,17 @@ def test_a_purga_apaga_so_as_expiradas_tenant_a_tenant_e_em_lotes(
     recente = _conversa_antiga(cenario.alfa, cenario.ana, dias=89, titulo="alfa recente")
     beta_velha = _conversa_antiga(cenario.beta, cenario.carla, dias=100, titulo="beta velha")
 
-    # Uma purga de um tenant só não vê — nem apaga — as do outro.
-    assert purgar_conversas(tenant_id=str(cenario.alfa.id)) == 3
-    with tenant_scope(cenario.alfa.id):
-        assert set(Conversation.objects.values_list("id", flat=True)) == {recente}
-        assert ChatMessage.objects.count() == 1, "o CASCADE levou as mensagens"
-    with tenant_scope(cenario.beta.id):
-        assert Conversation.objects.filter(pk=beta_velha).exists()
+    with override_settings(AGENTS_CHAT_RETENTION_DAYS=90):
+        # Uma purga de um tenant só não vê — nem apaga — as do outro.
+        assert purgar_conversas(tenant_id=str(cenario.alfa.id)) == 3
+        with tenant_scope(cenario.alfa.id):
+            assert set(Conversation.objects.values_list("id", flat=True)) == {recente}
+            assert ChatMessage.objects.count() == 1, "o CASCADE levou as mensagens"
+        with tenant_scope(cenario.beta.id):
+            assert Conversation.objects.filter(pk=beta_velha).exists()
 
-    # O cron descobre os tenants pelo `tenant_ids` e enfileira uma purga por cada.
-    resultado = purgar_conversas_expiradas()
+        # O cron descobre os tenants pelo `tenant_ids` e enfileira uma purga por cada.
+        resultado = purgar_conversas_expiradas()
 
     assert resultado["tenants"] == 2
     with tenant_scope(cenario.beta.id):

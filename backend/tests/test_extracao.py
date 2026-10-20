@@ -6,7 +6,14 @@ Este ficheiro mede cinco coisas.
 rebenta.** É o estado de **todo** o projecto hoje: não há cliente de LLM, nem
 chave de API, nem rede. O que a fatia 1 entrega é o caminho completo até à
 fronteira, e o que esta asserção protege é que a falha fica na base de dados (uma
-linha, com `status=erro` e uma frase) e não num log de worker.
+linha, com `status=erro` e uma frase) e não num log de worker. As recusas de
+configuração são três e cada uma tem o seu teste, com o ambiente que a torna
+verdadeira: sem modelo, sem chave, e sem preço com um destino que cobra.
+
+Esse ambiente é **fixado** e nunca herdado: a fixture `_extracao_por_configurar`
+põe as cinco settings de que a fronteira depende, e a razão está no docstring
+dela — uma suite que lê configuração do ambiente afirma coisas diferentes em
+máquinas diferentes.
 
 **2. O `payload` guarda-se verbatim e nunca é lido para ramificar.** O que decide
 o estado é a **forma** do payload contra o schema, e o conteúdo é escrito como
@@ -91,6 +98,18 @@ URL = "/api/v1/documents"
 
 CREDENCIAL_VALIDA = "trigo-fresco-ao-amanhecer-7"
 
+#: Uma credencial de mentira, para os testes cujo facto **não** é a falta de
+#: chave. Nenhum deles chega a abrir um socket: a recusa que medem acontece
+#: antes da fábrica `cliente()`.
+CHAVE_DE_ENSAIO = "sem-valor-nao-e-segredo"
+
+#: Um modelo **com** preço e a tabela que lho dá, fixados juntos: a tabela real
+#: vive no `config/settings/base.py` e muda quando o dono muda de fornecedor, e
+#: um teste sobre a chave não pode passar a falhar por causa disso.
+MODELO_COM_PRECO = "um-modelo-com-preco"
+MODELO_SEM_PRECO = "um-modelo-sem-preco"
+PRECOS = {MODELO_COM_PRECO: {"input": Decimal("0.23"), "output": Decimal("1.85")}}
+
 PDF = (
     b"%PDF-1.4\n"
     b"1 0 obj<</Type /Catalog>>endobj\n"
@@ -167,6 +186,33 @@ def _rasterizador(monkeypatch: pytest.MonkeyPatch) -> None:
         "rasterizar",
         lambda **_: ImagemNormalizada(webp=b"RIFF-encenado", width=1240, height=1754),
     )
+
+
+@pytest.fixture(autouse=True)
+def _extracao_por_configurar() -> Iterator[None]:
+    """O estado que este ficheiro mede, fixado em vez de herdado da máquina.
+
+    A premissa do ficheiro é *"não há modelo, não há chave, não há rede"* — e
+    até 2026-10-20 ela vinha das omissões do ambiente, o que é o mesmo que dizer
+    que vinha do `backend/.env` de quem corre a suite. Dois testes afirmavam
+    coisas diferentes em máquinas diferentes por causa disso: o CI (sem `.env`,
+    destino OpenAI) via a recusa do **preço**, e a máquina do dono (com
+    `AGENTS_CHAT_BASE_URL` para um fornecedor gratuito) via a da **chave**.
+    Verde localmente deixava de querer dizer alguma coisa.
+
+    Cinco settings, porque são as cinco de que a fronteira depende: o modelo, as
+    duas URL base (a da extração cai na do chat) e as duas chaves. Fixadas aqui
+    e não teste a teste porque é o ficheiro inteiro que mede este estado; quem
+    mede outro põe o seu `override_settings` por cima, que aninha.
+    """
+    with override_settings(
+        AGENTS_EXTRACTION_MODEL="",
+        AGENTS_EXTRACTION_BASE_URL="",
+        AGENTS_EXTRACTION_API_KEY="",
+        AGENTS_CHAT_BASE_URL="",
+        AGENTS_CHAT_API_KEY="",
+    ):
+        yield
 
 
 @pytest.fixture
@@ -320,7 +366,10 @@ def test_um_documento_de_outro_tenant_nao_e_legivel_pela_tarefa(cenario: Cenario
 
 
 @override_settings(
-    AGENTS_EXTRACTION_MODEL="um-modelo-qualquer",
+    AGENTS_EXTRACTION_MODEL=MODELO_COM_PRECO,
+    AGENTS_MODEL_PRICES_EUR_PER_MTOKEN=PRECOS,
+    AGENTS_EXTRACTION_BASE_URL="",
+    AGENTS_CHAT_BASE_URL="",
     AGENTS_EXTRACTION_API_KEY="",
     AGENTS_CHAT_API_KEY="",
 )
@@ -330,6 +379,11 @@ def test_com_modelo_configurado_e_sem_chave_grava_erro(cenario: Cenario) -> None
     Falha **fechada** e numa frase que diz o que configurar. A diferença entre
     "não consegui ler" e "não há chave" é a diferença entre chamar o fornecedor
     e corrigir o deploy.
+
+    O facto medido é **só** a falta de chave, e por isso tudo o que o podia
+    tapar está fixado: o modelo tem preço na tabela (que também vai fixada) e as
+    URL base estão vazias. Sem isto o teste afirmava coisas diferentes consoante
+    o `.env` da máquina — era a recusa do preço que aparecia no CI.
     """
     cliente = _cliente(cenario)
     documento_id = _documento_com_pagina(cliente)
@@ -337,8 +391,38 @@ def test_com_modelo_configurado_e_sem_chave_grava_erro(cenario: Cenario) -> None
     tentativa = _tentativas(cenario.alfa.id, documento_id)[0]
 
     assert tentativa.status == EstadoDaExtracao.ERRO
-    assert tentativa.model == "um-modelo-qualquer"
+    assert tentativa.model == MODELO_COM_PRECO
     assert "chave de API" in tentativa.error
+
+
+@override_settings(
+    AGENTS_EXTRACTION_MODEL=MODELO_SEM_PRECO,
+    AGENTS_MODEL_PRICES_EUR_PER_MTOKEN=PRECOS,
+    AGENTS_EXTRACTION_BASE_URL="",
+    AGENTS_CHAT_BASE_URL="",
+    AGENTS_EXTRACTION_API_KEY=CHAVE_DE_ENSAIO,
+)
+def test_com_modelo_sem_preco_e_destino_que_cobra_grava_erro(cenario: Cenario) -> None:
+    """O outro facto: há chave, mas o destino cobra e o modelo não tem preço.
+
+    Sem preço na tabela o custo gravado é 0 € e o tecto diário em euros nunca
+    trava — logo recusa-se, e é a recusa que a revisão de segurança de
+    2026-10-15 pediu. Esta é a metade que o ambiente escondia: numa máquina com
+    `AGENTS_CHAT_BASE_URL` para um fornecedor gratuito, `_modelo_tem_preco`
+    devolve `True` e esta recusa nunca acontecia.
+
+    Com URL base é outro facto (o nível gratuito, que dispensa a tabela) e tem
+    teste próprio no `tests/test_extracao_de_faturas.py`.
+    """
+    cliente = _cliente(cenario)
+    documento_id = _documento_com_pagina(cliente)
+
+    tentativa = _tentativas(cenario.alfa.id, documento_id)[0]
+
+    assert tentativa.status == EstadoDaExtracao.ERRO
+    assert tentativa.model == MODELO_SEM_PRECO
+    assert "AGENTS_MODEL_PRICES_EUR_PER_MTOKEN" in tentativa.error
+    assert "chave de API" not in tentativa.error, "a chave está lá: a razão é o preço"
 
 
 def test_a_fronteira_do_modelo_recusa_sem_modelo_e_acima_do_tecto(
@@ -348,7 +432,9 @@ def test_a_fronteira_do_modelo_recusa_sem_modelo_e_acima_do_tecto(
 
     A segunda é a da decisão 1 da ADR 0031: acima do tecto de páginas não se
     chama de todo — a alternativa era pagar uma leitura que já se sabe que vai
-    ser cortada a meio.
+    ser cortada a meio. Para ela ser *a* recusa que acontece, o que vem antes
+    dela na ordem (modelo, chave, preço) tem de estar fixado e satisfeito: era o
+    preço que faltava, e no CI era ele que levantava primeiro.
     """
     with pytest.raises(ModeloNaoConfigurado):
         ler_documento(tenant_id=cenario.alfa.id, paginas=())
@@ -364,7 +450,12 @@ def test_a_fronteira_do_modelo_recusa_sem_modelo_e_acima_do_tecto(
         )
         for i in range(1, 12)
     )
-    with override_settings(AGENTS_EXTRACTION_MODEL="x", AGENTS_EXTRACTION_MAX_PAGES=10):
+    with override_settings(
+        AGENTS_EXTRACTION_MODEL=MODELO_COM_PRECO,
+        AGENTS_MODEL_PRICES_EUR_PER_MTOKEN=PRECOS,
+        AGENTS_EXTRACTION_API_KEY=CHAVE_DE_ENSAIO,
+        AGENTS_EXTRACTION_MAX_PAGES=10,
+    ):
         with pytest.raises(DocumentoGrandeDemais):
             ler_documento(tenant_id=cenario.alfa.id, paginas=paginas)
 

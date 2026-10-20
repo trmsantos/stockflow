@@ -1149,6 +1149,10 @@ def test_regra_11_a_confianca_nunca_bloqueia_e_null_nao_e_zero(
 
     `null` é "o modelo não disse" e não se marca; `0.000` é "o modelo disse que
     não confia nada" e marca-se. São estados distintos e sobrevivem ao ciclo.
+
+    O limiar vai fixado: `AGENTS_EXTRACTION_CONFIDENCE_THRESHOLD` lê-se do
+    ambiente e ninguém o calibrou, logo a confiança de 0,500 aqui em baixo só é
+    "baixa" contra um limiar conhecido.
     """
     _memorizar(cenario, codigo="7734", nif="500000000")
     cliente, _, receipt_id = _semear(
@@ -1167,7 +1171,8 @@ def test_regra_11_a_confianca_nunca_bloqueia_e_null_nao_e_zero(
     assert zero.extraction_confidence == Decimal("0.000")
     assert baixa.extraction_confidence == Decimal("0.500")
 
-    servidas = _servidas(cliente, receipt_id)
+    with override_settings(AGENTS_EXTRACTION_CONFIDENCE_THRESHOLD=Decimal("0.80")):
+        servidas = _servidas(cliente, receipt_id)
     assert "confianca_baixa" not in servidas[0]["warnings"], "ausente não é baixa"
     assert "confianca_baixa" in servidas[1]["warnings"]
     assert "confianca_baixa" in servidas[2]["warnings"]

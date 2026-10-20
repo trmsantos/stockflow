@@ -272,6 +272,23 @@ def chat_configurado() -> bool:
     return bool(modelo) and _modelo_tem_preco(modelo)
 
 
+def _exige_chave(chave: str) -> str:
+    """A chave, ou `ModeloNaoConfigurado` com a frase que diz o que configurar.
+
+    Uma função e não um `if` repetido porque a pergunta passou a ser feita em
+    dois sítios e a frase tem de ser a mesma nos dois: a fábrica `cliente()` é a
+    última rede, e o `ler_documento` pergunta **antes** da tabela de preços
+    (a ordem está explicada lá).
+    """
+    if not chave:
+        raise ModeloNaoConfigurado(
+            "não há chave de API: as definições AGENTS_EXTRACTION_API_KEY e "
+            "AGENTS_CHAT_API_KEY estão as duas vazias. Só o worker a recebe, "
+            "pelo ambiente (ADR 0027)."
+        )
+    return chave
+
+
 def cliente(
     *, chave: str | None = None, url: str | None = None, timeout: int | None = None
 ) -> Any:
@@ -289,13 +306,7 @@ def cliente(
 
     Import no corpo: o SDK só é carregado no processo que o usa, que é o worker.
     """
-    chave = _chave_de_api() if chave is None else chave
-    if not chave:
-        raise ModeloNaoConfigurado(
-            "não há chave de API: as definições AGENTS_EXTRACTION_API_KEY e "
-            "AGENTS_CHAT_API_KEY estão as duas vazias. Só o worker a recebe, "
-            "pelo ambiente (ADR 0027)."
-        )
+    chave = _exige_chave(_chave_de_api() if chave is None else chave)
     import openai
 
     return openai.OpenAI(
@@ -538,6 +549,22 @@ def ler_documento(
     modelo o escreveu, sem um campo acrescentado nem retirado. Um corpo que não
     seja JSON válido vai como `{"texto": …}` para a coluna, onde não valida e
     dá `ilegivel`, que é exactamente a fronteira sintáctica da decisão 4.
+
+    ## A ordem das recusas: modelo, chave, preço, tecto
+
+    As três primeiras são de configuração e nenhuma delas abre um socket, logo a
+    ordem não muda o que é seguro — muda **a frase que uma pessoa lê**. A regra
+    é: o que é sempre preciso vem antes do que só às vezes é preciso. O nome do
+    modelo e a chave são precondições de haver chamada seja qual for o destino;
+    o preço na tabela só é exigido quando o destino cobra. Dizer *"este modelo
+    não tem preço"* a quem ainda não tem chave é responder sobre o risco de uma
+    chamada que nunca poderia acontecer — e manda corrigir a tabela de preços,
+    que é código e um deploy, antes da variável de ambiente que ainda assim
+    bloqueava tudo a seguir.
+
+    O que **não** muda: continua a não haver caminho nenhum para uma chamada
+    paga sem preço na tabela (ADR 0031, decisão 2). Falha-se fechado na mesma,
+    só que a seguir à pergunta mais básica.
     """
     modelo = nome_do_modelo()
     if not modelo:
@@ -548,6 +575,7 @@ def ler_documento(
             "tentativa gravada e à espera de revisão à mão."
         )
     url = _url_de_extracao()
+    chave = _exige_chave(_chave_de_extracao())
     if not _modelo_tem_preco(modelo, url_base=url):
         raise ModeloNaoConfigurado(
             f"o modelo {modelo!r} não está em AGENTS_MODEL_PRICES_EUR_PER_MTOKEN e "
@@ -569,7 +597,7 @@ def ler_documento(
         )
 
     timeout = int(getattr(settings, "AGENTS_EXTRACTION_TIMEOUT_S", 120))
-    api = cliente(chave=_chave_de_extracao(), url=url, timeout=timeout)
+    api = cliente(chave=chave, url=url, timeout=timeout)
     mensagens = [
         {"role": "system", "content": prompt_de_extracao()},
         {"role": "user", "content": imagens},

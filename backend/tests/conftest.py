@@ -77,6 +77,19 @@ SETTINGS_ENV_VARS: tuple[str, ...] = (
     "AGENTS_CHAT_MODEL",
     "AGENTS_CHAT_RETENTION_DAYS",
     "AGENTS_CHAT_TIMEOUT_S",
+    # As da extração (ADR 0031, decisão 2). Faltavam desde que nasceram, e a
+    # omissão era da mesma família do que o CI apanhou a 2026-10-20: um
+    # `AGENTS_EXTRACTION_BASE_URL` no `.env` de quem corre a suite decidia se a
+    # fronteira do modelo recusava pelo preço ou pela chave.
+    "AGENTS_EXTRACTION_API_KEY",
+    "AGENTS_EXTRACTION_BASE_URL",
+    "AGENTS_EXTRACTION_CONFIDENCE_THRESHOLD",
+    "AGENTS_EXTRACTION_DAILY_BUDGET_EUR",
+    "AGENTS_EXTRACTION_MAX_ATTEMPTS",
+    "AGENTS_EXTRACTION_MAX_PAGES",
+    "AGENTS_EXTRACTION_MAX_TOKENS",
+    "AGENTS_EXTRACTION_MODEL",
+    "AGENTS_EXTRACTION_TIMEOUT_S",
     "ALLOWED_HOSTS",
     "API_DOCS_ENABLED",
     "CACHE_URL",
