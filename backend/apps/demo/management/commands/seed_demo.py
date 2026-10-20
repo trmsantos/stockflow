@@ -35,6 +35,7 @@ from apps.accounts.api import (
     criar_membership,
     criar_tenant,
     criar_usuario,
+    nomes_de_membros,
     obter_usuario_por_papel,
 )
 from apps.catalog.api import criar_fornecedor, criar_produto
@@ -354,6 +355,12 @@ class Command(BaseCommand):
         """Semeia 10 movimentos de stock (entrada/saída)."""
         movement_ids = []
         now = timezone.now()
+        # O nome da **pertença** e nunca o email: o `created_by_name` é servido
+        # a qualquer dos três papéis, e esta linha gravava `owner@demo.pt` no
+        # ledger de três lojas (a mesma correcção de 2026-10-19 no `inventory`).
+        nome_de_quem_semeia = nomes_de_membros(
+            tenant_id=tenant.id, user_ids=[user.id]
+        ).get(user.id, "")
 
         for idx in range(10):
             # Dois movimentos por artigo — uma entrada e o consumo dela —, em vez
@@ -385,7 +392,7 @@ class Command(BaseCommand):
                 reference=reference,
                 occurred_at=occurred_at,
                 created_by_id=user.id,
-                created_by_name=user.email,
+                created_by_name=nome_de_quem_semeia,
             )
 
             movement_ids_returned = record_movements(

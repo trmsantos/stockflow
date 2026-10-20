@@ -33,7 +33,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
-from apps.accounts.api import Papel, PertenceAoTenant, TemPapel, membership_atual
+from apps.accounts.api import (
+    Papel,
+    PertenceAoTenant,
+    TemPapel,
+    membership_atual,
+    ve_euros,
+)
 from apps.catalog.api import produto_por_id
 from apps.inventory.count_services import (
     CODIGO_CONTAGEM_FECHADA,
@@ -580,9 +586,9 @@ class StockMovementViewSet(viewsets.ViewSet):
 #: cada chamada, e três subclasses iguais em três sítios não ajudam ninguém.
 SO_OWNER_OU_MANAGER = TemPapel.exige(Papel.OWNER, Papel.MANAGER)
 
-#: Os papéis a quem os euros são mostrados (ADR 0029). Ao `staff` o
-#: `difference_eur` vai a `null` — a lista é dele, os euros não.
-PAPEIS_QUE_VEEM_EUROS = frozenset({Papel.OWNER.value, Papel.MANAGER.value})
+#: Os papéis a quem os euros são mostrados (ADR 0029) vivem agora no
+#: `accounts.api` — ver `ve_euros`. Ao `staff` o `difference_eur` continua a ir
+#: a `null`: a lista é dele, os euros não.
 
 DETALHE_JA_ABERTA = _("There is already an open count in this establishment.")
 DETALHE_JA_FECHADA = _("This count is already closed.")
@@ -679,9 +685,8 @@ class ContagemViewSet(viewsets.GenericViewSet):
         return contagens_com_progresso(tenant_id=self.request.tenant.id)
 
     def _ve_euros(self, request: Request) -> bool:
-        """Este pedido pode ver euros? A regra é do papel e não do ecrã."""
-        pertenca = membership_atual(request)
-        return pertenca is not None and pertenca.role in PAPEIS_QUE_VEEM_EUROS
+        """Este pedido pode ver euros? A regra é do papel e vive no `accounts`."""
+        return ve_euros(request)
 
     def _nome_de_quem_conta(self, request: Request) -> str:
         """O nome da **pertença**, que é o que fica copiado na linha.

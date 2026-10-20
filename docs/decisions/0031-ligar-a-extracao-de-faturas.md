@@ -218,3 +218,113 @@ autoliquidação a 0 %) — o prompt deve distingui-los e o ecrã deve mostrá-l
 documento lido com zero linhas deve distinguir-se de uma nota de crédito que legitimamente não tem
 linhas de mercadoria? 6) 0,80 é um limiar com significado para marcar uma linha, ou marca-se só a
 confiança ausente e deixa-se o resto em paz?
+
+---
+
+## Adenda (2026-10-19) — o QR passa a ser lido: `zxing-cpp`
+
+A decisão 8 punha *"ler o QR"* fora de âmbito, e a razão era uma só: **faltava a dependência que o
+descodifica**. Essa dependência foi decidida pelo dono no mesmo dia — **`zxing-cpp`** — e com ela
+esta parte sai de "fora de âmbito" e entra. O que se segue substitui a primeira linha da decisão 8.
+
+**Porque é esta.** Instala-se como qualquer pacote Python: uma wheel com o C++ lá dentro, fixada por
+hash no `uv.lock`, e **sem uma linha acrescentada ao `docker/backend.Dockerfile`** — verificado a
+reconstruir a imagem de runtime e a importar lá dentro, não deduzido da documentação. E lê QR
+fotografados de lado ou com reflexo, que é o caso normal de uma fatura fotografada em cima do balcão.
+É a escolha oposta à da libvips do lado (apt, 149 MiB), e não é incoerência: ali os megabytes
+compraram **visibilidade** sobre quem dá parse a um PDF vindo de fora; aqui o que entra na biblioteca
+é uma matriz de cinzentos que já passou pela libvips.
+
+**Onde se lê.** Na `rasterizacao.rasterizar`, que é onde a imagem **já está aberta e já encolhida** —
+descodificar noutro sítio obrigava a abrir o ficheiro uma segunda vez e a renderizar outra vez um PDF,
+que é a parte cara disto. Quem escreve a coluna é `services.registar_normalizacao`, **na mesma escrita
+e na mesma transação que a largura**: nunca existe uma página normalizada cujo QR chegue um instante
+depois, que é o que faria a extração correr contra um cabeçalho que ainda não está lá. Escreve-se
+mesmo vazio, porque o resultado é função dos bytes e não do dia em que se correu.
+
+**Nunca rebenta a normalização.** QR ausente, ilegível, de outra coisa, biblioteca em falta ou
+excepção dela dão **string vazia** e a página serve à mesma — sem QR o cabeçalho vem da extração,
+exactamente como vinha. O que se apanha é uma **lista fechada** de excepções e nunca um `Exception`
+nu, que esconderia um defeito nosso com o aspecto de uma fotografia má. `PaginaIlegivel` continua a
+querer dizer *"a libvips recusou este ficheiro"* e mais nada.
+
+**Vários QR na folha.** Uma fatura tem mesmo mais do que um (publicidade, o logótipo do fornecedor).
+Quem decide se um texto é da AT é o `ler_qr` do `qr.py` — a mesma função que já validava a forma, e
+não uma segunda validação escrita ao lado. Com mais do que um candidato fica **o primeiro** e
+regista-se que havia mais: concatenar era fabricar um cabeçalho que nenhum software assinou, e
+escolher "o melhor" era inferência nossa. Acima de 1024 caracteres recusa-se — um QR da AT completo
+não passa dos ~250, e o resto é texto a aterrar numa coluna que o ecrã mostra.
+
+**O payload nunca vai para um log.** Traz os dois NIF (ARCHITECTURE.md §8). Regista-se quantos
+códigos se viram e qual foi a razão de não haver leitura; nunca o conteúdo.
+
+**Duas armadilhas, as duas medidas e não deduzidas.** Esta parte não se teria escrito a partir da
+documentação de nenhuma das bibliotecas:
+
+1. O que o `thumbnail` da libvips devolve é um pipeline de acesso **sequencial**, que só se consome
+   uma vez. Com dois consumidores — o WebP e os cinzentos do QR — o segundo morre com
+   `unable to write to memory: out of order read`, e morre **dentro** do `try` que traduz um erro da
+   libvips em `PaginaIlegivel`: ou seja, acrescentar a leitura do QR fazia **uma página perfeitamente
+   legível deixar de servir**. A correcção é materializar a imagem (`copy_memory()`) antes do primeiro
+   consumidor. Reproduzido dentro da imagem de runtime, nos dois sentidos.
+2. A `ImageView` da `zxing-cpp` é uma **vista** e não é dona dos bytes. Uma expressão temporária
+   construída dentro da chamada dá uma leitura **sem código nenhum, sem erro e sem aviso** — o modo de
+   falhar mais caro que há, porque é silencioso. O buffer atravessa a fronteira com um nome vivo.
+
+**Consequências.** **Zero migrações e zero alterações de contrato**: a coluna
+`purchasing_documentpage.qr_payload` já existia e `qr_read`, `divergences` e `vat_checks` já eram
+servidos — o que muda é que deixam de vir sempre vazios. Uma dependência nova no `pyproject.toml` e
+no `uv.lock`, que o `pip-audit` lê. Dois testes novos que **só correm onde há libvips** (o CI
+instala-a de propósito), pela mesma regra do rasterizador. E a lógica do *"o QR ganha no cabeçalho"*,
+que estava construída, testada e **inerte**, passa a correr.
+
+---
+
+## Adenda (2026-10-19) — os euros de uma receção passam a ser de `owner|manager`
+
+Esta adenda **altera um facto da ADR 0021, decisão 9**, e por isso existe: não é uma consequência
+desta fatia, é uma decisão que esta fatia tornou necessária.
+
+**O que mudou.** A ADR 0021 d9 deixou os endpoints de receção em `IsAuthenticated +
+PertenceAoTenant`, **sem `TemPapel`**, com a razão certa: *receber mercadoria é trabalho de quem está
+lá*, e exigir um papel de gestão para registar uma entrada era pôr o dono a receber caixas. Enquanto
+uma receção nascia **sem linhas**, isso era quase teórico — não havia euros lá dentro para ver. A
+decisão 5 desta ADR mudou o facto: `criar_rececao` passou a semear as linhas a partir da fatura, e
+com elas `unit_price`, `discount_pct`, `line_total` e `document_total`. Da noite para o dia, **um
+`staff` passava a ver os preços de compra de uma fatura inteira sem ninguém os ter escrito**.
+
+Foi a revisão de segurança desta fatia que o nomeou, e bem: *"pode ser defensável — quem recebe tem a
+fatura em papel na mão — mas os factos mudaram com esta fatia"*. Uma permissão que era inócua por
+acidente deixa de o ser quando os dados por trás dela mudam, e isso não se descobre a reler a ADR
+antiga.
+
+**A decisão do dono (2026-10-19): só `owner|manager`.** O colaborador continua a receber mercadoria,
+a conferir quantidades, a marcar linhas e a confirmar — a d9 mantém-se inteira nessa parte. Só não vê
+quanto custou.
+
+**A forma: a chave fica ausente.** Nunca zero, nunca `null`. É o reflexo que o `_dinheiro` do porto
+do `agents` já tinha (ADR 0028), e a forma é a decisão: um **zero** é uma afirmação falsa sobre o
+preço; um **`null`** convida o ecrã a imprimir "—" como se o valor não existisse naquela linha — e
+isso é um facto diferente, que acontece mesmo quando o modelo não conseguiu ler o preço. **Ausente**
+é *"não te compete"*, e é a única das três que não mente.
+
+**O que continua a sair para toda a gente**, e porquê: quantidades, unidade, lote, validade, os
+`warnings` (`preco_desviado` e `total_nao_bate` são marcações qualitativas, e marcar uma linha é
+exactamente o trabalho de quem recebe) e a `vat_rate` — uma taxa é 6, 13 ou 23, está impressa em
+qualquer talão e não diz quanto custou nada.
+
+**Consequência no contrato:** `unit_price`, `line_total`, `discount_pct` e `price_history` em
+`LinhaOut`, e `document_total` em `RececaoOut`, passam a **opcionais**. Isto apanhou o cliente
+desprevenido de uma forma que vale a pena deixar escrita: os schemas Zod escritos à mão declaravam-nos
+`.nullable()` **sem `.optional()`**, e em Zod isso aceita `null` mas continua a **exigir a chave
+presente** — ou seja, o ecrã de receções não degradava para um colaborador, **rebentava**. O
+`pnpm typecheck` passava à mesma, porque os schemas são escritos à mão e a validação é em runtime.
+É a mesma lição da fatia das contagens: *ligar uma ponta à outra é o que expõe estes defeitos*, e um
+gate verde sobre metade do caminho não é um gate.
+
+**Mesma classe, corrigida ao lado.** `inventory` gravava o **email** de quem abriu e de quem fechou
+uma contagem (`created_by_name`/`closed_by_name`), e esse resumo é servido pelo assistente a qualquer
+um dos três papéis. Passa a gravar o `display_name` da pertença, **sem o email como recurso** quando o
+nome está vazio — usá-lo como recurso repunha o defeito. Os valores **já gravados ficam como estão**
+(decisão do dono): é uma coluna de histórico, e reescrevê-la era mentir sobre o passado, que é a
+mesma regra que já se aplica ao ledger.

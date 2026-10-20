@@ -3,10 +3,23 @@ import { z } from "zod";
 /**
  * O contrato do módulo `purchasing`, em Zod.
  *
- * Como em `inventory`, estes schemas são o **rascunho do contrato** que a
- * sessão do backend recebe (ADR 0008, decisão 3): o mesmo ficheiro valida a
- * resposta no cliente e valida o fixture no servidor de desenvolvimento, logo
- * não há duas noções do payload.
+ * Como em `inventory`, estes schemas nasceram como o **rascunho do contrato**
+ * que a sessão do backend recebeu (ADR 0008, decisão 3): o mesmo ficheiro
+ * validava a resposta no cliente e validava o fixture no servidor de
+ * desenvolvimento, logo não havia duas noções do payload.
+ *
+ * **Essa relação inverteu-se e vale a pena dizê-lo, porque é a origem de dois
+ * defeitos medidos a 2026-10-20.** O `purchasing` tem Django do outro lado
+ * desde a ADR 0031, logo quem manda no contrato é o `schema.yaml` do servidor e
+ * o `src/lib/api/types.ts` que o `pnpm gen:api` escreve a partir dele. Este
+ * ficheiro passou a ser um **validador escrito à mão que tem de seguir o
+ * gerado** — e não seguiu: os euros ficaram `?:` no `types.ts` e aqui
+ * continuaram obrigatórios (o ecrã de receções partia-se por inteiro para um
+ * colaborador), e o `amount_mismatch` saiu do contrato e aqui ficou (partia-se
+ * para toda a gente). **O `pnpm typecheck` não vê nada disto**: a validação é
+ * em runtime e estes schemas não derivam do `types.ts`. Quem mexer aqui compara
+ * campo a campo com o componente gerado — `LinhaOut`, `RececaoOut`,
+ * `LinhasOut` — e, de preferência, contra uma resposta a sério.
  *
  * Três afirmações de domínio estão **na forma do contrato** e não num
  * comentário de UI, porque é aqui que o backend as vai ler:
@@ -108,8 +121,22 @@ export const especieDeLinhaSchema = z.enum(["goods", "deposit", "charge", "docum
  */
 export const conservacaoSchema = z.enum(["ambient", "chilled", "frozen"]);
 
+/**
+ * Uma coluna de texto do servidor que vem **vazia** quando não há nada, e
+ * nunca `null`: é a convenção do Django (`allow_blank`, um valor só para
+ * "nada") e é o que o `types.ts` promete — `doc_number: string`, não
+ * `string | null`.
+ *
+ * Normaliza-se para `null` à entrada porque é isso que o ecrã já sabe desenhar
+ * ("sem número", "sem nome"), e porque um `""` imprimido é um buraco: um
+ * `<Link>` sem texto não tem nome acessível. Mesma forma e mesma razão que o
+ * `expiry_kind` do `features/catalog` e o `reason` do `features/inventory`.
+ */
+const textoOuVazio = z.string().transform((valor) => (valor === "" ? null : valor));
+
 export const fornecedorSchema = z.object({
-  name: z.string().min(1),
+  /** `null` quando o documento não o traz — a fatura manuscrita da frutaria. */
+  name: textoOuVazio,
   /** NIF como impresso. `null` quando o documento não o traz legível. */
   nif: z.string().nullable(),
 });
@@ -206,21 +233,46 @@ export const linhaDeRececaoSchema = z.object({
   supplier_code: z.string(),
   /** Código de barras EAN. */
   ean: z.string(),
+  /* -------------------------------------------------------------------------
+   * Os quatro campos de dinheiro da linha, e **a ausência não é o `null`**.
+   *
+   * Desde 2026-10-19 só `owner|manager` veem euros numa receção, e o servidor
+   * di-lo da única forma que não mente: a chave **não vem** no JSON
+   * (`SemEurosParaQuemNaoVe`). Um zero seria uma afirmação falsa sobre o preço
+   * e um `null` convidaria o ecrã a imprimir "—" como se o valor não
+   * existisse. No contrato gerado estes quatro passaram a `?:`.
+   *
+   * Logo são **três** estados e não dois, e o schema tem de os saber separar:
+   *
+   *  - `undefined` (chave ausente) — *"não te compete"*. O ecrã não imprime
+   *    coluna nenhuma: uma coluna de traços lê-se como uma fatura sem preços,
+   *    que é mentira sobre o documento;
+   *  - `null` — *"não há preço nesta linha"*. Acontece a sério: uma guia de
+   *    remessa não traz preços, e há faturas em que o modelo não o leu. O ecrã
+   *    diz "sem preço", que é uma afirmação sobre o **documento**;
+   *  - uma string decimal — o preço.
+   *
+   * `.nullable().optional()` e não `.nullish()`, que é o mesmo validador, por
+   * uma razão de leitura: são dois factos e escrevem-se os dois. E **nunca**
+   * `.optional().default(null)` nem um `?? null` no ecrã — colapsar os dois
+   * estados é perder a distinção que este bloco existe para guardar.
+   *
+   * O `vat_rate` fica de fora e continua obrigatório: uma taxa é 6, 13 ou 23,
+   * está impressa em qualquer talão e não diz quanto custou nada.
+   * ---------------------------------------------------------------------- */
   /** Por `invoice_unit`. `null` numa guia de remessa, que não traz preços. */
-  unit_price: decimal.nullable(),
-  /** Percentagem de desconto linear. */
-  discount_pct: decimal.nullable(),
+  unit_price: decimal.nullable().optional(),
+  /** Percentagem de desconto linear — a condição comercial, logo é dinheiro. */
+  discount_pct: decimal.nullable().optional(),
   /** A taxa **como vem na linha**, em fração (`"0.230"`). Nunca do artigo. */
   vat_rate: decimal.nullable(),
-  line_total: decimal.nullable(),
+  line_total: decimal.nullable().optional(),
   /** Quantas unidades base vale uma unidade de fatura. */
   base_per_invoice_unit: decimal.nullable(),
-  price_history: historicoDePrecoSchema.nullable(),
-  /** Divergência entre o impresso e o total: |quantidade × preço × (1 - desconto) - total| > 0,02. */
-  amount_mismatch: z.boolean(),
+  price_history: historicoDePrecoSchema.nullable().optional(),
   /** Se este artigo exige lote: perecível, ou de origem animal (HACCP). */
   requires_lot: z.boolean(),
-  lot_code: z.string().min(1).nullable(),
+  lot_code: textoOuVazio,
   expires_at: z.iso.date().nullable(),
   /**
    * Qual dos dois rótulos a validade desta linha é. Vem do **artigo** e não é
@@ -236,6 +288,21 @@ export const linhaDeRececaoSchema = z.object({
    * mexe no stock.
    */
   movement: z.uuid().nullable(),
+  /* **Dois campos que este schema deixou de ter, e as duas razões são a
+   * mesma**: ele é escrito à mão e o contrato mudou debaixo dele.
+   *
+   * O `amount_mismatch` saiu porque **já não existe no `types.ts`** — a fatia
+   * da extração (ADR 0031) substituiu o booleano por `warnings`, uma lista
+   * fechada de marcações qualitativas, e o Zod continuou a exigir a chave
+   * antiga: medido a 2026-10-20, as linhas de qualquer documento recusavam-se
+   * às três contas. Não se perdeu nada no ecrã, porque nenhum ecrã o lia.
+   *
+   * O `warnings` **não** entrou no lugar dele, e isso é uma decisão e não um
+   * esquecimento: nenhum ecrã o desenha ainda, e uma chave que ninguém lê é
+   * exactamente o que o `amount_mismatch` era no dia em que apodreceu. O Zod
+   * ignora chaves que não declara, logo a resposta valida na mesma. Fica
+   * nomeado aqui porque é a peça que falta ao colaborador — `preco_desviado` e
+   * `total_nao_bate` são o sinal que lhe sobra quando os euros não vêm. */
 });
 
 /** A base e o IVA por taxa, como vêm no rodapé do documento. */
@@ -254,7 +321,7 @@ export const rececaoSchema = z.object({
   supplier_id: z.uuid().nullable(),
   doc_type: tipoDeDocumentoSchema,
   /** `null` numa fatura manuscrita sem número — e existem. */
-  doc_number: z.string().min(1).nullable(),
+  doc_number: textoOuVazio,
   /** Quando a mercadoria chegou, segundo o documento. */
   doc_date: z.iso.date().nullable(),
   /** Quando a mercadoria chegou, segundo o documento. */
@@ -266,7 +333,7 @@ export const rececaoSchema = z.object({
    * por isso que são dois campos e não um.
    */
   confirmed_at: z.iso.datetime({ offset: true }).nullable(),
-  confirmed_by: z.string().min(1).nullable(),
+  confirmed_by: textoOuVazio,
   status: estadoDeRececaoSchema,
   /** Quantas linhas faltam rever. É o número que o badge da lista mostra. */
   lines_to_review: z.number().int().nonnegative(),
@@ -287,15 +354,25 @@ export const rececaoSchema = z.object({
   company_nif: z.string(),
   /** Entrou por guia e a fatura ainda não existe. Não é um erro: é o normal. */
   awaiting_invoice: z.boolean(),
+  /* ----------------------------------------------------------------------
+   * Os três acumulados em euros do cabeçalho, com a **mesma** distinção dos
+   * quatro da linha: ausente é "não te compete", `null` é "não há valor neste
+   * documento". Ver o bloco do `linhaDeRececaoSchema`, que é onde ela está
+   * escrita por extenso.
+   *
+   * O `vat_breakdown` está na lista porque é uma tabela de euros (`base` e
+   * `vat`) e não por causa da taxa, e é `.optional()` sem `.nullable()`: uma
+   * tabela sem linhas é um `[]`, nunca um `null`.
+   * -------------------------------------------------------------------- */
   /** O total **impresso**. `null` numa guia de remessa sem preços. */
-  document_total: decimal.nullable(),
+  document_total: decimal.nullable().optional(),
   /**
    * A soma das linhas. Pode não bater com o impresso — um desconto de rodapé,
    * portes, uma linha que não foi lida. O ecrã avisa e **não** bloqueia:
    * bloquear é a Q1 e o shell não responde por ela (guião §4, proibição 3).
    */
-  lines_total: decimal.nullable(),
-  vat_breakdown: z.array(totalDeIvaSchema),
+  lines_total: decimal.nullable().optional(),
+  vat_breakdown: z.array(totalDeIvaSchema).optional(),
   /** Temperaturas registadas à entrega, por classe (refrigerado, congelado). */
   temperatures: z.array(
     z.object({
@@ -312,7 +389,7 @@ export const rececaoSchema = z.object({
   /** Onde a mercadoria entrou. Mais do que uma numa ida ao cash & carry. */
   locations: z.array(localizacaoSchema),
   /** A referência com que os movimentos desta receção vivem no ledger. */
-  reference: z.string().min(1),
+  reference: z.string(),
 });
 
 /**
@@ -333,7 +410,19 @@ export const resumoDeRececoesSchema = z.object({
   /** O total de linhas por rever, somando as receções. */
   needs_review_lines: z.number().int().nonnegative(),
   confirmed_today_count: z.number().int().nonnegative(),
-  business_day_starts_at: z.string().regex(/^\d\d:\d\d$/, "hora inválida"),
+  /**
+   * `"04:00"` — horas e minutos, que é o que a frase do topo lê.
+   *
+   * Aceita os segundos e deita-os fora: o `/receipts/summary` serializa com o
+   * default do DRF (`"%H:%M:%S"`) e só o `EstabelecimentoOut` fixa o formato
+   * curto. Medido a 2026-10-20 — chega `"04:00:00"` e a régua de números
+   * recusava-se inteira, nos três papéis. Os segundos de uma hora de abertura
+   * são três caracteres que nunca são outra coisa que `00`.
+   */
+  business_day_starts_at: z
+    .string()
+    .regex(/^\d\d:\d\d(:\d\d)?$/, "hora inválida")
+    .transform((hora) => hora.slice(0, 5)),
   confirmed_since: z.iso.datetime({ offset: true }),
 });
 

@@ -38,6 +38,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Max
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -450,6 +451,19 @@ def registar_normalizacao(
     marcada como normalizada a apontar para um ficheiro que ainda não existe, e é
     nessa janela que o ecrã de revisão pede a imagem.
 
+    ## O `qr_payload` escreve-se aqui, como a largura
+
+    Desde 2026-10-19 a fronteira da rasterização devolve também o texto do QR da
+    fatura (ADR 0021, adenda; ADR 0031, C — a dependência que faltava é a
+    `zxing-cpp`). É um atributo da página como a geometria, logo entra na
+    **mesma escrita e na mesma transação**: nunca existe uma página normalizada
+    cujo QR chegue um instante depois, que é o que faria a extração correr
+    contra um cabeçalho que ainda não está lá.
+
+    Escreve-se mesmo quando vem vazio, pela mesma razão por que a largura se
+    escreve sempre: o resultado é função dos bytes da página e não do dia em que
+    se correu. Uma repetição da tarefa sobre o mesmo ficheiro lê o mesmo QR.
+
     ## E, quando esta era a última, volta a publicar o fecho
 
     Porque a leitura precisa de **imagens**, e as duas tarefas do
@@ -473,9 +487,17 @@ def registar_normalizacao(
     pagina.image_path = caminho
     pagina.width = imagem.width
     pagina.height = imagem.height
+    pagina.qr_payload = imagem.qr_payload
     pagina.normalized_at = timezone.now()
     pagina.save(
-        update_fields=["image_path", "width", "height", "normalized_at", "updated_at"]
+        update_fields=[
+            "image_path",
+            "width",
+            "height",
+            "qr_payload",
+            "normalized_at",
+            "updated_at",
+        ]
     )
     _avisar_que_as_imagens_estao_prontas(tenant_id=tenant_id, documento_id=pagina.document_id)
     return True
@@ -744,8 +766,31 @@ class ConversaoEmFalta(Exception):
     pass
 
 
+#: A linha é de mercadoria e ninguém disse qual é o artigo (400). O `code` que
+#: o cliente ramifica; a frase do `DETALHE_LINHA_SEM_ARTIGO` é a que se lê.
+#:
+#: Nasce **normal** e não raro desde a fatia da extração: a correspondência de
+#: um código de fornecedor a um artigo é por chave exacta — `(supplier_id,
+#: code)`, sem correspondência difusa por descrição (ADR 0031, decisão 5) —,
+#: logo a primeira fatura de um fornecedor novo semeia linhas `kind=goods` sem
+#: artigo nenhum, por desenho. Escolher o artigo é exactamente o trabalho do
+#: portão humano, e carregar em confirmar antes disso é um engano de quem revê,
+#: não um erro do servidor.
+CODIGO_LINHA_SEM_ARTIGO = "linha_sem_artigo"
+
+#: O inglês é o msgid e o português está no `locale/pt_PT` (ADR 0019), como em
+#: todas as frases que esta API serve. Diz **o que fazer** e dá as duas saídas
+#: que o ecrã tem — escolher o artigo, ou deixar a linha fora desta entrada
+#: (`skip`) —, sem nomear `kind`, `goods` nem exceção nenhuma: quem lê isto está
+#: a conferir mercadoria com a fatura na mão.
+DETALHE_LINHA_SEM_ARTIGO = _(
+    "Choose the item for this line before confirming it, or leave the line out "
+    "of this entry."
+)
+
+
 class SemArtigo(Exception):
-    """Linha de goods sem artigo."""
+    """Linha de `goods` sem artigo: o 400 do `CODIGO_LINHA_SEM_ARTIGO`."""
 
     pass
 
@@ -932,6 +977,25 @@ def _semear_linhas(*, receipt: Receipt, leitura, supplier_id: UUID | None) -> No
     `needs_review` com `reviewed_at` a NULL na mesma — pré-preencher não é
     confirmar, e a pessoa continua a ter de tocar em todas as linhas
     (CLAUDE.md).
+
+    ## A `position` é nossa, e renumera-se aqui
+
+    A do modelo é texto não confiável (ADR 0031, decisão 6) e a coluna tem
+    `UniqueConstraint(receipt, position)`: num documento de várias folhas o
+    modelo reinicia a numeração na folha 2, e duas linhas com a mesma posição
+    davam `IntegrityError` dentro do `bulk_create` — **500 em `POST
+    /receipts`**, e para sempre, porque o payload fica guardado e todas as
+    tentativas seguintes falhavam igual. Uma restrição de base de dados não é
+    sítio para validar o que um modelo escreveu.
+
+    O que se guarda é a **ordem**, que é o que importa para pôr as linhas ao
+    lado da fotografia: `leitura_validada` já ordena pela posição lida, e aqui
+    numera-se `1..N` por cima dessa ordem. Densa, logo o arrasto que se deita
+    fora também deixa de abrir um buraco. A posição lida **não** se guarda como
+    rótulo: não há coluna para ela (guardá-la era uma migração que esta
+    correcção não precisa de ter) e, num documento em que a numeração reinicia,
+    "linha 2" não identifica linha nenhuma — é precisamente o defeito. Quem
+    revê emparelha pela descrição e pela ordem.
     """
     tenant_id = receipt.tenant_id
     codigos = [linha.supplier_code for linha in leitura.lines if linha.supplier_code]
@@ -952,20 +1016,27 @@ def _semear_linhas(*, receipt: Receipt, leitura, supplier_id: UUID | None) -> No
         if e_linha_de_continuacao(
             lida.description, quantity=lida.quantity, unit_price=lida.unit_price
         ):
-            # O prompt já manda deitá-las fora; esta é a segunda rede, e deixa
-            # um buraco na numeração de propósito — a `position` é a do papel.
+            # O prompt já manda deitá-las fora; esta é a segunda rede.
             continue
         kind = especie_da_linha(lida.description, line_total=lida.line_total)
         correspondencia = memoria.get(lida.supplier_code) if lida.supplier_code else None
         produto = (
             produtos.get(correspondencia.product_id) if correspondencia is not None else None
         )
-        base_por_unidade = _base_por_unidade_de_fatura(unidade=lida.unit, produto=produto)
+        base_por_unidade = _conversao_que_cabe(
+            base_por_unidade=_base_por_unidade_de_fatura(
+                unidade=lida.unit, produto=produto
+            ),
+            quantidade=lida.quantity,
+        )
         linhas.append(
             ReceiptLine(
                 tenant_id=tenant_id,
                 receipt=receipt,
-                position=lida.position,
+                # `1..N` pela ordem lida, e nunca o número do papel: ver o
+                # docstring. `len(linhas)` conta só as que ficam, logo a
+                # numeração não tem buracos.
+                position=len(linhas) + 1,
                 description=lida.description,
                 invoice_unit=lida.unit,
                 quantity_invoiced=lida.quantity,
@@ -1012,6 +1083,42 @@ def _base_por_unidade_de_fatura(*, unidade: str, produto) -> Decimal | None:
     return catalog_api.factor_para_base(unidade, produto.base_unit)
 
 
+#: O maior valor que cabe em `ReceiptLine.quantity_received` (`Decimal(12,3)`).
+#: O reflexo do `_DINHEIRO_MAXIMO` do `qr.py`, para a outra coluna e pela mesma
+#: razão: a quantidade lida é texto de um modelo, `999999999,999` valida no
+#: schema e o factor KG→g é 1000 — o produto não cabe na coluna e era um
+#: `DataError` do Postgres, ou seja **500 em `POST /receipts`** causado pelo
+#: conteúdo de uma fatura. Corta-se na fronteira, e não três ficheiros à frente.
+QUANTIDADE_MAXIMA = Decimal("999999999.999")
+
+
+def _cabe_na_quantidade(valor: Decimal) -> bool:
+    """O valor cabe na coluna que o vai receber?"""
+    return abs(valor) <= QUANTIDADE_MAXIMA
+
+
+def _conversao_que_cabe(
+    *, base_por_unidade: Decimal | None, quantidade: Decimal | None
+) -> Decimal | None:
+    """O factor, ou `None` quando o que ele produz não cabe na coluna.
+
+    Uma quantidade absurda numa fatura tem de dar uma **linha que a pessoa vê
+    marcada**, nunca uma escrita que rebenta: a fatia inteira existe para pôr
+    uma pessoa a rever, e um 500 tira-lhe essa hipótese.
+
+    `None` e não um número truncado, pela mesma regra do `"CX"` sem embalagem
+    escolhida: a conversão que não se pode aplicar é uma **ausência**, não um
+    palpite — truncar era inventar stock com ar de certo. E a ausência já tem
+    significado e já tem marca, logo nada de novo nasce no contrato: a linha sai
+    com `sem_conversao`, o `quantity_received` fica a zero e a quantidade é uma
+    pergunta que a revisão responde. O que o papel disse não muda: o
+    `quantity_invoiced` continua a ser o que está impresso.
+    """
+    if base_por_unidade is None or quantidade is None:
+        return base_por_unidade
+    return base_por_unidade if _cabe_na_quantidade(quantidade * base_por_unidade) else None
+
+
 def _peso_variavel(*, unidade: str, produto) -> bool:
     """A fatura pesa e o artigo vende-se à peça: é peso variável. **Nosso.**
 
@@ -1045,12 +1152,109 @@ def _quantidade_recebida(
     movimento, ADR 0021, decisão 6); e uma linha sem quantidade lida ou sem
     conversão conhecida — onde inventar um número era pôr stock a mais no
     ledger com ar de certo.
+
+    O terceiro caso inclui a conversão que **não cabe** na coluna: quem a
+    recusa é o `_conversao_que_cabe`, uma função acima, e o que chega aqui é
+    já o `None` de sempre.
     """
     if nota or kind != ESPECIE_GOODS:
         return Decimal("0")
     if quantidade is None or base_por_unidade is None:
         return Decimal("0")
     return abs(quantidade) * base_por_unidade
+
+
+def acrescentar_linha(
+    *,
+    receipt_id: UUID,
+    description: str,
+    invoice_unit: str,
+    quantity_invoiced: Decimal | None = None,
+    unit_price: Decimal | None = None,
+    discount_pct: Decimal | None = None,
+    vat_rate: Decimal | None = None,
+    line_total: Decimal | None = None,
+    supplier_code: str = "",
+    ean: str = "",
+    variable_weight: bool = False,
+    kind: str = ESPECIE_GOODS,
+    product_id: UUID | None = None,
+    packaging_id: UUID | None = None,
+    base_per_invoice_unit: Decimal | None = None,
+    quantity_received: Decimal | None = None,
+    location_id: UUID | None = None,
+    lot_code: str = "",
+    expires_at=None,
+) -> ReceiptLine:
+    """Acrescenta **uma** linha a uma receção por rever. Nasce `needs_review`.
+
+    É o caminho de quem tem a fatura na mão e vê que falta uma linha — ou que
+    recebeu mercadoria que o documento não traz. A linha nasce por rever e com
+    `reviewed_at` a NULL, como as que a extração semeia: escrever uma linha não
+    é confirmá-la, e o portão humano é o mesmo (ADR 0031, decisão 4).
+
+    ## Porque é que isto passou a ser um serviço
+
+    Até 2026-10-20 a view fazia `ReceiptLine.objects.create(**validated_data)`,
+    que é uma escrita fora de `services.py` (CLAUDE.md) — e cada uma das quatro
+    decisões que esta função toma estava lá por tomar ou tomada mal:
+
+    * **a `position`** saía de `receipt.lines.count() + 1`, sem lock. Duas
+      linhas acrescentadas ao mesmo tempo contavam o mesmo e colidiam na
+      `UniqueConstraint(receipt, position)`; e `count()` dá o número de linhas,
+      não a última posição. Aqui é `Max(position) + 1` **sob o lock da
+      receção**, que é o mesmo lock que a confirmação usa;
+    * **a `location`** é `NOT NULL` na coluna e opcional no contrato. O default
+      é a localização da receção — o mesmo que o `_semear_linhas` escreve, e o
+      único que não é um palpite;
+    * **a `quantity_received`** é `NOT NULL` e também opcional. Resolve-se pela
+      regra já escrita do `_quantidade_recebida`: zero numa nota, zero no que
+      não é mercadoria, zero sem conversão conhecida — **nunca** um factor 1
+      implícito (ADR 0022);
+    * **uma receção confirmada** não recebe mais linhas. Sem esta recusa,
+      acrescentar uma linha a uma receção já no ledger dava uma linha que nunca
+      mais seria confirmada e um documento que deixava de bater com o stock.
+    """
+    with transaction.atomic():
+        receipt = _bloquear_rececao(receipt_id)
+        if receipt.confirmed_at:
+            raise RececaoConfirmada()
+
+        ultima = receipt.lines.aggregate(ultima=Max("position"))["ultima"]
+        quantidade = (
+            quantity_received
+            if quantity_received is not None
+            else _quantidade_recebida(
+                kind=kind,
+                nota=receipt.doc_type in DOC_TIPOS_DE_NOTA,
+                quantidade=quantity_invoiced,
+                base_por_unidade=base_per_invoice_unit,
+            )
+        )
+        return ReceiptLine.objects.create(
+            tenant_id=receipt.tenant_id,
+            receipt=receipt,
+            position=(ultima or 0) + 1,
+            description=description,
+            invoice_unit=invoice_unit,
+            quantity_invoiced=quantity_invoiced,
+            unit_price=unit_price,
+            discount_pct=discount_pct,
+            vat_rate=vat_rate,
+            line_total=line_total,
+            supplier_code=supplier_code,
+            ean=ean,
+            variable_weight=variable_weight,
+            product_id=product_id,
+            packaging_id=packaging_id,
+            base_per_invoice_unit=base_per_invoice_unit,
+            quantity_received=quantidade,
+            location_id=location_id or receipt.location_id,
+            kind=kind,
+            lot_code=lot_code.strip().upper() if lot_code else "",
+            expires_at=expires_at,
+            status="needs_review",
+        )
 
 
 def rever_linha(
@@ -1158,7 +1362,13 @@ def _quantidade_revista(
         return quantity_received
     if quantity_invoiced is None or base_per_invoice_unit is None:
         return Decimal("0")
-    return quantity_invoiced * base_per_invoice_unit
+    convertida = quantity_invoiced * base_per_invoice_unit
+    # O mesmo tecto e a mesma resposta da sementeira: a quantidade lida é a do
+    # modelo e o factor é o que a revisão acabou de fixar, logo a multiplicação
+    # pode não caber na coluna — e aqui o 500 cairia **depois** de a linha já
+    # ter sido semeada, que é a forma de o defeito se mudar de endpoint em vez
+    # de desaparecer.
+    return convertida if _cabe_na_quantidade(convertida) else Decimal("0")
 
 
 def registar_temperatura(

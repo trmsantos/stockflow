@@ -56,6 +56,7 @@ export function ZonaDeFicheiro({
   desativado,
   limiteAtingido,
   erro,
+  idDoAviso,
   chave,
   aoEscolher,
 }: {
@@ -79,6 +80,19 @@ export function ZonaDeFicheiro({
   readonly limiteAtingido: number | null;
   /** A frase do servidor para o campo `ficheiro`, **não reescrita**. */
   readonly erro: string | null;
+  /**
+   * O `id` do **aviso de privacidade**, que o ecrã desenha por cima deste campo.
+   *
+   * Entra no `aria-describedby` **à frente** da ajuda, e a ordem é o requisito:
+   * quem ouve o ecrã tem de saber para onde vai a imagem **antes** de escolher o
+   * ficheiro, não depois (ADR 0031, resposta do dono). Visualmente a ordem já é
+   * essa porque o aviso está acima no DOM; isto é a mesma garantia para quem não
+   * vê o ecrã.
+   *
+   * Vem de fora porque o aviso vive fora deste componente — ele é do ecrã e
+   * cobre também o botão que abre um documento de várias folhas.
+   */
+  readonly idDoAviso: string;
   readonly chave: number;
   readonly aoEscolher: (ficheiro: File) => void;
 }) {
@@ -115,7 +129,9 @@ export function ZonaDeFicheiro({
           accept="application/pdf,image/jpeg,image/png"
           capture="environment"
           disabled={aEnviar || desativado}
-          aria-describedby={erro === null ? idAjuda : `${idAjuda} ${idErro}`}
+          aria-describedby={
+            erro === null ? `${idDoAviso} ${idAjuda}` : `${idDoAviso} ${idAjuda} ${idErro}`
+          }
           aria-invalid={erro === null ? undefined : true}
           onChange={aoMudar}
           // Duas coisas, e as duas foram medidas numa fotografia:

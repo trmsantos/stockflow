@@ -231,9 +231,10 @@ def qrs_por_documento(
     folhas, e a folha 1 é a que o traz. Em lote pela mesma razão das leituras —
     uma query por documento numa listagem de 50 é o N+1 clássico.
 
-    Vazio para quem não tem QR, que é o caso de hoje: a coluna só se preenche
-    quando a biblioteca que descodifica a imagem for escolhida (ADR 0021,
-    adenda). Até lá este selector devolve `{}` e o cabeçalho vem do modelo.
+    Vazio para quem não tem QR, e isso é um caso normal: uma página sem QR, um
+    QR dobrado, uma fotografia tremida. A coluna preenche-se na normalização,
+    pela `descodificacao.py` (ADR 0021, adenda; dependência decidida a
+    2026-10-19), e onde ficou vazia o cabeçalho vem do modelo.
     """
     if not documento_ids:
         return {}

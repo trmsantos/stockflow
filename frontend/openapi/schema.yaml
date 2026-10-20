@@ -2450,6 +2450,17 @@ components:
         `matches` falso é o sinal mais forte que esta feature produz sobre a
         qualidade de uma leitura — mais forte do que a `confidence`, que o modelo
         reporta de si próprio.
+
+        **As três bases são dinheiro; a taxa e o `matches` não.** A decisão não é
+        automática e vale a pena dizê-la: `lines_base` e `qr_base` são valores
+        **fiscais** do documento, não preços de compra, e podia defender-se que não
+        são "quanto custou". Mas a soma delas *é* o total da fatura — a identidade
+        que a ADR 0021 nomeia — e `lines_base` é literalmente a Σ dos `line_total`
+        que a linha acima esconde: deixá-las visíveis reconstruía por adição o que
+        se tira por ausência. Ficam `rate` e `matches`, que são a **marcação
+        qualitativa** desta leitura e exactamente o trabalho de quem recebe, pela
+        mesma razão pela qual os `warnings` e a `vat_rate` continuam a sair para
+        toda a gente (ADR 0031, adenda dos euros).
       properties:
         rate:
           type: string
@@ -2472,10 +2483,7 @@ components:
         matches:
           type: boolean
       required:
-      - difference
-      - lines_base
       - matches
-      - qr_base
       - rate
     ConflitoDeContagemOut:
       type: object
@@ -3184,6 +3192,14 @@ components:
         `ExtracaoOut` da ADR** — é um campo aditivo, e o nome vai em inglês como os
         vizinhos (decisão 9), apesar de o campo do DTO interno se chamar `motivo`
         como o resto do Python deste repositório.
+
+        ## O `total` é dinheiro, e sai por ausência
+
+        É o mesmo número que o `document_total` de uma receção — a adenda dos euros
+        da ADR 0031 tirou-o lá e tem de o tirar aqui, ou a decisão do dono vivia
+        numa rota e não na outra. As quantidades, a `unit` do papel, a
+        `description`, o `supplier_code`, o `ean`, a `vat_rate` e a `confidence`
+        continuam a sair para toda a gente: nenhum deles diz quanto custou nada.
       properties:
         state:
           $ref: '#/components/schemas/EstadoDaLeituraEnum'
@@ -3264,7 +3280,6 @@ components:
       - state
       - supplier_name
       - supplier_nif
-      - total
       - vat_checks
     FechoDeContagemInRequest:
       type: object
@@ -3928,7 +3943,24 @@ components:
           nullable: true
     LinhaInRequest:
       type: object
-      description: Entrada para criar linha de receção (à mão).
+      description: |-
+        Entrada para criar linha de receção (à mão).
+
+        Os três campos de referência chamam-se `product`, `packaging` e `location`
+        no contrato e `*_id` do lado de dentro — e a tradução **faltava aqui**,
+        exactamente como faltava no `RevisaoDeLinhaInSerializer` até 2026-10-19. A
+        consequência era a mesma com outro nome: a view entregava o
+        `validated_data` ao Django, que recusa um `UUID` onde a descritora de uma
+        chave estrangeira quer uma instância (*"Cannot assign UUID(...):
+        ReceiptLine.location must be a Location instance"*) — **500 em todos os
+        `POST /receipts/<id>/lines`**, que é o caminho de acrescentar uma linha à
+        mão a uma receção.
+
+        Os três têm `required=False` e isso continua a ser o contrato: uma linha
+        acrescentada à mão nasce por rever, e é a revisão que lhe escolhe o artigo.
+        Quem resolve a ausência de `location` é o `services.acrescentar_linha`,
+        porque a coluna é `NOT NULL` e o default certo — a localização da receção —
+        é um facto do domínio e não do transporte.
       properties:
         description:
           type: string
@@ -4020,6 +4052,12 @@ components:
         Os números são `Decimal` com `coerce_to_string` implícito (o default do DRF):
         saem como string no JSON, que é a única forma de um preço não passar por um
         `float` do JavaScript.
+
+        **Os euros só saem para `owner|manager`** — é a mesma decisão do dono e a
+        mesma mecânica do `LinhaOutSerializer`, aplicada ao caminho irmão. A ADR
+        0031 (adenda dos euros) fechou a receção e deixou esta janela aberta sobre
+        **a mesma fatura e os mesmos preços**: um colaborador que abrisse o
+        documento via o painel de leitura inteiro.
       properties:
         position:
           type: integer
@@ -4068,18 +4106,15 @@ components:
       required:
       - confidence
       - description
-      - discount_pct
       - ean
-      - line_total
       - position
       - quantity
       - supplier_code
       - unit
-      - unit_price
       - vat_rate
     LinhaOut:
       type: object
-      description: Saída de linha de receção.
+      description: Saída de linha de receção. Os euros só saem para `owner|manager`.
       properties:
         id:
           type: string
@@ -4195,20 +4230,17 @@ components:
       - base_per_invoice_unit
       - conservation
       - description
-      - discount_pct
       - ean
       - expires_at
       - expiry_kind
       - id
       - invoice_unit
       - kind
-      - line_total
       - location
       - lot_code
       - movement
       - packaging
       - position
-      - price_history
       - product
       - product_name
       - quantity_invoiced
@@ -4219,7 +4251,6 @@ components:
       - status
       - stock_quantity
       - supplier_code
-      - unit_price
       - variable_weight
       - vat_rate
       - warnings
@@ -5326,7 +5357,7 @@ components:
       - location
     RececaoOut:
       type: object
-      description: Saída de receção.
+      description: Saída de receção. Os totais em euros só saem para `owner|manager`.
       properties:
         id:
           type: string
@@ -5434,14 +5465,13 @@ components:
       - doc_number
       - doc_type
       - document
-      - document_total
       - id
       - received_at
       - reference
       - supplier_id
     RececaoOutRequest:
       type: object
-      description: Saída de receção.
+      description: Saída de receção. Os totais em euros só saem para `owner|manager`.
       properties:
         id:
           type: string
@@ -5498,7 +5528,6 @@ components:
       - doc_number
       - doc_type
       - document
-      - document_total
       - id
       - received_at
       - reference

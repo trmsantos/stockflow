@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { CLASSE_MICROROTULO } from "@/components/tabela";
 import { formatFileSize, formatTime } from "@/lib/format";
 
+import { MINUTOS_ATE_DESISTIR } from "../api-de-documentos";
 import type { Documento } from "../schemas-de-documento";
 import { textos } from "../textos";
 import {
@@ -194,8 +195,8 @@ export function PainelDoDocumento({
                 `aguarda_captura` a ser sondado. */}
             <AlertDescription className="text-pretty">
               {aceitaPaginas
-                ? textos.documento.painel.desistiuCorpoDaCaptura
-                : textos.documento.painel.desistiuCorpo}
+                ? textos.documento.painel.desistiuCorpoDaCaptura(MINUTOS_ATE_DESISTIR)
+                : textos.documento.painel.desistiuCorpo(MINUTOS_ATE_DESISTIR)}
             </AlertDescription>
           </Alert>
         </div>

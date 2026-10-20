@@ -32,6 +32,7 @@ export const EN: typeof PT = {
     verAsRececoes: "View goods receipts",
     aGuardar: "Saving…",
     semNumero: "no number",
+    semFornecedor: "supplier not identified yet",
     outroAdquirente: "another customer",
     as: "at",
     dataEHora: (data: string, hora: string) => `${data} at ${hora}`,
@@ -102,7 +103,8 @@ export const EN: typeof PT = {
         "Fifteen minutes went by without a single page arriving, and the document expired. Nothing was lost: open another one and send the file.",
       aNormalizar:
         "The pages arrived and are being prepared for reading. You can leave this screen — the document stays in the list.",
-      aExtrair: "The pages are prepared and the model is reading the document.",
+      aExtrair:
+        "The pages are prepared and the model is reading the document. A two-sheet invoice takes seconds; a ten-sheet document can take up to two minutes. You can leave this screen — the result is kept on the document.",
       lido:
         "The model read the document. What it read is below, read-only: nothing enters stock until someone confirms the lines.",
       ilegivel:
@@ -156,6 +158,12 @@ export const EN: typeof PT = {
         "The code was opened at an establishment this account cannot reach. Sign in with the right account, or ask whoever opened the document to open it where you work.",
     },
 
+    privacidade: {
+      titulo: "Before you send: where the image goes",
+      corpo:
+        "To read the document, the image leaves our server and goes to another company's artificial intelligence service. We are on that service's free plan, and on a free plan the image can be kept there and used to train the model. An invoice shows the supplier's NIF, this establishment's NIF and an address — so, for now, only send demonstration invoices and never a real one.",
+    },
+
     zona: {
       rotulo: "File or photograph of the document",
       rotuloParaSlot: "Add the next page",
@@ -192,10 +200,10 @@ export const EN: typeof PT = {
       aindaAceitaPaginas:
         "The document is open and already has pages. Add the sheets that are missing and say that you are done — that tap is what sends it for reading.",
       desistiuTitulo: "I stopped asking",
-      desistiuCorpo:
-        "Three minutes went by and the document is still being prepared. The work was not lost — when it is ready it shows up in the document list below. Reloading this page asks again.",
-      desistiuCorpoDaCaptura:
-        "Three minutes went by and no page arrived. Nothing was lost: the pages the phone already sent are below, and the document takes more until it expires. Reloading this page starts following again.",
+      desistiuCorpo: (minutos: number) =>
+        `${String(minutos)} minutes went by and the document is still being prepared. The work was not lost — when it is ready it shows up in the document list below. Reloading this page asks again.`,
+      desistiuCorpoDaCaptura: (minutos: number) =>
+        `${String(minutos)} minutes went by and no page arrived. Nothing was lost: the pages the phone already sent are below, and the document takes more until it expires. Reloading this page starts following again.`,
       abrirOutro: "Open another document",
       aCarregar: "Loading the document…",
       erroAoCarregar: "Could not load this document",
@@ -248,8 +256,50 @@ export const EN: typeof PT = {
         confianca: "Confidence",
       },
       tabela: "Lines the model read, in the order they appear on the document",
-      semLinhas:
-        "The model returned no lines. A document without lines can never bring goods into stock.",
+      semRazao:
+        "The reading did not finish and the server left no reason. You can ask for another reading, or book the goods in by hand.",
+      semLinhasTitulo: "The model found no lines in this image",
+      semLinhasCorpo:
+        "The reading ran, and there is nothing to show: either the image is not an invoice with lines, or it is a document that legitimately has none, such as a credit note with amounts only. A document without lines brings no goods into stock.",
+      confirmar: "check",
+      eurosDeQuemGere:
+        "The amounts in euros on this document belong to whoever manages the establishment. The quantities, the units and the VAT rates are the ones the model read — that is what there is to check against the paper.",
+      legendaDoMarcador: (quantas: number) =>
+        quantas === 1
+          ? "One line is marked because the model read it with low confidence, or gave none at all. The mark blocks nothing — check it against the paper, like every other line."
+          : `${String(quantas)} lines are marked because the model read them with low confidence, or gave none at all. The mark blocks nothing — check them against the paper, like every other line.`,
+    },
+
+    qr: {
+      semQr:
+        "This document has no readable QR code, which is normal. The header above is what the model read from the image, not certified data.",
+      titulo: "The QR code",
+      oQrGanha:
+        "The QR code is produced by certified software, so the header above is its own. Where the paper said something else, it is written below.",
+      atcud: "ATCUD",
+      espacoFiscal: "Tax region",
+      anuladoTitulo: "The issuer cancelled this document",
+      anuladoCorpo:
+        "The QR code says this document was cancelled by whoever issued it, so it brings no goods into stock. Ask the supplier for the correct document.",
+      ivaNaoBateTitulo: "The lines do not add up to what the QR says",
+      ivaNaoBateCorpo:
+        "The sum of the lines that were read does not match the taxable base in the QR code, which is a certified value. Almost always a whole line is missing, or a value was misread.",
+      taxa: (percentagem: string) => `VAT ${percentagem}`,
+      naoBate: "— does not match",
+      somaDasLinhas: "sum of the lines",
+      baseDoQr: "QR base",
+      diferenca: "difference",
+      divergenciasTitulo: "Where the paper and the QR disagree",
+      oPapelDiz: "the paper says",
+      oQrDiz: "the QR says",
+    },
+
+    saida: {
+      tentarOutraVez: "Try reading again",
+      aPedir: "Asking…",
+      reverAMao: "Book in by hand",
+      semTentativas: (maximo: number) =>
+        `This document has already been read ${String(maximo)} times, which is the maximum. Book the goods in by hand, or send a better photograph on a new document.`,
     },
 
     lista: {
@@ -362,6 +412,8 @@ export const EN: typeof PT = {
     notaDeCredito: "A credit note credits value; it does not bring goods in.",
     guiaSemPrecos:
       "This delivery note carries no prices — there are no totals to check. The value arrives with the invoice.",
+    eurosDeQuemGere:
+      "The amounts on this document are for whoever manages the restaurant. Quantities, lot codes and expiry dates are all above — that is what there is to check.",
     baseAIva: "base at VAT",
     total: "total",
     taxasDaLinha: "the rates are those of each invoice line — they are not taken from the item",

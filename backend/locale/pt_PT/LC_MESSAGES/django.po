@@ -431,3 +431,16 @@ msgstr "O assistente ainda está a responder à pergunta anterior desta conversa
 
 msgid "This conversation has reached its limit of questions. Start a new one."
 msgstr "Esta conversa chegou ao limite de perguntas. Começa uma nova."
+
+# ---------------------------------------------------------------------------
+# O portão humano da revisão de linhas (ADR 0031): `apps/purchasing/services.py`.
+# ---------------------------------------------------------------------------
+# A linha de mercadoria por casar é o estado **normal** da primeira fatura de um
+# fornecedor novo — a correspondência é por chave exacta e não há correspondência
+# difusa por descrição (decisão 5) —, e confirmar antes de escolher o artigo
+# respondia 500. A frase diz o que fazer e dá as duas saídas do ecrã: escolher o
+# artigo, ou deixar a linha fora da entrada. Sem `kind`, sem `goods` e sem o nome
+# de exceção nenhuma: quem a lê está a conferir mercadoria com a fatura na mão.
+
+msgid "Choose the item for this line before confirming it, or leave the line out of this entry."
+msgstr "Escolha o artigo desta linha antes de a confirmar, ou deixe a linha fora desta entrada."

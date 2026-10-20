@@ -23,15 +23,16 @@ import { documentoSchema, type Documento } from "./schemas-de-documento";
  * ficheiro com as duas metades esconderia qual é qual, e é precisamente essa a
  * pergunta de quem vem corrigir um erro de rede.
  *
- * ## As cinco escritas e o que cada uma invalida
+ * ## As seis escritas e o que cada uma invalida
  *
  * Nenhuma toca no ledger, e isso é a propriedade que esta fatia tem de
- * encarnar: **um documento não é stock.** Criar, anexar, fechar e descartar
- * mexem na lista de documentos e em mais nada — não há `useInvalidarLedger`
- * neste ficheiro, e não é por esquecimento. O `receipt` de um documento é
- * sempre nulo nesta fatia, logo não há sequer uma receção a invalidar.
+ * encarnar: **um documento não é stock.** Criar, anexar, fechar, descartar e
+ * voltar a pedir a leitura mexem na lista de documentos e em mais nada — não há
+ * `useInvalidarLedger` neste ficheiro, e não é por esquecimento. Quem escreve no
+ * ledger é a confirmação de uma receção, noutro ficheiro e depois de uma pessoa
+ * tocar em todas as linhas.
  *
- * ## Sem update optimista, em nenhuma das quatro
+ * ## Sem update optimista, em nenhuma das seis
  *
  * Quem decide o estado é o servidor, e o estado é **derivado**: se um upload
  * nasce fechado, se um slot já expirou, se as páginas detectadas num PDF são
@@ -43,6 +44,10 @@ import { documentoSchema, type Documento } from "./schemas-de-documento";
  * (`discarded_at`, a linha fica). Não é reversível **pelo ecrã** — não há
  * endpoint que o desfaça —, e um update optimista numa acção que o utilizador
  * não pode anular é uma promessa que o cliente faz sozinho.
+ *
+ * E a sexta, a releitura, é a menos reversível de todas: **custa dinheiro e
+ * gasta uma das três tentativas do documento.** Pintar o estado antes de o
+ * servidor responder seria mostrar uma tentativa que pode nunca ter sido aceite.
  */
 
 const CAMINHO_DOCUMENTOS = "/documents";
@@ -59,16 +64,40 @@ const RECURSO_DOCUMENTOS = "documents";
 const INTERVALO_DE_SONDAGEM_MS = 2_000;
 
 /**
- * A desistência: 3 minutos (ADR 0020, decisão 3).
+ * A desistência: **10 minutos, que é o relógio do servidor** (ADR 0020, decisão
+ * 3; ADR 0031, decisão 7).
  *
- * A conta dela: 90 pedidos no máximo por documento, 30/min de um desktop contra
- * os 600/min por IP da zona `geral` do proxy — 5 % do orçamento. E a razão de
- * haver um teto é melhor do que o orçamento: **o polling é conveniência, o
- * caminho é a lista.** Aos três minutos o ecrã diz que o documento aparece na
- * lista quando ficar pronto, em vez de sondar para sempre um worker que pode
- * nunca responder.
+ * ## Eram 3 minutos, e com a extração a correr a sério isso passou a ser cedo
+ *
+ * O teto existe por uma razão que não mudou — *o polling é conveniência, o
+ * caminho é a lista* —, mas o número estava calibrado para um mundo em que o
+ * `a_extrair` durava zero: até à ADR 0031 chegava-se a ele e caía-se logo em
+ * `erro`, porque não havia modelo configurado. Agora é um estado real, com um
+ * `AGENTS_EXTRACTION_TIMEOUT_S` de 120 s para **uma** chamada de até dez
+ * imagens, mais a normalização das páginas e o tempo de fila do worker. Um
+ * documento de dez folhas passa dos três minutos sem nada estar mal.
+ *
+ * E a frase que o teto escreve no ecrã é forte: *"deixei de perguntar"*. Dizê-la
+ * enquanto o servidor ainda considera o trabalho vivo é o cliente a desistir
+ * antes do dono do relógio. O relógio do servidor é de **10 minutos** — o que
+ * faz um `a_extrair` passar a `erro` (`models.estado_do_documento`) —, e é esse
+ * o número honesto: aos 10 minutos ou o documento mudou de estado, ou o próprio
+ * servidor já o deu como perdido.
+ *
+ * A conta: 2 s durante 10 minutos são 300 pedidos no máximo por documento, e o
+ * que o proxy limita é a **taxa** — 30/min contra os 600/min por IP da zona
+ * `geral`, 5 % do orçamento, exactamente como antes. O que subiu foi o total por
+ * documento, e um total por documento não é o que nenhuma zona limita.
  */
-const TETO_DE_SONDAGEM_MS = 3 * 60 * 1_000;
+const TETO_DE_SONDAGEM_MS = 10 * 60 * 1_000;
+
+/**
+ * O mesmo teto em minutos, para a frase que o ecrã escreve.
+ *
+ * Exportado em vez de repetido na copy: a frase dizia "três minutos" em duas
+ * línguas e o número vivia em três sítios. Agora vive num.
+ */
+export const MINUTOS_ATE_DESISTIR = TETO_DE_SONDAGEM_MS / 60_000;
 
 /**
  * Os três estados em que vale a pena sondar, e o terceiro entrou com o código QR.
@@ -131,8 +160,8 @@ export function useDocumentos(): UseQueryResult<Paginated<Documento>> {
 export interface DocumentoSondado {
   readonly consulta: UseQueryResult<Documento>;
   /**
-   * `true` quando passaram os 3 minutos e o documento continua a normalizar ou
-   * a extrair. É o estado que o ecrã **tem de dizer**: a alternativa é um
+   * `true` quando passou o teto de sondagem e o documento continua a normalizar
+   * ou a extrair. É o estado que o ecrã **tem de dizer**: a alternativa é um
    * indicador que roda para sempre, que é a forma mais barata de mentir.
    */
   readonly desistiu: boolean;
@@ -337,6 +366,47 @@ export function useFecharDocumento(): UseMutationResult<Documento, Error, string
   return useMutation({
     mutationFn: (documento: string) =>
       apiRequest(`${CAMINHO_DOCUMENTOS}/${documento}/closing`, documentoSchema, {
+        method: "POST",
+      }),
+    onSuccess: async () => {
+      await invalidarDocumentos(queryClient, tenant);
+    },
+  });
+}
+
+/**
+ * Voltar a pedir a leitura ao modelo: o *tentar outra vez* do ramo de erro.
+ *
+ * ## Não é um segundo `closing`, e a diferença é dinheiro
+ *
+ * O fecho é **repetível de propósito** — fechar duas vezes devolve 200 e não
+ * agenda trabalho duas vezes —, e isso existe para um duplo toque num telemóvel
+ * não pagar duas leituras. Reutilizá-lo como botão de repetir obrigava a
+ * destruir essa propriedade, e com ela o que ela protege. Este endpoint é o
+ * oposto e também de propósito: **quer** pagar outra leitura, porque uma pessoa
+ * a pediu (ADR 0031, decisão 7).
+ *
+ * `202` e não `200`: o trabalho fica aceite e não feito. Quem o faz é o worker, e
+ * o cliente descobre o resultado pela sondagem que já existe — nenhuma máquina
+ * nova, nenhum `job_id`, nenhum websocket.
+ *
+ * ## As três recusas vêm todas em 409, e o ecrã não as distingue
+ *
+ * Receção já confirmada, documento a ser lido neste momento, tentativas
+ * esgotadas: o servidor devolve o mesmo `releitura_recusada` com uma frase que
+ * cobre as três. O ecrã mostra essa frase **sem a reescrever** e esconde o botão
+ * quando já sabe, pelo `attempt`, que ela vai acontecer.
+ *
+ * Invalida o mesmo que as irmãs: a resposta é o `DocumentoOut` completo, logo a
+ * cache do detalhe fica certa pela mutação e a lista pela invalidação.
+ */
+export function usePedirNovaLeitura(): UseMutationResult<Documento, Error, string> {
+  const queryClient = useQueryClient();
+  const tenant = tenantDaCache();
+
+  return useMutation({
+    mutationFn: (documento: string) =>
+      apiRequest(`${CAMINHO_DOCUMENTOS}/${documento}/extraction`, documentoSchema, {
         method: "POST",
       }),
     onSuccess: async () => {

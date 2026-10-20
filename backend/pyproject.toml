@@ -31,6 +31,7 @@ dependencies = [
     "pydantic>=2.14.1",
     "pyvips>=3.2.0",
     "redis>=8.1.0",
+    "zxing-cpp>=3.1.1",
 ]
 
 [dependency-groups]

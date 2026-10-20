@@ -20,7 +20,10 @@ instruções.
    próprias com fallback para as do chat, tectos de páginas e de euros;
 3. **o QR** — ganha no cabeçalho, guarda a divergência, recusa `E=A`, e confere
    Σ das linhas por taxa contra a base por taxa;
-4. **a sementeira** — as 17 regras, uma a uma, com o número da regra no nome.
+4. **a sementeira** — as 17 regras, uma a uma, com o número da regra no nome;
+5. **o que a revisão de segurança apanhou** — o nome de quem reviu (e nunca o
+   email), a `position` repetida de um documento de duas folhas e a quantidade
+   que não cabe na coluna. Os três são do conteúdo da fatura para dentro.
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ from apps.agents.prompt_extracao import VERSAO_DO_PROMPT_DA_EXTRACAO, prompt_de_
 from apps.agents.tasks import extrair_documento
 from apps.catalog.models import Product, ProductPackaging, Supplier, UnidadeBase
 from apps.inventory.models import Location
+from apps.purchasing.classificacao import AVISO_SEM_CONVERSAO
 from apps.purchasing.models import DocumentPage, Receipt, ReceiptLine
 from apps.purchasing.qr import ler_qr
 from apps.purchasing.rasterizacao import ImagemNormalizada
@@ -122,6 +126,9 @@ class ClienteFalso:
 class Cenario:
     alfa: Tenant
     ana: User
+    #: O colaborador do mesmo estabelecimento. Existe para a secção 6: recebe
+    #: mercadoria como a Ana e **não** vê euros nenhuns (ADR 0031, adenda).
+    bruno: User
     loja: Location
     fornecedor: Supplier
     farinha: Product
@@ -172,10 +179,14 @@ def falso(monkeypatch: pytest.MonkeyPatch) -> ClienteFalso:
 @pytest.fixture
 def cenario(transactional_db: None) -> Cenario:
     ana = User.objects.create_user("ana@alfa.pt", CREDENCIAL)
+    bruno = User.objects.create_user("bruno@alfa.pt", CREDENCIAL)
     alfa = criar_tenant(name="Pastelaria Alfa")
     with tenant_scope(alfa.id):
         conceder_pertenca(
             user=ana, tenant_id=alfa.id, role=Papel.OWNER, display_name="Ana Silva"
+        )
+        conceder_pertenca(
+            user=bruno, tenant_id=alfa.id, role=Papel.STAFF, display_name="Bruno Dias"
         )
         loja = Location.objects.create(tenant=alfa, name="Loja", position=1)
         fornecedor = Supplier.objects.create(
@@ -198,6 +209,7 @@ def cenario(transactional_db: None) -> Cenario:
     return Cenario(
         alfa=alfa,
         ana=ana,
+        bruno=bruno,
         loja=loja,
         fornecedor=fornecedor,
         farinha=farinha,
@@ -205,13 +217,18 @@ def cenario(transactional_db: None) -> Cenario:
     )
 
 
-def _cliente(cenario: Cenario) -> Client:
+def _sessao_de(cenario: Cenario, utilizador: User) -> Client:
+    """Um cliente com sessão iniciada e o estabelecimento escolhido."""
     cliente = Client()
-    cliente.force_login(cenario.ana, backend=BACKEND_DE_SESSAO)
+    cliente.force_login(utilizador, backend=BACKEND_DE_SESSAO)
     sessao = cliente.session
     sessao[SESSION_TENANT_KEY] = str(cenario.alfa.id)
     sessao.save()
     return cliente
+
+
+def _cliente(cenario: Cenario) -> Client:
+    return _sessao_de(cenario, cenario.ana)
 
 
 def _documento(cliente: Client, *, paginas: int = 1) -> str:
@@ -231,13 +248,15 @@ def _tentativa(tenant_id: UUID, documento_id: str) -> Extraction:
 
 
 def _escrever_qr(tenant_id: UUID, documento_id: str, payload: str) -> None:
-    """Põe um QR na primeira página deste documento.
+    """Põe um QR na primeira página deste documento, **sem passar pela imagem**.
 
-    Por `update()` e fora de `services.py` de propósito: **não há caso de uso
-    que escreva o `qr_payload`** — a biblioteca que descodifica a imagem é uma
-    dependência por decidir (ADR 0021, adenda), e um teste que a fingisse num
-    serviço inventava um caminho que o código não tem. O que se mede é o que
-    acontece **depois** de a coluna estar preenchida.
+    Por `update()` e fora de `services.py` de propósito, e a razão mudou a
+    2026-10-19: já **há** quem escreva esta coluna (a normalização, com a
+    `zxing-cpp` a ler a imagem), e o teste que exercita esse caminho inteiro é o
+    `test_o_qr_descodificado_na_normalizacao_ganha_ao_modelo`, aqui ao lado. O
+    que estes outros medem é a **semântica** do cabeçalho — quem ganha, o que
+    diverge, o que se recusa —, e fazê-los passar por um descodificador dava-lhes
+    um segundo motivo de falha que não é o deles.
     """
     with tenant_scope(tenant_id):
         DocumentPage.objects.filter(document_id=documento_id, position=1).update(
@@ -569,6 +588,74 @@ def test_um_texto_qualquer_nao_e_um_qr_de_fatura() -> None:
     assert ler_qr("") is None
     assert ler_qr("olá: bom dia") is None
     assert ler_qr("D:FT*E:N") is None
+
+
+def test_o_qr_descodificado_na_normalizacao_ganha_ao_modelo(
+    cenario: Cenario, falso: ClienteFalso, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ponta a ponta: pixéis → coluna → porto → cabeçalho servido.
+
+    Este é o teste que faz correr a lógica que a ADR 0031 deixou **inerte**: o
+    `aplicar_qr` existia e nunca tinha um payload por baixo, porque ninguém
+    escrevia a coluna. O QR aqui não é um valor encenado — é descodificado pela
+    `zxing-cpp` a partir de pixéis gerados no teste, e a asserção do meio prova
+    isso antes de o resto correr.
+
+    O que fica substituído é só a libvips (que não existe numa máquina de
+    desenvolvimento) e o modelo (que fala com a rede): a fronteira do QR, a
+    escrita da coluna, o porto da extração e a composição do cabeçalho correm
+    todos a sério.
+    """
+    import apps.purchasing.tasks as tarefas_do_purchasing
+    from apps.purchasing.descodificacao import payload_da_at
+    from tests.qr_de_ensaio import luminancia_com_qr
+
+    pagina = luminancia_com_qr(QR_PT)
+    descodificado = payload_da_at(
+        luminancia=pagina.luminancia, largura=pagina.largura, altura=pagina.altura
+    )
+    assert descodificado == QR_PT
+
+    monkeypatch.setattr(
+        tarefas_do_purchasing,
+        "rasterizar",
+        lambda **_: ImagemNormalizada(
+            webp=IMAGEM, width=1240, height=1754, qr_payload=descodificado
+        ),
+    )
+    falso.respostas.append(
+        _resposta_json(
+            {
+                "supplier_name": "Moagem do Vale",
+                "supplier_nif": "500000002",
+                "doc_type": "FS",
+                "lines": [_linha(1, "FARINHA T65 25KG", total="72.26", taxa="6")],
+            }
+        )
+    )
+    cliente = _cliente(cenario)
+    documento_id = _documento(cliente)
+
+    with tenant_scope(cenario.alfa.id):
+        assert (
+            DocumentPage.objects.get(document_id=documento_id, position=1).qr_payload
+            == QR_PT
+        )
+
+    extracao = cliente.get(f"{URL}/{documento_id}").json()["extraction"]
+
+    assert extracao["qr_read"] is True
+    # O NIF servido é o que o software certificado assinou, e não o que o modelo
+    # leu de uma fotografia.
+    assert extracao["supplier_nif"] == "500000001"
+    assert extracao["doc_type"] == "FT"
+    assert extracao["atcud"] == "JFBD7CJ9-1174"
+    divergencias = {d["field"]: (d["paper"], d["qr"]) for d in extracao["divergences"]}
+    assert divergencias["supplier_nif"] == ("500000002", "500000001")
+    # E a conferência por taxa, que só existe porque há QR, já corre sobre as
+    # linhas que o modelo leu.
+    conferencias = {c["rate"]: c for c in extracao["vat_checks"]}
+    assert conferencias["6.000"]["matches"] is True
 
 
 def test_o_qr_ganha_no_cabecalho_e_a_divergencia_fica_visivel(
@@ -1427,3 +1514,344 @@ def test_um_qr_forjado_nao_rebenta_a_escrita_do_cabecalho(
     assert len(rececao.atcud) <= 50
     assert len(rececao.fiscal_space) <= 5
     assert rececao.doc_type == "", "uma sigla que não é das seis não entra"
+
+
+# ===========================================================================
+# 5. O que a revisão de segurança apanhou (2026-10-19)
+# ===========================================================================
+def test_quem_reviu_e_quem_confirmou_saem_por_nome_e_nunca_por_email(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """O autor de uma revisão é o nome da pertença, nunca o endereço de email.
+
+    `reviewed_by` e `confirmed_by` são servidos a **qualquer** membro do
+    estabelecimento, incluindo `staff`. Gravar lá o email punha o endereço de um
+    colega na resposta de um `GET` — a mesma fuga que o `accounts.api` já evita
+    ao servir o email só ao `OWNER`. O nome certo é o `display_name` da
+    pertença, que é o nome da pessoa **naquele** tenant e o que o
+    `criar_documento` já usa.
+
+    Quem foi continua gravado: é a coluna `reviewed_by`/`confirmed_by`, por id,
+    e essa não sai no payload.
+    """
+    cliente, _, receipt_id = _semear(
+        cenario,
+        falso,
+        [_linha(1, "FARINHA T65 25KG"), _linha(2, "AZEITE 5L")],
+    )
+    primeira, _segunda = _linhas_semeadas(cenario.alfa.id, receipt_id)
+
+    revisao = cliente.post(
+        f"/api/v1/receipts/{receipt_id}/lines/{primeira.id}/confirmation",
+        data={"product": str(cenario.farinha.id), "base_per_invoice_unit": "1000.000"},
+        content_type="application/json",
+    )
+    assert revisao.status_code == 201, revisao.content
+    assert revisao.json()["reviewed_by"] == "Ana Silva"
+
+    confirmacao = cliente.post(f"/api/v1/receipts/{receipt_id}/confirmation")
+    assert confirmacao.status_code == 201, confirmacao.content
+    assert confirmacao.json()["confirmed_by"] == "Ana Silva"
+
+    servidas = _servidas(cliente, receipt_id)
+    assert [linha["reviewed_by"] for linha in servidas] == ["Ana Silva", "Ana Silva"]
+    assert "ana@alfa.pt" not in json.dumps(servidas)
+    assert "ana@alfa.pt" not in confirmacao.content.decode()
+
+    with tenant_scope(cenario.alfa.id):
+        rececao = Receipt.objects.get(pk=receipt_id)
+        gravados = set(
+            ReceiptLine.objects.filter(receipt_id=receipt_id).values_list(
+                "reviewed_by_name", flat=True
+            )
+        )
+    assert gravados == {"Ana Silva"}
+    assert rececao.confirmed_by_name == "Ana Silva"
+    assert rececao.confirmed_by_id == cenario.ana.id, "quem foi fica, e fica por id"
+
+
+def test_a_temperatura_tambem_se_regista_pelo_nome_da_pertenca(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """O mesmo carimbo, no terceiro sítio onde se escreve um nome.
+
+    O `measured_by_name` lia `request.user.get_full_name() or
+    request.user.username`, e o `User` deste projecto **não tem nenhum dos
+    dois** — o `USERNAME_FIELD` é o `email` e o nome vive na pertença. Era um
+    `AttributeError`, ou seja um 500, em todos os registos de temperatura.
+    """
+    cliente, _, receipt_id = _semear(cenario, falso, [_linha(1, "FARINHA T65 25KG")])
+
+    resposta = cliente.post(
+        f"/api/v1/receipts/{receipt_id}/temperature",
+        data={"conservation": "chilled", "celsius": "3.5"},
+        content_type="application/json",
+    )
+
+    assert resposta.status_code == 201, resposta.content
+    with tenant_scope(cenario.alfa.id):
+        rececao = Receipt.objects.get(pk=receipt_id)
+    assert rececao.chilled_measured_by_name == "Ana Silva"
+
+
+def test_duas_folhas_com_a_numeracao_reiniciada_semeiam_se_na_mesma(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """A `position` do modelo é texto não confiável e não é a chave da coluna.
+
+    Um documento de várias folhas em que o modelo reinicia a numeração na folha
+    2 dava duas linhas com a mesma `position`, `IntegrityError` dentro do
+    `bulk_create` e **500 em `POST /receipts`** — e como o payload fica
+    guardado, todas as tentativas seguintes falhavam igual: o caminho
+    documento→receção ficava morto para aquele documento.
+
+    A numeração é nossa, densa e pela ordem lida. O arrasto que se deita fora
+    deixa de abrir um buraco nela, que é a segunda forma de a `position` do
+    papel não ser uma chave.
+    """
+    cliente, _, receipt_id = _semear(
+        cenario,
+        falso,
+        [
+            # Folha 1
+            _linha(1, "FARINHA T65 25KG"),
+            _linha(2, "AZEITE 5L"),
+            # Folha 2, com a numeração reiniciada e um arrasto no topo
+            _linha(1, "A transportar", quantidade=None, preco=None, total="42.23"),
+            _linha(2, "MANTEIGA 1KG"),
+            _linha(3, "ACUCAR 1KG"),
+        ],
+    )
+
+    semeadas = _linhas_semeadas(cenario.alfa.id, receipt_id)
+    assert [linha.position for linha in semeadas] == [1, 2, 3, 4]
+    assert {linha.description for linha in semeadas} == {
+        "FARINHA T65 25KG",
+        "AZEITE 5L",
+        "MANTEIGA 1KG",
+        "ACUCAR 1KG",
+    }
+    assert [linha["position"] for linha in _servidas(cliente, receipt_id)] == [1, 2, 3, 4]
+
+
+def test_uma_quantidade_absurda_marca_a_linha_e_nunca_rebenta_a_escrita(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """O tecto da quantidade é o da coluna, e corta-se na fronteira.
+
+    `quantity` aceita até `999999999,999` e o factor KG→g é 1000: o produto não
+    cabe em `Decimal(12,3)` e era um `DataError` do Postgres — **500 em `POST
+    /receipts`**, o segundo causado pelo conteúdo de uma fatura. O reflexo é o
+    que o `qr.py` já tem com o `_DINHEIRO_MAXIMO`: um número que não cabe não é
+    um valor melhor do que uma ausência.
+
+    O que a pessoa vê é a linha marcada com `sem_conversao` e a quantidade por
+    escrever — e a revisão dessa mesma linha também não rebenta.
+    """
+    _memorizar(cenario, codigo="7734", nif="500000000")
+    cliente, _, receipt_id = _semear(
+        cenario,
+        falso,
+        [
+            _linha(1, "FARINHA T65", quantidade="999999999.999", codigo="7734"),
+            _linha(2, "FARINHA T65", quantidade="2.500", codigo="7734"),
+        ],
+        cabecalho={"supplier_nif": "500000000"},
+    )
+
+    absurda, normal = _linhas_semeadas(cenario.alfa.id, receipt_id)
+    assert absurda.quantity_received == Decimal("0"), "nunca um número truncado"
+    assert absurda.quantity_invoiced == Decimal("999999999.999"), "o papel não muda"
+    assert absurda.base_per_invoice_unit is None, "a conversão que não cabe é uma ausência"
+    assert normal.base_per_invoice_unit == Decimal("1000.000"), "a linha ao lado converte-se"
+    assert normal.quantity_received == Decimal("2500.000")
+
+    servidas = _servidas(cliente, receipt_id)
+    assert AVISO_SEM_CONVERSAO in servidas[0]["warnings"]
+
+    revisao = cliente.post(
+        f"/api/v1/receipts/{receipt_id}/lines/{absurda.id}/confirmation",
+        data={"product": str(cenario.farinha.id), "base_per_invoice_unit": "1000.000"},
+        content_type="application/json",
+    )
+    assert revisao.status_code == 201, revisao.content
+    assert Decimal(revisao.json()["quantity_received"]) == Decimal("0")
+
+
+# ===========================================================================
+# 6. Os euros do painel de leitura são de `owner|manager`
+#
+# A adenda da ADR 0031 fechou os euros de uma **receção** e deixou aberto o
+# caminho irmão: o `ExtracaoOut` do `GET /documents/<id>` serve as linhas **como
+# o modelo as leu da fatura**, com `unit_price`, `line_total` e `discount_pct`,
+# e o endpoint é `IsAuthenticated + PertenceAoTenant` sem papel. Era a mesma
+# fatura e os mesmos preços por outra rota — a decisão do dono contornada.
+#
+# O que estes testes afirmam é a **ausência da chave**, nunca um zero nem um
+# `null`, pela razão escrita no `tests/test_rececoes.py`: um
+# `assert painel["total"] is None` passaria com a fuga meio tapada.
+# ===========================================================================
+
+#: As três famílias de euros do painel, por nível do payload.
+EUROS_DA_EXTRACAO = ("total",)
+EUROS_DA_LINHA_LIDA = ("unit_price", "discount_pct", "line_total")
+EUROS_DA_CONFERENCIA = ("lines_base", "qr_base", "difference")
+
+
+def _painel_lido(cenario: Cenario, falso: ClienteFalso) -> str:
+    """Um documento `lido`, com preços, desconto, QR e as duas divergências.
+
+    O cabeçalho do modelo discorda do QR em **duas** coisas de naturezas
+    diferentes: o número do documento (texto) e o total (euros). É isso que
+    torna visível a diferença entre o que se esconde e o que se mostra.
+    """
+    falso.respostas.append(
+        _resposta_json(
+            {
+                "supplier_name": "Moagem do Vale",
+                "doc_number": "FT A/9999",
+                "total": "199.90",
+                "lines": [
+                    _linha(
+                        1,
+                        "FARINHA T65 25KG",
+                        quantidade="2.000",
+                        unidade="SC",
+                        preco="17.3300",
+                        total="72.26",
+                        taxa="6",
+                        codigo="FAR-25",
+                        ean="5601234567890",
+                        desconto="5.000",
+                    ),
+                    _linha(2, "DETERGENTE 5L", total="90.00", taxa="23"),
+                ],
+            }
+        )
+    )
+    documento_id = _documento(_cliente(cenario))
+    _escrever_qr(cenario.alfa.id, documento_id, QR_PT)
+    return documento_id
+
+
+def test_o_colaborador_nao_ve_os_euros_do_painel_de_extracao(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """A janela do documento fecha-se com a mesma mecânica da porta da receção.
+
+    Três níveis e uma lista: o `total` da leitura, os três campos de cada linha
+    lida, as três bases de cada conferência de IVA, e a divergência cujo campo
+    **é** dinheiro — essa sai inteira, porque uma divergência diz o valor duas
+    vezes.
+    """
+    documento_id = _painel_lido(cenario, falso)
+
+    painel = _sessao_de(cenario, cenario.bruno).get(f"{URL}/{documento_id}").json()
+    extracao = painel["extraction"]
+
+    assert extracao["state"] == "lido"
+    for chave in EUROS_DA_EXTRACAO:
+        assert chave not in extracao, chave
+    assert extracao["lines"], "há linhas para esconder"
+    for linha in extracao["lines"]:
+        for chave in EUROS_DA_LINHA_LIDA:
+            assert chave not in linha, chave
+    assert extracao["vat_checks"], "há conferências para esconder"
+    for conferencia in extracao["vat_checks"]:
+        for chave in EUROS_DA_CONFERENCIA:
+            assert chave not in conferencia, chave
+    campos = [divergencia["field"] for divergencia in extracao["divergences"]]
+    assert "total" not in campos
+
+
+def test_o_colaborador_continua_a_ver_o_que_precisa_para_conferir(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """Quantidade, unidade do papel, descrição, códigos, taxa e confiança ficam.
+
+    Mais a **marcação** da conferência de IVA (`rate` e `matches`) e as
+    divergências que não são dinheiro: nenhuma delas diz quanto custou nada, e
+    todas são exactamente o trabalho de quem recebe a mercadoria.
+    """
+    documento_id = _painel_lido(cenario, falso)
+
+    extracao = (
+        _sessao_de(cenario, cenario.bruno).get(f"{URL}/{documento_id}").json()["extraction"]
+    )
+    primeira = extracao["lines"][0]
+
+    assert primeira["description"] == "FARINHA T65 25KG"
+    assert primeira["quantity"] == "2.000"
+    assert primeira["unit"] == "SC"
+    assert primeira["vat_rate"] == "6.000"
+    assert primeira["supplier_code"] == "FAR-25"
+    assert primeira["ean"] == "5601234567890"
+    assert primeira["confidence"] == "0.950"
+    assert extracao["supplier_name"] == "Moagem do Vale"
+    assert extracao["atcud"] == "JFBD7CJ9-1174"
+    assert extracao["qr_read"] is True
+
+    conferencias = {c["rate"]: c for c in extracao["vat_checks"]}
+    assert conferencias["6.000"]["matches"] is True
+    assert conferencias["23.000"]["matches"] is False
+
+    divergencias = {d["field"]: (d["paper"], d["qr"]) for d in extracao["divergences"]}
+    assert divergencias["doc_number"] == ("FT A/9999", "FT A/1174")
+
+
+def test_o_gerente_ve_os_euros_do_painel_de_extracao(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """O mesmo pedido, com papel que vê euros: está lá tudo, e ao cêntimo."""
+    documento_id = _painel_lido(cenario, falso)
+
+    extracao = _cliente(cenario).get(f"{URL}/{documento_id}").json()["extraction"]
+
+    assert extracao["total"] == "199.60", "o QR ganha, e o valor continua a sair"
+    primeira = extracao["lines"][0]
+    assert primeira["unit_price"] == "17.3300"
+    assert primeira["line_total"] == "72.26"
+    assert primeira["discount_pct"] == "5.000"
+    conferencias = {c["rate"]: c for c in extracao["vat_checks"]}
+    assert conferencias["6.000"]["lines_base"] == "72.26"
+    assert conferencias["6.000"]["qr_base"] == "72.26"
+    assert conferencias["23.000"]["difference"] == "-10.00"
+    divergencias = {d["field"]: (d["paper"], d["qr"]) for d in extracao["divergences"]}
+    assert divergencias["total"] == ("199.90", "199.60")
+
+
+def test_as_rotas_que_servem_um_documento_seguem_todas_a_mesma_regra(
+    cenario: Cenario, falso: ClienteFalso
+) -> None:
+    """A revisão anterior apanhou-nos por **uma rota esquecida**. Aqui estão.
+
+    O `DocumentoOut` sai de cinco sítios mais o 202 da re-extração. Os que
+    podem carregar uma leitura já feita são estes quatro — ler um, listar,
+    fechar outra vez e voltar a ler; o `create` e o `files` partilham o mesmo
+    `_resposta` e nascem sempre sem leitura nenhuma.
+    """
+    documento_id = _painel_lido(cenario, falso)
+    colaborador = _sessao_de(cenario, cenario.bruno)
+
+    um = colaborador.get(f"{URL}/{documento_id}")
+    assert um.status_code == 200
+    lista = colaborador.get(URL)
+    assert lista.status_code == 200
+    fecho = colaborador.post(f"{URL}/{documento_id}/closing")
+    assert fecho.status_code == 200
+    releitura = colaborador.post(f"{URL}/{documento_id}/extraction")
+    assert releitura.status_code == 202
+
+    paineis = [
+        um.json()["extraction"],
+        lista.json()["results"][0]["extraction"],
+        fecho.json()["extraction"],
+        releitura.json()["extraction"],
+    ]
+    for painel in paineis:
+        assert painel is not None
+        assert "total" not in painel
+        assert painel["lines"], "a rota serve mesmo linhas"
+        for linha in painel["lines"]:
+            for chave in EUROS_DA_LINHA_LIDA:
+                assert chave not in linha, chave

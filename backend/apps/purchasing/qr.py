@@ -37,11 +37,13 @@ bases e o IVA por escalão, `N` total de impostos, `O` total). Chaves que não
 conhecemos são **ignoradas em silêncio**: a especificação cresce e um campo novo
 não pode partir a leitura de uma fatura.
 
-Este ficheiro **não descodifica a imagem do QR** — isso é uma dependência que
-ainda não está escolhida (ADR 0021, adenda), e a coluna
-`purchasing_documentpage.qr_payload` fica vazia até lá. O que está aqui é a
+Este ficheiro **não descodifica a imagem do QR**: isso é a `descodificacao.py`,
+a fronteira que fala com a `zxing-cpp` desde 2026-10-19 e que escreve a coluna
+`purchasing_documentpage.qr_payload` ao normalizar a página. O que está aqui é a
 leitura do texto já descodificado, que é pura, determinística e testável sem
-imagem nenhuma.
+imagem nenhuma — e é também o que decide, **para os dois lados**, se um texto é
+um QR da AT: a fronteira pergunta-lhe isso de cada código que encontra, em vez
+de duplicar a validação da forma.
 
 Puro: não toca na base de dados e não importa `models.py`. É isso que lhe permite
 ser usado pelos selectors **e** pelos serviços sem inverter nada.
@@ -60,6 +62,7 @@ from apps.purchasing.extracao import (
 )
 
 __all__ = [
+    "CAMPOS_DE_CABECALHO_EM_EUROS",
     "ESTADO_ANULADO",
     "TAXAS_POR_ESPACO",
     "TOLERANCIA_POR_TAXA",
@@ -68,6 +71,17 @@ __all__ = [
     "bases_por_taxa",
     "ler_qr",
 ]
+
+#: Dos campos que o `aplicar_qr` compara, quais são **dinheiro**. Hoje um só.
+#:
+#: Vive aqui e não no `serializers.py` porque é aqui que as divergências
+#: nascem: quem acrescentar uma comparação de um campo em euros à lista do
+#: `aplicar_qr` tem esta linha a dois ecrãs de distância. Uma
+#: `DivergenciaDoCabecalho` serve `paper` e `qr` como texto, logo a do `total`
+#: diz o total do documento duas vezes — e quem não vê euros não a recebe
+#: (ADR 0031, adenda dos euros). Esconde-se a **linha inteira** e não as duas
+#: colunas: um `{"field": "total"}` sem valores era um aviso sobre nada.
+CAMPOS_DE_CABECALHO_EM_EUROS: frozenset[str] = frozenset({"total"})
 
 #: O valor do campo `E` que diz que o documento foi **anulado**. Os outros
 #: estados da especificação (`N` normal, `F` facturado, `R` autofacturação) não
@@ -304,9 +318,9 @@ def _conferencia(
 def aplicar_qr(leitura: LeituraDeDocumento, payload: str | None) -> LeituraDeDocumento:
     """A leitura com o cabeçalho do QR por cima, e as divergências à vista.
 
-    Sem QR legível devolve a leitura **tal como está** — é o caminho de hoje,
-    enquanto a biblioteca que descodifica a imagem não for escolhida. Com QR, os
-    campos do cabeçalho passam a ser os dele; o que o modelo tinha lá e não bate
+    Sem QR legível devolve a leitura **tal como está** — é o que acontece a uma
+    página sem QR, ou com um QR que a `descodificacao.py` não conseguiu ler. Com
+    QR, os campos do cabeçalho passam a ser os dele; o que o modelo leu e não bate
     fica em `divergencias`, e as linhas **nunca** se tocam: o QR não as tem.
     """
     cabecalho = ler_qr(payload)

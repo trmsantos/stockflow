@@ -216,12 +216,17 @@ export function CartaoDeReceber() {
         {linhas.map((rececao) => (
           <LinhaDoCartao
             key={rececao.id}
-            nome={rececao.supplier.name}
+            nome={rececao.supplier.name ?? textos.inicio.semFornecedor}
             trilho={tintaDoTrilhoDoEstado(rececao.status)}
           >
-            {/* Uma guia de remessa entra sem preços, e dizê-lo é mais honesto
-                do que um "0,00 €" — é a mesma decisão da tabela do Receber. */}
-            {rececao.document_total === null ? (
+            {/* Três estados e não dois, e o terceiro é o silêncio. Uma guia de
+                remessa entra sem preços (`null`) e dizê-lo é mais honesto do que
+                um "0,00 €"; a quem não vê euros a chave **não vem**
+                (`undefined`) e a miniatura não escreve nada no lugar — "sem
+                valor" seria uma afirmação sobre a fatura, e a fatura tem valor.
+                A linha continua a dar o fornecedor e as linhas por rever, que é
+                o trabalho dele. É a mesma decisão da tabela do Receber. */}
+            {rececao.document_total === undefined ? null : rececao.document_total === null ? (
               <span className="shrink-0 text-xs text-muted-foreground">
                 {textos.inicio.semValor}
               </span>

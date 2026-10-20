@@ -43,6 +43,8 @@ export const PT = {
     aCarregarRececoes: "A carregar o que está por dar entrada…",
     vazioRececoes: "nada por dar entrada",
     semValor: "sem valor",
+    /** O documento cujo fornecedor ainda não tem nome. */
+    semFornecedor: "fornecedor por identificar",
 
     contar: "Contar",
     aCarregarContagem: "A carregar a contagem a decorrer…",

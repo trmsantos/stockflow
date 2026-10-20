@@ -1425,15 +1425,26 @@ export interface components {
          *     `matches` falso é o sinal mais forte que esta feature produz sobre a
          *     qualidade de uma leitura — mais forte do que a `confidence`, que o modelo
          *     reporta de si próprio.
+         *
+         *     **As três bases são dinheiro; a taxa e o `matches` não.** A decisão não é
+         *     automática e vale a pena dizê-la: `lines_base` e `qr_base` são valores
+         *     **fiscais** do documento, não preços de compra, e podia defender-se que não
+         *     são "quanto custou". Mas a soma delas *é* o total da fatura — a identidade
+         *     que a ADR 0021 nomeia — e `lines_base` é literalmente a Σ dos `line_total`
+         *     que a linha acima esconde: deixá-las visíveis reconstruía por adição o que
+         *     se tira por ausência. Ficam `rate` e `matches`, que são a **marcação
+         *     qualitativa** desta leitura e exactamente o trabalho de quem recebe, pela
+         *     mesma razão pela qual os `warnings` e a `vat_rate` continuam a sair para
+         *     toda a gente (ADR 0031, adenda dos euros).
          */
         ConferenciaDeIvaOut: {
             /** Format: decimal */
-            difference: string | null;
+            difference?: string | null;
             /** Format: decimal */
-            lines_base: string;
+            lines_base?: string;
             matches: boolean;
             /** Format: decimal */
-            qr_base: string | null;
+            qr_base?: string | null;
             /** Format: decimal */
             rate: string;
         };
@@ -1878,6 +1889,14 @@ export interface components {
          *     `ExtracaoOut` da ADR** — é um campo aditivo, e o nome vai em inglês como os
          *     vizinhos (decisão 9), apesar de o campo do DTO interno se chamar `motivo`
          *     como o resto do Python deste repositório.
+         *
+         *     ## O `total` é dinheiro, e sai por ausência
+         *
+         *     É o mesmo número que o `document_total` de uma receção — a adenda dos euros
+         *     da ADR 0031 tirou-o lá e tem de o tirar aqui, ou a decisão do dono vivia
+         *     numa rota e não na outra. As quantidades, a `unit` do papel, a
+         *     `description`, o `supplier_code`, o `ean`, a `vat_rate` e a `confidence`
+         *     continuam a sair para toda a gente: nenhum deles diz quanto custou nada.
          */
         ExtracaoOut: {
             atcud: string;
@@ -1901,7 +1920,7 @@ export interface components {
             supplier_name: string;
             supplier_nif: string;
             /** Format: decimal */
-            total: string | null;
+            total?: string | null;
             vat_checks: components["schemas"]["ConferenciaDeIvaOut"][];
         };
         /**
@@ -2246,7 +2265,25 @@ export interface components {
             readonly short_name?: string;
             readonly zone?: components["schemas"]["ZonaOut"];
         };
-        /** @description Entrada para criar linha de receção (à mão). */
+        /**
+         * @description Entrada para criar linha de receção (à mão).
+         *
+         *     Os três campos de referência chamam-se `product`, `packaging` e `location`
+         *     no contrato e `*_id` do lado de dentro — e a tradução **faltava aqui**,
+         *     exactamente como faltava no `RevisaoDeLinhaInSerializer` até 2026-10-19. A
+         *     consequência era a mesma com outro nome: a view entregava o
+         *     `validated_data` ao Django, que recusa um `UUID` onde a descritora de uma
+         *     chave estrangeira quer uma instância (*"Cannot assign UUID(...):
+         *     ReceiptLine.location must be a Location instance"*) — **500 em todos os
+         *     `POST /receipts/<id>/lines`**, que é o caminho de acrescentar uma linha à
+         *     mão a uma receção.
+         *
+         *     Os três têm `required=False` e isso continua a ser o contrato: uma linha
+         *     acrescentada à mão nasce por rever, e é a revisão que lhe escolhe o artigo.
+         *     Quem resolve a ausência de `location` é o `services.acrescentar_linha`,
+         *     porque a coluna é `NOT NULL` e o default certo — a localização da receção —
+         *     é um facto do domínio e não do transporte.
+         */
         LinhaInRequest: {
             /** Format: decimal */
             base_per_invoice_unit?: string | null;
@@ -2292,34 +2329,40 @@ export interface components {
          *     Os números são `Decimal` com `coerce_to_string` implícito (o default do DRF):
          *     saem como string no JSON, que é a única forma de um preço não passar por um
          *     `float` do JavaScript.
+         *
+         *     **Os euros só saem para `owner|manager`** — é a mesma decisão do dono e a
+         *     mesma mecânica do `LinhaOutSerializer`, aplicada ao caminho irmão. A ADR
+         *     0031 (adenda dos euros) fechou a receção e deixou esta janela aberta sobre
+         *     **a mesma fatura e os mesmos preços**: um colaborador que abrisse o
+         *     documento via o painel de leitura inteiro.
          */
         LinhaLidaOut: {
             /** Format: decimal */
             confidence: string | null;
             description: string;
             /** Format: decimal */
-            discount_pct: string | null;
+            discount_pct?: string | null;
             ean: string;
             /** Format: decimal */
-            line_total: string | null;
+            line_total?: string | null;
             position: number;
             /** Format: decimal */
             quantity: string | null;
             supplier_code: string;
             unit: string;
             /** Format: decimal */
-            unit_price: string | null;
+            unit_price?: string | null;
             /** Format: decimal */
             vat_rate: string | null;
         };
-        /** @description Saída de linha de receção. */
+        /** @description Saída de linha de receção. Os euros só saem para `owner|manager`. */
         LinhaOut: {
             /** Format: decimal */
             base_per_invoice_unit: string | null;
             conservation: components["schemas"]["LinhaOutConservationEnum"];
             description: string;
             /** Format: decimal */
-            discount_pct: string | null;
+            discount_pct?: string | null;
             ean: string;
             /** Format: date */
             expires_at: string | null;
@@ -2329,14 +2372,14 @@ export interface components {
             invoice_unit: string;
             kind: components["schemas"]["KindEnum"];
             /** Format: decimal */
-            line_total: string | null;
+            line_total?: string | null;
             location: components["schemas"]["LocalizacaoReference"];
             lot_code: string;
             /** Format: uuid */
             movement: string | null;
             packaging: components["schemas"]["EmbalagemReference"] | null;
             position: number;
-            price_history: components["schemas"]["PriceHistory"] | null;
+            price_history?: components["schemas"]["PriceHistory"] | null;
             /** Format: uuid */
             product: string | null;
             product_name: string | null;
@@ -2352,7 +2395,7 @@ export interface components {
             stock_quantity: components["schemas"]["StockQuantity"] | null;
             supplier_code: string;
             /** Format: decimal */
-            unit_price: string | null;
+            unit_price?: string | null;
             variable_weight: boolean;
             /** Format: decimal */
             vat_rate: string | null;
@@ -2965,7 +3008,7 @@ export interface components {
             supplier_name?: string;
             supplier_nif?: string;
         };
-        /** @description Saída de receção. */
+        /** @description Saída de receção. Os totais em euros só saem para `owner|manager`. */
         RececaoOut: {
             readonly awaiting_invoice?: boolean;
             readonly cold_chain?: boolean;
@@ -2983,7 +3026,7 @@ export interface components {
             /** Format: uuid */
             document: string | null;
             /** Format: decimal */
-            document_total: string | null;
+            document_total?: string | null;
             /** Format: uuid */
             id: string;
             readonly line_count?: number;
@@ -3002,7 +3045,7 @@ export interface components {
             readonly temperatures?: components["schemas"]["TemperaturaRegistadaOut"][];
             readonly vat_breakdown?: components["schemas"]["VatBreakdown"][];
         };
-        /** @description Saída de receção. */
+        /** @description Saída de receção. Os totais em euros só saem para `owner|manager`. */
         RececaoOutRequest: {
             /** Format: date-time */
             confirmed_at: string | null;
@@ -3016,7 +3059,7 @@ export interface components {
             /** Format: uuid */
             document: string | null;
             /** Format: decimal */
-            document_total: string | null;
+            document_total?: string | null;
             /** Format: uuid */
             id: string;
             /** Format: date-time */

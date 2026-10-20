@@ -80,7 +80,8 @@ class PaginaDoDocumento:
 
     `imagem` é o caminho relativo ao `MEDIA_ROOT` e está vazio enquanto não
     houver rasterização. `qr_payload` é o que o QR da fatura diz — a verdade do
-    cabeçalho (ADR 0021, adenda) — e está vazio porque não há descodificador.
+    cabeçalho (ADR 0021, adenda) — e preenche-se na normalização, quando a
+    página traz um QR que se leia; vazio é o caso normal de uma página sem QR.
 
     Não leva bytes: quem precisar deles abre o caminho, e hoje ninguém precisa
     porque não há imagem nenhuma. No dia em que o `agents` chamar um modelo a

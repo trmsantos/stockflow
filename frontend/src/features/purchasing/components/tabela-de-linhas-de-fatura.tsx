@@ -106,37 +106,53 @@ import {
 const LOTE_VALIDO = /^[\w\-./ ]{1,40}$/;
 
 /**
- * As oito colunas. Sete levam largura escrita e só o artigo é flexível, que é a
- * distribuição que o ecrã de Alertas chegou a medir num screenshot: sem larguras
- * declaradas o layout automático dá espaço a quem tem o conteúdo mais largo, e
- * numa coluna numérica o conteúdo mais largo é o **cabeçalho** em caixa alta.
+ * As colunas. Todas menos o artigo levam largura escrita, que é a distribuição
+ * que o ecrã de Alertas chegou a medir num screenshot: sem larguras declaradas
+ * o layout automático dá espaço a quem tem o conteúdo mais largo, e numa coluna
+ * numérica o conteúdo mais largo é o **cabeçalho** em caixa alta.
  *
- * A conta (soma do que está declarado abaixo, não uma medição num ecrã — o
- * ensaio headless não correu nesta sessão): o trilho e as sete fixas somam
- * 836px, logo a 1280px, onde a área de conteúdo tem ~1024px, o artigo fica com
- * ~190px e trunca nomes longos; a 1440px fica com ~350px. Truncar o nome é o
- * preço de ter o lote, a validade e o dinheiro à vista ao mesmo tempo; o nome
- * completo está no `title` do link, a descrição da fatura por extenso está no
- * dossier, e a sidebar do shell colapsa quando o documento é grande.
+ * A conta com euros (soma do que está declarado abaixo): o trilho e as sete
+ * fixas somam 836px, logo a 1280px, onde a área de conteúdo tem ~1024px, o
+ * artigo fica com ~190px e trunca nomes longos; a 1440px fica com ~350px.
+ * Truncar o nome é o preço de ter o lote, a validade e o dinheiro à vista ao
+ * mesmo tempo; o nome completo está no `title` do link, a descrição da fatura
+ * por extenso está no dossier, e a sidebar do shell colapsa quando o documento
+ * é grande.
  *
  * As duas alternativas foram rejeitadas: esconder colunas a 1280 (a coluna que
  * se esconde é sempre a que faltava) e deixar a tabela deslizar na horizontal no
  * portátil obrigatório do §4.
+ *
+ * ## **Oito colunas com euros, sete sem eles**, e a que falta é a coluna inteira
+ *
+ * Quem não vê dinheiro não recebe a coluna "Valor": uma coluna cheia de "—", ou
+ * de "0,00 €", lê-se como uma fatura **sem preços**, que é uma mentira sobre o
+ * documento que ele tem na mão. A ausência não tem essa leitura — é o mesmo
+ * reflexo com que o servidor tira a chave do JSON em vez de a pôr a zero.
+ *
+ * E não fica buraco nenhum, pela conta acima: o artigo é a única coluna
+ * flexível, logo os 144px do `w-36` passam **para ela** — que é exactamente a
+ * que truncava nomes a 1280px. A tabela sem euros é mais larga onde precisava
+ * de ser, não mais estreita.
  */
-const COLUNAS: readonly ColunaDeTabela[] = [
-  // Medido a 1280px: com o `Recebido` a `w-32` e a validade a forçar 152px, esta
-  // coluna ficava com 159px (126 úteis) e truncava "Nata para bater 35% UHT 1L",
-  // que precisa de 192. O `Recebido` desceu a `w-28` (o cabeçalho "RECEBIDO" em
-  // caixa alta precisa de 110 e tem 112) e a validade encurtou o seu rótulo.
-  { chave: "artigo", rotulo: textos.linhas.colunas.artigo },
-  { chave: "recebido", rotulo: textos.linhas.colunas.recebido, classe: "w-28 text-right" },
-  { chave: "stock", rotulo: textos.linhas.colunas.stock, classe: "w-28 text-right" },
-  { chave: "valor", rotulo: textos.linhas.colunas.valor, classe: "w-36 text-right" },
-  { chave: "lote", rotulo: textos.linhas.colunas.lote, classe: "w-28" },
-  { chave: "validade", rotulo: textos.linhas.colunas.validade, classe: "w-32" },
-  { chave: "estado", rotulo: textos.linhas.colunas.estado, classe: "w-28" },
-  { chave: "accao", rotulo: textos.linhas.colunas.accao, classe: "w-24" },
-];
+function colunasDasLinhas(comEuros: boolean): readonly ColunaDeTabela[] {
+  return [
+    // Medido a 1280px: com o `Recebido` a `w-32` e a validade a forçar 152px, esta
+    // coluna ficava com 159px (126 úteis) e truncava "Nata para bater 35% UHT 1L",
+    // que precisa de 192. O `Recebido` desceu a `w-28` (o cabeçalho "RECEBIDO" em
+    // caixa alta precisa de 110 e tem 112) e a validade encurtou o seu rótulo.
+    { chave: "artigo", rotulo: textos.linhas.colunas.artigo },
+    { chave: "recebido", rotulo: textos.linhas.colunas.recebido, classe: "w-28 text-right" },
+    { chave: "stock", rotulo: textos.linhas.colunas.stock, classe: "w-28 text-right" },
+    ...(comEuros
+      ? [{ chave: "valor", rotulo: textos.linhas.colunas.valor, classe: "w-36 text-right" }]
+      : []),
+    { chave: "lote", rotulo: textos.linhas.colunas.lote, classe: "w-28" },
+    { chave: "validade", rotulo: textos.linhas.colunas.validade, classe: "w-32" },
+    { chave: "estado", rotulo: textos.linhas.colunas.estado, classe: "w-28" },
+    { chave: "accao", rotulo: textos.linhas.colunas.accao, classe: "w-24" },
+  ];
+}
 
 const LARGURA_MINIMA = "min-w-5xl";
 const ROTULO = textos.linhas.tabela;
@@ -270,7 +286,11 @@ function FormularioDeLinha({
  * cor" é cumprida pela palavra, nunca foi pelo ícone.
  */
 function DossierDaLinha({ linha }: { readonly linha: LinhaDeRececao }) {
-  const historico = linha.price_history;
+  // `?? null` junta as duas ausências **neste** sítio de propósito: quem não vê
+  // euros não vê a variação contra as últimas compras, e quem vê mas não tem
+  // histórico também não. A frase que falta é a mesma, e não há uma terceira a
+  // escrever — a razão de não haver preços está dita no rodapé do documento.
+  const historico = linha.price_history ?? null;
   const parcial = Number(linha.quantity_invoiced) !== Number(linha.quantity_received);
 
   return (
@@ -294,13 +314,23 @@ function DossierDaLinha({ linha }: { readonly linha: LinhaDeRececao }) {
         // fatura vem a fim de mês.
         <p className="text-muted-foreground">{textos.linhas.guiaSemPrecos}</p>
       ) : (
+        // **A mesma frase, com menos factos** quando os euros não vêm: "A
+        // fatura cobra 50 un, com IVA de 23 %". A quantidade faturada, a
+        // unidade impressa e a taxa continuam a ser dela — a taxa é 6, 13 ou 23
+        // e está em qualquer talão. O que sai é o preço e o total da linha, e
+        // sai sem deixar um buraco no meio da frase.
         <p className="text-muted-foreground">
           {textos.linhas.aFaturaCobra}{" "}
           <span data-numeric>
             {textoDeQuantidadeDaFatura(linha.quantity_invoiced, linha.invoice_unit)}
-          </span>{" "}
-          {textos.linhas.aoPreco} <span data-numeric>{formatMoney(linha.unit_price)}</span>/
-          {linha.invoice_unit}
+          </span>
+          {linha.unit_price === undefined ? null : (
+            <>
+              {" "}
+              {textos.linhas.aoPreco} <span data-numeric>{formatMoney(linha.unit_price)}</span>/
+              {linha.invoice_unit}
+            </>
+          )}
           {linha.vat_rate === null ? null : (
             <>
               {textos.linhas.comIvaDe}{" "}
@@ -308,7 +338,7 @@ function DossierDaLinha({ linha }: { readonly linha: LinhaDeRececao }) {
               {textos.linhas.taxaDaLinha}
             </>
           )}
-          {linha.line_total === null ? null : (
+          {linha.line_total === null || linha.line_total === undefined ? null : (
             <>
               {textos.linhas.totalDaLinha}{" "}
               <span data-numeric>{formatMoney(linha.line_total)}</span>
@@ -384,6 +414,8 @@ function DossierDaLinha({ linha }: { readonly linha: LinhaDeRececao }) {
 
 function LinhaDeFatura({
   linha,
+  colunas,
+  comEuros,
   aberto,
   aoAlternar,
   aRevisar,
@@ -394,6 +426,10 @@ function LinhaDeFatura({
   aoVoltarARever,
 }: {
   readonly linha: LinhaDeRececao;
+  /** As colunas desta tabela — sete ou oito. O painel abre com o `colSpan` delas. */
+  readonly colunas: readonly ColunaDeTabela[];
+  /** Este documento trouxe euros. Decide a coluna "Valor", não o conteúdo dela. */
+  readonly comEuros: boolean;
   readonly aberto: boolean;
   readonly aoAlternar: () => void;
   /** Esta linha tem um pedido a sair. */
@@ -408,7 +444,7 @@ function LinhaDeFatura({
   const porRever = linha.status === "needs_review";
   const foraDaEntrada = linha.status === "skipped";
   const parcial = Number(linha.quantity_invoiced) !== Number(linha.quantity_received);
-  const historico = linha.price_history;
+  const historico = linha.price_history ?? null;
 
   return (
     <>
@@ -510,32 +546,37 @@ function LinhaDeFatura({
             coluna (é um de três valores legais, e não é número que se compare de
             linha em linha): vive no `title` desta célula, no dossier, e no rodapé
             do documento, que dá a base e o IVA por taxa como está impresso. */}
-        <td
-          data-numeric
-          className={`${CLASSE_CELULA} w-36 text-right`}
-          {...(linha.vat_rate === null
-            ? {}
-            : { title: textos.linhas.ivaDaLinha(formatRate(linha.vat_rate)) })}
-        >
-          {linha.line_total === null ? (
-            <span className="font-sans text-xs text-muted-foreground">
-              {textos.linhas.semPreco}
-            </span>
-          ) : (
-            formatMoney(linha.line_total)
-          )}
-          {linha.unit_price === null ? null : (
-            <span className="block text-xs text-muted-foreground">
-              {formatMoney(linha.unit_price)}/{linha.invoice_unit}
-              {historico === null ? null : (
-                <span className={historico.change_pct > 0 ? "text-warning" : "text-success"}>
-                  {" "}
-                  {formatPercentChange(historico.change_pct)}
-                </span>
-              )}
-            </span>
-          )}
-        </td>
+        {comEuros ? (
+          <td
+            data-numeric
+            className={`${CLASSE_CELULA} w-36 text-right`}
+            {...(linha.vat_rate === null
+              ? {}
+              : { title: textos.linhas.ivaDaLinha(formatRate(linha.vat_rate)) })}
+          >
+            {/* `null` **tem** célula e diz "sem preço": é uma afirmação sobre o
+                documento (uma guia não os traz). A ausência não chega aqui —
+                nesse caso não há coluna. */}
+            {linha.line_total === null || linha.line_total === undefined ? (
+              <span className="font-sans text-xs text-muted-foreground">
+                {textos.linhas.semPreco}
+              </span>
+            ) : (
+              formatMoney(linha.line_total)
+            )}
+            {linha.unit_price === null || linha.unit_price === undefined ? null : (
+              <span className="block text-xs text-muted-foreground">
+                {formatMoney(linha.unit_price)}/{linha.invoice_unit}
+                {historico === null ? null : (
+                  <span className={historico.change_pct > 0 ? "text-warning" : "text-success"}>
+                    {" "}
+                    {formatPercentChange(historico.change_pct)}
+                  </span>
+                )}
+              </span>
+            )}
+          </td>
+        ) : null}
 
         <td data-numeric className={`${CLASSE_CELULA} w-28 text-left text-muted-foreground`}>
           {linha.lot_code ?? ""}
@@ -612,7 +653,7 @@ function LinhaDeFatura({
           <td aria-hidden="true" className="w-trilho bg-surface-2 p-0" />
           <td
             id={idDoPainel}
-            colSpan={COLUNAS.length}
+            colSpan={colunas.length}
             className="bg-surface-2 px-celula-x py-3"
           >
             <div className="flex max-w-6xl flex-col gap-3">
@@ -657,6 +698,7 @@ function LinhaDeFatura({
 
 export function TabelaDeLinhasDeFatura({
   linhas,
+  comEuros,
   abertaEm,
   aoAlternar,
   linhaARevisar,
@@ -666,6 +708,13 @@ export function TabelaDeLinhasDeFatura({
   aoVoltarARever,
 }: {
   readonly linhas: readonly LinhaDeRececao[];
+  /**
+   * Este documento trouxe euros. Vem do **cabeçalho** da receção e não das
+   * linhas, para o esqueleto poder ter as mesmas colunas que a tabela: o
+   * cabeçalho chega primeiro, e um esqueleto com outra contagem de colunas é um
+   * salto de layout no momento em que os dados chegam (DESIGN.md §3).
+   */
+  readonly comEuros: boolean;
   /** O `id` da linha com o painel aberto, ou `null`. */
   readonly abertaEm: string | null;
   readonly aoAlternar: (id: string) => void;
@@ -680,9 +729,11 @@ export function TabelaDeLinhasDeFatura({
   readonly aoDeixarFora: (linha: LinhaDeRececao) => void;
   readonly aoVoltarARever: (linha: LinhaDeRececao) => void;
 }) {
+  const colunas = colunasDasLinhas(comEuros);
+
   return (
     <MolduraDeTabela
-      colunas={COLUNAS}
+      colunas={colunas}
       larguraMinima={LARGURA_MINIMA}
       comTrilho
       rotulo={ROTULO}
@@ -692,6 +743,8 @@ export function TabelaDeLinhasDeFatura({
           <LinhaDeFatura
             key={linha.id}
             linha={linha}
+            colunas={colunas}
+            comEuros={comEuros}
             idDoPainel={`linha-${linha.id}`}
             aberto={abertaEm === linha.id}
             aoAlternar={() => {
@@ -721,10 +774,10 @@ export function TabelaDeLinhasDeFatura({
  * os dados chegam. Três linhas, que é a ordem de grandeza de um documento real
  * deste seed.
  */
-export function EsqueletoDaTabelaDeLinhas() {
+export function EsqueletoDaTabelaDeLinhas({ comEuros }: { readonly comEuros: boolean }) {
   return (
     <EsqueletoDeTabela
-      colunas={COLUNAS}
+      colunas={colunasDasLinhas(comEuros)}
       larguraMinima={LARGURA_MINIMA}
       comTrilho
       rotulo={textos.linhas.aCarregar}

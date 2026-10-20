@@ -56,7 +56,12 @@ function Adquirente({ rececao }: { readonly rececao: Rececao }) {
 export function AvisoDeTotais({ rececao }: { readonly rececao: Rececao }) {
   const impresso = rececao.document_total;
   const somado = rececao.lines_total;
-  if (impresso === null || somado === null) return null;
+  // Três ausências e um aviso só: sem os dois números não há divergência a
+  // apontar — nem quando o documento não os tem (`null`), nem quando os euros
+  // não vieram para este papel (`undefined`). Comparar o que não se tem era
+  // inventar um alerta.
+  if (impresso === null || impresso === undefined) return null;
+  if (somado === null || somado === undefined) return null;
   if (Number(impresso) === Number(somado)) return null;
 
   return (
@@ -84,8 +89,19 @@ export function CabecalhoDaRececao({ rececao }: { readonly rececao: Rececao }) {
   return (
     <header className="flex flex-col gap-2 px-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h1 className="min-w-0 text-2xl font-semibold text-balance">{rececao.supplier.name}</h1>
-        {rececao.document_total === null ? null : (
+        <h1 className="min-w-0 text-2xl font-semibold text-balance">
+          {/* O documento que ainda não tem fornecedor não deixa o `h1` vazio: a
+              palavra entra em itálico e a cinzento, para se ler como o que
+              falta e não como o nome de uma empresa. */}
+          {rececao.supplier.name ?? (
+            <span className="italic text-muted-foreground">{textos.comuns.semFornecedor}</span>
+          )}
+        </h1>
+        {/* O número grande ao lado do nome **cala-se** nas duas ausências, e
+            aqui calar-se é a mesma coisa nas duas: não há valor para pôr. A
+            diferença entre elas diz-se uma vez, no rodapé, e não em cada sítio
+            onde um número não aparece. */}
+        {rececao.document_total === null || rececao.document_total === undefined ? null : (
           <span data-numeric className="text-xl font-semibold">
             {formatMoney(rececao.document_total)}
           </span>
@@ -167,6 +183,18 @@ export function CabecalhoDaRececao({ rececao }: { readonly rececao: Rececao }) {
  * as Regiões Autónomas, e muda de fornecedor para fornecedor no mesmo artigo.
  */
 export function TotaisDaRececao({ rececao }: { readonly rececao: Rececao }) {
+  // **A única frase do ecrã sobre a ausência de euros, e vive aqui** — no sítio
+  // onde os totais estariam, que é onde a pergunta se faz. Uma por documento e
+  // não uma por linha: repetida em cada célula seria um ecrã a justificar-se.
+  // Sem tom de castigo: diz de quem são os valores, e o que fica para fazer.
+  if (rececao.lines_total === undefined) {
+    return (
+      <p className="text-pretty px-4 py-3 text-xs text-muted-foreground">
+        {textos.cabecalho.eurosDeQuemGere}
+      </p>
+    );
+  }
+
   if (rececao.lines_total === null) {
     return (
       <p className="px-4 py-3 text-xs text-muted-foreground">{textos.cabecalho.guiaSemPrecos}</p>
@@ -175,7 +203,7 @@ export function TotaisDaRececao({ rececao }: { readonly rececao: Rececao }) {
 
   return (
     <div className="flex flex-col gap-1 border-t border-border px-4 py-3">
-      {rececao.vat_breakdown.map((taxa) => (
+      {(rececao.vat_breakdown ?? []).map((taxa) => (
         <p key={taxa.rate} className="flex items-baseline justify-between gap-3 text-xs">
           <span className="text-muted-foreground">
             {textos.cabecalho.baseAIva} <span data-numeric>{formatRate(taxa.rate)}</span>
