@@ -7,8 +7,9 @@
 #   1. **CVEs.** O binário das imagens oficiais (todas as tags, v2.11.4) traz
 #      17 CVEs HIGH/CRITICAL **com correção disponível**: Go stdlib 1.26.3
 #      quando a correção está na 1.26.4, mais grpc, x/crypto, x/net e x/text.
-#      O upstream ainda não reconstruiu. Com Go 1.26.9 ficam zero, e o
-#      SECURITY.md §9 exige zero.
+#      O upstream ainda não reconstruiu. Com um Go recente ficam zero, e o
+#      SECURITY.md §9 exige zero. **A versão exacta lê-se no digest abaixo**,
+#      não aqui: um número escrito num comentário apodrece e já apodreceu.
 #   2. **Rate limit por IP.** O SECURITY.md §1 e §5 delegam-no ao proxy, porque
 #      o django-axes cobre a conta e o par IP+conta mas não o IP puro. Não é
 #      directiva do Caddy oficial: é o plugin `caddy-ratelimit`, e só entra com
@@ -17,7 +18,7 @@
 # Tudo fixado por versão exacta, incluindo o plugin — este binário está no
 # caminho de todo o tráfego, e um `xcaddy build` sem versões é o oposto de
 # reproduzível. O módulo de terceiros é uma dependência nova e deliberada.
-FROM golang@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS caddy-builder
+FROM golang@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS caddy-builder
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 WORKDIR /build
 
@@ -53,7 +54,10 @@ GO
 #   1. **Três dos quatro eram da `stdlib` 1.26.8, e a `stdlib` não se fixa
 #      aqui.** Com `GOTOOLCHAIN=local` a stdlib do binário é a da imagem do
 #      builder e mais nada — nenhum `go get` lhe toca. A correcção foi subir o
-#      digest do `golang` para o `1.26.9-alpine3.24`. Um CVE de `stdlib`
+#      digest do `golang` — primeiro para `1.26.9-alpine3.24`, e a
+#      2026-10-21 para `1.26.10-alpine3.24` (CVE-2026-111943, em
+#      `crypto/x509`), na mesma altura em que o `klauspost/compress`
+#      subiu para `v1.18.7` (CVE-2026-63209). Um CVE de `stdlib`
 #      lê-se sempre como "o digest do builder está velho", nunca como uma
 #      dependência a acrescentar à lista abaixo.
 #   2. O método do `-u` voltou a pagar-se. O mínimo corrigido do `x/net` era o
@@ -71,6 +75,7 @@ RUN go mod init stockflow/caddy \
             golang.org/x/net@v0.61.0 \
             golang.org/x/text@v0.43.0 \
             google.golang.org/grpc@v1.84.0 \
+            github.com/klauspost/compress@v1.18.7 \
  && go mod tidy \
  && go build -trimpath -ldflags="-s -w" -o /caddy . \
  && /caddy version
