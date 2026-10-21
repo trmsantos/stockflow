@@ -79,12 +79,24 @@ RUN go mod init stockflow/caddy \
 # Alpine e não a imagem do Caddy: o binário dela é o que estamos a substituir, e
 # deixá-lo na imagem punha os 17 CVEs de volta no relatório do Trivy, que analisa
 # o sistema de ficheiros e não o processo. O `wget` do busybox serve o
-# healthcheck, e o `ca-certificates` é para o ACME quando o TLS passar a ser
-# terminado aqui.
+# healthcheck.
+#
+# **Sem `apk add`, e isso é a correcção de 2026-10-21.** Havia aqui um
+# `ca-certificates` fixado em `=20260909-r0`, e o CI ficou vermelho sozinho, em
+# todos os PR, sem ninguém ter tocado em nada: o `apk` resolve contra o
+# repositório **vivo** do Alpine, que só guarda o último patch de cada pacote —
+# a imagem base está fixada por digest, o repositório de pacotes não. Um pin de
+# versão de apk contra um repositório que roda apodrece por construção.
+#
+# O pacote era para o ACME *"quando o TLS passar a ser terminado aqui"*, e esse
+# dia não chegou: o Caddyfile tem `auto_https off` e os dois `reverse_proxy` vão
+# para HTTP dentro da rede do compose. Não se carrega uma dependência que
+# apodrece por uma necessidade que ainda não existe. Quando o TLS vier mesmo
+# para aqui, o pacote volta — a float e com a razão escrita, porque um ficheiro
+# de certificados é dos poucos que se quer sempre fresco.
 FROM alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 
-RUN apk add --no-cache "ca-certificates=20260909-r0" \
- && addgroup -g 10001 app \
+RUN addgroup -g 10001 app \
  && adduser -u 10001 -G app -D -H -s /sbin/nologin app \
  && mkdir -p /data /config \
  && chown -R app:app /data /config
