@@ -16,6 +16,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Segunda-feira às 06:00 UTC. **Não é zelo: é a correcção de um defeito do
+  # desenho destes gates**, e acrescentou-se a 2026-10-21 depois de o CI ficar
+  # vermelho sozinho pela terceira vez.
+  #
+  # Tudo aqui está fixado por versão exacta e por digest, e isso está certo —
+  # um gate que se atualiza sozinho é um gate que alguém pode mover. Mas dois
+  # dos gates (`trivy image` e os dois `audit`) julgam o que está fixado contra
+  # uma **base de dados de vulnerabilidades viva**. Logo o veredicto muda com o
+  # tempo **sem a nossa árvore mudar**: uma CVE publicada contra a stdlib do Go
+  # que compilamos põe o job do Docker vermelho sem ninguém ter tocado em nada.
+  #
+  # Com os gatilhos de cima apenas, quem descobre isso é **sempre o PR
+  # seguinte** — ou seja, alguém a meio de outra coisa, que passa a ter de
+  # arranjar uma podridão que não criou. Foi o que aconteceu com o #10, um PR
+  # de um único ficheiro de documentação que falhou em três jobs. Esta entrada
+  # move a descoberta para um dia marcado, em que o trabalho é precisamente
+  # esse.
+  schedule:
+    - cron: "0 6 * * 1"
 
 # Menos privilégios do que o default: nenhum job aqui escreve no repositório.
 permissions:
