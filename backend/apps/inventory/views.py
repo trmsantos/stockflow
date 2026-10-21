@@ -18,6 +18,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+from typing import Any
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -31,9 +32,11 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.serializers import Serializer
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import (
+    CHAVE_DE_EUROS,
     Papel,
     PertenceAoTenant,
     TemPapel,
@@ -79,11 +82,13 @@ from apps.inventory.serializers import (
     StockDetailSerializer,
     StockMovementResponseSerializer,
     StockSummarySerializer,
+    StockTransferResponseSerializer,
     TransferSerializer,
     WasteSerializer,
     compor_contagem,
     compor_fecho,
     compor_linha,
+    compor_movimento,
     em_unidade_base,
     zona_da_localizacao,
 )
@@ -219,7 +224,14 @@ class LocalizacaoViewSet(
     ),
 )
 class StockPanelViewSet(viewsets.ViewSet):
-    """Painel de stock: queries read-only ao ledger (ADR 0024)."""
+    """Painel de stock: queries read-only ao ledger (ADR 0024, ADR 0032).
+
+    **Nenhuma destas rotas tem papel** e nenhuma passou a ter: o dinheiro aqui é
+    uma coluna e não o recurso, as rotas de stock são `TODOS_OS_PAPEIS` no
+    `menu.py`, e negá-las tirava o ecrã a quem mais o usa (ADR 0032, decisão 1).
+    O que muda por papel é o payload, e quem o decide é o
+    `SemEurosParaQuemNaoVe` do `accounts.api` — um sítio só.
+    """
 
     permission_classes = [IsAuthenticated, PertenceAoTenant]
     throttle_scope = AMBITO_THROTTLE_CATALOGO
@@ -228,6 +240,36 @@ class StockPanelViewSet(viewsets.ViewSet):
     def get_throttles(self) -> list[BaseThrottle]:
         """Sem throttle extra em leitura."""
         return super().get_throttles()
+
+    def _contexto(self, request: Request) -> dict[str, bool]:
+        """O contexto de serialização: quem vê euros, e nada mais.
+
+        O default do mixin é **falso**, logo esquecer este contexto esconde
+        dinheiro a toda a gente em vez de o mostrar a quem não deve — a direcção
+        certa para falhar.
+        """
+        return {CHAVE_DE_EUROS: ve_euros(request)}
+
+    def _pagina(
+        self,
+        items: list[dict[str, Any]],
+        serializador: type[Serializer],
+        request: Request,
+    ) -> Response:
+        """O envelope `{items,total,page,page_size}` das quatro rotas do painel.
+
+        Existe para o `context` não poder ser esquecido numa delas: as quatro
+        passam por aqui e o contexto é montado num sítio só.
+        """
+        serializer = serializador(items, many=True, context=self._contexto(request))
+        return Response(
+            {
+                "items": serializer.data,
+                "total": len(items),
+                "page": 1,
+                "page_size": self.page_size,
+            }
+        )
 
     @extend_schema(responses={200: StockSummarySerializer(many=True)})
     @action(detail=False, methods=["GET"], url_path="summary")
@@ -244,18 +286,8 @@ class StockPanelViewSet(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        queryset = stock_summary(tenant_id=request.tenant.id, location_id=location_id)
-        items = list(queryset)
-        serializer = StockSummarySerializer(items, many=True)
-
-        return Response(
-            {
-                "items": serializer.data,
-                "total": len(items),
-                "page": 1,
-                "page_size": self.page_size,
-            }
-        )
+        items = stock_summary(tenant_id=request.tenant.id, location_id=location_id)
+        return self._pagina(items, StockSummarySerializer, request)
 
     @extend_schema(responses={200: StockDetailSerializer(many=True)})
     @action(detail=False, methods=["GET"], url_path="by-location")
@@ -278,22 +310,12 @@ class StockPanelViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        queryset = stock_by_location(
+        items = stock_by_location(
             tenant_id=request.tenant.id,
             location_id=location_id,
             search_text=search_text,
         )
-        items = list(queryset)
-        serializer = StockDetailSerializer(items, many=True)
-
-        return Response(
-            {
-                "items": serializer.data,
-                "total": len(items),
-                "page": 1,
-                "page_size": self.page_size,
-            }
-        )
+        return self._pagina(items, StockDetailSerializer, request)
 
     @extend_schema(responses={200: StockDetailSerializer(many=True)})
     @action(detail=False, methods=["GET"], url_path="by-product")
@@ -317,22 +339,12 @@ class StockPanelViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        queryset = stock_by_product(
+        items = stock_by_product(
             tenant_id=request.tenant.id,
             product_id=product_id,
             search_text=search_text,
         )
-        items = list(queryset)
-        serializer = StockDetailSerializer(items, many=True)
-
-        return Response(
-            {
-                "items": serializer.data,
-                "total": len(items),
-                "page": 1,
-                "page_size": self.page_size,
-            }
-        )
+        return self._pagina(items, StockDetailSerializer, request)
 
     @extend_schema(responses={200: AlertSerializer(many=True)})
     @action(detail=False, methods=["GET"], url_path="alerts")
@@ -367,17 +379,7 @@ class StockPanelViewSet(viewsets.ViewSet):
             product_id=product_id,
             location_id=location_id,
         )
-
-        serializer = AlertSerializer(alerts_data, many=True)
-
-        return Response(
-            {
-                "items": serializer.data,
-                "total": len(alerts_data),
-                "page": 1,
-                "page_size": self.page_size,
-            }
-        )
+        return self._pagina(alerts_data, AlertSerializer, request)
 
 
 @extend_schema_view(
@@ -397,14 +399,26 @@ class StockPanelViewSet(viewsets.ViewSet):
         operation_id="stock_movements_transfer",
         summary="Transferir stock entre localizações",
         request=TransferSerializer,
-        responses={201: StockMovementResponseSerializer},
+        responses={201: StockTransferResponseSerializer},
     ),
 )
 class StockMovementViewSet(viewsets.ViewSet):
-    """Endpoints para criar movimentos de stock manuais (desperdício, ajuste, transferência)."""
+    """Endpoints para criar movimentos de stock manuais (desperdício, ajuste, transferência).
+
+    Sem papel, e é a decisão 3 da ADR 0032: perder e transferir é trabalho de
+    campo. O que sai do 201 é que mudou — o `unit_cost` só vai a `owner|manager`
+    —, e **a resposta passa agora por um serializer**. Até 2026-10-21 as três
+    montavam um `dict` e devolviam-no: o `StockMovementResponseSerializer` só
+    existia no `extend_schema`, nenhum mixin lhes chegava, e no caso da
+    transferência o schema declarado nem descrevia o corpo que sai.
+    """
 
     permission_classes = [IsAuthenticated, PertenceAoTenant]
     throttle_scope = AMBITO_THROTTLE_CATALOGO
+
+    def _contexto(self, request: Request) -> dict[str, bool]:
+        """Quem vê euros neste pedido. Default falso — ver `SemEurosParaQuemNaoVe`."""
+        return {CHAVE_DE_EUROS: ve_euros(request)}
 
     @action(detail=False, methods=["POST"], url_path="waste")
     def waste(self, request: Request) -> Response:
@@ -425,19 +439,12 @@ class StockMovementViewSet(viewsets.ViewSet):
                 user_name=request.membership.display_name,
             )
 
-            # Recuperar movimento criado
             movimento = StockMovement.objects.get(pk=movement_id)
-            response_data = {
-                "movement_id": movimento.id,
-                "product_name": movimento.product.short_name,
-                "location_name": movimento.location.name,
-                "lot_code": movimento.lot.code if movimento.lot else None,
-                "quantity": abs(movimento.quantity),
-                "unit_cost": movimento.unit_cost,
-                "created_at": movimento.created_at,
-            }
-
-            return Response(response_data, status=status.HTTP_201_CREATED)
+            corpo = StockMovementResponseSerializer(
+                compor_movimento(movimento) | {"created_at": movimento.created_at},
+                context=self._contexto(request),
+            )
+            return Response(corpo.data, status=status.HTTP_201_CREATED)
 
         except ValidationError as e:
             logger.warning(
@@ -475,19 +482,12 @@ class StockMovementViewSet(viewsets.ViewSet):
                 user_name=request.membership.display_name,
             )
 
-            # Recuperar movimento criado
             movimento = StockMovement.objects.get(pk=movement_id)
-            response_data = {
-                "movement_id": movimento.id,
-                "product_name": movimento.product.short_name,
-                "location_name": movimento.location.name,
-                "lot_code": movimento.lot.code if movimento.lot else None,
-                "quantity": abs(movimento.quantity),
-                "unit_cost": movimento.unit_cost,
-                "created_at": movimento.created_at,
-            }
-
-            return Response(response_data, status=status.HTTP_201_CREATED)
+            corpo = StockMovementResponseSerializer(
+                compor_movimento(movimento) | {"created_at": movimento.created_at},
+                context=self._contexto(request),
+            )
+            return Response(corpo.data, status=status.HTTP_201_CREATED)
 
         except ValidationError as e:
             logger.warning(
@@ -524,36 +524,21 @@ class StockMovementViewSet(viewsets.ViewSet):
                 user_name=request.membership.display_name,
             )
 
-            # Recuperar movimentos criados
             out_movimento = StockMovement.objects.get(pk=out_id)
             in_movimento = StockMovement.objects.get(pk=in_id)
 
-            response_data = {
-                "transfer_id": out_movimento.transfer_id,
-                "movements": [
-                    {
-                        "movement_id": out_movimento.id,
-                        "type": "transfer_out",
-                        "product_name": out_movimento.product.short_name,
-                        "location_name": out_movimento.location.name,
-                        "lot_code": out_movimento.lot.code if out_movimento.lot else None,
-                        "quantity": abs(out_movimento.quantity),
-                        "unit_cost": out_movimento.unit_cost,
-                    },
-                    {
-                        "movement_id": in_movimento.id,
-                        "type": "transfer_in",
-                        "product_name": in_movimento.product.short_name,
-                        "location_name": in_movimento.location.name,
-                        "lot_code": in_movimento.lot.code if in_movimento.lot else None,
-                        "quantity": in_movimento.quantity,
-                        "unit_cost": in_movimento.unit_cost,
-                    },
-                ],
-                "created_at": out_movimento.created_at,
-            }
-
-            return Response(response_data, status=status.HTTP_201_CREATED)
+            corpo = StockTransferResponseSerializer(
+                {
+                    "transfer_id": out_movimento.transfer_id,
+                    "movements": [
+                        compor_movimento(out_movimento) | {"type": "transfer_out"},
+                        compor_movimento(in_movimento) | {"type": "transfer_in"},
+                    ],
+                    "created_at": out_movimento.created_at,
+                },
+                context=self._contexto(request),
+            )
+            return Response(corpo.data, status=status.HTTP_201_CREATED)
 
         except ValidationError as e:
             logger.warning(
@@ -586,9 +571,12 @@ class StockMovementViewSet(viewsets.ViewSet):
 #: cada chamada, e três subclasses iguais em três sítios não ajudam ninguém.
 SO_OWNER_OU_MANAGER = TemPapel.exige(Papel.OWNER, Papel.MANAGER)
 
-#: Os papéis a quem os euros são mostrados (ADR 0029) vivem agora no
-#: `accounts.api` — ver `ve_euros`. Ao `staff` o `difference_eur` continua a ir
-#: a `null`: a lista é dele, os euros não.
+#: Os papéis a quem os euros são mostrados (ADR 0029) vivem no `accounts.api` —
+#: ver `ve_euros`. Ao `staff`, o `difference_eur` **não vem na resposta**: a
+#: lista é dele, os euros não. Era `null` até 2026-10-21 e a ADR 0032, decisão
+#: 5, trocou-o pela chave ausente — `null` dizia ao mesmo tempo "ainda não
+#: contado" e "não te é mostrado", e a ausência diz a segunda sem apagar a
+#: primeira.
 
 DETALHE_JA_ABERTA = _("There is already an open count in this establishment.")
 DETALHE_JA_FECHADA = _("This count is already closed.")
@@ -687,6 +675,16 @@ class ContagemViewSet(viewsets.GenericViewSet):
     def _ve_euros(self, request: Request) -> bool:
         """Este pedido pode ver euros? A regra é do papel e vive no `accounts`."""
         return ve_euros(request)
+
+    def _contexto(self, request: Request) -> dict[str, bool]:
+        """O contexto que o `SemEurosParaQuemNaoVe` lê para decidir o payload.
+
+        Tem de ser passado **em todas** as instâncias, incluindo as do `/closing`
+        — que é de `owner|manager` e portanto vê sempre: sem contexto o default
+        do mixin é falso e o `difference_eur` desaparecia do corpo de quem tem
+        todo o direito a ele.
+        """
+        return {CHAVE_DE_EUROS: self._ve_euros(request)}
 
     def _nome_de_quem_conta(self, request: Request) -> str:
         """O nome da **pertença**, que é o que fica copiado na linha.
@@ -805,7 +803,9 @@ class ContagemViewSet(viewsets.GenericViewSet):
             for linha in paginador.paginate_queryset(linhas, request, view=self)
         ]
         return paginador.get_paginated_response(
-            LinhaDeContagemOutSerializer(corpo, many=True).data
+            LinhaDeContagemOutSerializer(
+                corpo, many=True, context=self._contexto(request)
+            ).data
         )
 
     def _registar_linha(self, request: Request, contagem: StockCount) -> Response:
@@ -851,14 +851,22 @@ class ContagemViewSet(viewsets.GenericViewSet):
             zona=zona_da_localizacao(contagem.location),
             difference_eur=valores.get(linha.id) if valores is not None else None,
         )
-        return Response(LinhaDeContagemOutSerializer(corpo).data, status=status.HTTP_200_OK)
+        return Response(
+            LinhaDeContagemOutSerializer(corpo, context=self._contexto(request)).data,
+            status=status.HTTP_200_OK,
+        )
 
     def _valores_por_linha(self, request: Request, contagem: StockCount):
         """Os euros de cada linha, ou `None` quando o papel não os vê.
 
         `None` e não um dicionário vazio: "não te é mostrado" e "não tem
-        diferença" são duas coisas, e o `null` do contrato diz as duas por
-        falta de uma terceira forma — mas aqui dentro distinguem-se.
+        diferença" são duas coisas, e aqui dentro distinguem-se — no contrato
+        distinguem-se também, desde que a ADR 0032 deu a primeira à **ausência**
+        da chave e deixou o `null` a dizer só a segunda.
+
+        O que isto poupa não é cosmético: para quem não vê euros nem se chega a
+        chamar o `planear_fecho`. O mixin apagaria a chave na mesma, mas o
+        trabalho de a calcular era feito à mesma.
         """
         if not self._ve_euros(request):
             return None
@@ -907,6 +915,8 @@ class ContagemViewSet(viewsets.GenericViewSet):
 
         previsto = planear_fecho(tenant_id=request.tenant.id, contagem=contagem)
         return Response(
-            FechoDeContagemOutSerializer(compor_fecho(previsto)).data,
+            FechoDeContagemOutSerializer(
+                compor_fecho(previsto), context=self._contexto(request)
+            ).data,
             status=status.HTTP_200_OK,
         )

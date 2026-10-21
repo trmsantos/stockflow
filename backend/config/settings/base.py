@@ -455,6 +455,19 @@ SPECTACULAR_SETTINGS = {
         # `pnpm gen:api`. O nome é o que o `estadoDeContagemSchema` do cliente
         # já usa.
         "EstadoDeContagemEnum": ["open", "closed"],
+        # Os dois enums que a ADR 0032 trouxe ao painel de stock. Os nomes
+        # derivados eram `CostStatusEnum` e **`TypeEnum`**, e o segundo é o pior
+        # nome possível para um componente partilhado: o primeiro campo chamado
+        # `type` que apareça noutro serializer com outros valores colide com ele
+        # e o drf-spectacular resolve-o com um sufixo de hash — um nome que muda
+        # sozinho e um warning que é exit 1 no `pnpm gen:api`.
+        #
+        # O estado do custo aponta para a tupla e não para uma lista copiada:
+        # as três palavras têm **uma** definição (`ESTADOS_DO_CUSTO`), que é o
+        # ponto inteiro dessa constante, e uma cópia aqui era a quarta palavra a
+        # nascer num ficheiro de settings.
+        "EstadoDoCustoEnum": "apps.inventory.selectors.ESTADOS_DO_CUSTO",
+        "PernaDeTransferenciaEnum": ["transfer_out", "transfer_in"],
         "IdDeParteDeSalariosEnum": [
             "base",
             "social_security",

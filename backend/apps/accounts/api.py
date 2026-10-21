@@ -37,7 +37,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, time
 from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
 
 from django.http import HttpRequest
@@ -55,7 +55,9 @@ if TYPE_CHECKING:
     from apps.accounts.services import DemonstracaoSemeada
 
 __all__ = [
+    "CHAVE_DE_EUROS",
     "PAPEIS_QUE_VEEM_EUROS",
+    "SemEurosParaQuemNaoVe",
     "ConvitePendente",
     "ConvitesPendentes",
     "DefinicoesDoAmbito",
@@ -340,6 +342,60 @@ def ve_euros(request: HttpRequest) -> bool:
     """
     pertenca = membership_atual(request)
     return pertenca is not None and pertenca.role in PAPEIS_QUE_VEEM_EUROS
+
+
+#: A chave do `context` por onde a view diz se este pedido vê euros. O valor
+#: vem do `ve_euros` daqui ao lado e o default é **falso**: um serializer
+#: instanciado sem contexto não mostra dinheiro a ninguém, que é o lado certo
+#: para falhar.
+CHAVE_DE_EUROS = "ve_euros"
+
+
+class SemEurosParaQuemNaoVe:
+    """Tira do payload os campos de dinheiro quando o papel não os vê.
+
+    **Chave ausente, nunca zero e nunca `null`** — é o reflexo do `_custo` do
+    porto do `agents` (`apps/agents/tools.py`), e a forma importa: um zero é
+    uma afirmação falsa sobre o preço, e um `null` convida o ecrã a imprimir
+    "—" como se o valor não existisse. Ausente é "não te compete", e é o que o
+    cliente gerado vê como campo opcional.
+
+    Decisão do dono de 2026-10-19 para a receção (*"só owner e manager"*) e de
+    2026-10-21 para o custo de stock (ADR 0032): quem recebe, conta, perde e
+    transfere continua a fazê-lo — só não vê quanto custou. Os endpoints
+    continuam sem `TemPapel`, porque o dinheiro aqui é uma **coluna** e não o
+    recurso: negar a rota tirava o ecrã a quem mais o usa.
+
+    ## Porque é que isto vive no `accounts.api` e não ao lado de um serializer
+
+    Nasceu em `purchasing/serializers.py` (ADR 0031) e mudou-se aqui na ADR
+    0032, decisão 4, por uma razão de alcance: um `serializers.py` não é porta
+    de módulo nenhum, a aresta permitida é `purchasing → inventory.api` e não o
+    contrário, e o `inventory` precisava exactamente desta mecânica. Vive ao
+    lado da **política** que a alimenta (`PAPEIS_QUE_VEEM_EUROS`, `ve_euros`)
+    pela razão que esse bloco já tem escrita: uma regra de autorização escrita
+    em três sítios é uma que um dia só se corrige em dois. Separar o mecanismo
+    da política — pô-lo no `apps.shared`, por exemplo — é como se chega outra
+    vez a duas versões dela.
+
+    Não importa o DRF de propósito: é um mixin de `to_representation` e o
+    `accounts.api` não tem razão para conhecer a camada HTTP.
+
+    Mistura-se **antes** do `serializers.Serializer` para o `to_representation`
+    chegar primeiro ao `super()` certo.
+    """
+
+    #: Os campos a retirar. São nomes do **contrato** (o que sai no JSON) e não
+    #: nomes de colunas: é o payload que se filtra.
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = ()
+
+    def to_representation(self, instance: Any) -> Any:
+        dados = super().to_representation(instance)
+        if self.context.get(CHAVE_DE_EUROS, False):
+            return dados
+        for chave in self.CAMPOS_DE_DINHEIRO:
+            dados.pop(chave, None)
+        return dados
 
 
 def opcao_de_tenant(user_id: UUID, tenant_id: UUID) -> TenantOption | None:

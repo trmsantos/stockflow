@@ -8,15 +8,22 @@ Sem `fields = "__all__"` (CLAUDE.md, SECURITY.md §4).
 from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import Any, ClassVar
 
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
+from apps.accounts.api import SemEurosParaQuemNaoVe
 from apps.inventory.count_services import (
     MOTIVO_OBRIGATORIO_ACIMA_DE_EUR,
     ROTULO_DE_QUEM_FECHA,
+)
+from apps.inventory.selectors import (
+    CUSTO_CONHECIDO,
+    CUSTO_DESCONHECIDO,
+    CUSTO_ESTIMADO,
+    ESTADOS_DO_CUSTO,
 )
 
 #: O tecto da coluna `Decimal(12,3)` do `StockCountLine`, na unidade **base**.
@@ -36,6 +43,10 @@ __all__ = [
     "AdjustmentSerializer",
     "TransferSerializer",
     "StockMovementResponseSerializer",
+    "StockTransferResponseSerializer",
+    "CustoDeStockOutSerializer",
+    "MovimentoDeStockOutSerializer",
+    "PernaDeTransferenciaOutSerializer",
     "ConflitoDeContagemOutSerializer",
     "ContagemInSerializer",
     "ContagemOutSerializer",
@@ -51,7 +62,9 @@ __all__ = [
     "compor_contagem",
     "compor_fecho",
     "compor_linha",
+    "compor_movimento",
     "em_unidade_base",
+    "estado_do_custo",
     "quantidade",
     "zona_da_localizacao",
 ]
@@ -111,48 +124,33 @@ class LocalizacaoPatchInSerializer(serializers.Serializer):
         return value
 
 
-class StockSummarySerializer(serializers.Serializer):
-    """Resumo de stock agregado por produto (painel, fatia 4)."""
+class CustoDeStockOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
+    """A parte comum às três rotas do painel: o saldo e o que ele vale.
+
+    **`unit_cost` e `total_value` só saem a `owner|manager`** (ADR 0032,
+    decisão 1), e saem **os dois juntos**: um reconstrói o outro por
+    multiplicação ou por divisão, com a quantidade que já está no payload.
+    Esconder um só é teatro.
+
+    Desde 2026-10-21 a quantidade dessa aritmética é a que **tem preço** —
+    `unit_cost × (quantity − quantity_without_cost) == total_value` —, porque o
+    divisor do custo unitário deixou de incluir a parte sem preço (ver
+    `selectors._custo_unitario`). A reconstrução continua fechada dos dois
+    lados: as duas pontas do divisor são **quantidades**, e as quantidades nunca
+    se escondem de ninguém.
+
+    O que **fica para toda a gente**: a quantidade — as quantidades são o
+    produto e nunca se escondem de ninguém —, o lote, a validade, e o marcador
+    qualitativo do custo, que as subclasses declaram cada uma à sua maneira. O
+    marcador é qualidade de dados e não um euro, pela mesma razão por que a
+    `vat_rate` de uma fatura fica (ADR 0031): "este artigo não tem preço
+    registado" é um defeito de uma receção a corrigir, não um preço.
+    """
+
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = ("unit_cost", "total_value")
 
     product_id = serializers.UUIDField(read_only=True)
     product_name = serializers.CharField(read_only=True)
-    quantity = serializers.DecimalField(
-        max_digits=12,
-        decimal_places=3,
-        read_only=True,
-        help_text="Quantidade total em unidade base",
-    )
-    unit_cost = serializers.DecimalField(
-        max_digits=12,
-        decimal_places=6,
-        read_only=True,
-        allow_null=True,
-        help_text="Custo unitário (NULL se zero)",
-    )
-    total_value = serializers.SerializerMethodField(read_only=True)
-
-    def get_total_value(self, obj) -> Decimal | None:
-        """Quantidade × custo unitário."""
-        quantity = obj.get("total_quantity")
-        unit_cost = obj.get("avg_unit_cost")
-        if quantity and unit_cost:
-            return quantity * unit_cost
-        return None
-
-
-class StockDetailSerializer(serializers.Serializer):
-    """Detalhe de stock por (product, lot) ou (location, lot) (fatia 4)."""
-
-    product_id = serializers.UUIDField(read_only=True)
-    product_name = serializers.CharField(read_only=True)
-    location_id = serializers.UUIDField(read_only=True, allow_null=True)
-    location_name = serializers.CharField(read_only=True, allow_null=True)
-    lot_code = serializers.CharField(read_only=True, allow_null=True)
-    expires_at = serializers.DateTimeField(
-        read_only=True,
-        allow_null=True,
-        help_text="Data de validade (NULL se sem data)",
-    )
     quantity = serializers.DecimalField(
         max_digits=12,
         decimal_places=3,
@@ -164,17 +162,81 @@ class StockDetailSerializer(serializers.Serializer):
         decimal_places=6,
         read_only=True,
         allow_null=True,
-        help_text="Custo unitário (NULL se zero)",
+        help_text=(
+            "Custo unitário médio ponderado da quantidade **com** preço "
+            "registado — nunca diluído pela parte sem preço. NULL quando "
+            "nenhuma tem. Ausente para quem não vê euros."
+        ),
     )
-    total_value = serializers.SerializerMethodField(read_only=True)
+    total_value = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        read_only=True,
+        help_text=(
+            "Valor da quantidade com preço registado: `unit_cost × (quantity − "
+            "quantity_without_cost)`. Zero quando nenhuma tem preço — é a soma "
+            "de nada. Ausente para quem não vê euros."
+        ),
+    )
 
-    def get_total_value(self, obj) -> Decimal | None:
-        """Quantidade × custo unitário."""
-        quantity = obj.get("quantity") or obj.get("total_quantity")
-        unit_cost = obj.get("unit_cost")
-        if quantity and unit_cost:
-            return quantity * unit_cost
-        return None
+
+class StockSummarySerializer(CustoDeStockOutSerializer):
+    """Uma linha do `GET /stock/summary`: **um** artigo, somado em todos os lotes.
+
+    Uma linha por artigo e não uma por custo distinto — ver o defeito (b) no
+    `selectors.stock_summary`: contar as linhas chegou a dizer quantos custos
+    diferentes um artigo tem, que é um oráculo sobre preços sem nenhuma chave de
+    preço no payload.
+
+    ## Cobertura e não um `cost_status`, e é a diferença entre agregado e lote
+
+    O facto "esta entrada ficou sem preço" é **por lote**: é o defeito de uma
+    receção concreta. Num artigo com dois lotes, um com preço e outro sem, não
+    há palavra que descreva a linha agregada — e inventar uma quarta
+    ("parcialmente desconhecido") era recriar a divergência de vocabulário que a
+    ADR 0032 fechou. O que um agregado mostra é a **cobertura**: quanta
+    quantidade não tem preço. É quantidade e não euro, diz se o valor está
+    subestimado em 5 % ou em 95 %, e é o mesmo feitio do `linhas_sem_custo` do
+    desperdício e do `ingredientes_sem_custo` de uma receita.
+    """
+
+    quantity_without_cost = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        read_only=True,
+        help_text=(
+            "Quanta desta quantidade está em níveis sem preço registado. Zero é "
+            "cobertura total, e igual ao `quantity` é não haver preço nenhum. "
+            "O que sobra (`quantity` menos isto) é a quantidade que pagou o "
+            "`total_value`."
+        ),
+    )
+
+
+class StockDetailSerializer(CustoDeStockOutSerializer):
+    """Uma linha do `by-location` / `by-product`: **um lote**, onde ele está.
+
+    É aqui que o marcador qualitativo é exacto e por isso é aqui que ele é uma
+    palavra: a linha é um lote, e um lote tem preço ou não tem. As três palavras
+    possíveis e a razão de serem três estão no `selectors.ESTADOS_DO_CUSTO`.
+    """
+
+    location_id = serializers.UUIDField(read_only=True, allow_null=True)
+    location_name = serializers.CharField(read_only=True, allow_null=True)
+    lot_code = serializers.CharField(read_only=True, allow_null=True)
+    expires_at = serializers.DateTimeField(
+        read_only=True,
+        allow_null=True,
+        help_text="Data de validade (NULL se sem data)",
+    )
+    cost_status = serializers.ChoiceField(
+        choices=ESTADOS_DO_CUSTO,
+        read_only=True,
+        help_text=(
+            "Qualidade do custo deste lote. `estimado` não aparece no painel, "
+            "que lê a projeção: ver a dívida nomeada em `ESTADOS_DO_CUSTO`."
+        ),
+    )
 
 
 class AlertSerializer(serializers.Serializer):
@@ -296,8 +358,21 @@ class TransferSerializer(serializers.Serializer):
     )
 
 
-class StockMovementResponseSerializer(serializers.Serializer):
-    """Resposta de um movimento de stock criado (201)."""
+class MovimentoDeStockOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
+    """A parte comum dos 201 de `stock/movements/*`: o que o movimento escreveu.
+
+    **`unit_cost` só sai a `owner|manager`** (ADR 0032). O resto é trabalho de
+    campo e fica: que artigo, onde, que lote e quanto — o cliente precisa deles
+    para desenhar a confirmação, e nenhum deles diz um preço.
+
+    `cost_status` lê o `cost_is_estimate` do movimento, que é o campo certo para
+    a pergunta — mas os três serviços manuais gravam-no sempre a `False`, porque
+    lêem o custo do **nível** e um nível não guarda a proveniência do preço. A
+    dívida está escrita por extenso no `ESTADOS_DO_CUSTO`; o que importa é que
+    `estimado` é a palavra que lá estará, e não uma quarta inventada nesse dia.
+    """
+
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = ("unit_cost",)
 
     movement_id = serializers.UUIDField(read_only=True)
     product_name = serializers.CharField(read_only=True)
@@ -308,14 +383,62 @@ class StockMovementResponseSerializer(serializers.Serializer):
         decimal_places=3,
         read_only=True,
     )
+    cost_status = serializers.ChoiceField(
+        choices=ESTADOS_DO_CUSTO,
+        read_only=True,
+        help_text="Qualidade do custo com que o movimento foi avaliado.",
+    )
     unit_cost = serializers.DecimalField(
         max_digits=12,
         decimal_places=6,
         read_only=True,
+        help_text="Ausente para quem não vê euros.",
     )
+
+
+class StockMovementResponseSerializer(MovimentoDeStockOutSerializer):
+    """O 201 de `POST /stock/movements/{waste,adjustment}`.
+
+    Até 2026-10-21 este serializer **não serializava nada**: estava declarado no
+    `extend_schema` e a view devolvia um `dict` montado à mão, logo o contrato
+    descrevia uma resposta que ninguém produzia e nenhum mixin lhe chegava (ADR
+    0032, decisão 4). Agora a resposta passa por aqui.
+    """
+
     created_at = serializers.DateTimeField(read_only=True)
 
 
+class PernaDeTransferenciaOutSerializer(MovimentoDeStockOutSerializer):
+    """Uma das duas pernas de uma transferência: a saída e a entrada.
+
+    `type` diz qual é (`transfer_out` / `transfer_in`), e as duas trazem a
+    localização **de cada uma** — é o par que conta a história, e é por isso que
+    o `unit_cost` tinha de desaparecer nas **duas**: escondê-lo só numa delas
+    dava o mesmo número pelo outro lado.
+    """
+
+    type = serializers.ChoiceField(
+        choices=["transfer_out", "transfer_in"],
+        read_only=True,
+    )
+
+
+class StockTransferResponseSerializer(serializers.Serializer):
+    """O 201 de `POST /stock/movements/transfer` — e é novo porque **não existia**.
+
+    O `extend_schema` desta rota apontava para o `StockMovementResponseSerializer`,
+    que descreve **um** movimento: o schema prometia `movement_id` e
+    `product_name` no topo e o corpo que sai tem `transfer_id` e `movements`. O
+    cliente gerado estava errado desde que a rota nasceu (ADR 0025) e ninguém
+    reparou porque nada serializava a resposta (ADR 0032, decisão 4).
+
+    Sem mixin próprio: o dinheiro está nas pernas, e o `context` chega-lhes pelo
+    `root` — é o serializer de topo que tem de ser instanciado com ele.
+    """
+
+    transfer_id = serializers.UUIDField(read_only=True, allow_null=True)
+    movements = PernaDeTransferenciaOutSerializer(many=True, read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
 
 
 # ===========================================================================
@@ -419,14 +542,22 @@ class LinhaDeContagemInSerializer(serializers.Serializer):
     )
 
 
-class LinhaDeContagemOutSerializer(serializers.Serializer):
+class LinhaDeContagemOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
     """Uma linha: o que o sistema diz, o que se contou e a diferença.
 
-    `difference_eur` vem a `null` para o `staff` — é a regra dos euros da ADR
-    0029 —, e o preço é que `null` passa a dizer duas coisas ("ainda não
-    contado" e "não te é mostrado"). É o menor dos males contra negar a lista a
-    quem conta.
+    **`difference_eur` passou de `null` a ausente** a 2026-10-21 (ADR 0032,
+    decisão 5). A ADR 0030 escolhera `null` e nomeara o preço: *"`null` passa a
+    dizer duas coisas — ainda não contado e não te é mostrado"*. A chave ausente
+    diz a segunda sem apagar a primeira — `difference` presente com
+    `difference_eur` ausente é inequívoco — e é a forma que o resto do sistema
+    já usa, incluindo o módulo ao lado. Duas formas da mesma política dentro do
+    mesmo módulo era o que a decisão 4 desta ADR acabara de desfazer.
+
+    O que o colaborador continua a receber: a lista inteira, o esperado, o
+    contado, a diferença em quantidade, quem contou e quando.
     """
+
+    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = ("difference_eur",)
 
     id = serializers.UUIDField(read_only=True)
     product = serializers.UUIDField(read_only=True)
@@ -474,7 +605,27 @@ class FechoDeContagemInSerializer(serializers.Serializer):
 
 
 class FechoDeContagemOutSerializer(serializers.Serializer):
-    """O fecho: as diferenças em quantidade e em euros, antes e depois de escrever."""
+    """O fecho: as diferenças em quantidade e em euros, antes e depois de escrever.
+
+    ## Sem mixin, e isso é uma decisão: aqui o **recurso** é dinheiro
+
+    As duas rotas de `/closing` são de `owner|manager` em `permission_classes` —
+    é a assimetria da ADR 0030 — e esses são exactamente os
+    `PAPEIS_QUE_VEEM_EUROS`. Quem não vê euros leva 403 antes de este serializer
+    correr, logo não há payload a filtrar. O teste
+    `test_o_limiar_do_fecho_nao_chega_a_quem_nao_ve_euros` prende as duas listas
+    uma à outra e falha no dia em que alguém alargar a rota.
+
+    **Porque é que isto importa, e não é só o `loss_eur`:** o
+    `reason_required_above_eur` é hoje `0` e o `reason_required` é por isso
+    sempre `True` — um par morto, que não informa nada. Com um limiar ≠ 0 e
+    estes dois campos à vista de quem conta, **cada linha passa a limitar um
+    custo**: "esta contagem exigiu justificação" é "a diferença vale mais de X
+    €", e repetido artigo a artigo é uma busca binária sobre o preço sem nenhuma
+    chave de dinheiro no payload. Se um dia o fecho se abrir a quem conta, o
+    limiar e a bandeira têm de sair com os euros — não são metadados de
+    configuração, são o euro por outro nome.
+    """
 
     count = serializers.UUIDField(read_only=True)
     status = serializers.ChoiceField(choices=["open", "closed"], read_only=True)
@@ -509,6 +660,46 @@ class ConflitoDeContagemOutSerializer(serializers.Serializer):
 # Composição das respostas. Funções e não métodos de view: a view escolhe o
 # serviço e o estado HTTP; a forma do que sai é desta camada.
 # ---------------------------------------------------------------------------
+def estado_do_custo(*, unit_cost: Decimal, estimado: bool) -> str:
+    """As três palavras do custo, lidas de um **movimento**.
+
+    Zero é "preço desconhecido" (ADR 0024, decisão 5, caso 3) e ganha a tudo: um
+    custo estimado de zero continua a ser um custo que ninguém sabe. Fora disso
+    manda o `cost_is_estimate` do ledger — guia de remessa sem fatura é
+    `estimado`, fatura conferida é `conhecido` (ADR 0023).
+
+    As palavras vêm do `selectors.ESTADOS_DO_CUSTO`, que é o sítio onde se
+    explica porque são estas três e não uma quarta.
+    """
+    if Decimal(unit_cost) == 0:
+        return CUSTO_DESCONHECIDO
+    return CUSTO_ESTIMADO if estimado else CUSTO_CONHECIDO
+
+
+def compor_movimento(movimento: Any) -> dict[str, Any]:
+    """Um movimento como os 201 de `stock/movements/*` o mostram.
+
+    A quantidade sai **positiva**: uma saída está no ledger a negativo porque é
+    uma saída, e "perdeste −2 kg" não é uma frase (é a mesma leitura de sinal do
+    `desperdicio_por_artigo_e_motivo`). O sinal lê-se aqui, uma vez — e antes
+    disto cada uma das três rotas o lia à sua maneira, com a perna de entrada da
+    transferência a ser a única sem o `abs()`.
+
+    O `unit_cost` vem **sempre** daqui; quem o tira é o mixin, no serializer.
+    """
+    return {
+        "movement_id": movimento.id,
+        "product_name": movimento.product.short_name,
+        "location_name": movimento.location.name,
+        "lot_code": movimento.lot.code if movimento.lot else None,
+        "quantity": abs(movimento.quantity),
+        "cost_status": estado_do_custo(
+            unit_cost=movimento.unit_cost, estimado=movimento.cost_is_estimate
+        ),
+        "unit_cost": movimento.unit_cost,
+    }
+
+
 def quantidade(valor: Decimal, *, produto: Any) -> dict[str, Any]:
     """Uma quantidade da unidade base para as duas formas que o cliente lê.
 
