@@ -7,7 +7,7 @@ import {
   tintaDoTrilhoDeGravidade,
   tintaDoTrilhoDoNivel,
   useAlertas,
-  useContagemAberta,
+  useContagensAbertas,
   useNiveisDeStock,
   useResumoDeStock,
 } from "@/features/inventory/api";
@@ -246,13 +246,27 @@ export function CartaoDeReceber() {
 }
 
 /* ---------------------------------------------------------------------------
- * Contar — o progresso por zona.
+ * Contar — as contagens a decorrer.
  * ------------------------------------------------------------------------- */
 
+/**
+ * As contagens **a decorrer**, uma linha por localização.
+ *
+ * Era uma contagem só, e o cartão mostrava as **zonas** dela. Com a ADR 0033 a
+ * exclusividade passou a ser por localização e podem estar três abertas ao
+ * mesmo tempo — e como nesta fatia a zona *é* a localização (ADR 0030, decisão
+ * 3), as zonas de uma contagem eram sempre uma. A linha passa a ser a contagem:
+ * mesma forma, mais verdade.
+ *
+ * O trilho marca a contagem que já tem **tudo contado** — a que só falta
+ * fechar, e a única sobre a qual alguém tem de fazer alguma coisa daqui. As
+ * outras estão a decorrer e uma linha a decorrer não é um problema; um trilho
+ * em todas era uma coluna pintada que não distingue nada (DESIGN.md §3). A cor
+ * não comunica sozinha: os dois números ao lado dizem `9 de 9`.
+ */
 export function CartaoDeContar() {
-  const contagem = useContagemAberta();
-  const aberta = contagem.data ?? null;
-  const zonas = (aberta?.zones ?? []).slice(0, LINHAS_DE_PREVIA);
+  const contagem = useContagensAbertas();
+  const abertas = (contagem.data?.results ?? []).slice(0, LINHAS_DE_PREVIA);
 
   return (
     <CartaoDeEcra
@@ -270,29 +284,18 @@ export function CartaoDeContar() {
       // O convite é o cartão: ele inteiro é o link para o Contar, e é lá que
       // está a acção de começar. A frase diz o que não há; a saída é o toque.
       //
-      // Os dois vazios são **estados diferentes** e não se dizem com a mesma
-      // frase: "não há contagem" convida a começar uma, e "há contagem e ela
-      // não tem zonas" é outra coisa. Com um `zonas.length === 0` só, o segundo
-      // caso dizia que não havia contagem a decorrer — uma frase falsa sobre o
-      // ecrã para onde o cartão leva.
-      vazio={
-        aberta === null
-          ? textos.inicio.vazioSemContagem
-          : zonas.length === 0
-            ? textos.inicio.vazioSemZonas
-            : null
-      }
+      // Um vazio só, desde a ADR 0033: o segundo ("há contagem e ela não tem
+      // zonas") era sobre a lista de zonas de uma contagem, e a lista passou a
+      // ser das contagens. Sem contagens a decorrer há uma frase, e ela convida
+      // a começar uma — que é, desde esta ADR, coisa que toda a gente pode.
+      vazio={abertas.length === 0 ? textos.inicio.vazioSemContagem : null}
     >
       <ul className="flex flex-col">
-        {zonas.map((zona) => (
+        {abertas.map((aberta) => (
           <LinhaDoCartao
-            key={zona.slug}
-            nome={zona.name}
-            // O acento e não o âmbar, e só na zona onde a contagem está: isto
-            // não corre contra o tempo, está **em curso** — é o mesmo trilho do
-            // item de menu activo (DESIGN.md §3). As zonas que faltam não levam
-            // trilho, porque ainda não contadas não é o mesmo que mal.
-            trilho={zona.slug === aberta?.current_zone?.slug ? "bg-primary" : ""}
+            key={aberta.id}
+            nome={aberta.location.name}
+            trilho={aberta.counted_lines === aberta.total_lines ? "bg-warning" : ""}
           >
             {/* Dois números do servidor e **nenhuma barra de progresso**. O
                 `progresso-da-contagem.tsx` já decidiu isto e a razão vale aqui
@@ -301,7 +304,7 @@ export function CartaoDeContar() {
                 proíbe. Numa miniatura, uma barra também gastaria metade da
                 largura da célula para repetir seis caracteres. */}
             <span data-numeric className="shrink-0 text-sm text-muted-foreground">
-              {zona.counted_lines}/{zona.total_lines}
+              {aberta.counted_lines}/{aberta.total_lines}
             </span>
           </LinhaDoCartao>
         ))}

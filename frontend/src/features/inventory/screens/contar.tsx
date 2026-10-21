@@ -1,30 +1,26 @@
-import { Link, useSearch } from "@tanstack/react-router";
-import { ClipboardCheck, ClipboardList, Lock, Search, TriangleAlert } from "lucide-react";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { ArrowLeft, ClipboardList, Lock, Search, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 
 import { EstadoVazio } from "@/components/estado-vazio";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ApiError, mensagemDeErro } from "@/lib/api/errors";
 import { formatDate, formatTime } from "@/lib/format";
 
 import {
-  useContagemAberta,
+  useContagensAbertas,
   useIniciarContagem,
   useLinhasDeContagem,
-  useLocalizacoes,
-  usePodeGerirContagens,
+  usePodeFecharContagens,
   useRegistarContagemDeLinha,
   useUltimaContagemFechada,
 } from "../api";
+import {
+  AbrirContagem,
+  ContagensAbertas,
+  EsqueletoDasContagensAbertas,
+} from "../components/contagens-abertas";
 import { ErroDaLista } from "../components/estados-da-lista";
 import {
   CabecalhoDaContagem,
@@ -40,9 +36,11 @@ import {
   CODIGO_CONTAGEM_FECHADA,
   CODIGO_CONTAGEM_JA_ABERTA,
   codigoDaRecusaDeContagem,
+  contagemDoConflito,
   erroDaQuantidade,
   erroDoArtigo,
 } from "../recusas-de-contagem";
+import type { Contagem, Localizacao } from "../schemas";
 import { textos } from "../textos";
 
 /**
@@ -59,15 +57,32 @@ import { textos } from "../textos";
  * com justificação. O ledger continua append-only (ADR 0006) e nenhum nível é
  * reescrito em sítio nenhum.
  *
- * ## As três coisas que o contrato real trouxe, e onde elas se veem
+ * ## O ecrã tem duas faces, e a fronteira é o `?contagem=` (ADR 0033)
  *
- *  1. **há uma contagem aberta por estabelecimento** (ADR 0030, decisão 2), e a
- *     segunda tentativa de abrir responde 409 com o `id` da que já está aberta.
- *     Isso **não é um erro**: o ecrã relê a lista, troca o estado vazio pela
- *     contagem a decorrer e diz porquê. Levar lá quem tentou é a reacção certa;
- *  2. **quem conta é toda a gente, quem abre e quem fecha é `owner|manager`.**
- *     Não é o ecrã que decide — o servidor impõe-o em `permission_classes` —,
- *     mas desenhar um botão que vai dar 403 é mentir a quem o vê. Esconder é
+ * Havia **uma** contagem aberta por estabelecimento, e por isso este ecrã era o
+ * ecrã dela: encontrava-a com um `results.find(status === "open")` e contava-a.
+ * Com a exclusividade a passar a ser **por localização**, a arca e a despensa
+ * são duas contagens legítimas ao mesmo tempo e aquela selecção ficou errada de
+ * duas maneiras — assumia unicidade e dependia da paginação.
+ *
+ *  - **sem `?contagem=`**, o ecrã é a lista das abertas, com o que começa outra
+ *    por baixo. Escolher uma delas por ele seria repor no cliente a
+ *    arbitrariedade que a ADR tirou do servidor — e escolher automaticamente a
+ *    **única** aberta seria pior ainda: escondia o botão de abrir exactamente de
+ *    quem chega para contar outra localização, que é o caso que esta fatia
+ *    existe para desbloquear ("às 7h não se conta a despensa porque a câmara
+ *    fria ainda está aberta");
+ *  - **com `?contagem=`**, é a contagem daquela localização, e um recarregamento
+ *    ou um bloqueio de ecrã devolve a mesma (ADR 0008).
+ *
+ * ## As três coisas que o contrato traz, e onde elas se veem
+ *
+ *  1. **há uma contagem aberta por localização**, e a segunda tentativa sobre a
+ *     **mesma** localização responde 409 com o `id` da que já está aberta. Isso
+ *     não é um erro: é um atalho, e o botão do banner leva lá;
+ *  2. **abrir e contar são de toda a gente; fechar é de `owner|manager`.** Não é
+ *     o ecrã que decide — o servidor impõe-o em `permission_classes` —, mas
+ *     desenhar um botão que vai dar 403 é mentir a quem o vê. Esconder é
  *     apresentação, não autorização (ADR 0009);
  *  3. **os euros não são de toda a gente**, e por isso a linha não desenha um
  *     traço onde eles estariam: a quantidade da diferença continua lá, inteira.
@@ -82,90 +97,98 @@ function campoDe(produto: string): string {
   return `contagem-${produto}`;
 }
 
+/** O que o 409 de `contagem_ja_aberta` deixa no ecrã: a frase e o atalho. */
+interface Conflito {
+  /** A localização que a pessoa escolheu. A frase nomeia-a. */
+  readonly localizacao: string;
+  /** A contagem que já estava aberta ali, quando o corpo do 409 a traz. */
+  readonly contagem: string | null;
+}
+
 /**
- * O estado vazio: não há contagem a decorrer, e a ação é começar uma.
+ * O índice: **as contagens a decorrer**, o que começa outra, e o resultado da
+ * última fechada.
  *
- * As localizações vêm do `GET /locations` — a lista a sério, ordenada pelo
- * servidor (no seed ela já é o percurso: Armazém → Cozinha → Sala). Vinham dos
- * níveis de stock, e isso tinha um preço que agora não é preciso pagar: uma
- * localização sem movimento nenhum não aparecia, e contar o armazém vazio
- * depois do inventário era exactamente o que não dava para fazer.
+ * Era um estado vazio ("não há contagem a decorrer") porque não havia mais nada
+ * que pudesse estar a acontecer. Agora pode haver três, e a lista é o ecrã; o
+ * estado vazio é o caso em que ela está vazia, e continua a ter a mesma acção.
  */
-function SemContagem({
-  aoComecar,
+function IndiceDasContagens({
+  abertas,
   aComecar,
   recusa,
+  conflito,
+  aoComecar,
+  contagemPerdida,
 }: {
-  readonly aoComecar: (localizacao: string) => void;
+  readonly abertas: readonly Contagem[];
   readonly aComecar: boolean;
   readonly recusa: string | null;
+  readonly conflito: Conflito | null;
+  readonly aoComecar: (localizacao: Localizacao) => void;
+  /** O `?contagem=` aponta para uma contagem que já não está aberta. */
+  readonly contagemPerdida: boolean;
 }) {
-  const localizacoes = useLocalizacoes();
-  const [escolhida, setEscolhida] = useState("");
   const ultima = useUltimaContagemFechada();
-  const podeAbrir = usePodeGerirContagens();
-
-  const lista = localizacoes.data?.results ?? [];
-  const local = escolhida === "" ? lista[0]?.id : escolhida;
 
   return (
     <>
-      <EstadoVazio
-        icone={ClipboardList}
-        titulo={textos.contagem.semContagemTitulo}
-        descricao={
-          podeAbrir ? textos.contagem.semContagemCorpo : textos.contagem.semContagemCorpoStaff
-        }
-      >
-        {podeAbrir ? (
-          <>
-            <div className="flex w-full max-w-xs flex-col gap-1.5">
-              <Label htmlFor="contagem-localizacao">{textos.contagem.ondeContar}</Label>
-              <Select
-                value={local ?? ""}
-                onValueChange={setEscolhida}
-                disabled={lista.length === 0}
-              >
-                <SelectTrigger id="contagem-localizacao" className="w-full">
-                  <SelectValue placeholder={textos.contagem.escolhaALoja} />
-                </SelectTrigger>
-                <SelectContent>
-                  {lista.map((localizacao) => (
-                    <SelectItem key={localizacao.id} value={localizacao.id}>
-                      {localizacao.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              disabled={local === undefined || aComecar}
-              onClick={() => {
-                if (local === undefined) return;
-                aoComecar(local);
-              }}
-            >
-              <ClipboardCheck aria-hidden="true" />
-              {aComecar ? textos.contagem.aComecar : textos.contagem.comecar}
-            </Button>
-          </>
-        ) : (
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Lock aria-hidden="true" className="size-3 shrink-0" />
-            {textos.contagem.soOPapelAbre}
-          </p>
-        )}
-      </EstadoVazio>
-
-      {localizacoes.isError ? (
-        <ErroDaLista
-          titulo={textos.contagem.erroDasLocalizacoes}
-          mensagem={mensagemDeErro(localizacoes.error)}
-          aoTentarOutraVez={() => {
-            void localizacoes.refetch();
-          }}
-        />
+      {/* O endereço aponta para uma contagem que já não está a decorrer — outra
+          pessoa fechou-a, ou é um atalho guardado no telemóvel. Não é erro e
+          não é beco: a lista das que estão a decorrer está logo por baixo. */}
+      {contagemPerdida ? (
+        <div className="px-celula-x pt-3">
+          <Alert className="border-warning-border bg-warning-surface">
+            <TriangleAlert aria-hidden="true" className="text-warning" />
+            <AlertTitle>{textos.contagem.naoEstaAbertaTitulo}</AlertTitle>
+            <AlertDescription>{textos.contagem.naoEstaAbertaCorpo}</AlertDescription>
+          </Alert>
+        </div>
       ) : null}
+
+      {conflito === null ? null : (
+        <div className="px-celula-x pt-3">
+          <Alert className="border-warning-border bg-warning-surface">
+            <TriangleAlert aria-hidden="true" className="text-warning" />
+            <AlertTitle>{textos.contagem.jaHaviaAbertaTitulo}</AlertTitle>
+            <AlertDescription className="flex flex-col items-start gap-2">
+              {textos.contagem.jaHaviaAbertaCorpo(conflito.localizacao)}
+              {/* O `id` do corpo do 409 **passou a ter leitor** (ADR 0033): com
+                  várias abertas, reler a lista já não leva a lado nenhum — traz
+                  três, e nenhuma delas é "a" contagem. Sem `id` legível fica a
+                  frase, e a contagem está na lista por baixo. */}
+              {conflito.contagem === null ? null : (
+                <Button asChild variant="outline" size="sm">
+                  <Link to="/contar" search={{ contagem: conflito.contagem }}>
+                    {textos.contagem.irParaEssaContagem}
+                  </Link>
+                </Button>
+              )}
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
+
+      {abertas.length === 0 ? (
+        <EstadoVazio
+          icone={ClipboardList}
+          titulo={textos.contagem.semContagemTitulo}
+          descricao={textos.contagem.semContagemCorpo}
+        >
+          <AbrirContagem aComecar={aComecar} aoComecar={aoComecar} />
+        </EstadoVazio>
+      ) : (
+        <>
+          <ContagensAbertas contagens={abertas} />
+          <div className="flex flex-col items-start gap-3 px-celula-x py-4">
+            <AbrirContagem
+              titulo={textos.contagem.contarOutra}
+              aComecar={aComecar}
+              aoComecar={aoComecar}
+            />
+          </div>
+        </>
+      )}
 
       {recusa === null ? null : (
         <p role="alert" className="px-celula-x text-sm text-danger">
@@ -205,19 +228,30 @@ function SemContagem({
 
 export function EcraDeContar() {
   const busca = useSearch({ from: "/app/contar" });
-  const contagem = useContagemAberta();
-  const aberta = contagem.data ?? null;
-  const podeGerir = usePodeGerirContagens();
+  // `from` é o **caminho** da rota e não o id dela: o `useSearch` acima lê por
+  // id (`/app/…`) e o `useNavigate` tipa-se pelo caminho.
+  const navegar = useNavigate({ from: "/contar" });
 
+  const contagens = useContagensAbertas();
+  const abertas = contagens.data?.results;
+  const aberta =
+    busca.contagem === undefined
+      ? null
+      : (abertas?.find((contagem) => contagem.id === busca.contagem) ?? null);
+  // Só depois de a lista chegar: enquanto ela não chegou, "não está lá" é
+  // indistinguível de "ainda não se sabe", e o banner piscava a cada visita.
+  const contagemPerdida = busca.contagem !== undefined && abertas !== undefined && aberta === null;
+
+  const podeFechar = usePodeFecharContagens();
   const linhas = useLinhasDeContagem(aberta?.id, busca.zona);
   const registar = useRegistarContagemDeLinha();
   const iniciar = useIniciarContagem();
 
-  // O 409 de "já há uma contagem aberta" não é um erro, é uma troca de ecrã — e
-  // uma troca sem explicação deixa quem escolheu a Cozinha a olhar para o
-  // Armazém. A `api.ts` relê a lista; o que falta é a frase, e ela tem de
-  // sobreviver à contagem aberta aparecer (que desmonta o estado vazio).
-  const [jaHaviaAberta, setJaHaviaAberta] = useState(false);
+  // O 409 de `contagem_ja_aberta` não é um erro: é um atalho para a contagem
+  // que já está aberta naquela localização. Fica em estado porque sobrevive à
+  // invalidação da lista — o `onError` da mutação relê as abertas, e sem isto a
+  // frase desaparecia no instante em que a contagem aparecesse na lista.
+  const [conflito, setConflito] = useState<Conflito | null>(null);
 
   const resultados = linhas.data?.results;
   const porContar = aberta === null ? 0 : aberta.total_lines - aberta.counted_lines;
@@ -289,40 +323,54 @@ export function EcraDeContar() {
           uma das sete linhas do orçamento de 360×640. */}
       <h1 className="sr-only">{textos.contagem.titulo}</h1>
 
-      {contagem.isPending ? (
-        <>
-          <EsqueletoDoProgresso />
-          <EsqueletoDaContagem />
-        </>
+      {contagens.isPending ? (
+        busca.contagem === undefined ? (
+          <EsqueletoDasContagensAbertas />
+        ) : (
+          <>
+            <EsqueletoDoProgresso />
+            <EsqueletoDaContagem />
+          </>
+        )
       ) : null}
 
-      {contagem.isError ? (
+      {contagens.isError ? (
         <ErroDaLista
           titulo={textos.contagem.erroDaContagem}
-          mensagem={mensagemDeErro(contagem.error)}
+          mensagem={mensagemDeErro(contagens.error)}
           aoTentarOutraVez={() => {
-            void contagem.refetch();
+            void contagens.refetch();
           }}
         />
       ) : null}
 
-      {contagem.data === undefined ? null : aberta === null ? (
-        <SemContagem
+      {abertas === undefined ? null : aberta === null ? (
+        <IndiceDasContagens
+          abertas={abertas}
           aComecar={iniciar.isPending}
+          contagemPerdida={contagemPerdida}
+          conflito={conflito}
           recusa={
             iniciar.isError && codigoDaRecusaDeContagem(iniciar.error) !== CODIGO_CONTAGEM_JA_ABERTA
               ? mensagemDeErro(iniciar.error)
               : null
           }
           aoComecar={(localizacao) => {
-            setJaHaviaAberta(false);
+            setConflito(null);
             iniciar.mutate(
-              { location: localizacao },
+              { location: localizacao.id },
               {
+                // Abrir **leva lá**: o `id` da contagem nova entra no URL, e a
+                // pessoa que carregou no botão está a contar no toque seguinte.
+                onSuccess: (nova) => {
+                  void navegar({ to: "/contar", search: { contagem: nova.id } });
+                },
                 onError: (erro) => {
-                  setJaHaviaAberta(
-                    codigoDaRecusaDeContagem(erro) === CODIGO_CONTAGEM_JA_ABERTA,
-                  );
+                  if (codigoDaRecusaDeContagem(erro) !== CODIGO_CONTAGEM_JA_ABERTA) return;
+                  setConflito({
+                    localizacao: localizacao.name,
+                    contagem: contagemDoConflito(erro),
+                  });
                 },
               },
             );
@@ -330,26 +378,15 @@ export function EcraDeContar() {
         />
       ) : (
         <>
-          {jaHaviaAberta ? (
-            <div className="px-celula-x pt-3">
-              <Alert className="border-warning-border bg-warning-surface">
-                <TriangleAlert aria-hidden="true" className="text-warning" />
-                <AlertTitle>{textos.contagem.jaHaviaAbertaTitulo}</AlertTitle>
-                <AlertDescription className="flex flex-col items-start gap-2">
-                  {textos.contagem.jaHaviaAbertaCorpo(aberta.location.name)}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setJaHaviaAberta(false);
-                    }}
-                  >
-                    {textos.contagem.entendido}
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            </div>
-          ) : null}
+          {/* O caminho de volta à lista — e é por aqui que se abre a contagem de
+              **outra** localização sem fechar esta. Sem ele, quem entrou numa
+              contagem ficava lá fechado. */}
+          <Button asChild variant="ghost" className="self-start">
+            <Link to="/contar" search={() => ({})}>
+              <ArrowLeft aria-hidden="true" />
+              {textos.contagem.aDecorrer}
+            </Link>
+          </Button>
 
           <ProgressoDaContagem contagem={aberta} zonaAtiva={busca.zona} />
 
@@ -372,7 +409,7 @@ export function EcraDeContar() {
               descricao={textos.contagem.zonaVaziaCorpo}
             >
               <Button asChild variant="outline">
-                <Link to="/contar" search={() => ({})}>
+                <Link to="/contar" search={{ contagem: aberta.id }}>
                   {textos.contagem.verTudo}
                 </Link>
               </Button>
@@ -423,7 +460,7 @@ export function EcraDeContar() {
                   saída da tab bar (ADR 0009) — o que tapava a linha era a barra
                   fixa, não o que estava por baixo dela. */}
               <div className="flex flex-col items-start gap-1.5 border-t border-border px-celula-x py-4">
-                {podeGerir ? (
+                {podeFechar ? (
                   <Button asChild>
                     <Link to="/contar/fechar" search={{ contagem: aberta.id }}>
                       {porContar === 0

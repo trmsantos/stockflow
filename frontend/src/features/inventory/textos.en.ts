@@ -273,10 +273,7 @@ export const EN: typeof PT = {
     naoFoiGuardado: "Could not save that. Check the connection and enter it again.",
     semContagemTitulo: "No count in progress",
     semContagemCorpo:
-      "You count one location at a time: pick where to count, count it, close it. While a count is open no other one can be started.",
-    semContagemCorpoStaff:
-      "Once someone opens a count, the items in that location show up here to be counted.",
-    soOPapelAbre: "counts are opened by the owner or the manager",
+      "Pick where to count and start. Each location has its own count: the chest freezer and the pantry can be counted at the same time.",
     erroDasLocalizacoes: "Could not load the locations",
     ondeContar: "Where to count",
     escolhaALoja: "Choose the location",
@@ -292,10 +289,17 @@ export const EN: typeof PT = {
     zonaVaziaCorpo:
       "This count has no item under this filter. Items with stock in this location are in the full list.",
     verTudo: "See the whole count",
-    jaHaviaAbertaTitulo: "A count was already in progress",
+    jaHaviaAbertaTitulo: "That location is already being counted",
     jaHaviaAbertaCorpo: (localizacao: string) =>
-      `This is it, in ${localizacao}. Only one count is open at a time: close it before starting another.`,
-    entendido: "Got it",
+      `There is already an open count in ${localizacao}, started by you or by someone else. Carry on with that one — two counts of the same location would correct the same stock twice.`,
+    irParaEssaContagem: "Go to that count",
+    aDecorrer: "Counts in progress",
+    aCarregarAbertas: "Loading the counts in progress…",
+    abertaDesde: (dia: string, hora: string) => `open since ${dia} at ${hora}`,
+    contarOutra: "Count another location",
+    naoEstaAbertaTitulo: "That count is no longer in progress",
+    naoEstaAbertaCorpo:
+      "Someone may have closed it while this screen was open. The ones in progress are in the list.",
     fechouAMeioTitulo: "This count has already been closed",
     fechouAMeioCorpo:
       "Someone closed it while you were counting. The last number you entered did not go in — go back to Count to see the current state.",
@@ -308,7 +312,7 @@ export const EN: typeof PT = {
     voltar: "Count",
     semContagemTitulo: "No count to close",
     semContagemCorpo:
-      "This address points to a count that no longer exists, or there is none in progress.",
+      "This address does not say which count to close, or it points to one that no longer exists. Pick it from the list of counts in progress.",
     irParaContar: "Go to Count",
     aCarregar: "Loading the differences…",
     erroAoCalcular: "Could not work out the differences",

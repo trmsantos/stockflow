@@ -358,16 +358,13 @@ export const PT = {
     naoFoiGuardado: "Não deu para guardar. Verifique a ligação e escreva outra vez.",
     semContagemTitulo: "Nenhuma contagem a decorrer",
     /**
-     * Há **uma** contagem aberta de cada vez por estabelecimento (ADR 0030): a
-     * frase di-lo antes de alguém tentar abrir a segunda e levar com um
-     * conflito. Conta-se o armazém, fecha-se, conta-se a cozinha.
+     * Há uma contagem aberta por **localização** (ADR 0033, decisão 1): a arca
+     * e a despensa contam-se ao mesmo tempo, por duas pessoas. A frase di-lo
+     * antes de alguém o descobrir por um conflito — e dizia o contrário até
+     * aqui, porque a exclusividade era por estabelecimento.
      */
     semContagemCorpo:
-      "Conta-se uma localização de cada vez: escolha onde quer contar, conte, feche. Enquanto uma contagem estiver aberta não é possível abrir outra.",
-    /** Quem conta não abre a contagem. A frase diz-lhe o que fazer, não o que falhou. */
-    semContagemCorpoStaff:
-      "Quando alguém abrir uma contagem, os artigos dessa localização aparecem aqui para contar.",
-    soOPapelAbre: "quem abre uma contagem é o dono ou o gerente",
+      "Escolha onde quer contar e comece. Cada localização tem a sua contagem: a arca e a despensa podem estar a ser contadas ao mesmo tempo.",
     erroDasLocalizacoes: "Não foi possível carregar as localizações",
     ondeContar: "Onde quer contar",
     escolhaALoja: "Escolha a loja",
@@ -385,15 +382,37 @@ export const PT = {
       "Esta contagem não tem nenhum artigo neste filtro. Os artigos com stock nesta localização aparecem na lista completa.",
     verTudo: "Ver a contagem toda",
     /**
-     * O 409 de "já há uma contagem aberta" visto do lado de quem carregou no
-     * botão: a contagem que ela quer já existe, e o ecrã mostra-a. A frase
-     * existe para quem escolheu a Cozinha não ficar a olhar para o Armazém sem
-     * perceber porquê.
+     * O 409 de `contagem_ja_aberta` visto do lado de quem carregou no botão: a
+     * contagem que ela quer **já existe**, e a reacção certa é levá-la lá pelo
+     * `id` que o servidor devolve — é a diferença entre um beco e um atalho.
+     *
+     * A frase caducou com a ADR 0033 e dizia "há uma contagem aberta de cada
+     * vez: feche-a antes de começar outra", que hoje é falso: o conflito é
+     * **daquela localização**, e começar outra noutra localização é
+     * precisamente o que passou a ser possível.
+     *
+     * A localização vem da que a pessoa escolheu no seletor, e não de ler a
+     * frase do servidor: o banner tem de funcionar quando o 409 chega sem corpo
+     * legível, e a frase que diz o passo seguinte é do ecrã.
      */
-    jaHaviaAbertaTitulo: "Já havia uma contagem a decorrer",
+    jaHaviaAbertaTitulo: "Essa localização já está a ser contada",
     jaHaviaAbertaCorpo: (localizacao: string) =>
-      `É esta, em ${localizacao}. Há uma contagem aberta de cada vez: feche-a antes de começar outra.`,
-    entendido: "Entendido",
+      `Já há uma contagem aberta em ${localizacao}, começada por si ou por outra pessoa. Continue essa — duas contagens da mesma localização corrigiam o mesmo stock duas vezes.`,
+    irParaEssaContagem: "Ir para essa contagem",
+    /** O título da lista, e o rótulo do caminho de volta para ela. */
+    aDecorrer: "Contagens a decorrer",
+    aCarregarAbertas: "A carregar as contagens a decorrer…",
+    /**
+     * "Desde quando" é o que distingue uma contagem aberta das outras — e é o
+     * que diz a quem chega de manhã que há trabalho de ontem por fechar. O dia
+     * é relativo até um dia de distância ("hoje", "ontem") e data a partir daí.
+     */
+    abertaDesde: (dia: string, hora: string) => `aberta desde ${dia} às ${hora}`,
+    contarOutra: "Contar outra localização",
+    /** O `?contagem=` do URL aponta para uma contagem que já não está aberta. */
+    naoEstaAbertaTitulo: "Essa contagem já não está a decorrer",
+    naoEstaAbertaCorpo:
+      "Pode ter sido fechada por outra pessoa enquanto este ecrã estava aberto. As que estão a decorrer aparecem na lista.",
     /** A contagem fechou enquanto esta pessoa contava, noutro telemóvel. */
     fechouAMeioTitulo: "Esta contagem já foi fechada",
     fechouAMeioCorpo:
@@ -412,8 +431,14 @@ export const PT = {
     fechada: "Contagem fechada",
     voltar: "Contar",
     semContagemTitulo: "Não há contagem para fechar",
+    /**
+     * Desde a ADR 0033 o fecho **não adivinha** qual é a contagem: a
+     * exclusividade passou a ser por localização e podem estar três abertas ao
+     * mesmo tempo. A frase dizia "ou não há nenhuma a decorrer", que era a
+     * descrição do palpite que desapareceu.
+     */
     semContagemCorpo:
-      "Este endereço aponta para uma contagem que já não existe, ou não há nenhuma a decorrer.",
+      "Este endereço não diz qual é a contagem a fechar, ou aponta para uma que já não existe. Escolha-a na lista das que estão a decorrer.",
     irParaContar: "Ir para Contar",
     aCarregar: "A carregar as diferenças…",
     erroAoCalcular: "Não foi possível calcular as diferenças",

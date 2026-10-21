@@ -1032,6 +1032,12 @@ export interface paths {
         /**
          * Contagens do estabelecimento, da mais recente para a mais antiga
          * @description Lista paginada de contagens, da mais recente para a mais antiga.
+         *
+         *     `?status=open|closed` (ADR 0033, decisão 4): com várias contagens
+         *     abertas ao mesmo tempo, "as que estão a decorrer" é uma pergunta ao
+         *     servidor e não um `results.find(status === "open")` sobre a primeira
+         *     página — era o rabo a abanar o cão, uma suposição de ecrã a decidir uma
+         *     invariante de domínio.
          */
         get: operations["contagens_listar"];
         put?: never;
@@ -5234,6 +5240,8 @@ export interface operations {
             query?: {
                 /** @description A page number within the paginated result set. */
                 page?: number;
+                /** @description Filtra pelo estado. Ausente traz as duas; um valor fora da lista é 400. */
+                status?: "closed" | "open";
             };
             header?: never;
             path?: never;

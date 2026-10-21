@@ -46,11 +46,12 @@ import { textoDeQuantidade } from "../vocabulario";
  *
  * ## Quem contou não é cromado
  *
- * Há **uma** contagem aberta por estabelecimento, logo duas pessoas contam ao
- * mesmo tempo em dois telemóveis e a última a escrever ganha (o `POST` é um
- * upsert por artigo). Quem chega a uma linha tem de ver que já ali esteve
- * alguém — "o João já contou isto às 10:42" é a diferença entre recontar e
- * contar a mesma prateleira duas vezes. Nunca se somam duas observações.
+ * Há **uma** contagem aberta por localização (ADR 0033), e nada impede duas
+ * pessoas de a contarem ao mesmo tempo em dois telemóveis: a última a escrever
+ * ganha (o `POST` é um upsert por artigo). Quem chega a uma linha tem de ver
+ * que já ali esteve alguém — "o João já contou isto às 10:42" é a diferença
+ * entre recontar e contar a mesma prateleira duas vezes. Nunca se somam duas
+ * observações.
  */
 
 /** A mesma forma que o `decimal` do contrato, sem sinal: não se conta negativo. */
@@ -326,9 +327,9 @@ export function LinhaDeContagem({
 
           {/* Quem contou e quando, nas **duas** larguras. Esteve escondido a
               360px, e a razão de então ("quem está a contar ao telemóvel é quem
-              conta") caiu com a contagem única por estabelecimento: duas pessoas
-              contam ao mesmo tempo em dois telemóveis, e é no telemóvel que a
-              pergunta "isto já foi contado?" se faz. */}
+              conta") caiu assim que duas pessoas passaram a poder contar a
+              mesma localização ao mesmo tempo em dois telemóveis — e é no
+              telemóvel que a pergunta "isto já foi contado?" se faz. */}
           <span className="ml-auto max-w-36 shrink-0 truncate text-right text-muted-foreground md:ml-0 md:max-w-none md:text-left">
             {aRegistar ? (
               textos.contagem.aGuardar
