@@ -314,15 +314,24 @@ export const linhaDeContagemSchema = z.object({
   difference: quantidadeSchema.nullable(),
   /**
    * A mesma diferença em euros, com sinal, arredondada ao cêntimo pelo CMP — e
-   * **`null` para quem não vê euros** (ADR 0030, decisão 1: a lista é de toda a
-   * gente, os euros são de `owner|manager`).
+   * **ausente para quem não vê euros** (ADR 0032, decisão 5).
    *
-   * O preço do contrato é que `null` passa a dizer duas coisas: "ainda não
-   * contado" e "não te é mostrado". O ecrã distingue-as pelo campo ao lado — há
-   * `difference` sem `difference_eur` — e nunca desenha um traço onde havia
-   * dinheiro: para quem não os vê, a coluna não existe.
+   * ## Um `.optional()` que não é opcional
+   *
+   * A chave só falta por **papel**, nunca por acaso: para `owner|manager` vem
+   * sempre. O `.optional()` está aqui porque sem ele o Zod exigia a chave e o
+   * ecrã de contagens não degradava para o colaborador — **rebentava** no
+   * `parse`, que é o defeito exacto que a adenda da ADR 0031 descreve.
+   *
+   * O `.nullable()` fica, e não é redundante: `null` continua a querer dizer
+   * "ainda não contado", que é o seu único significado desde que a ausência
+   * passou a dizer o outro. A ADR 0030 tinha nomeado o preço de os juntar.
+   *
+   * Quem lê isto trata os dois casos como um só — não há número — e **nunca
+   * desenha um traço** no lugar do dinheiro: para quem não o vê, a coluna não
+   * existe.
    */
-  difference_eur: decimal.nullable(),
+  difference_eur: decimal.nullable().optional(),
   /**
    * Quem contou e quando — uma **cópia do nome** da pertença, como no ledger,
    * para sobreviver à conta ser apagada.

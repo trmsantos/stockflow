@@ -98,6 +98,16 @@ ROTULO_DE_QUEM_FECHA = _("Owner or manager")
 #: respostas do dono, nº 5) e o ecrã mostra o limiar em vez de o esconder num
 #: painel de configurações. Se o dono voltar atrás, muda-se este número e mais
 #: nada.
+#:
+#: **E muda-se mais uma coisa: quem o vê.** A zero isto é um oráculo morto —
+#: "obrigatório acima de 0 €" não diz nada sobre preço nenhum. Com um limiar
+#: ≠ 0 servido a quem não vê euros, cada fecho passa a limitar um custo ("esta
+#: diferença vale mais de X €"), e repetido artigo a artigo reconstrói o preço
+#: sem nunca mostrar um euro. Hoje não chega lá porque as duas rotas de
+#: `/closing` são de `owner|manager`, que são os `PAPEIS_QUE_VEEM_EUROS`; o
+#: `FechoDeContagemOutSerializer` tem a nota completa e o
+#: `test_o_limiar_do_fecho_nao_chega_a_quem_nao_ve_euros` prende as duas listas.
+#: Quem mexer neste número sem ler isto abre a fuga com uma linha (ADR 0032).
 MOTIVO_OBRIGATORIO_ACIMA_DE_EUR = Decimal("0")
 
 #: O comprimento máximo da justificação, igual ao da coluna e ao do schema Zod.

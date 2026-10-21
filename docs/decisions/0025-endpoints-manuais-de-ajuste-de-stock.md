@@ -146,3 +146,11 @@ Nenhum conhecido. ADR 0023 deixou tudo pronto:
 - `waste` em produto sem rastreio (`track_lots=False`): há problema se houver múltiplos lotes de facto (ex: comprados em dois dias) mas nós só sabemos de um? Ou a regra é sempre um só? (Resposta esperada: sempre sintético, um lote por artigo, sem problema.)
 - FEFO: é sempre por `expires_at` depois `received_at`, ou há contexto em que seja LIFO ou por localização física do armazém? (Resposta esperada: é FEFO conforme ADR 0023, decisão 3.)
 - Ajuste: quando a contagem descobrir falta, o utilizador cria um `adjustment` com `-X`, ou a contagem é um tipo diferente com ferramenta própria? (Resposta esperada: contagem é ferramenta da fatia 6, este ajuste é manual ad-hoc; são dois paths.)
+
+---
+
+> **Revogado em parte (2026-10-21).** A **decisão 3** desta ADR foi **revogada pela ADR 0032**: o
+> `unit_cost` deixa de sair nos `201` de `stock/movements/waste|adjustment|transfer` a quem não é
+> `owner|manager`, com a chave **ausente**. Os três endpoints continuam abertos a todos os papéis e
+> o resto do corpo não muda — registar uma perda, um ajuste ou uma transferência continua a ser
+> trabalho de quem está lá.

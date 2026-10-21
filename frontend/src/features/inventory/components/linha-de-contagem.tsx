@@ -174,7 +174,11 @@ export function LinhaDeContagem({
   // contra "24.000".
   const contado = linha.counted === null ? "" : formatDecimalField(linha.counted.display);
   const diferenca = linha.difference;
-  const diferencaEmEuros = linha.difference_eur;
+  // `?? null` e não `=== undefined` espalhado: a chave **falta** para quem
+  // não vê euros (ADR 0032, decisão 5) e `null` quer dizer "ainda não
+  // contado". Para este ecrã os dois são a mesma coisa — não há número —
+  // e normalizá-los aqui deixa a única guarda lá em baixo a dizer isso.
+  const diferencaEmEuros = linha.difference_eur ?? null;
 
   // O sinal da diferença decide a tinta, e o sinal está no próprio número ("−")
   // mais a palavra em `sr-only`, logo a cor nunca comunica sozinha.
@@ -306,9 +310,9 @@ export function LinhaDeContagem({
                   <span className="sr-only">
                     {emFalta ? textos.accoes.aMenos : textos.accoes.aMais}
                   </span>
-                  {/* Os euros só para quem os vê. `difference_eur` chega a `null`
-                      ao colaborador, e um traço no lugar deles seria dizer-lhe
-                      que falta um número — quando o que falta é a permissão. */}
+                  {/* Os euros só para quem os vê. Ao colaborador a chave **não
+                      vem**, e um traço no lugar deles seria dizer-lhe que falta
+                      um número — quando o que falta é a permissão. */}
                   {diferencaEmEuros === null ? null : (
                     <>
                       <span aria-hidden="true">·</span>

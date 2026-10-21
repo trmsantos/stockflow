@@ -68,6 +68,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import (
+    CHAVE_DE_EUROS,
     PertenceAoTenant,
     membership_atual,
     utilizador_atual,
@@ -89,7 +90,6 @@ from apps.purchasing.selectors import (
     ultimos_precos_por_codigo,
 )
 from apps.purchasing.serializers import (
-    CHAVE_DE_EUROS,
     CabecalhoInSerializer,
     DocumentoInSerializer,
     DocumentoOutSerializer,

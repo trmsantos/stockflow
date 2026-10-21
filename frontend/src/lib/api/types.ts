@@ -1857,6 +1857,13 @@ export interface components {
          */
         EstadoDeContagemEnum: "open" | "closed";
         /**
+         * @description * `conhecido` - conhecido
+         *     * `estimado` - estimado
+         *     * `desconhecido` - desconhecido
+         * @enum {string}
+         */
+        EstadoDoCustoEnum: "conhecido" | "estimado" | "desconhecido";
+        /**
          * @description * `aguarda_captura` - slot aberto, à espera da primeira página
          *     * `expirado` - o slot expirou sem página nenhuma
          *     * `a_normalizar` - há páginas e a imagem ainda não está pronta
@@ -1935,7 +1942,28 @@ export interface components {
             /** @description Porque é que esta contagem fecha. Obrigatória. */
             reason: string;
         };
-        /** @description O fecho: as diferenças em quantidade e em euros, antes e depois de escrever. */
+        /**
+         * @description O fecho: as diferenças em quantidade e em euros, antes e depois de escrever.
+         *
+         *     ## Sem mixin, e isso é uma decisão: aqui o **recurso** é dinheiro
+         *
+         *     As duas rotas de `/closing` são de `owner|manager` em `permission_classes` —
+         *     é a assimetria da ADR 0030 — e esses são exactamente os
+         *     `PAPEIS_QUE_VEEM_EUROS`. Quem não vê euros leva 403 antes de este serializer
+         *     correr, logo não há payload a filtrar. O teste
+         *     `test_o_limiar_do_fecho_nao_chega_a_quem_nao_ve_euros` prende as duas listas
+         *     uma à outra e falha no dia em que alguém alargar a rota.
+         *
+         *     **Porque é que isto importa, e não é só o `loss_eur`:** o
+         *     `reason_required_above_eur` é hoje `0` e o `reason_required` é por isso
+         *     sempre `True` — um par morto, que não informa nada. Com um limiar ≠ 0 e
+         *     estes dois campos à vista de quem conta, **cada linha passa a limitar um
+         *     custo**: "esta contagem exigiu justificação" é "a diferença vale mais de X
+         *     €", e repetido artigo a artigo é uma busca binária sobre o preço sem nenhuma
+         *     chave de dinheiro no payload. Se um dia o fecho se abrir a quem conta, o
+         *     limiar e a bandeira têm de sair com os euros — não são metadados de
+         *     configuração, são o euro por outro nome.
+         */
         FechoDeContagemOut: {
             readonly closing_reason?: string | null;
             readonly closing_role?: string;
@@ -2242,10 +2270,16 @@ export interface components {
         /**
          * @description Uma linha: o que o sistema diz, o que se contou e a diferença.
          *
-         *     `difference_eur` vem a `null` para o `staff` — é a regra dos euros da ADR
-         *     0029 —, e o preço é que `null` passa a dizer duas coisas ("ainda não
-         *     contado" e "não te é mostrado"). É o menor dos males contra negar a lista a
-         *     quem conta.
+         *     **`difference_eur` passou de `null` a ausente** a 2026-10-21 (ADR 0032,
+         *     decisão 5). A ADR 0030 escolhera `null` e nomeara o preço: *"`null` passa a
+         *     dizer duas coisas — ainda não contado e não te é mostrado"*. A chave ausente
+         *     diz a segunda sem apagar a primeira — `difference` presente com
+         *     `difference_eur` ausente é inequívoco — e é a forma que o resto do sistema
+         *     já usa, incluindo o módulo ao lado. Duas formas da mesma política dentro do
+         *     mesmo módulo era o que a decisão 4 desta ADR acabara de desfazer.
+         *
+         *     O que o colaborador continua a receber: a lista inteira, o esperado, o
+         *     contado, a diferença em quantidade, quem contou e quando.
          */
         LinhaDeContagemOut: {
             readonly count_unit?: string;
@@ -2736,6 +2770,43 @@ export interface components {
             since: string;
             /** Format: date-time */
             until: string;
+        };
+        /**
+         * @description * `transfer_out` - transfer_out
+         *     * `transfer_in` - transfer_in
+         * @enum {string}
+         */
+        PernaDeTransferenciaEnum: "transfer_out" | "transfer_in";
+        /**
+         * @description Uma das duas pernas de uma transferência: a saída e a entrada.
+         *
+         *     `type` diz qual é (`transfer_out` / `transfer_in`), e as duas trazem a
+         *     localização **de cada uma** — é o par que conta a história, e é por isso que
+         *     o `unit_cost` tinha de desaparecer nas **duas**: escondê-lo só numa delas
+         *     dava o mesmo número pelo outro lado.
+         */
+        PernaDeTransferenciaOut: {
+            /**
+             * @description Qualidade do custo com que o movimento foi avaliado.
+             *
+             *     * `conhecido` - conhecido
+             *     * `estimado` - estimado
+             *     * `desconhecido` - desconhecido
+             */
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
+            readonly location_name?: string;
+            readonly lot_code?: string | null;
+            /** Format: uuid */
+            readonly movement_id?: string;
+            readonly product_name?: string;
+            /** Format: decimal */
+            readonly quantity?: string;
+            readonly type?: components["schemas"]["PernaDeTransferenciaEnum"];
+            /**
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
+             */
+            readonly unit_cost?: string;
         };
         /** @description Um ponto: o valor e a altura da barra (`value / scale_max`). */
         PontoDaSerieOut: {
@@ -3312,8 +3383,22 @@ export interface components {
          * @enum {string}
          */
         SessaoOutEstadoEnum: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa";
-        /** @description Detalhe de stock por (product, lot) ou (location, lot) (fatia 4). */
+        /**
+         * @description Uma linha do `by-location` / `by-product`: **um lote**, onde ele está.
+         *
+         *     É aqui que o marcador qualitativo é exacto e por isso é aqui que ele é uma
+         *     palavra: a linha é um lote, e um lote tem preço ou não tem. As três palavras
+         *     possíveis e a razão de serem três estão no `selectors.ESTADOS_DO_CUSTO`.
+         */
         StockDetail: {
+            /**
+             * @description Qualidade do custo deste lote. `estimado` não aparece no painel, que lê a projeção: ver a dívida nomeada em `ESTADOS_DO_CUSTO`.
+             *
+             *     * `conhecido` - conhecido
+             *     * `estimado` - estimado
+             *     * `desconhecido` - desconhecido
+             */
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
             /**
              * Format: date-time
              * @description Data de validade (NULL se sem data)
@@ -3332,18 +3417,33 @@ export interface components {
              */
             readonly quantity?: string;
             /**
-             * Format: double
-             * @description Quantidade × custo unitário.
+             * Format: decimal
+             * @description Valor da quantidade com preço registado: `unit_cost × (quantity − quantity_without_cost)`. Zero quando nenhuma tem preço — é a soma de nada. Ausente para quem não vê euros.
              */
-            readonly total_value?: number | null;
+            readonly total_value?: string;
             /**
              * Format: decimal
-             * @description Custo unitário (NULL se zero)
+             * @description Custo unitário médio ponderado da quantidade **com** preço registado — nunca diluído pela parte sem preço. NULL quando nenhuma tem. Ausente para quem não vê euros.
              */
             readonly unit_cost?: string | null;
         };
-        /** @description Resposta de um movimento de stock criado (201). */
+        /**
+         * @description O 201 de `POST /stock/movements/{waste,adjustment}`.
+         *
+         *     Até 2026-10-21 este serializer **não serializava nada**: estava declarado no
+         *     `extend_schema` e a view devolvia um `dict` montado à mão, logo o contrato
+         *     descrevia uma resposta que ninguém produzia e nenhum mixin lhe chegava (ADR
+         *     0032, decisão 4). Agora a resposta passa por aqui.
+         */
         StockMovementResponse: {
+            /**
+             * @description Qualidade do custo com que o movimento foi avaliado.
+             *
+             *     * `conhecido` - conhecido
+             *     * `estimado` - estimado
+             *     * `desconhecido` - desconhecido
+             */
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
             /** Format: date-time */
             readonly created_at?: string;
             readonly location_name?: string;
@@ -3353,7 +3453,10 @@ export interface components {
             readonly product_name?: string;
             /** Format: decimal */
             readonly quantity?: string;
-            /** Format: decimal */
+            /**
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
+             */
             readonly unit_cost?: string;
         };
         /** @description Quantidade em stock após receção. */
@@ -3365,26 +3468,68 @@ export interface components {
             display: string;
             display_unit: string;
         };
-        /** @description Resumo de stock agregado por produto (painel, fatia 4). */
+        /**
+         * @description Uma linha do `GET /stock/summary`: **um** artigo, somado em todos os lotes.
+         *
+         *     Uma linha por artigo e não uma por custo distinto — ver o defeito (b) no
+         *     `selectors.stock_summary`: contar as linhas chegou a dizer quantos custos
+         *     diferentes um artigo tem, que é um oráculo sobre preços sem nenhuma chave de
+         *     preço no payload.
+         *
+         *     ## Cobertura e não um `cost_status`, e é a diferença entre agregado e lote
+         *
+         *     O facto "esta entrada ficou sem preço" é **por lote**: é o defeito de uma
+         *     receção concreta. Num artigo com dois lotes, um com preço e outro sem, não
+         *     há palavra que descreva a linha agregada — e inventar uma quarta
+         *     ("parcialmente desconhecido") era recriar a divergência de vocabulário que a
+         *     ADR 0032 fechou. O que um agregado mostra é a **cobertura**: quanta
+         *     quantidade não tem preço. É quantidade e não euro, diz se o valor está
+         *     subestimado em 5 % ou em 95 %, e é o mesmo feitio do `linhas_sem_custo` do
+         *     desperdício e do `ingredientes_sem_custo` de uma receita.
+         */
         StockSummary: {
             /** Format: uuid */
             readonly product_id?: string;
             readonly product_name?: string;
             /**
              * Format: decimal
-             * @description Quantidade total em unidade base
+             * @description Quantidade em unidade base
              */
             readonly quantity?: string;
             /**
-             * Format: double
-             * @description Quantidade × custo unitário.
+             * Format: decimal
+             * @description Quanta desta quantidade está em níveis sem preço registado. Zero é cobertura total, e igual ao `quantity` é não haver preço nenhum. O que sobra (`quantity` menos isto) é a quantidade que pagou o `total_value`.
              */
-            readonly total_value?: number | null;
+            readonly quantity_without_cost?: string;
             /**
              * Format: decimal
-             * @description Custo unitário (NULL se zero)
+             * @description Valor da quantidade com preço registado: `unit_cost × (quantity − quantity_without_cost)`. Zero quando nenhuma tem preço — é a soma de nada. Ausente para quem não vê euros.
+             */
+            readonly total_value?: string;
+            /**
+             * Format: decimal
+             * @description Custo unitário médio ponderado da quantidade **com** preço registado — nunca diluído pela parte sem preço. NULL quando nenhuma tem. Ausente para quem não vê euros.
              */
             readonly unit_cost?: string | null;
+        };
+        /**
+         * @description O 201 de `POST /stock/movements/transfer` — e é novo porque **não existia**.
+         *
+         *     O `extend_schema` desta rota apontava para o `StockMovementResponseSerializer`,
+         *     que descreve **um** movimento: o schema prometia `movement_id` e
+         *     `product_name` no topo e o corpo que sai tem `transfer_id` e `movements`. O
+         *     cliente gerado estava errado desde que a rota nasceu (ADR 0025) e ninguém
+         *     reparou porque nada serializava a resposta (ADR 0032, decisão 4).
+         *
+         *     Sem mixin próprio: o dinheiro está nas pernas, e o `context` chega-lhes pelo
+         *     `root` — é o serializer de topo que tem de ser instanciado com ele.
+         */
+        StockTransferResponse: {
+            /** Format: date-time */
+            readonly created_at?: string;
+            readonly movements?: components["schemas"]["PernaDeTransferenciaOut"][];
+            /** Format: uuid */
+            readonly transfer_id?: string | null;
         };
         /**
          * @description * `escuro` - Escuro
@@ -5300,7 +5445,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StockMovementResponse"];
+                    "application/json": components["schemas"]["StockTransferResponse"];
                 };
             };
         };

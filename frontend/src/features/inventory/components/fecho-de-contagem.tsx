@@ -137,6 +137,9 @@ export function ResumoDoFecho({ fecho }: { readonly fecho: FechoDeContagem }) {
             {fecho.differences.map((linha) => {
               const emFalta = linha.difference?.base.startsWith("-") ?? false;
               const tinta = emFalta ? "text-danger" : "text-success";
+              // Ausente (quem não vê euros) e `null` (por contar) são o mesmo
+              // para quem desenha: não há número. Ver `linhaDeContagemSchema`.
+              const emEuros = linha.difference_eur ?? null;
               return (
                 <li
                   key={linha.id}
@@ -154,11 +157,11 @@ export function ResumoDoFecho({ fecho }: { readonly fecho: FechoDeContagem }) {
                     </span>
                     {/* Os euros só existem para quem os vê. Este ecrã é de
                         `owner|manager`, logo chegam sempre — e a guarda fica
-                        porque o contrato os declara nuláveis e um traço no
-                        lugar do dinheiro seria uma afirmação falsa. */}
-                    {linha.difference_eur === null ? null : (
+                        porque o contrato os declara ausentes ou nulos, e um
+                        traço no lugar do dinheiro seria uma afirmação falsa. */}
+                    {emEuros === null ? null : (
                       <span data-numeric className={`w-20 shrink-0 text-sm ${tinta}`}>
-                        {formatMoney(linha.difference_eur)}
+                        {formatMoney(emEuros)}
                       </span>
                     )}
                   </span>

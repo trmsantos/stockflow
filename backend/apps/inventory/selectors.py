@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
 
@@ -43,6 +43,10 @@ from apps.inventory.models import (
 )
 
 __all__ = [
+    "ESTADOS_DO_CUSTO",
+    "CUSTO_CONHECIDO",
+    "CUSTO_DESCONHECIDO",
+    "CUSTO_ESTIMADO",
     "ajustes_da_contagem",
     "artigo_tem_lote",
     "artigos_abaixo_do_minimo",
@@ -110,117 +114,306 @@ def listar_localizacoes(*, tenant_id: UUID) -> QuerySet[Location]:
     return localizacoes_do_ambito(tenant_id=tenant_id).order_by("position", "name", "id")
 
 
-def stock_summary(
-    *, tenant_id: UUID, location_id: UUID | None = None
-) -> QuerySet:
-    """Saldo agregado por produto (com ou sem localização).
+#: As três palavras com que este projecto fala da qualidade de um custo, e as
+#: **únicas** três: são as que o porto do `agents` já serve ao `staff`
+#: (`_custo` em `apps/agents/tools.py`), e uma quarta — "parcialmente
+#: desconhecido", por exemplo — seria a divergência que a ADR 0032 fechou a
+#: nascer outra vez. Zero é "preço desconhecido" por convenção da ADR 0024,
+#: decisão 5, caso 3, e não um preço de zero euros.
+#:
+#: **Dívida nomeada: `CUSTO_ESTIMADO` não é alcançável nesta fatia.** O
+#: `cost_is_estimate` existe no `StockMovement` (ADR 0023) e a projeção não o
+#: carrega: o `StockLevel` guarda o custo e não a sua proveniência, logo o
+#: painel só distingue conhecido de desconhecido. Os 201 de
+#: `stock/movements/*` também não o alcançam, por consequência e não por
+#: esquecimento — o `registar_waste`, o `registar_adjustment` e o
+#: `registar_transfer` escrevem `cost_is_estimate=False` porque lêem o custo
+#: **do nível** (ADR 0025, decisão 5), e uma saída não sabe se a entrada que a
+#: pagou vinha de uma guia ou de uma fatura.
+#:
+#: A palavra fica na lista à mesma, e é esse o ponto: no dia em que a
+#: proveniência chegar ao nível, escreve-se `estimado` e não se **inventa** uma
+#: palavra nova para o mesmo facto. É a divergência que a ADR 0032 fechou e que
+#: um booleano aqui reabria.
+CUSTO_CONHECIDO = "conhecido"
+CUSTO_ESTIMADO = "estimado"
+CUSTO_DESCONHECIDO = "desconhecido"
+ESTADOS_DO_CUSTO: tuple[str, str, str] = (
+    CUSTO_CONHECIDO,
+    CUSTO_ESTIMADO,
+    CUSTO_DESCONHECIDO,
+)
 
-    Retorna: product_id, product_name, quantity (SUM), unit_cost, total_value.
-    Filtra por: quantity != 0.
+#: O valor de uma linha (`quantidade × custo`) precisa de mais dígitos do que
+#: qualquer das duas pontas: 12,3 vezes 12,6 não cabe em 12,6.
+_VALOR = DecimalField(max_digits=20, decimal_places=6)
+_QUANTIDADE = DecimalField(max_digits=16, decimal_places=3)
+
+#: Duas casas para o dinheiro, seis para um custo unitário — as do contrato.
+_CENTIMO = Decimal("0.01")
+_MILIONESIMO = Decimal("0.000001")
+
+
+def _quantidade_sem_custo() -> Sum:
+    """Σ das quantidades cujo nível não tem preço. **Dentro** do `Sum`, sempre.
+
+    É a "cobertura" da ADR 0032: diz se a subestimação do valor é de 5 % ou de
+    95 % sem dizer um euro. E a razão de o `Case` viver dentro do agregado é a
+    outra metade do defeito que esta fatia corrigiu — ver `stock_summary`.
+
+    Serve também de **complemento do divisor** do custo unitário: o que sobra,
+    `quantidade − sem custo`, é a quantidade que pagou o `total_value` (ver
+    `_custo_unitario`).
     """
-    qs = (
-        StockLevel.objects.filter(tenant_id=tenant_id)
-        .exclude(quantity=Decimal("0"))
-        .select_related("product", "lot")
-        .values("product_id", "product__short_name")
-        .annotate(
-            product_name=F("product__short_name"),
-            total_quantity=Sum("quantity"),
-            avg_unit_cost=Case(
-                When(quantity__gt=0, then=F("unit_cost")),
-                default=Value(Decimal("0")),
-                output_field=DecimalField(),
-            ),
-        )
+    return Sum(
+        Case(
+            When(unit_cost=Decimal("0"), then=F("quantity")),
+            default=Value(Decimal("0")),
+            output_field=_QUANTIDADE,
+        ),
+        output_field=_QUANTIDADE,
     )
 
-    if location_id:
-        qs = qs.filter(location_id=location_id)
 
-    return qs.order_by("product__short_name")
+def _custo_unitario(*, valor: Decimal, quantidade_com_custo: Decimal) -> Decimal | None:
+    """O custo médio **ponderado**, ou `None` se não houver nenhum.
+
+    O divisor é a quantidade que **contribuiu** para o `valor`, e não o saldo
+    todo: `quantity − quantity_without_cost`. É a correcção de 2026-10-21 e a
+    razão está medida — 30 unidades a 2,00 € mais 70 sem preço davam
+    **0,60 €/un** num artigo cujo custo conhecido é 2,00 €/un, porque o
+    numerador só somava a parte com preço e o denominador somava tudo. Dividir
+    euros por unidades que não contribuíram com um cêntimo não é uma média de
+    nada: é um número que ninguém pode usar para decidir uma compra, e nenhum
+    manual, nenhum TOC e nenhum ERP o calcula. O mesmo princípio já estava
+    escrito no `purchasing.selectors.linhas_com_preco_confirmado`: *"uma linha
+    sem preço calculável não é um preço de zero"*.
+
+    **A invariante da ADR 0032 sobrevive**, e é ela que fecha a reconstrução por
+    aritmética: `unit_cost × (quantity − quantity_without_cost) == total_value`.
+    As duas pontas do divisor são **quantidades** — ambas servidas a quem não vê
+    euros —, logo esconder `unit_cost` e `total_value` continua a não deixar
+    reconstruir nenhum dos dois. Mudou o divisor, não a política.
+
+    `None` e não zero: zero é "preço desconhecido" (ADR 0024, decisão 5, caso 3)
+    e seria uma afirmação sobre o preço. Com divisor a zero — um artigo em que
+    **toda** a quantidade está sem preço, ou saldos com sinais que se anulam
+    (uma localização a +5 e outra a −5) — não há média nenhuma.
+    """
+    if not quantidade_com_custo or valor == 0:
+        return None
+    return (valor / quantidade_com_custo).quantize(
+        _MILIONESIMO, rounding=ROUND_HALF_UP
+    )
+
+
+def _estado_do_custo(custo: Decimal | None) -> str:
+    """Conhecido ou desconhecido, nas palavras do `ESTADOS_DO_CUSTO`."""
+    return CUSTO_DESCONHECIDO if not custo else CUSTO_CONHECIDO
+
+
+def _linha_de_stock(
+    linha: dict[str, Any], identidade: dict[str, Any]
+) -> dict[str, Any]:
+    """A parte comum das três rotas do painel: saldo, custo e cobertura.
+
+    `total_value` e `unit_cost` saem daqui **sempre**; quem os tira do payload é
+    o `SemEurosParaQuemNaoVe` do `accounts.api`, no serializer. Esta camada não
+    conhece papéis, e é de propósito: uma query que ramificasse no papel era a
+    segunda definição da política que a ADR 0032 acabou de desfazer.
+
+    Pela mesma razão saem daqui as **duas** formas do marcador de preço
+    desconhecido — a palavra (`cost_status`, exacta num lote) e a cobertura
+    (`quantity_without_cost`, o que resta dizer num agregado). Quem escolhe uma
+    é o serializer de cada rota: o detalhe é por lote e serve a palavra, o
+    resumo soma lotes e serve a cobertura.
+
+    O que está sem preço vale **zero no `total_value`** e não torna o total
+    nulo: é a convenção que o `desperdicio_por_artigo_e_motivo` já segue — *"um
+    `unit_cost` a zero sai como zero com a contagem de linhas sem custo ao
+    lado"* —, e aqui o "ao lado" é a cobertura. Um total nulo escondia o valor
+    que **se** conhece por causa do que não se conhece; o `unit_cost`, esse, vem
+    a `None`, porque uma média de nada não é zero euros.
+
+    **Os dois factos são diferentes e por isso têm formas diferentes**, e é a
+    distinção que a ADR 0032 fez questão de manter: num artigo em que *toda* a
+    quantidade está sem preço, `total_value` é `0,00` porque é mesmo a soma de
+    nada — "deste artigo não se conhece um cêntimo de valor" é uma afirmação
+    verdadeira e somável no painel —, e `unit_cost` vem a `None` porque "o custo
+    unitário é zero" seria falsa. Quem distingue as duas é a cobertura:
+    `quantity_without_cost == quantity` diz, em quantidade, que o zero é
+    ausência de preço e não mercadoria oferecida.
+    """
+    quantidade = linha["quantidade"] or Decimal("0")
+    sem_custo = linha["sem_custo"] or Decimal("0")
+    valor = (linha["valor"] or Decimal("0")).quantize(_CENTIMO, rounding=ROUND_HALF_UP)
+    custo = _custo_unitario(valor=valor, quantidade_com_custo=quantidade - sem_custo)
+    return {
+        **identidade,
+        "quantity": quantidade,
+        "quantity_without_cost": sem_custo,
+        "cost_status": _estado_do_custo(custo),
+        "unit_cost": custo,
+        "total_value": valor,
+    }
+
+
+def stock_summary(
+    *, tenant_id: UUID, location_id: UUID | None = None
+) -> list[dict[str, Any]]:
+    """Saldo agregado **por artigo**, com o valor e a cobertura do custo.
+
+    Uma linha por artigo: `product_id`, `product_name`, `quantity`,
+    `quantity_without_cost`, `unit_cost` e `total_value`. Ordenada por nome, que
+    é a ordem do ecrã — e nunca por valor (ADR 0032: uma lista ordenada por
+    euros **são** os euros, servida a quem não os pode ver).
+
+    ## Os dois defeitos que esta função teve até 2026-10-21, porque voltam
+
+    **(a) A rota não devolvia a quantidade.** A anotação chamava-se
+    `total_quantity` e o serializer declarava `quantity`: o DRF não encontrava a
+    chave, o campo era `read_only` (logo `required=False`) e saía um `SkipField`
+    silencioso — o painel de stock servia o valor em euros e **não** o saldo. A
+    cura não é renomear um dos dois até o teste passar: é esta camada devolver
+    os nomes do contrato, que é o que faz o erro ser impossível em vez de
+    improvável.
+
+    **(b) O `Case` desfazia a agregação.** `avg_unit_cost` era um `Case` sobre
+    `quantity` e `unit_cost` **fora** de qualquer agregado, dentro de um
+    `values().annotate()`: o Django põe no `GROUP BY` toda a coluna não
+    agregada, logo agrupava por (artigo, quantidade, custo) e um artigo com três
+    lotes de custos diferentes saía em **três linhas**. Contar as linhas passava
+    a dizer quantos custos distintos o artigo tem — um oráculo sobre preços que
+    nenhum teste de "chaves de dinheiro" apanha, porque não há ali chave nenhuma
+    de dinheiro. Agora todo o `Case` está **dentro** de um `Sum`.
+    """
+    niveis = StockLevel.objects.filter(tenant_id=tenant_id).exclude(
+        quantity=Decimal("0")
+    )
+    if location_id is not None:
+        niveis = niveis.filter(location_id=location_id)
+
+    linhas = (
+        niveis.values("product_id", "product__short_name")
+        .annotate(
+            quantidade=Sum("quantity"),
+            valor=Sum(F("quantity") * F("unit_cost"), output_field=_VALOR),
+            sem_custo=_quantidade_sem_custo(),
+        )
+        .order_by("product__short_name", "product_id")
+    )
+    return [
+        _linha_de_stock(
+            linha,
+            {
+                "product_id": linha["product_id"],
+                "product_name": linha["product__short_name"],
+            },
+        )
+        for linha in linhas
+    ]
 
 
 def stock_by_location(
     *, tenant_id: UUID, location_id: UUID, search_text: str = ""
-) -> QuerySet:
-    """Saldo por (product, lot) nessa localização, ordenado por FEFO.
+) -> list[dict[str, Any]]:
+    """Saldo por (artigo, lote) nessa localização, por FEFO.
 
-    Retorna: product_id, product_name, lot_code, expires_at, quantity, unit_cost, total_value.
-    FEFO: expires_at ASC NULLS LAST, received_at ASC.
+    FEFO: `expires_at` ascendente com os sem validade no fim, depois
+    `received_at`. A ordem é **de validade** e não de valor — é o que o painel
+    mostra a quem vai à prateleira, e a ADR 0032 fixa que nenhuma lista servida
+    a quem não vê euros pode ser ordenada por eles.
+
+    Tinha o mesmo buraco do `quantity` que o `stock_summary`: a coluna não
+    estava sequer no `values()`, logo o `total_value` do serializer dividia por
+    uma quantidade que não existia e saía `null`.
     """
-    qs = (
-        StockLevel.objects.filter(
-            tenant_id=tenant_id,
-            location_id=location_id,
-        )
-        .exclude(quantity=Decimal("0"))
-        .select_related("product", "lot")
-        .values(
-            "product_id",
-            "product__short_name",
-            "lot__code",
-            "lot__expires_at",
-            "lot__received_at",
-            "unit_cost",
-        )
-        .annotate(
-            product_name=F("product__short_name"),
-            lot_code=F("lot__code"),
-            expires_at=F("lot__expires_at"),
-            received_at=F("lot__received_at"),
-        )
-    )
-
+    niveis = StockLevel.objects.filter(
+        tenant_id=tenant_id, location_id=location_id
+    ).exclude(quantity=Decimal("0"))
     if search_text:
-        qs = qs.filter(
+        niveis = niveis.filter(
             Q(product__short_name__icontains=search_text)
             | Q(lot__code__icontains=search_text)
         )
-
-    return qs.order_by("lot__expires_at", "lot__received_at")
-
-
-def stock_by_product(
-    *, tenant_id: UUID, product_id: UUID, search_text: str = ""
-) -> QuerySet:
-    """Saldo por (location, lot) desse produto, ordenado por FEFO.
-
-    Retorna: product_id, product_name, location_id, location_name, lot_code, expires_at,
-    quantity, unit_cost, total_value.
-    """
-    qs = (
-        StockLevel.objects.filter(
-            tenant_id=tenant_id,
-            product_id=product_id,
-        )
-        .exclude(quantity=Decimal("0"))
-        .select_related("product", "location", "lot")
-        .values(
+    linhas = (
+        niveis.values(
             "product_id",
             "product__short_name",
             "location_id",
             "location__name",
+            "lot_id",
             "lot__code",
             "lot__expires_at",
             "lot__received_at",
-            "unit_cost",
         )
         .annotate(
-            product_name=F("product__short_name"),
-            location_name=F("location__name"),
-            lot_code=F("lot__code"),
-            expires_at=F("lot__expires_at"),
-            received_at=F("lot__received_at"),
+            quantidade=Sum("quantity"),
+            valor=Sum(F("quantity") * F("unit_cost"), output_field=_VALOR),
+            sem_custo=_quantidade_sem_custo(),
         )
+        .order_by("lot__expires_at", "lot__received_at", "product__short_name")
     )
+    return [
+        _linha_de_stock(
+            linha,
+            {
+                "product_id": linha["product_id"],
+                "product_name": linha["product__short_name"],
+                "location_id": linha["location_id"],
+                "location_name": linha["location__name"],
+                "lot_code": linha["lot__code"],
+                "expires_at": linha["lot__expires_at"],
+            },
+        )
+        for linha in linhas
+    ]
 
+
+def stock_by_product(
+    *, tenant_id: UUID, product_id: UUID, search_text: str = ""
+) -> list[dict[str, Any]]:
+    """Saldo por (localização, lote) desse artigo, por FEFO. Ver `stock_by_location`."""
+    niveis = StockLevel.objects.filter(
+        tenant_id=tenant_id, product_id=product_id
+    ).exclude(quantity=Decimal("0"))
     if search_text:
-        qs = qs.filter(
+        niveis = niveis.filter(
             Q(location__name__icontains=search_text)
             | Q(lot__code__icontains=search_text)
         )
-
-    return qs.order_by("lot__expires_at", "lot__received_at")
+    linhas = (
+        niveis.values(
+            "product_id",
+            "product__short_name",
+            "location_id",
+            "location__name",
+            "lot_id",
+            "lot__code",
+            "lot__expires_at",
+            "lot__received_at",
+        )
+        .annotate(
+            quantidade=Sum("quantity"),
+            valor=Sum(F("quantity") * F("unit_cost"), output_field=_VALOR),
+            sem_custo=_quantidade_sem_custo(),
+        )
+        .order_by("lot__expires_at", "lot__received_at", "location__name")
+    )
+    return [
+        _linha_de_stock(
+            linha,
+            {
+                "product_id": linha["product_id"],
+                "product_name": linha["product__short_name"],
+                "location_id": linha["location_id"],
+                "location_name": linha["location__name"],
+                "lot_code": linha["lot__code"],
+                "expires_at": linha["lot__expires_at"],
+            },
+        )
+        for linha in linhas
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -124,3 +124,14 @@ Nenhum conhecido. ADR 0023 deixou tudo pronto:
 ---
 
 **Consultar `domain-expert`**: não há regras de negócio novas — ledger já foi validado em ADR 0023. As queries são projeção limpas de dados existentes.
+
+---
+
+> **Revogado em parte (2026-10-21).** A **decisão 4** desta ADR — os endpoints de stock *"sem
+> `IsStaff` ou papel específico"* — foi **revogada pela ADR 0032**. `unit_cost` e `total_value`
+> passam a sair só a `owner|manager`, com a chave **ausente** do JSON. Os endpoints continuam a
+> responder a todos os papéis (nenhum passa a 403) e **nenhuma quantidade desaparece**: o que muda é
+> só quem vê os euros. A razão está lá por extenso, e em resumo é esta: `unit_cost` deriva de
+> `line_total / quantity_received`, logo num artigo com uma receção o custo médio **é a linha da
+> fatura** — esconder a fatura (ADR 0031) e servir o custo de stock era esconder e servir o mesmo
+> número por portas diferentes.

@@ -23,6 +23,15 @@ ADR 0010 — não se estende aqui: estes campos espelham colunas de modelos
 (`closed_at`, `page_count`, `original_filename`), e é a fronteira do módulo que
 separa as duas convenções.
 
+## O `SemEurosParaQuemNaoVe` mudou-se daqui para o `apps/accounts/api.py`
+
+Nasceu neste ficheiro com a ADR 0031 e saiu com a **ADR 0032, decisão 4**: o
+`inventory` precisava da mesma mecânica e não pode importar um `serializers.py`
+de outro módulo — a aresta permitida é `purchasing → inventory.api` e não o
+contrário. Foi viver ao lado da política que o alimenta (`PAPEIS_QUE_VEEM_EUROS`,
+`ve_euros`), que é a porta que toda a gente já importa. Os serializers deste
+ficheiro continuam a usá-lo exactamente como antes; o que mudou é o `import`.
+
 ## Onde é que a validação do ficheiro vive, e porquê aqui
 
 O serializer é a fronteira (SECURITY.md §4), e é aqui que se recusa por campo:
@@ -43,6 +52,7 @@ from django.utils.translation import gettext_lazy as _
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from apps.accounts.api import CHAVE_DE_EUROS, SemEurosParaQuemNaoVe
 from apps.purchasing.classificacao import AVISOS
 from apps.purchasing.ficheiros import (
     BYTES_PARA_DECIDIR,
@@ -60,8 +70,6 @@ from apps.purchasing.qr import CAMPOS_DE_CABECALHO_EM_EUROS
 from apps.purchasing.services import FicheiroRecebido
 
 __all__ = [
-    "CHAVE_DE_EUROS",
-    "SemEurosParaQuemNaoVe",
     "ConferenciaDeIvaOutSerializer",
     "DivergenciaOutSerializer",
     "DocumentoInSerializer",
@@ -169,48 +177,6 @@ def _euros(valor: Decimal | None) -> str | None:
 def _taxa(valor: Decimal) -> str:
     """Uma taxa de IVA na forma do contrato: string com três casas."""
     return str(Decimal(valor).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
-
-
-#: A chave do `context` por onde a view diz se este pedido vê euros. O valor
-#: vem do `ve_euros` do `accounts.api` e o default é **falso**: um serializer
-#: instanciado sem contexto não mostra dinheiro a ninguém, que é o lado certo
-#: para falhar.
-CHAVE_DE_EUROS = "ve_euros"
-
-
-class SemEurosParaQuemNaoVe:
-    """Tira do payload os campos de dinheiro quando o papel não os vê.
-
-    **Chave ausente, nunca zero e nunca `null`** — é o reflexo do `_dinheiro`
-    do porto do `agents` (`apps/agents/tools.py`), e a forma importa: um zero é
-    uma afirmação falsa sobre o preço, e um `null` convida o ecrã a imprimir
-    "—" como se o valor não existisse. Ausente é "não te compete", e é o que o
-    cliente gerado vê como campo opcional.
-
-    Decisão do dono de 2026-10-19: *"só owner e manager"* veem dinheiro numa
-    receção. Até à fatia da extração (ADR 0031) a questão era quase teórica —
-    uma receção nascia sem linhas —, mas o `criar_rececao` passou a semeá-las a
-    partir da fatura, e com elas os preços de compra de um documento inteiro.
-    Os endpoints continuam sem `TemPapel` (ADR 0021, decisão 9: *"receber
-    mercadoria é trabalho de quem está lá"*): o colaborador continua a receber,
-    a conferir quantidades, a marcar linhas e a confirmar. Só não vê quanto
-    custou.
-
-    Mistura-se **antes** do `serializers.Serializer` para o `to_representation`
-    chegar primeiro ao `super()` certo.
-    """
-
-    #: Os campos a retirar. São nomes do **contrato** (o que sai no JSON) e não
-    #: nomes de colunas: é o payload que se filtra.
-    CAMPOS_DE_DINHEIRO: ClassVar[tuple[str, ...]] = ()
-
-    def to_representation(self, instance: Any) -> Any:
-        dados = super().to_representation(instance)
-        if self.context.get(CHAVE_DE_EUROS, False):
-            return dados
-        for chave in self.CAMPOS_DE_DINHEIRO:
-            dados.pop(chave, None)
-        return dados
 
 
 # ---------------------------------------------------------------------------

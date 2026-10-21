@@ -911,13 +911,17 @@ class TestRotas:
             format="json",
         )
         assert contou.status_code == 200, contou.content
-        assert contou.json()["difference_eur"] is None, "euros não, lista sim"
+        # **Ausente** e não `null`: a ADR 0032, decisão 5, trocou a forma. O
+        # `null` da ADR 0030 dizia ao mesmo tempo "ainda não contado" e "não te
+        # é mostrado"; a chave ausente diz a segunda e deixa o `null` com um
+        # significado só.
+        assert "difference_eur" not in contou.json(), "euros não, lista sim"
         assert contou.json()["counted_by"] == "João Colaborador"
 
         # Regra 14: a lista é dele, os euros não.
         linhas = staff.get(f"/api/v1/stock/counts/{contagem_id}/lines")
         assert linhas.status_code == 200
-        assert linhas.json()["results"][0]["difference_eur"] is None
+        assert "difference_eur" not in linhas.json()["results"][0]
         assert linhas.json()["results"][0]["counted"]["base"] == "4250.000"
 
         assert dono.get(
