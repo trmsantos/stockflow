@@ -402,8 +402,12 @@ msgstr "O factor de rendimento da receita tem de ser maior que zero."
 msgid "Owner or manager"
 msgstr "Dono ou gerente"
 
-msgid "There is already an open count in this establishment."
-msgstr "Já há uma contagem aberta neste estabelecimento."
+# A localização entra na frase por nome (ADR 0033, decisão 1): o código do 409
+# continua `contagem_ja_aberta` e o que muda é o significado — "já há uma aberta
+# **aqui**". O marcador é nomeado (`%(location)s`) e não posicional, para a
+# ordem da frase poder mudar na tradução sem partir a interpolação.
+msgid "There is already an open count in %(location)s."
+msgstr "Já há uma contagem aberta em %(location)s."
 
 msgid "This count is already closed."
 msgstr "Esta contagem já foi fechada."
@@ -413,6 +417,9 @@ msgstr "Este artigo tem controlo por lotes e ainda não tem nenhum lote registad
 
 msgid "This amount is too large for a count."
 msgstr "Esta quantidade é grande de mais para uma contagem."
+
+msgid "Unknown count status. Use open or closed."
+msgstr "Estado de contagem desconhecido. Usa open ou closed."
 
 msgid "Write why this count is being closed."
 msgstr "Escreve porque é que esta contagem está a ser fechada."

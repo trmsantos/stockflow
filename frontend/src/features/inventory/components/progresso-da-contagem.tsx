@@ -30,8 +30,9 @@ import { textos } from "../textos";
  * existirem acontece sem esta linha mudar.
  *
  * O nome da localização fica sempre à vista, porque é a resposta a "o que é que
- * eu estou a contar?" — e com uma contagem aberta por estabelecimento, quem
- * chega pode não ter sido quem a abriu.
+ * eu estou a contar?" — e desde a ADR 0033 vale a dobrar: podem estar três
+ * contagens abertas ao mesmo tempo, quem chega pode não ter sido quem abriu
+ * esta, e a diferença entre elas **é** a localização.
  */
 
 function Pastilha({

@@ -23,10 +23,10 @@ por **HTTP**, com sessão a sério, porque é o único sítio onde as
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -185,6 +185,63 @@ def _saida(
     )
 
 
+def _movimento(
+    casa: SimpleNamespace,
+    produto: Product,
+    localizacao: Location,
+    lote: Lot,
+    *,
+    quantidade: Decimal,
+    tipo: str,
+    quando: datetime,
+    custo: Decimal = Decimal("0.001"),
+    transferencia: UUID | None = None,
+) -> None:
+    """Um movimento com **hora própria**: é o `occurred_at` que o cut-off lê.
+
+    O `_receber` e o `_saida` acima escrevem sempre "agora", que é o que serve a
+    quase todos os testes. O cut-off da ADR 0033 vive da diferença entre quando
+    um movimento **aconteceu** e quando foi **inserido**, e essa diferença só se
+    escreve com este parâmetro.
+    """
+    record_movements(
+        tenant_id=casa.tenant.id,
+        movements=[
+            MovementDTO(
+                product_id=produto.id,
+                location_id=localizacao.id,
+                lot_id=lote.id,
+                quantity=quantidade,
+                unit_cost=custo,
+                cost_is_estimate=False,
+                movement_type=tipo,
+                occurred_at=quando,
+                created_by_id=None,
+                created_by_name="semeador",
+                transfer_id=transferencia,
+            )
+        ],
+    )
+
+
+def _transferir(
+    casa: SimpleNamespace,
+    produto: Product,
+    lote: Lot,
+    *,
+    de: Location,
+    para: Location,
+    quantidade: Decimal,
+    quando: datetime,
+) -> None:
+    """As duas pernas de uma transferência, à mesma hora e com o mesmo `transfer_id`."""
+    transferencia = uuid4()
+    _movimento(casa, produto, de, lote, quantidade=-quantidade, tipo="transfer_out",
+               quando=quando, transferencia=transferencia)
+    _movimento(casa, produto, para, lote, quantidade=quantidade, tipo="transfer_in",
+               quando=quando, transferencia=transferencia)
+
+
 def _linha(contagem: StockCount, produto: Product) -> StockCountLine:
     return StockCountLine.objects.get(stock_count=contagem, product=produto)
 
@@ -255,17 +312,39 @@ class TestAbrir:
             # E nasce por contar: `None` não é zero.
             assert all(linha.quantity_counted is None for linha in linhas)
 
-    def test_a_segunda_contagem_aberta_e_recusada_com_o_id_da_primeira(self):
-        """Regra 13, primeira metade: 409 `contagem_ja_aberta`, com o `id`."""
+    def test_a_segunda_contagem_da_mesma_localizacao_e_recusada_com_o_id_da_primeira(self):
+        """Regra 13, primeira metade, agora **por localização** (ADR 0033, decisão 1).
+
+        O que não pode acontecer duas vezes ao mesmo tempo são **duas correcções
+        dos mesmos factos**, e dois instantâneos de localizações diferentes não
+        têm uma linha de nível em comum.
+        """
         casa = _casa()
         with tenant_scope(casa.tenant.id):
             primeira = abrir_contagem(
                 tenant_id=casa.tenant.id, location_id=casa.armazem.id
             )
             with pytest.raises(ContagemJaAberta) as erro:
-                abrir_contagem(tenant_id=casa.tenant.id, location_id=casa.cozinha.id)
+                abrir_contagem(tenant_id=casa.tenant.id, location_id=casa.armazem.id)
             assert erro.value.contagem_id == primeira.pk
+            assert erro.value.location_name == "Armazém"
             assert StockCount.objects.filter(status="open").count() == 1
+
+    def test_duas_localizacoes_contam_se_ao_mesmo_tempo(self):
+        """A escassez acabou: quem chega às 6h não espera pela contagem de ontem."""
+        casa = _casa()
+        with tenant_scope(casa.tenant.id):
+            arca = abrir_contagem(tenant_id=casa.tenant.id, location_id=casa.armazem.id)
+            despensa = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.cozinha.id
+            )
+            assert arca.pk != despensa.pk
+            assert StockCount.objects.filter(status="open").count() == 2
+            # E a que fecha não leva a outra atrás.
+            fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=arca, reason="Arca contada."
+            )
+            assert StockCount.objects.get(pk=despensa.pk).status == "open"
 
     def test_localizacao_inativa_ou_inexistente_e_recusada(self):
         casa = _casa()
@@ -649,6 +728,427 @@ class TestFecho:
 
 
 # ---------------------------------------------------------------------------
+# O cut-off (ADR 0033, adenda): a base do ajuste é o que os livros diziam **no
+# instante em que se contou**, e não na abertura nem agora.
+#
+#   ajuste = contado − Σ(movimentos da localização com occurred_at ≤ counted_at)
+#
+# Os dois primeiros testes são os dois modos de falhar do cálculo antigo, e o
+# segundo é o que ninguém via: o antigo produzia **silêncio**, e silêncio não se
+# audita.
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+class TestOCorteNaHoraEmQueSeContou:
+    """A observação é datada, e a base de comparação tem a mesma data que ela."""
+
+    def _armazem_com_cem(self, casa: SimpleNamespace, produto: Product, *, agora: datetime) -> Lot:
+        """100 na arca, recebidos há seis horas. O ponto de partida dos dois casos."""
+        lote = _lote(casa, produto, codigo="F", dias=10)
+        _movimento(casa, produto, casa.armazem, lote, quantidade=Decimal("100"),
+                   tipo="receipt", quando=agora - timedelta(hours=6))
+        return lote
+
+    def test_o_movimento_entre_abrir_e_contar_nao_e_contado_duas_vezes(self):
+        """Cenário (A): o ajuste certo é **zero**, e o esperado congelado dava −10.
+
+        Esperado 100 na abertura, transferência de −10 às 7h, contam-se 90 às
+        8h. O cálculo antigo escrevia `90 − 100 = −10` **sobre um nível que já
+        era 90**, e deixava a arca a 80: a transferência era contada duas vezes.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            lote = self._armazem_com_cem(casa, farinha, agora=agora)
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            assert _linha(contagem, farinha).quantity_expected == Decimal("100")
+
+            _transferir(casa, farinha, lote, de=casa.armazem, para=casa.cozinha,
+                        quantidade=Decimal("10"), quando=agora - timedelta(hours=3))
+            registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=farinha.id, quantity=Decimal("90"), user_name="Ana Dona",
+            )
+            fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                reason="A arca bate certo com os livros.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+
+            assert _ajustes(casa, contagem) == [], (
+                "o que já estava registado não se corrige outra vez"
+            )
+            assert StockLevel.objects.get(
+                lot=lote, location=casa.armazem
+            ).quantity == Decimal("90.000")
+
+    def test_a_sobra_real_que_um_movimento_registado_mascarava(self):
+        """Cenário (B), o perigoso: o certo é **+10** e o cálculo antigo dava zero.
+
+        Esperado 100, transferência de −10 às 7h, e às 8h contam-se **100** —
+        há uma sobra real de dez face aos livros. `100 − 100 = 0` fechava a
+        contagem com "tudo certo", sem movimento nenhum e sem ninguém a
+        investigar, porque uma variância zero nunca é investigada.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            lote = self._armazem_com_cem(casa, farinha, agora=agora)
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            _transferir(casa, farinha, lote, de=casa.armazem, para=casa.cozinha,
+                        quantidade=Decimal("10"), quando=agora - timedelta(hours=3))
+            registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=farinha.id, quantity=Decimal("100"), user_name="Ana Dona",
+            )
+            fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                reason="Estavam lá cem, e os livros diziam noventa.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+
+            ajustes = _ajustes(casa, contagem)
+            assert [m.quantity for m in ajustes] == [Decimal("10.000")], (
+                "um movimento registado não pode mascarar uma discrepância real"
+            )
+            assert StockLevel.objects.get(
+                lot=lote, location=casa.armazem
+            ).quantity == Decimal("100.000")
+
+    def test_o_empate_no_instante_da_contagem_entra_na_base(self):
+        """`occurred_at == counted_at` entra (`≤`): a base é tudo até à observação."""
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            lote = self._armazem_com_cem(casa, farinha, agora=agora)
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            linha = registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=farinha.id, quantity=Decimal("100"), user_name="Ana Dona",
+            )
+            # Um movimento ao segundo exacto da observação: entra na base, logo
+            # os livros passam a dizer 90 e os 100 contados são uma sobra.
+            _movimento(casa, farinha, casa.armazem, lote, quantidade=Decimal("-10"),
+                       tipo="consumption", quando=linha.counted_at)
+            fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                reason="Empate ao segundo.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+
+            assert [m.quantity for m in _ajustes(casa, contagem)] == [Decimal("10.000")]
+
+    def test_a_base_le_se_por_occurred_at_e_nunca_pela_ordem_de_insercao(self):
+        """A fatura que entra às 9h com data de 7h30 muda a base de uma contagem das 8h.
+
+        É o caso que obriga a recalcular a base **no fecho**: gravá-la na
+        abertura ou no `POST` da linha deixava de fora um documento que ainda
+        não existia. O `created_at` é posterior ao `counted_at` e o
+        `occurred_at` é anterior — é o segundo que manda.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            lote = self._armazem_com_cem(casa, farinha, agora=agora)
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            linha = registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=farinha.id, quantity=Decimal("100"), user_name="Ana Dona",
+            )
+            assert linha.quantity_expected == Decimal("100"), "à hora de contar, 100"
+
+            _movimento(casa, farinha, casa.armazem, lote, quantidade=Decimal("20"),
+                       tipo="receipt", quando=linha.counted_at - timedelta(minutes=30))
+            previsto = planear_fecho(tenant_id=casa.tenant.id, contagem=contagem)
+            assert previsto.loss_eur == Decimal("0.02"), "20 × 0,001 € em falta"
+
+            fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                reason="A fatura das 7h30 entrou depois de contarmos.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+            assert [m.quantity for m in _ajustes(casa, contagem)] == [Decimal("-20.000")]
+
+    @pytest.mark.parametrize("fechar_primeiro", ["armazem", "cozinha"])
+    def test_as_duas_pernas_da_transferencia_dao_zero_em_qualquer_ordem(
+        self, fechar_primeiro: str
+    ):
+        """Contadas as duas localizações depois da transferência, nenhuma a corrige.
+
+        É o erro que esta ADR tornaria alcançável ao permitir duas contagens ao
+        mesmo tempo: −10 de um lado e +10 do outro, com o total do
+        estabelecimento certo e **nenhum relatório agregado a apanhá-lo**.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            lote = _lote(casa, farinha, codigo="F", dias=10)
+            _movimento(casa, farinha, casa.armazem, lote, quantidade=Decimal("100"),
+                       tipo="receipt", quando=agora - timedelta(hours=6))
+            _movimento(casa, farinha, casa.cozinha, lote, quantidade=Decimal("50"),
+                       tipo="receipt", quando=agora - timedelta(hours=6))
+
+            arca = abrir_contagem(tenant_id=casa.tenant.id, location_id=casa.armazem.id)
+            despensa = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.cozinha.id
+            )
+            _transferir(casa, farinha, lote, de=casa.armazem, para=casa.cozinha,
+                        quantidade=Decimal("10"), quando=agora - timedelta(hours=3))
+
+            for contagem, contado in ((arca, Decimal("90")), (despensa, Decimal("60"))):
+                registar_linha_contagem(
+                    tenant_id=casa.tenant.id, contagem=contagem,
+                    product_id=farinha.id, quantity=contado, user_name="Ana Dona",
+                )
+
+            ordem = (arca, despensa) if fechar_primeiro == "armazem" else (despensa, arca)
+            for contagem in ordem:
+                fechar_contagem(
+                    tenant_id=casa.tenant.id, contagem=contagem,
+                    reason="As duas batem certo.",
+                    user_id=casa.dono.id, user_name="Ana Dona",
+                )
+
+            assert _ajustes(casa, arca) == []
+            assert _ajustes(casa, despensa) == []
+            niveis = {
+                nivel.location_id: nivel.quantity
+                for nivel in StockLevel.objects.filter(
+                    tenant_id=casa.tenant.id, product=farinha
+                )
+            }
+            assert niveis == {
+                casa.armazem.id: Decimal("90.000"),
+                casa.cozinha.id: Decimal("60.000"),
+            }
+
+    def test_a_recontagem_reescreve_o_esperado_com_o_contado_e_a_hora(self):
+        """A tripla é atómica: `expected`, `counted` e `counted_at` movem-se juntos.
+
+        O esperado deixou de ser congelado uma vez: é re-instantâneo em **cada**
+        observação, e uma recontagem que não o reescrevesse comparava o número
+        novo com os livros de uma hora que já passou.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            lote = self._armazem_com_cem(casa, farinha, agora=agora)
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            primeira = registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=farinha.id, quantity=Decimal("100"), user_name="Ana Dona",
+            )
+            assert (primeira.quantity_expected, primeira.quantity_counted) == (
+                Decimal("100"),
+                Decimal("100"),
+            )
+
+            _transferir(casa, farinha, lote, de=casa.armazem, para=casa.cozinha,
+                        quantidade=Decimal("10"), quando=agora - timedelta(hours=3))
+            segunda = registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=farinha.id, quantity=Decimal("90"),
+                user_name="João Colaborador",
+            )
+
+            assert segunda.pk == primeira.pk, "continua a ser uma linha só"
+            assert segunda.quantity_expected == Decimal("90"), "o esperado é re-instantâneo"
+            assert segunda.quantity_counted == Decimal("90")
+            assert segunda.counted_at > primeira.counted_at
+            # E o invariante da tripla, lido da base e não do objeto em memória.
+            for linha in StockCountLine.objects.filter(stock_count=contagem):
+                assert (linha.quantity_counted is None) == (linha.counted_at is None)
+
+            fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                reason="Recontámos depois da transferência.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+            assert _ajustes(casa, contagem) == []
+
+    def test_a_linha_por_contar_nao_tem_corte_e_por_isso_nao_afirma_nada(self):
+        """Sem `counted_at` não há base, logo não há afirmação — nem com stock a mexer.
+
+        A contagem parcial fica mais coerente e não menos: "ausência de
+        observação não é zero" passa a ser consequência da aritmética.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            lote = self._armazem_com_cem(casa, farinha, agora=agora)
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            _transferir(casa, farinha, lote, de=casa.armazem, para=casa.cozinha,
+                        quantidade=Decimal("10"), quando=agora - timedelta(hours=3))
+            fechada = fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                reason="Afinal não contámos nada.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+
+            assert _ajustes(casa, contagem) == []
+            assert fechada.status == "closed"
+
+    def test_uma_contagem_sem_nada_contado_nao_carimba_a_ultima_contagem(self):
+        """Decisão do dono (2026-10-21): o painel não diz que a arca foi contada.
+
+        Esta ADR tornou o fecho a forma de limpar uma contagem aberta por
+        engano. Carimbar o `last_count_at` com ela era o painel a dizer que
+        alguém lá foi — e é esse o número que serve para saber o que falta
+        contar.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            self._armazem_com_cem(casa, farinha, agora=agora)
+            vazia = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=vazia,
+                reason="Aberta por engano.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+            assert ultima_contagem_fechada_em(tenant_id=casa.tenant.id) is None
+
+            a_serio = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=a_serio,
+                product_id=farinha.id, quantity=Decimal("100"), user_name="Ana Dona",
+            )
+            fechada = fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=a_serio,
+                reason="Esta contou-se.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+            assert ultima_contagem_fechada_em(
+                tenant_id=casa.tenant.id
+            ) == fechada.closed_at
+
+    def test_o_ajuste_acontece_na_hora_do_fecho_e_nao_na_da_contagem(self):
+        """Decisão do dono: o `occurred_at` do ajuste é o fecho — o ajuste é uma decisão.
+
+        O instante da observação não se perde: vive no `counted_at` da linha.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            self._armazem_com_cem(casa, farinha, agora=agora)
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            linha = registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=farinha.id, quantity=Decimal("95"), user_name="Ana Dona",
+            )
+            fechada = fechar_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                reason="Faltaram cinco.",
+                user_id=casa.dono.id, user_name="Ana Dona",
+            )
+            ajuste = _ajustes(casa, contagem)[0]
+            assert ajuste.occurred_at == fechada.closed_at
+            assert ajuste.occurred_at > linha.counted_at
+
+    def test_nenhuma_linha_desta_fatia_tem_lote_e_o_corte_depende_disso(self):
+        """Invariante presa: `lot IS NULL` em toda a `StockCountLine` desta fatia.
+
+        O corte é chaveado **por artigo** — o `_bases_do_corte` monta
+        `{linha.product_id: linha.counted_at}` — e a base **permite** duas
+        linhas do mesmo artigo com lotes diferentes: o `lot` é nullable e a
+        restrição única é `(tenant, contagem, artigo, lote)` com
+        `nulls_distinct=False`, logo o par `(A, lote1)` e `(A, lote2)` passa
+        sem reclamação nenhuma. Nesse dia uma das duas recebe **em silêncio** o
+        corte da outra — base errada, ajuste errado gravado num ledger
+        append-only, e nenhuma exceção em lado nenhum para alguém reparar.
+
+        O que impede o caso hoje não é a base: é **nenhum caminho desta fatia
+        escrever `lot`**, nem o da abertura (a linha é por artigo, com os lotes
+        somados) nem o do `POST /lines` (os dois ramos do upsert criam e
+        procuram com `lot=None`). É isso que este teste prende, e é por isso
+        que ele falha no commit que introduzir contar por lote, em vez de o
+        erro sair como um ajuste errado em produção.
+
+        **Onde se corrige quando cair** (contar por lote é fatia própria, ADR
+        0030): no `count_services._bases_do_corte`, chaveando o corte por
+        `linha.id` em vez de `linha.product_id` — ou agrupando as linhas do
+        mesmo artigo e pedindo um corte por grupo, porque o
+        `selectors.saldos_por_artigo_ate` também soma por artigo. **A chave não
+        se muda agora**: hoje não há caso que a exercite, e mudá-la sem caso
+        era correcção sem teste.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha", track_lots=True)
+        canela = _artigo(casa, nome="Canela")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            # A base deixa: a coluna existe e aceita um lote. Quem a mantém a
+            # `NULL` é o código, e é o código que este teste mede.
+            assert StockCountLine._meta.get_field("lot").null is True
+
+            lote_a = _lote(casa, farinha, codigo="A", dias=10)
+            lote_b = _lote(casa, farinha, codigo="B", dias=30)
+            _movimento(casa, farinha, casa.armazem, lote_a, quantidade=Decimal("40"),
+                       tipo="receipt", quando=agora - timedelta(hours=6))
+            _movimento(casa, farinha, casa.armazem, lote_b, quantidade=Decimal("60"),
+                       tipo="receipt", quando=agora - timedelta(hours=5))
+
+            # (1) Abertura: dois lotes do mesmo artigo dão **uma** linha.
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            assert _linha(contagem, farinha).quantity_expected == Decimal("100")
+
+            # (2) Contar essa linha e (3) recontá-la: o upsert não cria a segunda.
+            for quantidade in (Decimal("95"), Decimal("97")):
+                registar_linha_contagem(
+                    tenant_id=casa.tenant.id, contagem=contagem,
+                    product_id=farinha.id, quantity=quantidade, user_name="Ana Dona",
+                )
+            # (4) Um artigo que não estava na lista: a linha nasce no `POST /lines`.
+            registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=canela.id, quantity=Decimal("3"), user_name="Ana Dona",
+            )
+
+            linhas = list(StockCountLine.objects.filter(stock_count=contagem))
+            assert len(linhas) == 2, "um artigo com dois lotes continua a ser uma linha"
+            assert all(linha.lot_id is None for linha in linhas)
+            # E a mesma pergunta sem passar pela contagem, para apanhar um
+            # caminho de escrita novo que não seja nenhum dos quatro acima.
+            assert not StockCountLine.objects.filter(lot__isnull=False).exists()
+
+            # O corte não colide porque as chaves são distintas — é a leitura
+            # que o `_bases_do_corte` faz, aqui à vista.
+            cortes = {
+                linha.product_id: linha.counted_at
+                for linha in linhas
+                if linha.counted_at is not None
+            }
+            assert len(cortes) == len([lin for lin in linhas if lin.counted_at])
+
+# ---------------------------------------------------------------------------
 # 12 e a recusa da segunda ronda
 # ---------------------------------------------------------------------------
 @pytest.mark.django_db
@@ -875,7 +1375,7 @@ class TestRotas:
         assert outra_vez.status_code == 409
         assert outra_vez.json()["code"] == CODIGO_CONTAGEM_FECHADA
 
-    def test_a_segunda_contagem_aberta_da_409_com_o_id_da_primeira(self):
+    def test_a_segunda_contagem_da_mesma_localizacao_da_409_com_o_id_da_primeira(self):
         casa = self._casa_com_stock()
         dono = _sessao(casa.dono.email)
         primeira = dono.post(
@@ -884,21 +1384,102 @@ class TestRotas:
         assert primeira.status_code == 201
 
         segunda = dono.post(
-            "/api/v1/stock/counts", {"location": str(casa.cozinha.id)}, format="json"
+            "/api/v1/stock/counts", {"location": str(casa.armazem.id)}, format="json"
         )
         assert segunda.status_code == 409
         assert segunda.json()["code"] == CODIGO_CONTAGEM_JA_ABERTA
         assert segunda.json()["id"] == primeira.json()["id"]
+        # A frase nomeia a localização: o código é o mesmo, o significado é "já
+        # há uma aberta **nesta** localização" (ADR 0033, decisão 1).
+        assert "Armazém" in segunda.json()["detail"]
+
+        # E a localização ao lado abre na mesma, ao mesmo tempo.
+        outra = dono.post(
+            "/api/v1/stock/counts", {"location": str(casa.cozinha.id)}, format="json"
+        )
+        assert outra.status_code == 201, outra.content
+
+    def test_a_lista_filtra_por_estado(self):
+        """`?status=open|closed` — o cliente deixa de adivinhar qual é "a" aberta."""
+        casa = self._casa_com_stock()
+        dono = _sessao(casa.dono.email)
+        aberta = dono.post(
+            "/api/v1/stock/counts", {"location": str(casa.armazem.id)}, format="json"
+        ).json()["id"]
+        a_fechar = dono.post(
+            "/api/v1/stock/counts", {"location": str(casa.cozinha.id)}, format="json"
+        ).json()["id"]
+        dono.post(
+            f"/api/v1/stock/counts/{a_fechar}/closing",
+            {"reason": "Contada e fechada."},
+            format="json",
+        )
+
+        abertas = dono.get("/api/v1/stock/counts?status=open").json()
+        assert [c["id"] for c in abertas["results"]] == [aberta]
+        fechadas = dono.get("/api/v1/stock/counts?status=closed").json()
+        assert [c["id"] for c in fechadas["results"]] == [a_fechar]
+        assert dono.get("/api/v1/stock/counts").json()["count"] == 2
+        # Um estado que não existe é recusa e não uma lista a fingir que filtrou.
+        recusa = dono.get("/api/v1/stock/counts?status=aberta")
+        assert recusa.status_code == 400
+        assert "status" in recusa.json()
+
+    def test_quem_conta_tambem_abre_mas_continua_a_nao_fechar(self):
+        """ADR 0033, decisão 2: desaparecida a escassez, desaparece a razão de restringir.
+
+        O custo está nomeado: alguém abre a contagem errada, e limpá-la é um
+        fecho de `owner|manager` — **sem nada contado não escreve movimento
+        nenhum**, logo a limpeza é inerte no ledger.
+        """
+        casa = self._casa_com_stock()
+        staff = _sessao(casa.colaborador.email)
+
+        aberta = staff.post(
+            "/api/v1/stock/counts", {"location": str(casa.armazem.id)}, format="json"
+        )
+        assert aberta.status_code == 201, aberta.content
+        contagem_id = aberta.json()["id"]
+        assert aberta.json()["closing_role"] == "Dono ou gerente"
+        # Abrir não revela euro nenhum: o 201 passa pelo mesmo mixin.
+        assert aberta.json()["closing_reason"] is None
+
+        assert staff.post(
+            f"/api/v1/stock/counts/{contagem_id}/closing",
+            {"reason": "Eu abri, eu fecho."},
+            format="json",
+        ).status_code == 403
+        with tenant_scope(casa.tenant.id):
+            assert StockCount.objects.filter(pk=contagem_id, status="open").exists()
+
+    def test_o_counted_at_e_sempre_do_servidor_e_nunca_do_corpo(self):
+        """É carga aritmética: move a base do ajuste, logo não se aceita de quem conta."""
+        casa = self._casa_com_stock()
+        dono = _sessao(casa.dono.email)
+        contagem_id = dono.post(
+            "/api/v1/stock/counts", {"location": str(casa.armazem.id)}, format="json"
+        ).json()["id"]
+
+        antes = timezone.now()
+        contou = dono.post(
+            f"/api/v1/stock/counts/{contagem_id}/lines",
+            {
+                "product": str(casa.farinha.id),
+                "quantity": "4.250",
+                "counted_at": "2020-01-01T00:00:00Z",
+            },
+            format="json",
+        )
+        assert contou.status_code == 200, contou.content
+        with tenant_scope(casa.tenant.id):
+            linha = _linha(StockCount.objects.get(pk=contagem_id), casa.farinha)
+        assert linha.counted_at >= antes, "a hora é a do servidor, não a do corpo"
 
     def test_os_papeis_do_contrato(self):
-        """Contar é de toda a gente; abrir, pré-ver e fechar não são."""
+        """Abrir e contar são de toda a gente; pré-ver e fechar não são (ADR 0033)."""
         casa = self._casa_com_stock()
         dono = _sessao(casa.dono.email)
         staff = _sessao(casa.colaborador.email)
-
-        assert staff.post(
-            "/api/v1/stock/counts", {"location": str(casa.armazem.id)}, format="json"
-        ).status_code == 403
 
         contagem_id = dono.post(
             "/api/v1/stock/counts", {"location": str(casa.armazem.id)}, format="json"
@@ -981,6 +1562,74 @@ class TestRotas:
             alheia.refresh_from_db()
         assert alheia.status == "open"
         assert dono.get("/api/v1/stock/counts").json()["count"] == 0
+
+    def test_abrir_na_localizacao_do_vizinho_e_400_igual_ao_de_um_uuid_inventado(self):
+        """A rota que a ADR 0033 abriu a **todos os papéis**, vista do outro estabelecimento.
+
+        `POST /stock/counts` deixou de ser de `owner|manager` (decisão 2), e o
+        `location` é o único argumento que o cliente escolhe: é por aí que uma
+        fronteira de tenant se atravessa, se alguém a esquecer. O
+        `abrir_contagem` resolve a localização com
+        `Location.objects.filter(tenant_id=..., pk=..., is_active=True)`
+        **antes** de qualquer insert, logo a localização do vizinho não existe
+        para este pedido e a recusa chega sem nada escrito.
+
+        **O que este teste prende é o comportamento, e não aquele filtro** — e
+        isso foi medido, não assumido: tirando o `tenant_id=tenant_id` da linha
+        acima, este teste **continua a passar**. Quem recusa é a **RLS**, que
+        filtra a `locations` dentro do `tenant_scope` antes de o ORM ver fosse o
+        que fosse (ADR 0007). O filtro do ORM é a segunda camada e não a
+        primeira, e é por isso que o `tests/test_rls_isolation.py` existe: é lá
+        que a ausência de uma política dói. Aqui mede-se o que a rota responde,
+        que é o que um cliente consegue observar.
+
+        O que este teste prende não é só o 400: é a **igualdade das duas
+        respostas**. Uma localização real de outro estabelecimento e um UUID
+        que nunca existiu têm de dar a mesma frase — se a do vizinho dissesse
+        "inativa" e a inventada "não encontrada", a rota passava a ser um
+        oráculo de existência: um `staff` percorria UUIDs e sabia quais são
+        localizações reais lá fora. É um 400 e não um 404 porque o recurso do
+        pedido é a contagem (que não chegou a existir), e o `location` é um
+        campo do corpo que não validou — a forma do DRF, por campo.
+        """
+        casa = self._casa_com_stock()
+        vizinha = _casa(nome="Café do Lado")
+        staff = _sessao(casa.colaborador.email)
+
+        do_vizinho = staff.post(
+            "/api/v1/stock/counts",
+            {"location": str(vizinha.armazem.id)},
+            format="json",
+        )
+        inventada = staff.post(
+            "/api/v1/stock/counts",
+            {"location": str(uuid4())},
+            format="json",
+        )
+
+        assert do_vizinho.status_code == 400, do_vizinho.content
+        assert inventada.status_code == 400, inventada.content
+        assert do_vizinho.json() == inventada.json(), (
+            "a frase de uma localização real do vizinho tem de ser a mesma de "
+            "um UUID que nunca existiu — a diferença seria um oráculo de existência"
+        )
+        assert set(do_vizinho.json()) == {"location"}
+        # E a frase não deixa escapar o que negou conhecer.
+        frase = " ".join(do_vizinho.json()["location"])
+        assert vizinha.armazem.name not in frase
+        assert str(vizinha.armazem.id) not in frase
+
+        # Nada escrito, de nenhum dos dois lados: a resolução da localização
+        # acontece antes do primeiro insert.
+        with tenant_scope(casa.tenant.id):
+            assert not StockCount.objects.exists()
+        with tenant_scope(vizinha.tenant.id):
+            assert not StockCount.objects.exists()
+        # E a lista de cada um continua vazia, vista por HTTP.
+        assert staff.get("/api/v1/stock/counts").json()["count"] == 0
+        assert _sessao(vizinha.dono.email).get(
+            "/api/v1/stock/counts"
+        ).json()["count"] == 0
 
     def test_o_corpo_do_fecho_e_validado(self):
         """Sem `reason` é 400, e sem sessão é 403."""

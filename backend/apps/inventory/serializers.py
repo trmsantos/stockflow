@@ -806,15 +806,30 @@ def compor_contagem(
 
 
 def compor_linha(
-    linha: Any, *, position: int, zona: dict[str, Any], difference_eur: Decimal | None
+    linha: Any,
+    *,
+    position: int,
+    zona: dict[str, Any],
+    difference_eur: Decimal | None,
+    esperado: Decimal | None = None,
 ) -> dict[str, Any]:
     """Uma linha de contagem. `counted` a `null` é **por contar**, nunca zero.
 
     `difference` só existe quando há as duas pontas: sem observação não há
     diferença, e escrever zero ali era inventar uma.
+
+    O `esperado` é um **recurso e não um valor por omissão**: sem ele mostra-se
+    o `quantity_expected` da linha, que é o número que esteve à frente de quem
+    contou. O `GET /closing` de uma contagem aberta passa a base do cut-off
+    (ADR 0033), porque aí a pergunta é outra — "contra que número é que isto vai
+    ser escrito no ledger" — e as duas só divergem quando um documento entra
+    depois de se contar com data anterior. Mostrar o esperado da linha nesse
+    caso era a pré-visualização a dizer `+10` e o fecho a escrever `−10`, e a
+    ADR 0030, decisão 5, promete que o `GET` **é** a decisão.
     """
     produto = linha.product
     contado = linha.quantity_counted
+    base = linha.quantity_expected if esperado is None else esperado
     return {
         "id": linha.id,
         "product": linha.product_id,
@@ -822,12 +837,10 @@ def compor_linha(
         "zone": zona,
         "position": position,
         "count_unit": produto.display_unit,
-        "expected": quantidade(linha.quantity_expected, produto=produto),
+        "expected": quantidade(base, produto=produto),
         "counted": None if contado is None else quantidade(contado, produto=produto),
         "difference": (
-            None
-            if contado is None
-            else quantidade(contado - linha.quantity_expected, produto=produto)
+            None if contado is None else quantidade(contado - base, produto=produto)
         ),
         "difference_eur": difference_eur,
         "counted_by": linha.counted_by_name or None,
@@ -841,15 +854,25 @@ def compor_fecho(previsto: Any) -> dict[str, Any]:
     `differences` são só as linhas contadas **com** diferença, a maior em euros
     primeiro; `loss_eur` e `gain_eur` são os dois positivos e o `net_eur` é
     `ganho − perda`, com sinal.
+
+    "Com diferença" mede-se contra a base do **plano** (`base_por_linha`, o
+    cut-off da ADR 0033) e não contra o `quantity_expected`: é o plano que o
+    `POST` executa, e uma linha que vai gerar movimento tem de aparecer aqui.
+    Numa contagem já fechada o plano não se recalcula e o mapa vem vazio — aí a
+    base é o esperado da linha, que é o que ficou escrito.
     """
     contagem = previsto.contagem
     zona = zona_da_localizacao(contagem.location)
     posicoes = {linha.id: indice for indice, linha in enumerate(previsto.linhas)}
+
+    def base_de(linha: Any) -> Decimal:
+        return previsto.base_por_linha.get(linha.id, linha.quantity_expected)
+
     com_diferenca = [
         linha
         for linha in previsto.linhas
         if linha.quantity_counted is not None
-        and linha.quantity_counted != linha.quantity_expected
+        and linha.quantity_counted != base_de(linha)
     ]
     com_diferenca.sort(
         key=lambda linha: (
@@ -868,6 +891,7 @@ def compor_fecho(previsto: Any) -> dict[str, Any]:
                 position=posicoes[linha.id],
                 zona=zona,
                 difference_eur=previsto.valor_por_linha.get(linha.id, Decimal("0")),
+                esperado=base_de(linha),
             )
             for linha in com_diferenca
         ],

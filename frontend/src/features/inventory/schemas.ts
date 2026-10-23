@@ -336,8 +336,8 @@ export const linhaDeContagemSchema = z.object({
    * Quem contou e quando — uma **cópia do nome** da pertença, como no ledger,
    * para sobreviver à conta ser apagada.
    *
-   * Não é cromado: com uma só contagem aberta por estabelecimento, duas pessoas
-   * contam ao mesmo tempo em dois telemóveis e **a última a escrever ganha** (o
+   * Não é cromado: nada impede duas pessoas de contarem a mesma localização ao
+   * mesmo tempo em dois telemóveis, e **a última a escrever ganha** (o
    * `POST` é um upsert por artigo). Quem recontar tem de ver que já ali esteve
    * alguém, e a resposta a "o João já contou isto?" é esta linha e não uma soma
    * — somar duas observações da mesma prateleira é contar a mesma farinha duas

@@ -6,7 +6,7 @@ contagem não reescreve um nível — ao fechar, cada diferença entra como um
 soma dos movimentos (CLAUDE.md, ADR 0023).
 
 * `abrir_contagem` materializa a lista: uma linha por artigo com nível não-zero
-  na localização, com o `expected` congelado nesse instante (decisão 4).
+  na localização, com o `expected` desse instante (decisão 4).
 * `registar_linha_contagem` é um **upsert por artigo** — a última observação
   substitui a anterior e nunca se somam duas (decisão 4 e 6c).
 * `planear_fecho` é a pré-visualização, e é **a mesma função** que o fecho usa
@@ -14,6 +14,36 @@ soma dos movimentos (CLAUDE.md, ADR 0023).
   divergiam, e é exactamente esse o defeito que a ADR manda fechar.
 * `fechar_contagem` grava **N movimentos, um por lote** — não um por linha: o
   ledger, o nível e o custo são todos por lote (ADR 0023, decisão 1).
+
+## O cut-off: contra que número é que o contado se compara (ADR 0033, adenda)
+
+Uma contagem é uma **observação datada** — "às 06:12, nesta localização, havia
+3,4 kg de farinha" — e o `adjustment` existe para absorver o que mexeu **sem ter
+sido registado** até esse instante: quebra não lançada, roubo,
+sobre-porcionamento, erro de receção. Logo a base de comparação é o que os
+livros diziam **no momento em que se contou**:
+
+    ajuste = contado − Σ(movimentos da localização com occurred_at ≤ counted_at)
+
+Nem o esperado congelado na abertura (só acerta quando nada mexeu entre abrir e
+contar, ou seja por acidente), nem o nível de agora (afirma "agora há C", que
+ninguém observou, e depende do relógio a que se carrega no botão). Movimentos
+registados **depois** da observação são factos documentados — uma transferência
+tem duas pernas, uma receção tem fatura —, e uma contagem descobre o que não foi
+registado: não tem autoridade para des-registar o que foi.
+
+Três consequências que se leem no código abaixo:
+
+* a base **recalcula-se no fecho**, a partir do ledger e por `occurred_at` — não
+  se lê de um número gravado na abertura nem no `POST`, porque a fatura que
+  entra às 11h com data de 7h ainda não existia quando a linha se escreveu;
+* o `counted_at` é **sempre do servidor**: move a base do ajuste, logo é carga
+  aritmética e não um rasto que quem conta possa escolher;
+* a **atribuição por lote** continua a correr contra a composição de hoje. A
+  quantidade é *as-of*, a atribuição não: o delta tem de aterrar em linhas de
+  nível que existam. Se o lote FEFO foi todo consumido entre contar e fechar, a
+  falta cai num lote que a pessoa nunca viu — aceitável porque a repartição já é
+  heurística assumida (ADR 0030), e **não se finge que é exacta**.
 
 ## Como é que uma diferença por artigo se reparte por lotes
 
@@ -130,15 +160,22 @@ def ao_centimo(valor: Decimal) -> Decimal:
 
 
 class ContagemJaAberta(Exception):
-    """Já há uma contagem aberta neste estabelecimento — 409, com o `id` dela.
+    """Já há uma contagem aberta **nesta localização** — 409, com o `id` dela.
 
     Levantada a partir do `IntegrityError` do índice único parcial e não de um
     `filter().exists()`: dois telemóveis a carregar em "começar" no mesmo
     instante veem os dois zero abertas e inserem os dois (ADR 0030, decisão 2).
+
+    O `code` mantém-se `contagem_ja_aberta` porque o cliente ramifica nele; o
+    que muda com a ADR 0033 é o **significado** — e por isso a excepção leva o
+    nome da localização, para a frase o nomear em vez de dizer
+    "estabelecimento". O `id` passa finalmente a ter leitor: com várias abertas,
+    é ele que leva quem tentou até à que já está a decorrer ali.
     """
 
-    def __init__(self, *, contagem_id: UUID | None) -> None:
+    def __init__(self, *, contagem_id: UUID | None, location_name: str = "") -> None:
         self.contagem_id = contagem_id
+        self.location_name = location_name
         super().__init__(CODIGO_CONTAGEM_JA_ABERTA)
 
 
@@ -189,6 +226,11 @@ class FechoPrevisto:
     #: `line_id` → valor em euros da diferença daquela linha, com sinal e ao
     #: cêntimo. Só as linhas contadas com diferença lá estão.
     valor_por_linha: Mapping[UUID, Decimal]
+    #: `line_id` → o que o ledger dizia **à hora da observação** (ADR 0033): a
+    #: base contra a qual o ajuste daquela linha é escrito. Só as linhas
+    #: contadas lá estão, e só numa contagem **aberta** — depois de fechar a
+    #: verdade é o que ficou gravado, e quem a lê usa o `quantity_expected`.
+    base_por_linha: Mapping[UUID, Decimal]
     total_lines: int
     counted_lines: int
     #: Os nomes dos artigos por contar, na ordem das linhas. É o que o ecrã usa
@@ -222,9 +264,16 @@ def abrir_contagem(
     que o ecrã assume de ponta a ponta: contar é percorrer uma lista que já
     existe, e o `total_lines` existe antes de se contar o primeiro artigo.
 
-    Levanta `ContagemJaAberta` se o estabelecimento já tiver uma aberta — da
-    base, pelo índice único parcial, e não de uma verificação prévia que duas
-    inserções simultâneas atravessariam as duas.
+    Esse `expected` é o número que o contador vê, e **mais nada**: a base do
+    ajuste é recalculada no fecho, a partir do ledger e até ao `counted_at` de
+    cada linha (ADR 0033, adenda). Congelá-lo aqui como aritmética contava duas
+    vezes tudo o que mexesse entre abrir e contar.
+
+    Levanta `ContagemJaAberta` se **aquela localização** já tiver uma aberta —
+    da base, pelo índice único parcial, e não de uma verificação prévia que duas
+    inserções simultâneas atravessariam as duas. Abrir é de toda a gente desde a
+    ADR 0033, decisão 2: a razão de ser restrito era ocupar a única vaga do
+    estabelecimento, e essa escassez acabou.
     """
     localizacao = Location.objects.filter(
         tenant_id=tenant_id, pk=location_id, is_active=True
@@ -241,12 +290,14 @@ def abrir_contagem(
                 created_by_id=user_id,
             )
     except IntegrityError as erro:
-        aberta = selectors.contagem_aberta(tenant_id=tenant_id)
+        aberta = selectors.contagem_aberta(tenant_id=tenant_id, location_id=location_id)
         logger.info(
-            "contagem recusada: já há uma aberta",
+            "contagem recusada: já há uma aberta nesta localização",
             extra={"event": "inventario.contagem", "outcome": "ja_aberta"},
         )
-        raise ContagemJaAberta(contagem_id=aberta.id if aberta else None) from erro
+        raise ContagemJaAberta(
+            contagem_id=aberta.id if aberta else None, location_name=localizacao.name
+        ) from erro
 
     saldos = selectors.saldos_por_artigo_na_localizacao(
         tenant_id=tenant_id, location_id=location_id
@@ -292,10 +343,24 @@ def registar_linha_contagem(
     de contar em pé com 3G.
 
     Um artigo que **não estava na lista** entra por aqui: a linha nasce com o
-    `expected` tirado nesse momento e congelado — zero, se o artigo nunca entrou
-    —, e a diferença dele é um `adjustment` positivo e nunca um `receipt`, que
-    tem fornecedor, documento e preço. Não há transferência implícita: se o
-    artigo estiver noutra localização, ela fica como está.
+    `expected` tirado nesse momento — zero, se o artigo nunca entrou —, e a
+    diferença dele é um `adjustment` positivo e nunca um `receipt`, que tem
+    fornecedor, documento e preço. Não há transferência implícita: se o artigo
+    estiver noutra localização, ela fica como está.
+
+    ## A tripla atómica: `expected`, `counted` e `counted_at` andam juntos
+
+    Os três escrevem-se no mesmo `save()`, aqui e em mais lado nenhum (ADR 0033,
+    adenda). O esperado é **re-instantâneo em cada observação, incluindo a
+    recontagem**: deixá-lo como estava na abertura comparava o número novo com
+    os livros de uma hora que já passou — e era esse o caminho que o upsert
+    seguia, enquanto o da linha que não existia já fazia o certo. Esta função
+    tinha as duas versões do mesmo gesto; passou a ter uma.
+
+    O `counted_at` é `timezone.now()` do **servidor** e nunca vem do corpo do
+    pedido: ele fixa o cut-off, logo escolhê-lo era escolher a base contra a
+    qual o ajuste é escrito — e um oráculo de preço no dia em que o
+    `MOTIVO_OBRIGATORIO_ACIMA_DE_EUR` deixar de ser zero.
 
     Recusa um artigo com `track_lots=True` e **sem lote registado** (ADR 0030,
     segunda ronda, resposta 4): a rastreabilidade não nasce partida numa
@@ -317,7 +382,6 @@ def registar_linha_contagem(
     ):
         raise ValidationError({"product": [DETALHE_SEM_LOTE]})
 
-    agora = timezone.now()
     linha = (
         StockCountLine.objects.filter(
             tenant_id=tenant_id, stock_count_id=aberta.pk, product_id=product_id, lot=None
@@ -325,10 +389,14 @@ def registar_linha_contagem(
         .select_for_update()
         .first()
     )
+    # A tripla lê-se **depois** do lock e escreve-se de uma vez: quem ficou à
+    # espera do `select_for_update` tira o seu instantâneo quando chega a sua
+    # vez, e não com os números que leu antes de entrar na fila.
+    esperado = selectors.saldo_do_artigo_na_localizacao(
+        tenant_id=tenant_id, location_id=aberta.location_id, product_id=product_id
+    )
+    agora = timezone.now()
     if linha is None:
-        esperado = selectors.saldo_do_artigo_na_localizacao(
-            tenant_id=tenant_id, location_id=aberta.location_id, product_id=product_id
-        )
         try:
             with transaction.atomic():
                 return StockCountLine.objects.create(
@@ -343,18 +411,25 @@ def registar_linha_contagem(
                 )
         except IntegrityError:
             # Duas pessoas a contar o mesmo artigo que não estava na lista, no
-            # mesmo instante: a base arbitra e quem perder relê e actualiza. O
-            # `expected` que fica é o da linha que ganhou a corrida — congelado
-            # uma vez, como manda a ADR 0029.
+            # mesmo instante: a base arbitra e quem perder relê e actualiza.
+            # Quem relê escreve a **sua** tripla inteira, e não a sua observação
+            # por cima do esperado da outra.
             linha = StockCountLine.objects.select_for_update().get(
                 tenant_id=tenant_id, stock_count_id=aberta.pk, product_id=product_id, lot=None
             )
 
+    linha.quantity_expected = esperado
     linha.quantity_counted = quantity
     linha.counted_at = agora
     linha.counted_by_name = user_name
     linha.save(
-        update_fields=["quantity_counted", "counted_at", "counted_by_name", "updated_at"]
+        update_fields=[
+            "quantity_expected",
+            "quantity_counted",
+            "counted_at",
+            "counted_by_name",
+            "updated_at",
+        ]
     )
     return linha
 
@@ -371,7 +446,9 @@ def planear_fecho(*, tenant_id: UUID, contagem: StockCount) -> FechoPrevisto:
     somar as duas coisas à mão.
 
     Numa contagem já fechada o plano não se recalcula: os valores vêm do ledger,
-    pela `reference` dos movimentos.
+    pela `reference` dos movimentos, e o `base_por_linha` sai vazio — quem
+    compõe a resposta lê o `quantity_expected` da linha, que é o número que
+    estava à frente de quem contou.
     """
     linhas = selectors.linhas_da_contagem(tenant_id=tenant_id, stock_count_id=contagem.pk)
     contadas = [linha for linha in linhas if linha.quantity_counted is not None]
@@ -389,8 +466,12 @@ def planear_fecho(*, tenant_id: UUID, contagem: StockCount) -> FechoPrevisto:
             if linha.product_id in valores
         }
         ajustes: tuple[AjusteDeContagem, ...] = ()
+        bases: Mapping[UUID, Decimal] = {}
     else:
-        ajustes = _planear_ajustes(tenant_id=tenant_id, contagem=contagem, linhas=contadas)
+        bases = _bases_do_corte(tenant_id=tenant_id, contagem=contagem, linhas=contadas)
+        ajustes = _planear_ajustes(
+            tenant_id=tenant_id, contagem=contagem, linhas=contadas, bases=bases
+        )
         por_linha: dict[UUID, Decimal] = {}
         for ajuste in ajustes:
             por_linha[ajuste.line_id] = por_linha.get(ajuste.line_id, Decimal("0")) + (
@@ -407,6 +488,7 @@ def planear_fecho(*, tenant_id: UUID, contagem: StockCount) -> FechoPrevisto:
         linhas=tuple(linhas),
         ajustes=ajustes,
         valor_por_linha=valor_por_linha,
+        base_por_linha=bases,
         total_lines=len(linhas),
         counted_lines=len(contadas),
         por_contar=por_contar,
@@ -415,15 +497,59 @@ def planear_fecho(*, tenant_id: UUID, contagem: StockCount) -> FechoPrevisto:
     )
 
 
-def _planear_ajustes(
+def _bases_do_corte(
     *, tenant_id: UUID, contagem: StockCount, linhas: Sequence[StockCountLine]
+) -> dict[UUID, Decimal]:
+    """A base de cada linha contada: o ledger desta localização **até ao `counted_at`**.
+
+    Uma leitura só para a contagem inteira, e não uma por linha: cada artigo tem
+    um `counted_at` próprio (contou-se a farinha às 6h12 e o açúcar às 6h20) e o
+    selector recebe os cortes todos de uma vez.
+
+    O recurso para uma linha **sem** `counted_at` é o `quantity_expected`, que é
+    o comportamento anterior a esta ADR. Não acontece em nada que passe por
+    `registar_linha_contagem` — lá os três campos escrevem-se juntos — e serve
+    linhas escritas directamente na base antes da ADR 0030, que são as únicas
+    que podem ter quantidade contada sem hora.
+    """
+    cortes = {
+        linha.product_id: linha.counted_at
+        for linha in linhas
+        if linha.counted_at is not None
+    }
+    saldos = selectors.saldos_por_artigo_ate(
+        tenant_id=tenant_id, location_id=contagem.location_id, cortes=cortes
+    )
+    return {
+        linha.id: (
+            saldos.get(linha.product_id, Decimal("0"))
+            if linha.counted_at is not None
+            else linha.quantity_expected
+        )
+        for linha in linhas
+    }
+
+
+def _planear_ajustes(
+    *,
+    tenant_id: UUID,
+    contagem: StockCount,
+    linhas: Sequence[StockCountLine],
+    bases: Mapping[UUID, Decimal],
 ) -> tuple[AjusteDeContagem, ...]:
-    """A repartição de cada diferença pelos lotes. Nenhuma escrita, nenhum efeito."""
+    """A repartição de cada diferença pelos lotes. Nenhuma escrita, nenhum efeito.
+
+    A diferença é `contado − base`, e a base é a do cut-off (ADR 0033) e não o
+    `quantity_expected` da linha: o esperado é o que o contador viu, a base é o
+    que o ledger diz até à hora a que ele contou. Nos casos normais são o mesmo
+    número; quando divergem — uma fatura lançada depois de contar, com data
+    anterior — é a base que manda, porque é ela que descreve os livros.
+    """
     com_diferenca = [
         linha
         for linha in linhas
         if linha.quantity_counted is not None
-        and linha.quantity_counted != linha.quantity_expected
+        and linha.quantity_counted != bases[linha.id]
     ]
     if not com_diferenca:
         return ()
@@ -439,7 +565,7 @@ def _planear_ajustes(
 
     ajustes: list[AjusteDeContagem] = []
     for linha in com_diferenca:
-        diferenca = linha.quantity_counted - linha.quantity_expected
+        diferenca = linha.quantity_counted - bases[linha.id]
         do_artigo = niveis.get(linha.product_id, [])
         # Um nível sem lote é legado (as receções escrevem sempre lote, nem que
         # seja o sintético) e **nunca** é alvo: era aí que o custo se perdia.
@@ -486,9 +612,11 @@ def _repartir_falta(
         saidas.append((nivel.lot_id, -sai))
         restante -= sai
     if restante > 0:
-        # O saldo dos lotes não chega para a falta — o `expected` da linha foi
-        # congelado antes de alguém mexer no stock. O resto sai do primeiro lote
-        # do FEFO, que fica negativo, e isso é deliberado: a ADR 0012 proíbe
+        # O saldo dos lotes não chega para a falta: a quantidade é *as-of* a
+        # hora em que se contou e a composição por lote é a de **hoje** (ADR
+        # 0033), logo o lote que faltava pode ter sido consumido entretanto. O
+        # resto sai do primeiro lote do FEFO, que fica negativo, e isso é
+        # deliberado: a ADR 0012 proíbe
         # bloquear, e um nível negativo é um alerta visível em vez de uma recusa
         # que chega depois do facto.
         primeiro = alvos[0].lot_id if alvos else None
@@ -588,9 +716,18 @@ def fechar_contagem(
 
     **Fechar com linhas por contar é permitido** (ADR 0030, decisão 5): o guião
     §4 proíbe o contrário, porque quem conta inventa números para o botão
-    acender. Uma linha nunca contada gera **zero** movimentos — ausência de
-    observação não é diferença de zero —, e a contagem conta na mesma para o
-    `last_count_at` do painel: contou-se parte, e isso é mais do que não contar.
+    acender. Uma linha nunca contada gera **zero** movimentos — sem `counted_at`
+    não há cut-off, logo não há base e não há afirmação —, e a contagem conta na
+    mesma para o `last_count_at` do painel: contou-se parte, e isso é mais do
+    que não contar.
+
+    **Uma contagem sem nenhuma linha contada é a excepção** (ADR 0033, decisão
+    do dono de 2026-10-21): fecha na mesma — é assim que se limpa uma contagem
+    aberta por engano, e sem nada contado a limpeza é inerte no ledger — mas
+    **não carimba o `last_count_at`**. Quem impõe isso é o
+    `selectors.ultima_contagem_fechada_em`, que é quem responde à pergunta; dizer
+    que a arca foi contada sem ninguém lá ter ido era o painel a mentir
+    exactamente no número que serve para saber o que falta contar.
 
     A justificação é **sempre obrigatória** e sem limiar (segunda ronda de
     respostas do dono): o risco nomeado é a frase vazia, e a alternativa era um

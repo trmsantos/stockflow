@@ -372,18 +372,23 @@ class StockCount(TenantModel):
       hipótese por calibrar e o dono preferiu a disciplina de uma frase em todas
       as contagens.
 
-    ## Uma contagem aberta de cada vez, e porque é um índice
+    ## Uma contagem aberta por **localização**, e porque é um índice
 
-    `UniqueConstraint(tenant, condition=status="open")` — um índice único
-    **parcial**, e não um `filter().exists()` no serviço: dois telemóveis a
-    carregar em "começar" no mesmo instante veem os dois zero abertas e inserem
-    os dois (ADR 0030, decisão 2). É a base que arbitra; o serviço apanha o
-    `IntegrityError` e responde 409 com o id da que já estava aberta.
+    `UniqueConstraint(tenant, location, condition=status="open")` — um índice
+    único **parcial**, e não um `filter().exists()` no serviço: dois telemóveis
+    a carregar em "começar" no mesmo instante veem os dois zero abertas e
+    inserem os dois (ADR 0030, decisão 2). É a base que arbitra; o serviço
+    apanha o `IntegrityError` e responde 409 com o id da que já estava aberta
+    **naquela localização**.
 
-    Por estabelecimento e não por localização porque o `expected` de cada linha é
-    um instantâneo (ADR 0029): duas contagens abertas sobre stock que se cruza
-    congelam dois instantâneos que divergem, e ao fechar a segunda aplica
-    diferenças contra um nível que a primeira já ajustou.
+    Por localização e não por estabelecimento desde a ADR 0033, decisão 1: o que
+    não pode acontecer duas vezes ao mesmo tempo são **duas correcções dos
+    mesmos factos**, e o fecho escreve movimentos na localização da contagem e
+    em mais nenhuma. Dois instantâneos de localizações diferentes não se cruzam
+    porque não têm uma única linha de `StockLevel` em comum — o argumento da
+    0030 era verdadeiro, mas só **dentro** da mesma localização. Com a ADR 0030
+    a pastelaria que conta de madrugada ficava bloqueada pela contagem de
+    ontem, à espera de quem a fechasse.
     """
 
     STATUSES = [
@@ -434,9 +439,9 @@ class StockCount(TenantModel):
         verbose_name_plural = "contagens de stock"
         constraints = [
             models.UniqueConstraint(
-                fields=["tenant"],
+                fields=["tenant", "location"],
                 condition=models.Q(status="open"),
-                name="inventory_stockcount_uma_aberta_por_tenant",
+                name="inventory_stockcount_uma_aberta_por_local",
             ),
         ]
         indexes = [
@@ -459,13 +464,33 @@ class StockCountLine(TenantModel):
     - `lot` FK a `inventory_lot` null — sempre `NULL` nesta fatia: a linha é por
       **artigo** e o `expected` é a soma dos lotes daquela localização (ADR 0030,
       decisão 4). A coluna fica porque contar por lote é fatia própria
-    - `quantity_expected` Decimal(12,3) — o que o sistema dizia **no instante em
-      que a linha nasceu**, congelado (ADR 0029)
+    - `quantity_expected` Decimal(12,3) — o que o sistema dizia **no instante da
+      última observação**, e na abertura o que dizia nesse momento
     - `quantity_counted` Decimal(12,3) null — quantidade contada; `NULL` é **por
       contar** e nunca zero (zero é "contei e não havia nada", que é diferença)
     - `zone` CharField(100) — sem fonte nesta fatia: a zona *é* a localização
       (ADR 0030, decisão 3) e ninguém escreve esta coluna
-    - `counted_at` DateTime null — quando foi contada
+    - `counted_at` DateTime null — quando foi contada, **sempre do relógio do
+      servidor**: é carga aritmética (fixa o cut-off do fecho) e nunca se
+      aceita do cliente
+
+    ## A tripla atómica, e o que o `quantity_expected` **não** é
+
+    `quantity_expected`, `quantity_counted` e `counted_at` escrevem-se **juntos
+    ou não se escrevem** (ADR 0033, adenda): uma observação é um número com uma
+    hora, e o esperado é o que os livros diziam a essa hora. Numa recontagem os
+    três voltam a mover-se; deixar o esperado para trás comparava o número novo
+    com uma hora que já passou.
+
+    O valor materializado na abertura continua a existir — é o esperado que o
+    contador vê no ecrã — mas **não é base de cálculo**: o ajuste do fecho
+    compara o contado com o que o ledger diz até ao `counted_at`, recalculado no
+    fecho a partir dos `occurred_at`. É um adorno de ecrã e uma leitura
+    histórica, não uma aritmética.
+
+    Invariante: `quantity_counted IS NOT NULL ⇒ counted_at IS NOT NULL`. Sem
+    hora não há cut-off, logo não há base, logo não há afirmação — e é por isso
+    que uma linha por contar não gera movimento nenhum.
     - `counted_by_name` CharField(150) — o nome de quem contou, **copiado** da
       pertença como nos movimentos (`created_by_name`): sobrevive à conta ser
       apagada e nunca é o email, que qualquer colega leria depois

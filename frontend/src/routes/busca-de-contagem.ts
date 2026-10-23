@@ -21,6 +21,27 @@ import { z } from "zod";
  * Um `slug` desconhecido dá **página vazia** e não erro, que é um estado que o
  * ecrã já tem e desenha.
  *
+ * ## A `contagem` entrou porque deixou de haver "a" contagem (ADR 0033)
+ *
+ * Até aqui o ecrã encontrava a contagem a decorrer com um
+ * `results.find(status === "open")` sobre a primeira página, e isso **era**
+ * correcto enquanto o servidor garantia uma aberta por estabelecimento. Com a
+ * exclusividade a passar a ser **por localização**, a arca e a despensa são
+ * duas contagens legítimas ao mesmo tempo e aquela selecção ficou errada de
+ * duas maneiras: assumia unicidade e dependia da paginação.
+ *
+ * Qual delas se está a contar passa a viver no URL, como o `/contar/fechar`
+ * já fazia e como a ADR 0008 impõe. É o mesmo argumento do `zona`, e no
+ * telemóvel ainda mais literal: quem conta de pé bloqueia o ecrã, atende uma
+ * chamada e volta — e tem de voltar à contagem **daquela** localização, não à
+ * mais recente.
+ *
+ * Sem `?contagem=`, o ecrã é a **lista das abertas** e não um palpite.
+ * Escolher a primeira seria repor, dentro do cliente, a arbitrariedade que a
+ * ADR 0033 tirou do servidor; e escolher automaticamente a única aberta
+ * esconderia o botão de abrir exactamente de quem chega para contar **outra**
+ * localização, que é o caso que esta fatia existe para desbloquear.
+ *
  * Os campos que **não** estão aqui dizem mais do que o que está:
  *
  *  - **não há `loja`.** A contagem já tem uma localização — é a dela, veio no
@@ -36,6 +57,14 @@ import { z } from "zod";
  * valor cru do URL nunca sobrevive à fusão que o router faz.
  */
 export const buscaDeContagemSchema = z.object({
+  /**
+   * Qual das contagens abertas se está a contar. Ausente = a lista delas.
+   *
+   * Um `uuid` que não seja de nenhuma contagem aberta — um atalho guardado no
+   * telemóvel, uma contagem que outra pessoa fechou entretanto — **não é
+   * erro**: o ecrã di-lo e mostra o caminho para as que estão a decorrer.
+   */
+  contagem: z.uuid().optional().catch(undefined),
   /** A zona a contar — hoje, a localização. Ausente = a contagem toda. */
   zona: z.string().trim().max(40).optional().catch(undefined),
 });

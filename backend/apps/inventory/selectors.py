@@ -6,7 +6,7 @@ de RLS (SECURITY.md §1).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -19,9 +19,11 @@ from django.db.models import (
     DateTimeField,
     DecimalField,
     DurationField,
+    Exists,
     F,
     Func,
     Max,
+    OuterRef,
     Q,
     QuerySet,
     Sum,
@@ -74,6 +76,7 @@ __all__ = [
     "producoes_por_periodo",
     "saldo_do_artigo_na_localizacao",
     "saldos_do_artigo",
+    "saldos_por_artigo_ate",
     "saldos_por_artigo_na_localizacao",
     "ultima_contagem_fechada_em",
     "valor_de_stock",
@@ -752,21 +755,29 @@ def listar_contagens(
     return list(contagens[: limite + 1])
 
 
-def contagens_com_progresso(*, tenant_id: UUID) -> QuerySet[StockCount]:
+def contagens_com_progresso(
+    *, tenant_id: UUID, estado: str = ""
+) -> QuerySet[StockCount]:
     """A lista do `GET /stock/counts`: a mais recente primeiro, com o progresso.
 
     O "12 de 34" do topo vem de duas agregações sobre o mesmo `LEFT JOIN` e não
     de uma query por contagem — uma lista de vinte contagens não paga vinte
     idas à base. O `id` desempata para a paginação não repetir linhas.
+
+    O `estado` é o `?status=open|closed` da rota (ADR 0033, decisão 4): com
+    várias contagens abertas ao mesmo tempo, "as que estão a decorrer" passou a
+    ser uma pergunta a sério, e o cliente deixa de a responder com um
+    `results.find(status === "open")` sobre a primeira página. Vazio é "todas"
+    — quem chama valida o valor, porque um estado que não existe é uma recusa e
+    não uma lista a fingir que filtrou.
     """
-    return (
-        contagens_do_ambito(tenant_id=tenant_id)
-        .annotate(
-            n_linhas=Count("lines"),
-            n_contadas=Count("lines", filter=Q(lines__quantity_counted__isnull=False)),
-        )
-        .order_by("-started_at", "-id")
-    )
+    contagens = contagens_do_ambito(tenant_id=tenant_id)
+    if estado:
+        contagens = contagens.filter(status=estado)
+    return contagens.annotate(
+        n_linhas=Count("lines"),
+        n_contadas=Count("lines", filter=Q(lines__quantity_counted__isnull=False)),
+    ).order_by("-started_at", "-id")
 
 
 def progresso_da_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> dict[str, int]:
@@ -783,14 +794,23 @@ def progresso_da_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> dict[str,
     }
 
 
-def contagem_aberta(*, tenant_id: UUID) -> StockCount | None:
-    """A contagem aberta do estabelecimento, se houver — e há no máximo uma.
+def contagem_aberta(*, tenant_id: UUID, location_id: UUID) -> StockCount | None:
+    """A contagem aberta **desta localização**, se houver — e há no máximo uma.
 
-    O máximo é da base e não desta função: `inventory_stockcount_uma_aberta_por_tenant`
-    é um índice único parcial (ADR 0030, decisão 2). Aqui serve para dizer ao
-    ecrã **qual** é a que já está aberta quando a segunda tentativa dá 409.
+    O máximo é da base e não desta função: `inventory_stockcount_uma_aberta_por_local`
+    é um índice único parcial (ADR 0030, decisão 2; ADR 0033, decisão 1). Aqui
+    serve para dizer ao ecrã **qual** é a que já está aberta ali quando a segunda
+    tentativa dá 409 — e com várias localizações abertas ao mesmo tempo, esse
+    `id` passou a ser a única forma de lá chegar.
+
+    A lista das abertas do estabelecimento não vive aqui: é o `GET
+    /stock/counts?status=open`, servido pelo `contagens_com_progresso`.
     """
-    return contagens_do_ambito(tenant_id=tenant_id).filter(status="open").first()
+    return (
+        contagens_do_ambito(tenant_id=tenant_id)
+        .filter(status="open", location_id=location_id)
+        .first()
+    )
 
 
 def linhas_da_contagem(*, tenant_id: UUID, stock_count_id: UUID) -> list[StockCountLine]:
@@ -927,6 +947,48 @@ def saldos_por_artigo_na_localizacao(
         .annotate(saldo=Sum("quantity"))
         .order_by("product_id")
     )
+
+
+def saldos_por_artigo_ate(
+    *, tenant_id: UUID, location_id: UUID, cortes: Mapping[UUID, datetime]
+) -> dict[UUID, Decimal]:
+    """O saldo de cada artigo nesta localização **até ao instante de corte dele**.
+
+    `Σ(quantity)` dos movimentos com `occurred_at ≤ corte`, e é a base contra a
+    qual o fecho de uma contagem escreve o ajuste (ADR 0033, adenda): o que os
+    livros diziam na hora em que alguém olhou para a prateleira.
+
+    Três coisas que não são detalhe:
+
+    * **lê-se o ledger e não o `StockLevel`.** O nível é a projeção de *todos*
+      os movimentos, sem hora; é o número de agora, e o de agora é a única base
+      que ninguém observou;
+    * **o corte é por `occurred_at`**, nunca por `created_at` nem pela ordem de
+      inserção. Uma fatura fotografada às 11h com data de entrega às 7h entra na
+      base de uma contagem das 8h, e é esse o caso que obriga a recalcular isto
+      no fecho em vez de o gravar quando a linha se escreve;
+    * **o empate entra** (`≤`): um movimento com a hora exacta da observação
+      aconteceu até à observação, e quem contou viu-o.
+
+    Um corte por artigo numa query só: cada artigo tem o seu `counted_at` (a
+    farinha contou-se às 6h12 e o açúcar às 6h20) e a condição vai num `OR` por
+    par `(artigo, corte)`. Os artigos são distintos entre si, logo nenhuma linha
+    de movimento conta para o corte de outro artigo. Um artigo sem movimento
+    nenhum **não vem** no resultado; quem lê trata a ausência como zero, que é o
+    que o ledger diz de quem nunca entrou.
+    """
+    if not cortes:
+        return {}
+    condicao = Q()
+    for product_id, corte in cortes.items():
+        condicao |= Q(product_id=product_id, occurred_at__lte=corte)
+    somas = (
+        StockMovement.objects.filter(tenant_id=tenant_id, location_id=location_id)
+        .filter(condicao)
+        .values("product_id")
+        .annotate(saldo=Sum("quantity"))
+    )
+    return {soma["product_id"]: soma["saldo"] for soma in somas}
 
 
 def saldo_do_artigo_na_localizacao(
@@ -1332,13 +1394,30 @@ def valor_de_stock(*, tenant_id: UUID) -> Decimal:
 
 
 def ultima_contagem_fechada_em(*, tenant_id: UUID) -> datetime | None:
-    """`MAX(closed_at)` das contagens **fechadas**, ou `None` se nunca houve uma.
+    """`MAX(closed_at)` das contagens fechadas **com alguma linha contada**.
 
     Fechadas e não iniciadas: é o fecho que gera os `adjustment`, logo é o fecho
     que explica a quebra desconhecida. `None` é "nunca se contou", e o painel
     escreve-o — zero quebra sem contagem não é boa notícia, é ausência de
     medição (ADR 0013, decisão 7).
+
+    **Com alguma linha contada**, desde a ADR 0033 (decisão do dono de
+    2026-10-21): essa ADR tornou o fecho a forma de limpar uma contagem aberta
+    por engano, e uma contagem sem nada contado passaria a dizer ao painel que a
+    arca foi contada hoje sem ninguém lá ter ido — no número que existe
+    precisamente para saber o que falta contar. Uma contagem **parcial** conta:
+    contou-se parte, e isso é mais do que não contar (ADR 0030, decisão 5).
+
+    `EXISTS` e não um `JOIN` com `DISTINCT`: a pergunta é "houve pelo menos
+    uma", e a base pára na primeira linha em vez de somar as trezentas.
     """
-    return StockCount.objects.filter(tenant_id=tenant_id, status="closed").aggregate(
-        ultima=Max("closed_at")
-    )["ultima"]
+    contadas = StockCountLine.objects.filter(
+        tenant_id=tenant_id,
+        stock_count_id=OuterRef("pk"),
+        quantity_counted__isnull=False,
+    )
+    return (
+        StockCount.objects.filter(tenant_id=tenant_id, status="closed")
+        .filter(Exists(contadas))
+        .aggregate(ultima=Max("closed_at"))["ultima"]
+    )

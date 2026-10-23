@@ -8,11 +8,12 @@ import {
   MolduraDeTabela,
   type ColunaDeTabela,
 } from "@/components/tabela";
-import { formatDate, formatDaysAway, formatTime } from "@/lib/format";
+import { formatTime } from "@/lib/format";
 
 import type { Movimento } from "../schemas";
 import { textos } from "../textos";
 import {
+  diaDe,
   eEventoEconomico,
   rotuloDeMotivo,
   rotuloDeMovimento,
@@ -56,19 +57,17 @@ import {
  * decidir — não uma segunda lista de tipos aqui dentro.
  */
 
-/** A diferença em dias civis entre um instante e hoje, hora local. */
-function diferencaEmDias(iso: string): number {
-  const momento = new Date(iso);
-  const dia = new Date(momento.getFullYear(), momento.getMonth(), momento.getDate());
-  const agora = new Date();
-  const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
-  const milissegundosPorDia = 24 * 60 * 60 * 1000;
-  return Math.round((dia.getTime() - hoje.getTime()) / milissegundosPorDia);
-}
-
+/**
+ * O cabeçalho de um grupo: o mesmo dia do `vocabulario.ts`, com maiúscula.
+ *
+ * A conta dos dias civis e a escolha entre "ontem" e a data vivem lá desde a
+ * ADR 0033, quando a lista das contagens a decorrer passou a precisar das
+ * duas — e duas cópias no mesmo módulo divergem na primeira correcção feita
+ * só numa delas. Aqui fica só a caixa, que é decisão deste ecrã: início de
+ * linha leva maiúscula, dentro de uma frase não.
+ */
 function rotuloDoDia(iso: string): string {
-  const dias = diferencaEmDias(iso);
-  const texto = Math.abs(dias) <= 1 ? formatDaysAway(dias) : formatDate(iso);
+  const texto = diaDe(iso);
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 

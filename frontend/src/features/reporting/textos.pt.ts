@@ -49,7 +49,6 @@ export const PT = {
     contar: "Contar",
     aCarregarContagem: "A carregar a contagem a decorrer…",
     vazioSemContagem: "nenhuma contagem a decorrer — comece uma",
-    vazioSemZonas: "contagem aberta, sem zonas para contar",
 
     stock: "Stock",
     aCarregarStock: "A carregar as piores linhas de stock…",
