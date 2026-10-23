@@ -1071,6 +1071,82 @@ class TestOCorteNaHoraEmQueSeContou:
             assert ajuste.occurred_at == fechada.closed_at
             assert ajuste.occurred_at > linha.counted_at
 
+    def test_nenhuma_linha_desta_fatia_tem_lote_e_o_corte_depende_disso(self):
+        """Invariante presa: `lot IS NULL` em toda a `StockCountLine` desta fatia.
+
+        O corte é chaveado **por artigo** — o `_bases_do_corte` monta
+        `{linha.product_id: linha.counted_at}` — e a base **permite** duas
+        linhas do mesmo artigo com lotes diferentes: o `lot` é nullable e a
+        restrição única é `(tenant, contagem, artigo, lote)` com
+        `nulls_distinct=False`, logo o par `(A, lote1)` e `(A, lote2)` passa
+        sem reclamação nenhuma. Nesse dia uma das duas recebe **em silêncio** o
+        corte da outra — base errada, ajuste errado gravado num ledger
+        append-only, e nenhuma exceção em lado nenhum para alguém reparar.
+
+        O que impede o caso hoje não é a base: é **nenhum caminho desta fatia
+        escrever `lot`**, nem o da abertura (a linha é por artigo, com os lotes
+        somados) nem o do `POST /lines` (os dois ramos do upsert criam e
+        procuram com `lot=None`). É isso que este teste prende, e é por isso
+        que ele falha no commit que introduzir contar por lote, em vez de o
+        erro sair como um ajuste errado em produção.
+
+        **Onde se corrige quando cair** (contar por lote é fatia própria, ADR
+        0030): no `count_services._bases_do_corte`, chaveando o corte por
+        `linha.id` em vez de `linha.product_id` — ou agrupando as linhas do
+        mesmo artigo e pedindo um corte por grupo, porque o
+        `selectors.saldos_por_artigo_ate` também soma por artigo. **A chave não
+        se muda agora**: hoje não há caso que a exercite, e mudá-la sem caso
+        era correcção sem teste.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha", track_lots=True)
+        canela = _artigo(casa, nome="Canela")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            # A base deixa: a coluna existe e aceita um lote. Quem a mantém a
+            # `NULL` é o código, e é o código que este teste mede.
+            assert StockCountLine._meta.get_field("lot").null is True
+
+            lote_a = _lote(casa, farinha, codigo="A", dias=10)
+            lote_b = _lote(casa, farinha, codigo="B", dias=30)
+            _movimento(casa, farinha, casa.armazem, lote_a, quantidade=Decimal("40"),
+                       tipo="receipt", quando=agora - timedelta(hours=6))
+            _movimento(casa, farinha, casa.armazem, lote_b, quantidade=Decimal("60"),
+                       tipo="receipt", quando=agora - timedelta(hours=5))
+
+            # (1) Abertura: dois lotes do mesmo artigo dão **uma** linha.
+            contagem = abrir_contagem(
+                tenant_id=casa.tenant.id, location_id=casa.armazem.id
+            )
+            assert _linha(contagem, farinha).quantity_expected == Decimal("100")
+
+            # (2) Contar essa linha e (3) recontá-la: o upsert não cria a segunda.
+            for quantidade in (Decimal("95"), Decimal("97")):
+                registar_linha_contagem(
+                    tenant_id=casa.tenant.id, contagem=contagem,
+                    product_id=farinha.id, quantity=quantidade, user_name="Ana Dona",
+                )
+            # (4) Um artigo que não estava na lista: a linha nasce no `POST /lines`.
+            registar_linha_contagem(
+                tenant_id=casa.tenant.id, contagem=contagem,
+                product_id=canela.id, quantity=Decimal("3"), user_name="Ana Dona",
+            )
+
+            linhas = list(StockCountLine.objects.filter(stock_count=contagem))
+            assert len(linhas) == 2, "um artigo com dois lotes continua a ser uma linha"
+            assert all(linha.lot_id is None for linha in linhas)
+            # E a mesma pergunta sem passar pela contagem, para apanhar um
+            # caminho de escrita novo que não seja nenhum dos quatro acima.
+            assert not StockCountLine.objects.filter(lot__isnull=False).exists()
+
+            # O corte não colide porque as chaves são distintas — é a leitura
+            # que o `_bases_do_corte` faz, aqui à vista.
+            cortes = {
+                linha.product_id: linha.counted_at
+                for linha in linhas
+                if linha.counted_at is not None
+            }
+            assert len(cortes) == len([lin for lin in linhas if lin.counted_at])
 
 # ---------------------------------------------------------------------------
 # 12 e a recusa da segunda ronda
@@ -1486,6 +1562,74 @@ class TestRotas:
             alheia.refresh_from_db()
         assert alheia.status == "open"
         assert dono.get("/api/v1/stock/counts").json()["count"] == 0
+
+    def test_abrir_na_localizacao_do_vizinho_e_400_igual_ao_de_um_uuid_inventado(self):
+        """A rota que a ADR 0033 abriu a **todos os papéis**, vista do outro estabelecimento.
+
+        `POST /stock/counts` deixou de ser de `owner|manager` (decisão 2), e o
+        `location` é o único argumento que o cliente escolhe: é por aí que uma
+        fronteira de tenant se atravessa, se alguém a esquecer. O
+        `abrir_contagem` resolve a localização com
+        `Location.objects.filter(tenant_id=..., pk=..., is_active=True)`
+        **antes** de qualquer insert, logo a localização do vizinho não existe
+        para este pedido e a recusa chega sem nada escrito.
+
+        **O que este teste prende é o comportamento, e não aquele filtro** — e
+        isso foi medido, não assumido: tirando o `tenant_id=tenant_id` da linha
+        acima, este teste **continua a passar**. Quem recusa é a **RLS**, que
+        filtra a `locations` dentro do `tenant_scope` antes de o ORM ver fosse o
+        que fosse (ADR 0007). O filtro do ORM é a segunda camada e não a
+        primeira, e é por isso que o `tests/test_rls_isolation.py` existe: é lá
+        que a ausência de uma política dói. Aqui mede-se o que a rota responde,
+        que é o que um cliente consegue observar.
+
+        O que este teste prende não é só o 400: é a **igualdade das duas
+        respostas**. Uma localização real de outro estabelecimento e um UUID
+        que nunca existiu têm de dar a mesma frase — se a do vizinho dissesse
+        "inativa" e a inventada "não encontrada", a rota passava a ser um
+        oráculo de existência: um `staff` percorria UUIDs e sabia quais são
+        localizações reais lá fora. É um 400 e não um 404 porque o recurso do
+        pedido é a contagem (que não chegou a existir), e o `location` é um
+        campo do corpo que não validou — a forma do DRF, por campo.
+        """
+        casa = self._casa_com_stock()
+        vizinha = _casa(nome="Café do Lado")
+        staff = _sessao(casa.colaborador.email)
+
+        do_vizinho = staff.post(
+            "/api/v1/stock/counts",
+            {"location": str(vizinha.armazem.id)},
+            format="json",
+        )
+        inventada = staff.post(
+            "/api/v1/stock/counts",
+            {"location": str(uuid4())},
+            format="json",
+        )
+
+        assert do_vizinho.status_code == 400, do_vizinho.content
+        assert inventada.status_code == 400, inventada.content
+        assert do_vizinho.json() == inventada.json(), (
+            "a frase de uma localização real do vizinho tem de ser a mesma de "
+            "um UUID que nunca existiu — a diferença seria um oráculo de existência"
+        )
+        assert set(do_vizinho.json()) == {"location"}
+        # E a frase não deixa escapar o que negou conhecer.
+        frase = " ".join(do_vizinho.json()["location"])
+        assert vizinha.armazem.name not in frase
+        assert str(vizinha.armazem.id) not in frase
+
+        # Nada escrito, de nenhum dos dois lados: a resolução da localização
+        # acontece antes do primeiro insert.
+        with tenant_scope(casa.tenant.id):
+            assert not StockCount.objects.exists()
+        with tenant_scope(vizinha.tenant.id):
+            assert not StockCount.objects.exists()
+        # E a lista de cada um continua vazia, vista por HTTP.
+        assert staff.get("/api/v1/stock/counts").json()["count"] == 0
+        assert _sessao(vizinha.dono.email).get(
+            "/api/v1/stock/counts"
+        ).json()["count"] == 0
 
     def test_o_corpo_do_fecho_e_validado(self):
         """Sem `reason` é 400, e sem sessão é 403."""

@@ -236,3 +236,79 @@ fatura já estiver lançada no momento do fecho, o cut-off acerta. Se entrar **d
 há solução dentro desta fatia. Mitigação operacional: **receber antes de contar**. O detector —
 assinalar um documento que entra com data anterior a uma contagem já fechada naquela localização — é
 barato de construir e o erro é caro de corrigir à mão, e fica como fatia própria.
+
+### O outro operando do cut-off, e porque é que ele também é um resíduo
+
+A revisão de segurança (2026-10-21) nomeou o que a adenda acima não tinha nomeado: **o cut-off tem
+dois operandos e só um estava blindado.**
+
+O `counted_at` está fechado com cuidado — nunca vem do cliente, porque seria uma alavanca para mover
+a base do ajuste. Mas a base é `Σ(movimentos com occurred_at ≤ counted_at)`, e o `occurred_at` de uma
+receção é o `received_at`, que hoje é **campo livre de qualquer membro**, sem limite inferior nem
+superior, alterável por `PATCH` do cabeçalho antes de confirmar, numa viewset sem `TemPapel`
+(ADR 0021 d9). Com `doc_type="NC"` o movimento entra **negativo** — logo uma nota de crédito
+retrodatada **baixa a base** e pode levar o fecho a escrever **zero ajuste onde havia falta real**.
+
+É o mesmo *silêncio* que esta adenda existe para evitar, por uma porta que ela não tinha visto. E é
+**superfície nova**: antes desta fatia a base era congelada na abertura, e a mesma manipulação não
+calava a variância.
+
+**Fica assumido por escrito, e a formulação é esta: a base do ajuste é tão de confiança quanto a data
+dos documentos que a compõem.** Não é um defeito desta fatia — é uma consequência da regra que ela
+escolheu, e a regra continua a ser a certa (a alternativa, recalcular contra o nível actual, apagava
+movimentos documentados). Não é tratado aqui por duas razões: quem retrodata **já escreve no ledger
+por direito próprio**, fica atribuído em `created_by_name` e o documento é auditável; e a correcção é
+exactamente o **detector** que esta ADR já põe como fatia própria — recusar data futura e assinalar
+data anterior a uma contagem fechada ou aberta naquela localização. Faz-se de uma vez, e não meia
+agora e meia depois.
+
+**Mais duas janelas estreitas, nomeadas e não fechadas:**
+
+- O `GET /closing` continua a ser a decisão e o `POST` a assinatura, mas a base recalcula-se na
+  assinatura — logo um movimento retrodatado **entre a pré-visualização e o `POST`** faz escrever
+  números diferentes dos mostrados. É muito mais estreito do que a alternativa rejeitada (deixou de
+  depender do relógio) mas deixou de ser zero, e a promessa merece a nota.
+- O corte é chaveado **por artigo** (`{linha.product_id: linha.counted_at}`), e a base permite duas
+  linhas do mesmo artigo com lotes diferentes. Hoje nada escreve `lot`, e passa a haver um teste que
+  prende essa invariante — porque no dia em que alguém a quebrar, uma linha recebe **em silêncio** o
+  corte da outra e o erro sai como ajuste errado no ledger, sem exceção nenhuma.
+
+### O custo da query do corte, medido (2026-10-22)
+
+A revisão nomeou o `OR` do `saldos_por_artigo_ate` como risco de query lenta. Foi medido antes de se
+escrever seja o que for, e **a medição desaconselhou o índice que parecia óbvio**.
+
+Com 12 000 movimentos e 300 artigos numa localização, o plano é:
+
+```
+Seq Scan on inventory_stockmovement
+  Filter: tenant = … AND location = … AND (product = X1 OR product = X2 OR … ×300)
+  Rows Removed by Filter: 6000
+  Buffers: shared hit=300        Execution Time: ~9 ms
+```
+
+Três leituras, por ordem de importância:
+
+1. **O planeador escolhe varrimento sequencial** e avalia os 300 ramos do `OR` **linha a linha** —
+   12 000 × 300 ≈ 3,6 milhões de comparações para devolver 300 somas.
+2. **`Buffers: shared hit=300`** quer dizer que a tabela inteira cabe em 300 páginas e está toda em
+   memória: o tempo **não é de leitura**, é de avaliar o predicado. Um índice ataca o custo errado.
+3. Logo **um índice `(tenant, location, product, occurred_at)` não resolve isto.** Não ajuda um
+   predicado que o planeador transforma em `Seq Scan`; e, se o levasse a um `BitmapOr`, seriam 300
+   varrimentos de índice a fundir — o seu próprio custo, numa tabela que já estava em memória. Um
+   índice a mais na maior tabela do sistema tem custo de escrita em **todos** os movimentos, e aqui
+   não compraria nada.
+
+**O problema é a forma da query e não a falta de índice.** O custo é `O(linhas × artigos)` e corre em
+**cada `GET` e cada `POST` de `/lines`** de quem vê euros. À escala de uma loja a sério — 500 000
+movimentos e 300 artigos — são ~150 milhões de comparações por pedido.
+
+**A correcção, quando se fizer:** trocar os 300 `OR` por uma **junção contra uma lista de pares
+`(artigo, corte)`** (um `VALUES` juntado por `product_id` com `occurred_at <= corte`). Isso dá ao
+planeador uma junção em vez de um predicado gigante — e **só então** um índice
+`(tenant, location, product, occurred_at)` passa a ter onde pegar. Fazer o índice primeiro era
+pagar escrita em toda a tabela para não ganhar nada.
+
+Nota de método: a medição não se fez com a ligação da aplicação a criar o índice, porque o role
+`stockflow_app` **não é dono da tabela** e o `CREATE INDEX` é recusado — o que é a separação de
+privilégios a funcionar, e vale a pena saber antes de se planear um teste assim.
