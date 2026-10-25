@@ -559,16 +559,30 @@ class StockMovementViewSet(viewsets.ViewSet):
 
 
 # ===========================================================================
-# Contagem física (ADR 0030). Seis rotas num ViewSet, e a assimetria de papéis
-# é deliberada: **contar é de toda a gente** porque é o fluxo de campo e o
-# telemóvel é do `staff`; abrir e fechar são de `owner|manager` porque fechar
-# escreve N movimentos irreversíveis e abrir ocupa a única contagem aberta do
-# estabelecimento. A assimetria vive em `permission_classes` e não num botão
-# escondido.
+# Contagem física (ADR 0030, revista pela ADR 0033). Seis rotas num ViewSet, e a
+# assimetria de papéis é deliberada: **abrir e contar são de toda a gente**
+# porque são o fluxo de campo e o telemóvel é do `staff`; **fechar** é de
+# `owner|manager` porque escreve N movimentos irreversíveis e porque a decisão é
+# o `GET /closing`, que mostra euros. A assimetria vive em `permission_classes`
+# e não num botão escondido.
+#
+# Abrir era restrito e deixou de o ser (ADR 0033, decisão 2): a razão escrita na
+# ADR 0030 não era o risco da escrita, era "ocupar a única contagem aberta do
+# estabelecimento" — e com uma contagem aberta **por localização** essa escassez
+# acabou. Manter a permissão era conservar a consequência de uma premissa
+# revogada.
 # ===========================================================================
 
-#: Quem abre e quem fecha. Instanciada uma vez: a fábrica cria uma subclasse a
-#: cada chamada, e três subclasses iguais em três sítios não ajudam ninguém.
+#: Quem fecha — as duas rotas de `/closing`, e mais nenhuma desde a ADR 0033.
+#: Instanciada uma vez: a fábrica cria uma subclasse a cada chamada, e duas
+#: subclasses iguais em dois sítios não ajudam ninguém.
+#:
+#: O `tests/test_custos_de_stock.py` prende `SO_OWNER_OU_MANAGER.papeis` aos
+#: `PAPEIS_QUE_VEEM_EUROS` (ADR 0032): o `reason_required_above_eur` é um oráculo
+#: de preço no dia em que deixar de ser zero, e a rota que o serve tem de ser
+#: exactamente a de quem já vê euros. Esta ADR não lhe toca — a constante deixa
+#: de ser usada no `create` e fica só no `closing`, que é a rota que ela
+#: descreve.
 SO_OWNER_OU_MANAGER = TemPapel.exige(Papel.OWNER, Papel.MANAGER)
 
 #: Os papéis a quem os euros são mostrados (ADR 0029) vivem no `accounts.api` —
@@ -578,8 +592,17 @@ SO_OWNER_OU_MANAGER = TemPapel.exige(Papel.OWNER, Papel.MANAGER)
 #: contado" e "não te é mostrado", e a ausência diz a segunda sem apagar a
 #: primeira.
 
-DETALHE_JA_ABERTA = _("There is already an open count in this establishment.")
+#: A frase **nomeia a localização**: o `code` continua `contagem_ja_aberta`
+#: porque o cliente ramifica nele, e o que mudou foi o significado — "já há uma
+#: aberta **aqui**" e não "já há uma aberta nesta casa" (ADR 0033, decisão 1).
+DETALHE_JA_ABERTA = _("There is already an open count in %(location)s.")
 DETALHE_JA_FECHADA = _("This count is already closed.")
+
+#: Os dois estados que o `?status=` aceita. Um terceiro valor é **400** e não
+#: uma lista a fingir que filtrou: o conjunto é fechado e o cliente só envia
+#: estes dois.
+ESTADOS_DA_CONTAGEM = ("open", "closed")
+DETALHE_ESTADO_INVALIDO = _("Unknown count status. Use open or closed.")
 
 
 class PaginacaoDasLinhas(PageNumberPagination):
@@ -618,6 +641,18 @@ def _conflito(*, code: str, detail: str, contagem_id) -> Response:
     list=extend_schema(
         operation_id="contagens_listar",
         summary="Contagens do estabelecimento, da mais recente para a mais antiga",
+        parameters=[
+            OpenApiParameter(
+                "status",
+                OpenApiTypes.STR,
+                OpenApiParameter.QUERY,
+                enum=list(ESTADOS_DA_CONTAGEM),
+                description=(
+                    "Filtra pelo estado. Ausente traz as duas; um valor fora da "
+                    "lista é 400."
+                ),
+            )
+        ],
         responses={200: ContagemOutSerializer(many=True)},
     ),
     create=extend_schema(
@@ -636,7 +671,7 @@ class ContagemViewSet(viewsets.GenericViewSet):
     | rota | quem |
     |---|---|
     | `GET stock/counts` | todos |
-    | `POST stock/counts` | owner, manager |
+    | `POST stock/counts` | **todos** — desde a ADR 0033, decisão 2 |
     | `GET stock/counts/{id}/lines` | todos |
     | `POST stock/counts/{id}/lines` | **todos** — o staff conta no telemóvel |
     | `GET stock/counts/{id}/closing` | owner, manager |
@@ -657,8 +692,14 @@ class ContagemViewSet(viewsets.GenericViewSet):
     throttle_scope = AMBITO_THROTTLE_CATALOGO
 
     def get_permissions(self):
-        """Contar é de toda a gente; abrir e fechar são de `owner|manager`."""
-        if self.action in {"create", "closing"}:
+        """Abrir e contar são de toda a gente; **fechar** é de `owner|manager`.
+
+        O `create` saiu desta lista com a ADR 0033: abrir não escreve movimento
+        nenhum, não revela euro nenhum (o 201 passa pelo `ve_euros`) e deixou de
+        ocupar a única vaga do estabelecimento. O que continua a precisar do
+        dono é a decisão que o `GET /closing` mostra e o `POST` assina.
+        """
+        if self.action == "closing":
             return [IsAuthenticated(), PertenceAoTenant(), SO_OWNER_OU_MANAGER()]
         return [IsAuthenticated(), PertenceAoTenant()]
 
@@ -669,7 +710,13 @@ class ContagemViewSet(viewsets.GenericViewSet):
         return [*super().get_throttles(), ScopedRateThrottle()]
 
     def get_queryset(self) -> QuerySet[StockCount]:
-        """As contagens do estabelecimento ativo, com o progresso de cada uma."""
+        """As contagens do estabelecimento ativo, com o progresso de cada uma.
+
+        Sem o `?status=`: este é o queryset do `get_object()` das rotas
+        aninhadas, e filtrá-lo por estado faria um `?status=closed` perdido no
+        URL transformar uma contagem aberta em 404. O filtro da lista vive no
+        `list`, que é onde ele é uma pergunta.
+        """
         return contagens_com_progresso(tenant_id=self.request.tenant.id)
 
     def _ve_euros(self, request: Request) -> bool:
@@ -696,8 +743,23 @@ class ContagemViewSet(viewsets.GenericViewSet):
         return pertenca.display_name if pertenca else ""
 
     def list(self, request: Request, *args, **kwargs) -> Response:
-        """Lista paginada de contagens, da mais recente para a mais antiga."""
-        pagina = self.paginate_queryset(self.get_queryset())
+        """Lista paginada de contagens, da mais recente para a mais antiga.
+
+        `?status=open|closed` (ADR 0033, decisão 4): com várias contagens
+        abertas ao mesmo tempo, "as que estão a decorrer" é uma pergunta ao
+        servidor e não um `results.find(status === "open")` sobre a primeira
+        página — era o rabo a abanar o cão, uma suposição de ecrã a decidir uma
+        invariante de domínio.
+        """
+        estado = request.query_params.get("status", "")
+        if estado and estado not in ESTADOS_DA_CONTAGEM:
+            return Response(
+                {"status": [str(DETALHE_ESTADO_INVALIDO)]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        pagina = self.paginate_queryset(
+            contagens_com_progresso(tenant_id=request.tenant.id, estado=estado)
+        )
         ve_euros = self._ve_euros(request)
         corpo = [
             compor_contagem(
@@ -723,7 +785,7 @@ class ContagemViewSet(viewsets.GenericViewSet):
         except ContagemJaAberta as erro:
             return _conflito(
                 code=CODIGO_CONTAGEM_JA_ABERTA,
-                detail=DETALHE_JA_ABERTA,
+                detail=DETALHE_JA_ABERTA % {"location": erro.location_name},
                 contagem_id=erro.contagem_id,
             )
         except ValidationError as erro:

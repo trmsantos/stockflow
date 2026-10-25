@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { ApiError } from "@/lib/api/errors";
 import { erroDoCampo } from "@/lib/api/erros-por-campo";
 
@@ -20,17 +22,17 @@ import { erroDoCampo } from "@/lib/api/erros-por-campo";
  *  - o 403 do fecho é a regra dos euros, e o ecrã do colaborador nem sequer o
  *    provoca — não tem botão de fechar nem pede a pré-visualização.
  *
- * ## Porque é que o `id` do 409 não é lido aqui
+ * ## O `id` do 409 passou a ter leitor, e esse dia tem data
  *
- * O corpo do conflito traz `{code, detail, id}`, e o `id` é o que o contrato pôs
- * lá para o ecrã **levar quem tentou** até à contagem que já está aberta. Este
- * cliente chega ao mesmo sítio por outro caminho e sem ler o campo: só há uma
- * contagem aberta por estabelecimento (é um índice único), o `/contar` já é o
- * ecrã dela, e reler a lista faz o ecrã trocar sozinho — o `id` que voltasse
- * seria sempre o da única aberta que a lista traz. Uma função para o extrair
- * ficava sem chamador, e um leitor sem chamador é uma afirmação que nada
- * verifica. Se um dia houver mais do que uma aberta, o campo volta a ser preciso
- * e esta nota diz porquê.
+ * Esta secção dizia que o `id` do conflito não era lido, e dizia-o com uma
+ * razão verdadeira na altura: havia **uma** contagem aberta por
+ * estabelecimento, o `/contar` já era o ecrã dela, e reler a lista fazia o ecrã
+ * trocar sozinho — o `id` que voltasse seria sempre o da única aberta. A nota
+ * acabava assim: *"se um dia houver mais do que uma aberta, o campo volta a ser
+ * preciso"*. A ADR 0033 é esse dia. Com uma aberta **por localização**, reler a
+ * lista já não leva a lado nenhum: traz três, e nenhuma delas é "a" contagem.
+ * O `id` é o que distingue um beco de um atalho — é por ele que o ecrã leva
+ * quem tentou abrir a arca até à contagem da arca que já estava a decorrer.
  *
  * ## Os códigos são por endpoint, de propósito
  *
@@ -44,10 +46,17 @@ import { erroDoCampo } from "@/lib/api/erros-por-campo";
 /**
  * `contagem_ja_aberta` — 409 do `POST /stock/counts`.
  *
- * Só pode haver **uma contagem aberta por estabelecimento** (ADR 0030, decisão
- * 2), imposto por índice único parcial e não por um `exists()`: dois telemóveis
- * a carregar em "começar" no mesmo instante veem os dois zero abertas e inserem
- * os dois. O segundo leva este código, com o `id` da primeira.
+ * Só pode haver **uma contagem aberta por localização** (ADR 0033, decisão 1 —
+ * revoga a decisão 2 da ADR 0030, que a punha por estabelecimento). O que não
+ * pode acontecer duas vezes ao mesmo tempo são **duas correcções dos mesmos
+ * factos**, e dois instantâneos de localizações diferentes não têm uma única
+ * linha de nível em comum: a arca e a despensa contam-se em simultâneo.
+ *
+ * O `code` **não mudou** — o cliente ramifica nele —, mudou o significado: "já
+ * há uma contagem aberta **nesta localização**". Continua imposto por índice
+ * único parcial e não por um `exists()`: dois telemóveis a carregar em
+ * "começar" no mesmo instante veem os dois zero abertas e inserem os dois. O
+ * segundo leva este código, com o `id` da primeira.
  */
 export const CODIGO_CONTAGEM_JA_ABERTA = "contagem_ja_aberta";
 
@@ -64,6 +73,38 @@ export const CODIGO_CONTAGEM_FECHADA = "contagem_fechada";
 /** O `code` de uma recusa, ou `null`. */
 export function codigoDaRecusaDeContagem(erro: unknown): string | null {
   return erro instanceof ApiError ? erro.code : null;
+}
+
+/**
+ * O `id` da contagem que o 409 nomeia, ou `null` — o atalho do
+ * `contagem_ja_aberta`.
+ *
+ * Validado como `uuid` **aqui** e não no ecrã, e a razão é o que está do outro
+ * lado: este valor vai para o `?contagem=` do URL, onde o
+ * `buscaDeContagemSchema` o lê com `.catch(undefined)`. Um `id` com outra forma
+ * sobreviveria ao corpo do erro, seria posto num link e **desapareceria em
+ * silêncio** na validação do router — um botão que não vai a lado nenhum é pior
+ * do que não ter botão. Devolvendo `null`, o ecrã mostra a frase sem a saída
+ * falsa.
+ *
+ * Defensivo pelas mesmas razões do `erroDoCampo`: o payload pode não ser um
+ * objecto (um 500 com a página de erro do Django, um proxy que recusa os bytes)
+ * e a chave pode não existir. E lê-se por `Map` porque o
+ * `security/detect-object-injection` recusa — e bem — um `OBJETO[chave]` com
+ * chave dinâmica.
+ */
+export function contagemDoConflito(erro: unknown): string | null {
+  if (!(erro instanceof ApiError)) return null;
+
+  const payload: unknown = erro.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return null;
+  }
+
+  const valor: unknown = new Map<string, unknown>(Object.entries(payload)).get("id");
+  if (typeof valor !== "string") return null;
+
+  return z.uuid().safeParse(valor).success ? valor : null;
 }
 
 /**

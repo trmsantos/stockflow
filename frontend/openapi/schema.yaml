@@ -1769,7 +1769,14 @@ paths:
   /api/v1/stock/counts:
     get:
       operationId: contagens_listar
-      description: Lista paginada de contagens, da mais recente para a mais antiga.
+      description: |-
+        Lista paginada de contagens, da mais recente para a mais antiga.
+
+        `?status=open|closed` (ADR 0033, decisão 4): com várias contagens
+        abertas ao mesmo tempo, "as que estão a decorrer" é uma pergunta ao
+        servidor e não um `results.find(status === "open")` sobre a primeira
+        página — era o rabo a abanar o cão, uma suposição de ecrã a decidir uma
+        invariante de domínio.
       summary: Contagens do estabelecimento, da mais recente para a mais antiga
       parameters:
       - name: page
@@ -1778,6 +1785,15 @@ paths:
         description: A page number within the paginated result set.
         schema:
           type: integer
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - closed
+          - open
+        description: Filtra pelo estado. Ausente traz as duas; um valor fora da lista
+          é 400.
       tags:
       - stock
       security:

@@ -1,4 +1,4 @@
-import { formatCount, formatQuantity } from "@/lib/format";
+import { formatCount, formatDate, formatDaysAway, formatQuantity } from "@/lib/format";
 
 import type { EstadoNivel, MotivoQuebra, Quantidade, TipoMovimento } from "./schemas";
 import { textos } from "./textos";
@@ -118,4 +118,47 @@ const SEM_EVENTO_ECONOMICO: ReadonlySet<TipoMovimento> = new Set([
 
 export function eEventoEconomico(tipo: TipoMovimento): boolean {
   return !SEM_EVENTO_ECONOMICO.has(tipo);
+}
+
+/* ---------------------------------------------------------------------------
+ * Quando. A distância em dias civis até hoje, e o rótulo que dela sai.
+ * ------------------------------------------------------------------------- */
+
+const MILISSEGUNDOS_POR_DIA = 24 * 60 * 60 * 1000;
+
+/**
+ * A diferença em **dias civis** — não em horas — entre um instante e hoje, na
+ * hora local de quem lê.
+ *
+ * Civis e não corridos porque é assim que uma pessoa fala: às 00:30 de terça, a
+ * contagem aberta às 22:14 de segunda foi aberta "ontem", e não "há 2 horas".
+ * Negativo é passado.
+ *
+ * Vive aqui desde a ADR 0033 porque passou a ter dois leitores dentro do mesmo
+ * módulo — o histórico de movimentos de um artigo e a lista das contagens a
+ * decorrer. Duas cópias da mesma conta no mesmo módulo divergem na primeira
+ * correcção feita só numa delas.
+ */
+export function diferencaEmDiasCivis(iso: string): number {
+  const momento = new Date(iso);
+  const dia = new Date(momento.getFullYear(), momento.getMonth(), momento.getDate());
+  const agora = new Date();
+  const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
+  return Math.round((dia.getTime() - hoje.getTime()) / MILISSEGUNDOS_POR_DIA);
+}
+
+/**
+ * `hoje` · `ontem` · `19/10/2026` — o dia de um instante, **em minúsculas**.
+ *
+ * Relativo só até um dia de distância: "há 5 dias" obriga a contar de cabeça
+ * para saber qual foi o dia, e a data não obriga. A palavra segue a língua (é
+ * o `Intl.RelativeTimeFormat`); a data fica em pt-PT, como toda a forma de dado
+ * deste produto.
+ *
+ * Minúsculas porque o chamador decide a caixa: dentro de uma frase ("aberta
+ * desde ontem às 22:14") ela não leva maiúscula, e num cabeçalho de grupo leva.
+ */
+export function diaDe(iso: string): string {
+  const dias = diferencaEmDiasCivis(iso);
+  return Math.abs(dias) <= 1 ? formatDaysAway(dias) : formatDate(iso);
 }

@@ -50,7 +50,13 @@ from rest_framework.test import APIClient
 from apps.accounts.models import Papel, User
 from apps.accounts.services import conceder_pertenca, criar_tenant
 from apps.catalog.models import Product
-from apps.inventory.models import Location, StockCount, StockLevel, StockMovement
+from apps.inventory.models import (
+    Location,
+    StockCount,
+    StockCountLine,
+    StockLevel,
+    StockMovement,
+)
 from apps.reporting import periodos, selectors
 from apps.shared.db import tenant_scope
 
@@ -153,6 +159,31 @@ class Ambiente:
         return selectors.resumo_do_periodo(
             tenant_id=self.tenant_id, janela=janela, vat_regime="normal"
         )
+
+
+def contagem_fechada(painel: Ambiente, *, local: Location, quando: datetime) -> StockCount:
+    """Uma contagem fechada **com uma linha contada**, que é o que o painel conta.
+
+    Uma contagem fechada sem nenhuma linha contada deixou de carimbar o
+    `last_count_at` (ADR 0033, decisão do dono de 2026-10-21): o fecho passou a
+    ser a forma de limpar uma contagem aberta por engano, e sem esta regra o
+    painel dizia que a arca foi contada sem ninguém lá ter ido.
+    """
+    contagem = StockCount.objects.create(
+        tenant_id=painel.tenant_id,
+        location=local,
+        status="closed",
+        closed_at=timezone.make_aware(quando),
+    )
+    StockCountLine.objects.create(
+        tenant_id=painel.tenant_id,
+        stock_count=contagem,
+        product=painel.artigo,
+        quantity_expected=Decimal("1"),
+        quantity_counted=Decimal("1"),
+        counted_at=contagem.closed_at,
+    )
+    return contagem
 
 
 def janela_larga() -> tuple[datetime, datetime]:
@@ -321,11 +352,8 @@ def test_sem_ajustes_a_quebra_e_zero_e_a_contagem_diz_porque(painel: Ambiente) -
     assert resumo.unknown_shrinkage_eur == Decimal("0.00")
     assert resumo.data_quality.last_count_at is None
 
-    fechada = StockCount.objects.create(
-        tenant_id=painel.tenant_id,
-        location=painel.local,
-        status="closed",
-        closed_at=timezone.make_aware(datetime(2026, 5, 16, 20)),
+    fechada = contagem_fechada(
+        painel, local=painel.local, quando=datetime(2026, 5, 16, 20)
     )
     resumo = painel.resumo(painel.janela(desde=desde, ate=ate))
     assert resumo.unknown_shrinkage_eur == Decimal("0.00")
@@ -346,23 +374,15 @@ def test_ultima_contagem_ignora_abertas_e_devolve_o_maximo(painel: Ambiente) -> 
     armazem = Location.objects.create(
         tenant_id=painel.tenant_id, name="Armazém", position=2
     )
-    StockCount.objects.create(
-        tenant_id=painel.tenant_id,
-        location=painel.local,
-        status="closed",
-        closed_at=timezone.make_aware(datetime(2026, 5, 10, 18)),
+    contagem_fechada(painel, local=painel.local, quando=datetime(2026, 5, 10, 18))
+    mais_recente = contagem_fechada(
+        painel, local=armazem, quando=datetime(2026, 5, 18, 9)
     )
-    mais_recente = StockCount.objects.create(
-        tenant_id=painel.tenant_id,
-        location=armazem,
-        status="closed",
-        closed_at=timezone.make_aware(datetime(2026, 5, 18, 9)),
-    )
-    # Uma contagem aberta a que alguém pôs data sem a fechar: não conta. Era
-    # **uma segunda** aberta antes da ADR 0030, e agora o estabelecimento só
-    # pode ter uma (`inventory_stockcount_uma_aberta_por_tenant`) — o que o
+    # Uma contagem aberta a que alguém pôs data sem a fechar: não conta. O que o
     # teste precisa é de uma aberta com `closed_at` preenchido, que é o caso
     # perverso; a aberta sem data está coberta pelo filtro `status="closed"`.
+    # Desde a ADR 0033 há uma aberta **por localização**
+    # (`inventory_stockcount_uma_aberta_por_local`), e esta é a da Loja.
     StockCount.objects.create(
         tenant_id=painel.tenant_id,
         location=painel.local,

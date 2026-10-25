@@ -55,7 +55,6 @@ export const EN: typeof PT = {
     contar: "Stocktake",
     aCarregarContagem: "Loading the stocktake in progress…",
     vazioSemContagem: "no stocktake in progress — start one",
-    vazioSemZonas: "stocktake open, with no zones to count",
 
     stock: "Stock",
     aCarregarStock: "Loading the worst stock lines…",

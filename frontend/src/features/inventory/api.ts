@@ -260,47 +260,59 @@ export function useRegistarDesperdicio() {
  * ------------------------------------------------------------------------ */
 
 /**
- * As contagens deste estabelecimento, da mais recente para a mais antiga.
+ * **As** contagens a decorrer — plural, e perguntadas ao servidor.
  *
- * Não há `GET /stock/counts/aberta`: "a contagem aberta" é uma **seleção** da
- * lista, não um endpoint, e assim o ecrã que mostra a aberta e o que mostra o
- * resultado da última leem a mesma entrada de cache.
+ * Isto era um `useContagemAberta` (singular) que fazia
+ * `results.find(status === "open")` sobre a primeira página da lista toda.
+ * Estava certo enquanto o servidor garantia **uma** aberta por estabelecimento
+ * e ficou errado de duas maneiras com a ADR 0033: assume unicidade onde a
+ * exclusividade passou a ser **por localização** (a arca e a despensa são duas
+ * contagens legítimas em simultâneo), e depende da paginação — bastam 50
+ * contagens fechadas à frente para a aberta não vir na primeira página e o ecrã
+ * dizer que não há nenhuma a decorrer.
+ *
+ * O `?status=open` é a correcção das duas de uma vez, e é por isso que o
+ * parâmetro existe no contrato (ADR 0033, decisão 4): "as que estão a decorrer"
+ * é uma **pergunta ao servidor**, não uma suposição do ecrã. Devolve a página
+ * inteira e não uma escolha: **qual** delas se está a contar é do URL
+ * (`?contagem=`), e um `select` aqui voltava a pôr essa decisão nesta camada.
  */
-export function useContagens(): UseQueryResult<Paginated<Contagem>> {
+export function useContagensAbertas(): UseQueryResult<Paginated<Contagem>> {
   const tenant = tenantDaCache();
 
   return useQuery({
-    queryKey: queryKeys.list(tenant, RECURSO_CONTAGENS, {}),
+    queryKey: queryKeys.list(tenant, RECURSO_CONTAGENS, { status: "open" }),
     queryFn: ({ signal }) =>
-      apiRequest(CAMINHO_CONTAGENS, paginated(contagemSchema), { signal }),
+      apiRequest(CAMINHO_CONTAGENS, paginated(contagemSchema), {
+        query: { status: "open" },
+        signal,
+      }),
   });
 }
 
 /**
- * A contagem aberta, ou `null` quando não há nenhuma — e `null` e não
- * `undefined`, para o ecrã distinguir "não há contagem a decorrer" (que tem uma
- * ação: começar uma) de "ainda a carregar" (que tem um skeleton).
+ * A última contagem fechada, para o ecrã mostrar o resultado de quem fechou.
+ *
+ * Com `?status=closed` e `results[0]`, e não com um `find` sobre a lista toda:
+ * a ordem é `-started_at` do servidor, logo a primeira fechada **é** a última a
+ * ter começado. Pela mesma razão de paginação de cima — com várias abertas à
+ * frente, a página 1 podia não ter fechada nenhuma e o ecrã calava o resultado
+ * de quem acabou de fechar.
+ *
+ * `null` e não `undefined` quando não há nenhuma: o ecrã tem de distinguir
+ * "ainda não houve nenhuma" (não se mostra nada) de "ainda a carregar".
  */
-export function useContagemAberta(): UseQueryResult<Contagem | null> {
-  const tenant = tenantDaCache();
-
-  return useQuery({
-    queryKey: queryKeys.list(tenant, RECURSO_CONTAGENS, {}),
-    queryFn: ({ signal }) =>
-      apiRequest(CAMINHO_CONTAGENS, paginated(contagemSchema), { signal }),
-    select: (pagina) => pagina.results.find((contagem) => contagem.status === "open") ?? null,
-  });
-}
-
-/** A última contagem fechada, para o ecrã mostrar o resultado de quem fechou. */
 export function useUltimaContagemFechada(): UseQueryResult<Contagem | null> {
   const tenant = tenantDaCache();
 
   return useQuery({
-    queryKey: queryKeys.list(tenant, RECURSO_CONTAGENS, {}),
+    queryKey: queryKeys.list(tenant, RECURSO_CONTAGENS, { status: "closed" }),
     queryFn: ({ signal }) =>
-      apiRequest(CAMINHO_CONTAGENS, paginated(contagemSchema), { signal }),
-    select: (pagina) => pagina.results.find((contagem) => contagem.status === "closed") ?? null,
+      apiRequest(CAMINHO_CONTAGENS, paginated(contagemSchema), {
+        query: { status: "closed" },
+        signal,
+      }),
+    select: (pagina) => pagina.results[0] ?? null,
   });
 }
 
@@ -332,32 +344,25 @@ export function useLinhasDeContagem(
 }
 
 /**
- * Quem está nesta sessão **abre e fecha** contagens?
+ * Quais os papéis que **fecham** uma contagem, tipado contra o enum gerado.
  *
- * **Não é autorização, e é por isso que aceita a ausência de papel.** Quem
- * autoriza é o servidor: abrir e fechar são de `owner|manager`, impostos em
- * `permission_classes`, e o `GET /closing` responde **403** a quem conta. Isto é
- * a mesma verdade usada para duas coisas de apresentação — não desenhar um
- * botão que vai dar 403, e não disparar o pedido da pré-visualização que já se
- * sabe recusado. Esconder é apresentação, não autorização (ADR 0009).
+ * **Abrir saiu desta lista com a ADR 0033 (decisão 2), e foi a ADR 0030 que o
+ * mandou.** A razão escrita lá para abrir ser restrito não era o risco da
+ * escrita — era *"ocupar a única contagem aberta do estabelecimento"*. Com uma
+ * contagem aberta por **localização** a escassez acabou, e a razão acabou com
+ * ela; manter a restrição era conservar a consequência de uma premissa
+ * revogada. Quem conta às 6h abre a localização que quiser.
  *
- * A assimetria não é de ecrã: contar não toca no ledger e **fechar escreve N
- * movimentos irreversíveis**; abrir entra do lado restrito por ocupar a única
- * contagem aberta do estabelecimento.
- *
- * Lê a **única** cache que existe, pela porta que a ADR 0008 (decisão 2) deixa
- * aberta entre features. Não faz pedido nenhum. Enquanto a sessão não chegou o
- * papel é `undefined` e a resposta é `false`: na prática é imediato, porque o
- * `beforeLoad` da rota do shell já leu a sessão antes de montar o invólucro.
- */
-/**
- * Quais os papéis que abrem e fecham, **tipado contra o enum gerado**.
+ * **Fechar fica**, e a razão também não é o papel: o `GET /closing` **é** a
+ * decisão (diferença por linha, `loss_eur`, `gain_eur`) e o `POST` é só a
+ * assinatura. Dar a assinatura a quem não pode ver a decisão não é delegar
+ * responsabilidade, é retirá-la — um carimbo é pior do que a espera.
  *
  * O `Record` é a garantia e é exaustivo nos dois sentidos: se o backend ganhar
- * um quarto papel, isto não compila e alguém tem de decidir se ele conta ou se
- * ele fecha. Uma lista de strings que por acaso coincide com a do servidor
- * ficava em silêncio nesse dia — e o silêncio aqui é um botão a aparecer a quem
- * vai levar 403, ou a desaparecer a quem podia carregar nele.
+ * um quarto papel, isto não compila e alguém tem de decidir se ele fecha. Uma
+ * lista de strings que por acaso coincide com a do servidor ficava em silêncio
+ * nesse dia — e o silêncio aqui é um botão a aparecer a quem vai levar 403, ou
+ * a desaparecer a quem podia carregar nele.
  *
  * O `Map` é por onde se lê, porque o `security/detect-object-injection` recusa —
  * e bem — um `OBJETO[chave]` com chave dinâmica. É o mesmo par do
@@ -365,18 +370,38 @@ export function useLinhasDeContagem(
  * tipo vem do `types.ts` (que é `@/lib/*`, usado de cima para baixo) e não do
  * `papelSchema` do `accounts`, que não atravessa a fronteira da ADR 0008.
  */
-const GERE_CONTAGENS: Record<components["schemas"]["PapelEnum"], boolean> = {
+const FECHA_CONTAGENS: Record<components["schemas"]["PapelEnum"], boolean> = {
   owner: true,
   manager: true,
   staff: false,
 };
 
-const QUEM_GERE = new Map<string, boolean>(Object.entries(GERE_CONTAGENS));
+const QUEM_FECHA = new Map<string, boolean>(Object.entries(FECHA_CONTAGENS));
 
-export function usePodeGerirContagens(): boolean {
+/**
+ * Quem está nesta sessão **fecha** contagens?
+ *
+ * **Não é autorização, e é por isso que aceita a ausência de papel.** Quem
+ * autoriza é o servidor: fechar é de `owner|manager`, imposto em
+ * `permission_classes`, e o `GET /closing` responde **403** a quem conta. Isto é
+ * a mesma verdade usada para duas coisas de apresentação — não desenhar um
+ * botão que vai dar 403, e não disparar o pedido da pré-visualização que já se
+ * sabe recusado. Esconder é apresentação, não autorização (ADR 0009).
+ *
+ * Chamava-se `usePodeGerirContagens` e "gerir" eram duas acções; desde a ADR
+ * 0033 é uma só, e o nome diz qual. A assimetria não é de ecrã: contar e abrir
+ * não tocam no ledger, e **fechar escreve N movimentos irreversíveis** a partir
+ * de uma pré-visualização em euros.
+ *
+ * Lê a **única** cache que existe, pela porta que a ADR 0008 (decisão 2) deixa
+ * aberta entre features. Não faz pedido nenhum. Enquanto a sessão não chegou o
+ * papel é `undefined` e a resposta é `false`: na prática é imediato, porque o
+ * `beforeLoad` da rota do shell já leu a sessão antes de montar o invólucro.
+ */
+export function usePodeFecharContagens(): boolean {
   const sessao = useSessao();
   const papel = sessao.data?.tenant_ativo?.papel;
-  return papel !== undefined && (QUEM_GERE.get(papel) ?? false);
+  return papel !== undefined && (QUEM_FECHA.get(papel) ?? false);
 }
 
 /**
@@ -406,23 +431,24 @@ export function useFechoDeContagem(
 }
 
 /**
- * Começar a contar uma localização. É a ação do estado vazio do ecrã, e é de
- * `owner|manager`.
+ * Começar a contar uma localização. É a ação do ecrã, e desde a ADR 0033 é de
+ * **toda a gente**.
  *
  * **O 409 não é tratado como erro, e é essa a decisão.** Só pode haver uma
- * contagem aberta por estabelecimento (ADR 0030, decisão 2), logo a segunda
- * tentativa responde `contagem_ja_aberta` com o `id` da que já está aberta. O
- * que isso quer dizer, do lado de quem carregou no botão, é que **a contagem
- * que ela quer já existe** — e a reacção certa é mostrá-la, não dizer "erro".
+ * contagem aberta **por localização** (ADR 0033, decisão 1), logo a segunda
+ * tentativa sobre a mesma localização responde `contagem_ja_aberta` com o `id`
+ * da que já está aberta. O que isso quer dizer, do lado de quem carregou no
+ * botão, é que **a contagem que ela quer já existe** — e a reacção certa é
+ * levá-la lá, não dizer "erro".
  *
- * Aqui a recusa releva a lista: o `onError` invalida as contagens, a entrada de
- * cache que o `useContagemAberta` lê volta com a aberta lá dentro, e o ecrã
- * troca o estado vazio pela contagem a decorrer sem navegação nenhuma. O ecrã
- * acrescenta a frase que explica a troca — sem ela, quem escolheu a Cozinha
- * ficava a olhar para o Armazém sem perceber porquê.
+ * Aqui a recusa releva a lista das abertas: o `onError` invalida as contagens e
+ * a que já estava a decorrer aparece na lista do ecrã. O atalho é do ecrã, com
+ * o `id` que o corpo do conflito traz (`contagemDoConflito`) — com várias
+ * abertas, reler a lista deixou de bastar: ela traz três e nenhuma delas é "a"
+ * contagem.
  *
  * As linhas entram na mesma invalidação porque o `POST` as materializa: uma por
- * artigo com nível não-zero naquela localização (decisão 4).
+ * artigo com nível não-zero naquela localização (ADR 0030, decisão 4).
  */
 export function useIniciarContagem() {
   const queryClient = useQueryClient();

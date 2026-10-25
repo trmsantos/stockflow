@@ -1,5 +1,12 @@
 # ADR 0030 — Ligar as contagens: o contrato que as duas pontas já assumem, e onde elas divergem
 
+> **Revogada em parte pela [ADR 0033](0033-uma-contagem-aberta-por-localizacao.md) (2026-10-21).** A
+> **decisão 2** — uma contagem aberta por *estabelecimento* — passa a ser **uma aberta por
+> localização**, e com ela cai a razão que a **decisão 1** escreve para `POST stock/counts` ser de
+> `owner|manager` (*"ocupar a única contagem aberta do estabelecimento"*): **abrir passa a ser de toda
+> a gente**. O efeito combinado das duas regras — nunca aprovado como um todo — bloqueava quem conta de
+> madrugada. **Fechar continua `owner|manager`**, e o resto desta ADR mantém-se de pé.
+
 **Contexto.** O ecrã `/contar` existe na forma final e é servido por `frontend/fixtures/contagem.ts`.
 Atrás dele há tabelas (`StockCount`, `StockCountLine`, as duas com RLS), serviços (`abrir_contagem`,
 `adicionar_linha_contagem`, `resumo_contagem`, `fechar_contagem`), cinco serializers e até uma porta

@@ -8,12 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CLASSE_CONTADOR, ReguaDeContadores } from "@/components/regua-de-contadores";
 import { mensagemDeErro } from "@/lib/api/errors";
 
-import {
-  useContagemAberta,
-  useFecharContagem,
-  useFechoDeContagem,
-  usePodeGerirContagens,
-} from "../api";
+import { useFecharContagem, useFechoDeContagem, usePodeFecharContagens } from "../api";
 import { ErroDaLista } from "../components/estados-da-lista";
 import { FormularioDeFecho, ResumoDoFecho } from "../components/fecho-de-contagem";
 import { textos } from "../textos";
@@ -50,14 +45,22 @@ function Voltar() {
 
 export function EcraDeFechoDeContagem() {
   const busca = useSearch({ from: "/app/contar/fechar" });
-  // Sem `?contagem=` no URL — alguém que escreveu `/contar/fechar` à mão —, a
-  // contagem aberta é o palpite certo, e vem da mesma entrada de cache que o
-  // ecrã de contar já tem.
-  const aberta = useContagemAberta();
-  const id = busca.contagem ?? aberta.data?.id;
-  const podeGerir = usePodeGerirContagens();
+  /**
+   * A contagem vem **só** do URL, e deixou de haver palpite.
+   *
+   * Havia um: sem `?contagem=`, o ecrã caía na contagem aberta, que era única
+   * por estabelecimento. Com a ADR 0033 a exclusividade passou a ser por
+   * localização — podem estar três abertas ao mesmo tempo —, e um palpite entre
+   * três é como alguém assina o ajuste da arca a pensar que está a fechar a
+   * despensa. É a única escrita irreversível deste módulo (ADR 0006); não se
+   * adivinha o objecto dela.
+   *
+   * Quem escreve `/contar/fechar` à mão cai no estado vazio, que leva a Contar.
+   */
+  const id = busca.contagem;
+  const podeFechar = usePodeFecharContagens();
 
-  const fecho = useFechoDeContagem(id, podeGerir);
+  const fecho = useFechoDeContagem(id, podeFechar);
   const fechar = useFecharContagem();
 
   const dados = fecho.data;
@@ -77,7 +80,7 @@ export function EcraDeFechoDeContagem() {
         {fechada ? textos.fecho.fechada : textos.fecho.fechar}
       </h1>
 
-      {!podeGerir ? (
+      {!podeFechar ? (
         <EstadoVazio
           icone={Lock}
           titulo={textos.fecho.semPapelTitulo}
@@ -91,7 +94,7 @@ export function EcraDeFechoDeContagem() {
         </EstadoVazio>
       ) : null}
 
-      {podeGerir && id === undefined && !aberta.isPending ? (
+      {podeFechar && id === undefined ? (
         <EstadoVazio
           icone={ClipboardList}
           titulo={textos.fecho.semContagemTitulo}
@@ -105,7 +108,7 @@ export function EcraDeFechoDeContagem() {
         </EstadoVazio>
       ) : null}
 
-      {fecho.isPending && podeGerir && id !== undefined ? (
+      {fecho.isPending && podeFechar && id !== undefined ? (
         <div aria-busy="true" className="flex flex-col gap-3">
           <span className="sr-only">{textos.fecho.aCarregar}</span>
           {/* O esqueleto tem a forma da régua e não de três mosaicos: senão o
