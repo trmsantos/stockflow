@@ -36,7 +36,17 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
-**Estado atual (2026-10-19, fim do dia):** as **contagens estão ligadas** (ADR 0030) — o `/contar`
+**Estado atual (2026-10-26):** PR #13 mergeado a 25/10 — as contagens passam a ser **uma aberta por
+localização** e o fecho deixou de contar duas vezes (ADR 0033, que revoga a d2 da 0030). A `main`
+ficou **vermelha no próprio run do merge** e voltou a ficar no cron de segunda, e em nenhum dos dois
+casos por regressão: o `pnpm audit` apanhou o GHSA-mrhx-c7xc-m3w5 (`zod <4.6.6`), publicado *depois*
+do run verde do PR, e o `trivy` apanhou a CVE-2026-84782 (HIGH) no `openssl` da base debian 12.15.
+É o padrão de sempre — gates que julgam versões fixas contra bases vivas. Suite: **869 passed, 4
+skipped** (os quatro da libvips, que só correm no CI); `ruff check .` a zero, e **os 4 `DJ001`
+desapareceram por migração** (`inventory/0007_texto_sem_null_no_ledger_e_nas_contagens.py`) — não
+por supressão.
+
+**Estado de 2026-10-19 (fim do dia):** as **contagens estão ligadas** (ADR 0030) — o `/contar`
 deixou os fixtures, o colaborador conta no telemóvel e o fecho escreve ajustes no ledger. Antes
 disso, nesse mesmo dia: PR #7 mergeado com o CI **verde nos sete jobs** pela primeira vez (o `ruff`
 bloqueava-o há fatias), o **Painel ligado** (ADR 0029) e o **assistente a cobrir a app** (ADR 0028).
@@ -74,9 +84,11 @@ Dev local: `backend/.env` é a única fonte de variáveis (o Django lê-o sozinh
 `DATABASE_URL="$MIGRATION_DATABASE_URL"`; `uv run manage.py seed_demo --create-tenant` cria três
 lojas com `owner@demo.pt` / `manager@demo.pt` / `staff@demo.pt` (`DemoPassword123!`).
 
-**Por decidir / por fazer a seguir:** os 4 `DJ001`; validades
-do painel em calendário civil vs dia de negócio no chat (incoerência a nomear ao `domain-expert`);
-abrir o PR para o CI correr sobre os 19 commits.
+**Por decidir / por fazer a seguir:** as quatro rotas que o servidor de fixtures ainda não serve
+(`/stock/levels`, `/stock/movements` e os dois de `/stock/alerts` — o `fixtures/servidor.ts`
+diz num comentário que são outra fatia); validades do painel em calendário civil vs dia de negócio
+no chat (incoerência a nomear ao `domain-expert`); as dívidas de IVA e de notas de crédito que a
+receção deixou; `billing` e `notifications` continuam sem `models.py`.
 
 **Estado histórico (2026-10-08):** repo `trmsantos/stockflow`, privado, na conta pessoal. `main` tem o
 PR #3 mergeado (i18n, definições, temas, demonstração, SMTP); o **PR #4 está aberto** com a fatia 1 da
