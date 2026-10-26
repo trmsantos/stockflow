@@ -84,11 +84,23 @@ Dev local: `backend/.env` é a única fonte de variáveis (o Django lê-o sozinh
 `DATABASE_URL="$MIGRATION_DATABASE_URL"`; `uv run manage.py seed_demo --create-tenant` cria três
 lojas com `owner@demo.pt` / `manager@demo.pt` / `staff@demo.pt` (`DemoPassword123!`).
 
-**Por decidir / por fazer a seguir:** as quatro rotas que o servidor de fixtures ainda não serve
-(`/stock/levels`, `/stock/movements` e os dois de `/stock/alerts` — o `fixtures/servidor.ts`
-diz num comentário que são outra fatia); validades do painel em calendário civil vs dia de negócio
-no chat (incoerência a nomear ao `domain-expert`); as dívidas de IVA e de notas de crédito que a
-receção deixou; `billing` e `notifications` continuam sem `models.py`.
+**Por decidir / por fazer a seguir:** **ligar o Stock e os Alertas**, os últimos dois ecrãs a beber
+dos fixtures. Medido a 2026-10-26, e o contrato **não** é o mesmo dos dois lados: os fixtures servem
+`/stock/levels`, `/stock/summary`, `/stock/movements`, `/stock/alerts`, `/stock/alerts/summary` e
+`/stock/alerts/waste`; o Django serve `/stock/summary`, `/stock/by-location`, `/stock/by-product`,
+`/stock/alerts` e `/stock/movements`, e **não tem** `levels`, `alerts/summary` nem `alerts/waste`.
+Logo a fatia começa por uma decisão de contrato (ADR), não por código. O `fixtures/servidor.ts` diz
+como se desmonta: um recurso de cada vez, apagando o ficheiro e a linha.
+
+Depois disso: as dívidas de IVA e de notas de crédito que a receção deixou (ADR 0029 — o `unit_cost`
+de um `receipt` já é líquido de IVA, e uma nota de crédito **de preço** não move stock);
+`billing` e `notifications` continuam sem `models.py`.
+
+**Resolvido — não voltar a listar.** A incoerência das validades (painel em calendário civil,
+assistente em dia de negócio) foi fechada a **2026-10-16**: os dois chamadores de
+`inventory/selectors.py::lotes_a_vencer` passam `hoje_civil`, e o docstring explica porquê — o
+`business_day_starts_at` decide a que dia pertence um *movimento*, nunca uma *validade*, senão entre
+as 00:00 e as 04:00 a app diria "expira amanhã" de um lote que a ASAE já considera expirado.
 
 **Estado histórico (2026-10-08):** repo `trmsantos/stockflow`, privado, na conta pessoal. `main` tem o
 PR #3 mergeado (i18n, definições, temas, demonstração, SMTP); o **PR #4 está aberto** com a fatia 1 da
