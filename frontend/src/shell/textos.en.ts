@@ -34,7 +34,6 @@ export const EN: typeof PT = {
   cabecalho: {
     demonstracao: "Demo establishment",
     demonstracaoCurta: "Demo",
-    dadosDeDemonstracao: "demo data",
   },
 
   gaveta: {

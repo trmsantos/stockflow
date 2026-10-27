@@ -42,6 +42,26 @@ import { textos } from "../textos";
  * O limiar de dias saiu do rótulo para a nota pela mesma razão que no Stock: um
  * microrótulo em caixa alta com 24 caracteres parte em duas linhas e desalinha a
  * régua. Continua no ecrã e continua a vir do servidor.
+ *
+ * ## Três contadores para os três papéis, e o terceiro muda de unidade
+ *
+ * O `wasted_today_eur` chega **ausente** ao `staff`, como todo o dinheiro desta
+ * casa (ADR 0032, decisão 1). Esconder o campo — que é o que o ecrã de Stock faz
+ * com o valor de stock — aqui **não** serve: este contador e o rodapé do ecrã
+ * são as **duas únicas portas** para a lista de desperdício, e a decisão 4 da
+ * ADR 0034 diz expressamente que essa lista tem de chegar a quem a cria. Sem
+ * ele, o `staff` ficava com dois contadores e sem caminho nenhum para a rota.
+ *
+ * Por isso o terceiro campo troca de unidade em vez de desaparecer: euros para
+ * quem os vê, **linhas** (`wasted_today_count`) para quem não. Uma contagem não
+ * reconstrói o custo unitário — um `COUNT(id)` não tem numerador nem
+ * denominador — e o rótulo muda com ela, porque "deitado fora hoje: 7" seria
+ * sete euros para quem leu o campo do lado.
+ *
+ * A **cobertura** entra na nota quando há linhas sem preço conhecido, e entra
+ * para os três papéis: "7 quebras hoje" e "7 quebras hoje, 4 sem preço
+ * conhecido" não são a mesma frase, e do lado dos euros é a diferença entre um
+ * total e um total subestimado.
  */
 export type VistaDeAlertas = "expira" | "falta" | "desperdicio" | undefined;
 
@@ -89,6 +109,14 @@ export function NumerosDosAlertas({
   const dias = resumo.expiring_within_days;
   const desde = resumo.business_day_starts_at;
 
+  // A cobertura qualifica os dois casos: para quem vê euros diz que o total
+  // está subestimado, para quem vê linhas diz que nem todas têm preço.
+  const semPreco = resumo.wasted_today_lines_without_cost;
+  const nota =
+    semPreco === 0
+      ? textos.numeros.desdeAs(desde)
+      : textos.numeros.desdeAsSemPreco(desde, String(semPreco));
+
   return (
     <ReguaDeContadores>
       <ContadorDeVista
@@ -108,9 +136,17 @@ export function NumerosDosAlertas({
         vista="falta"
       />
       <ContadorDeVista
-        figura={formatMoneyRounded(resumo.wasted_today_eur)}
-        campo={textos.numeros.deitadoForaHoje}
-        nota={textos.numeros.desdeAs(desde)}
+        figura={
+          resumo.wasted_today_eur === undefined
+            ? String(resumo.wasted_today_count)
+            : formatMoneyRounded(resumo.wasted_today_eur)
+        }
+        campo={
+          resumo.wasted_today_eur === undefined
+            ? textos.numeros.quebrasHoje
+            : textos.numeros.deitadoForaHoje
+        }
+        nota={nota}
         titulo={textos.numeros.diaDeNegocio(desde, formatTime(resumo.wasted_since))}
         ativo={vistaAtiva === "desperdicio"}
         vista="desperdicio"

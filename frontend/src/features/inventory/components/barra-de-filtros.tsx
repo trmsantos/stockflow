@@ -1,4 +1,5 @@
 import { Search } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,11 +34,21 @@ import { textos } from "../textos";
  *
  * **O seletor de localização é a parte operacional da Q2** ("uma loja ou
  * várias"): ver consolidado ou separado, e observar qual é que ele procura. As
- * opções vêm dos dados — das localizações que aparecem em `by_location` —, não
- * de uma lista de lojas guardada no frontend: um catálogo de lojas no cliente
- * seria uma segunda fonte de verdade que só sabe ficar desactualizada. O preço
- * está nomeado no relatório: uma localização sem nenhum movimento não aparece
- * aqui, porque não há (ainda) endpoint que liste localizações.
+ * opções vêm do servidor — `GET /locations` —, nunca de uma lista de lojas
+ * guardada no frontend, que seria uma segunda fonte de verdade que só sabe
+ * ficar desactualizada. Vinham das localizações que apareciam em `by_location`,
+ * e mudaram de fonte quando os filtros passaram para o servidor (ADR 0034): com
+ * a lista filtrada, as opções do seletor encolhiam à medida que se procurava.
+ * Pelo caminho sai o preço que estava nomeado aqui — uma localização sem
+ * movimento nenhum já aparece.
+ *
+ * ## A procura espera 300ms, e isso é consequência de a filtragem ser do servidor
+ *
+ * Enquanto `?q=` se aplicava em JavaScript, escrever não custava rede nenhuma.
+ * Agora cada valor distinto é um `WHERE`, e escrever "açúcar" sem travão são
+ * seis pedidos em voo — numa cozinha com Wi-Fi mau é a resposta que interessa a
+ * chegar em último. O campo responde à tecla (o rascunho é local) e o **URL**,
+ * que é o estado do ecrã, só muda quando a pessoa pára de escrever.
  *
  * O guião põe este seletor no header. O header é do shell, e o shell não
  * conhece domínios (ADR 0008, decisão 2) — por isso vive aqui, colado ao campo
@@ -47,6 +58,13 @@ import { textos } from "../textos";
 
 /** Radix reserva a string vazia; "todas" é o sentinela só do seletor. */
 const TODAS = "todas";
+
+/**
+ * O travão da procura. 300ms é o intervalo entre teclas de quem escreve
+ * depressa e a espera que ninguém nota — mais do que isto e o ecrã parece
+ * lento, menos e volta a haver um pedido por tecla.
+ */
+const ATRASO_DA_PROCURA_MS = 300;
 
 export function BarraDeFiltros({
   termo,
@@ -61,6 +79,29 @@ export function BarraDeFiltros({
   readonly lojaAtiva: string | undefined;
   readonly aoEscolherLoja: (id: string | undefined) => void;
 }) {
+  // O rascunho do campo, local, para a tecla aparecer no instante em que é
+  // premida. O `termo` continua a ser a verdade (vem do URL): quando ele muda
+  // por fora — "Limpar filtros", o botão de voltar, um link partilhado — o
+  // rascunho acompanha-o. É o ajuste-durante-o-render que o React documenta
+  // para derivar estado de propriedades, e não um `useEffect` de sincronização:
+  // com efeito, o campo pintava uma vez com o valor velho.
+  const [rascunho, setRascunho] = useState(termo);
+  const [termoVisto, setTermoVisto] = useState(termo);
+  if (termo !== termoVisto) {
+    setTermoVisto(termo);
+    setRascunho(termo);
+  }
+
+  useEffect(() => {
+    if (rascunho === termo) return undefined;
+    const relogio = setTimeout(() => {
+      aoProcurar(rascunho);
+    }, ATRASO_DA_PROCURA_MS);
+    return () => {
+      clearTimeout(relogio);
+    };
+  }, [rascunho, termo, aoProcurar]);
+
   const semLocalizacoes = localizacoes.length === 0;
 
   // Uma localização que o URL pede mas que não está nos dados (um `?loja=` de
@@ -92,9 +133,9 @@ export function BarraDeFiltros({
           id="procurar-artigo"
           name="q"
           type="search"
-          value={termo}
+          value={rascunho}
           onChange={(evento) => {
-            aoProcurar(evento.target.value);
+            setRascunho(evento.target.value);
           }}
           placeholder={textos.filtros.procurarPista}
           autoComplete="off"

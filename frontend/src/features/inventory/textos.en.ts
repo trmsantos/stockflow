@@ -94,10 +94,12 @@ export const EN: typeof PT = {
     perdeuQualidade: (quando: string) => `lost quality ${quando}`,
     perdeQualidade: (quando: string) => `loses quality ${quando}`,
     melhorAntesDe: (data: string) => `best before ${data}`,
+    semRotulo: "expiry date",
     consumirAte: "use by (legal limit)",
     consumirPreferencialmente: "best before (quality)",
     titulo: (lote: string, natureza: string, data: string) =>
       `Lot ${lote} · ${natureza} ${data}`,
+    tituloSemLote: (natureza: string, data: string) => `No lot · ${natureza} ${data}`,
   },
 
   filtros: {
@@ -142,7 +144,10 @@ export const EN: typeof PT = {
     artigosAbaixoDoMinimoNosAlertas:
       "Items below their minimum stock — the same figure as the Stock screen",
     deitadoForaHoje: "thrown away today",
+    quebrasHoje: "waste lines today",
     desdeAs: (hora: string) => `since ${hora}`,
+    desdeAsSemPreco: (hora: string, quantas: string) =>
+      `since ${hora} · ${quantas} with no known price`,
     diaDeNegocio: (hora: string, inicio: string) =>
       `The business day of this establishment starts at ${hora}, that is at ${inicio} today — anything thrown away before that counts towards the previous day`,
   },
@@ -150,6 +155,8 @@ export const EN: typeof PT = {
   stock: {
     titulo: "Stock — what I have, and how much",
     tabela: "Stock levels, worst first",
+    minimoDoEstabelecimento:
+      "You are looking at one location. The quantity and the expiry date are that location's; the establishment minimum and the status are the whole establishment's.",
     artigos: (quantos: number) => (quantos === 1 ? "1 item" : `${String(quantos)} items`),
     rodape: (quantos: number, total: number | null) => {
       const contagem = quantos === 1 ? "1 item" : `${String(quantos)} items`;
@@ -167,6 +174,7 @@ export const EN: typeof PT = {
     semStock: "no stock",
     abaixoDoMinimo: "below minimum",
     minimoAbreviado: "min.",
+    semPreco: "no price",
     avisoAInicio: "warning at",
     avisoAFim: "days",
     todasAsLojas: "all",
@@ -202,11 +210,16 @@ export const EN: typeof PT = {
     registado: (quantidade: string, artigo: string, motivo: string) =>
       `Thrown away: ${quantidade} of ${artigo} — ${motivo}.`,
     deitadoForaNaSemana: "Thrown away in the last 7 days:",
+    quebrasNaSemana: (quantas: number) =>
+      quantas === 1
+        ? "1 waste line recorded in the last 7 days"
+        : `${String(quantas)} waste lines recorded in the last 7 days`,
     verOQueFoi: "See what it was, and at what time",
   },
 
   desperdicio: {
     tabela: "Waste movements, most recent first",
+    semPreco: "no price",
     aCarregar: "Loading the waste…",
     registar: "Record waste",
     semLocalizacao:
@@ -216,14 +229,17 @@ export const EN: typeof PT = {
     escolhaOMotivo: "Choose the waste reason.",
     localizacaoPrefixo: "Location:",
     localizacao: "Location",
-    quantidadeEm: (unidade: string) => `Quantity in ${unidade}`,
-    exemploDeQuantidade: (unidade: string) => `for example, 2000 ${unidade}`,
-    unidadeDeRegisto: (mostrada: string, base: string) =>
-      `The list shows this item in ${mostrada}; the ledger keeps it in ${base}, and that is the unit it is recorded in.`,
+    quantidade: "Quantity",
+    unidade: "Unit",
+    exemploDeQuantidade: (unidade: string) => `for example, 2 ${unidade}`,
+    unidadeAEscolher: (mostrada: string, base: string) =>
+      `Enter it in the unit you speak in: ${mostrada} or ${base}. The server does the conversion.`,
+    unidadeUnica: (unidade: string) => `This item is counted in ${unidade}.`,
     motivo: "Reason",
     escolhaOMotivoPista: "Choose the reason",
     registado: "Waste recorded.",
     registadoNoLote: (lote: string) => `Waste recorded in lot ${lote}.`,
+    registadoNosLotes: (lotes: string) => `Waste recorded in lots ${lotes}.`,
   },
 
   artigo: {

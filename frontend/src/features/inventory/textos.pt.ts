@@ -127,9 +127,17 @@ export const PT = {
     melhorAntesDe: (data: string) => `melhor antes de ${data}`,
     consumirAte: "consumir até (limite legal)",
     consumirPreferencialmente: "consumir de preferência antes de (qualidade)",
+    /**
+     * O artigo não tem rótulo de validade no catálogo. Diz-se "validade" e não
+     * se inventa a natureza legal: afirmar "consumir até" sobre mercadoria que
+     * não traz DLC é a mesma classe de erro que marcar um DDM a vermelho.
+     */
+    semRotulo: "validade",
     /** No `title`: o lote, a natureza do prazo e a data exacta, por extenso. */
     titulo: (lote: string, natureza: string, data: string) =>
       `Lote ${lote} · ${natureza} ${data}`,
+    /** O mesmo, num lote sintético — o que a produção de uma receita cria. */
+    tituloSemLote: (natureza: string, data: string) => `Sem lote · ${natureza} ${data}`,
   },
 
   filtros: {
@@ -179,7 +187,20 @@ export const PT = {
     artigosAbaixoDoMinimoNosAlertas:
       "Artigos abaixo do mínimo de stock — o mesmo número do ecrã de Stock",
     deitadoForaHoje: "deitado fora hoje",
+    /**
+     * O mesmo campo, em **linhas**, para quem não vê euros. O rótulo muda com a
+     * unidade: "deitado fora hoje: 7" seria sete euros para quem acabou de ler
+     * o campo do lado.
+     */
+    quebrasHoje: "quebras hoje",
     desdeAs: (hora: string) => `desde as ${hora}`,
+    /**
+     * A cobertura, ao lado da hora. Sem ela, "7 quebras hoje" e "7 quebras
+     * hoje, 4 sem preço conhecido" são a mesma frase — e do lado dos euros é a
+     * diferença entre um total e um total subestimado (a régua da ADR 0032).
+     */
+    desdeAsSemPreco: (hora: string, quantas: string) =>
+      `desde as ${hora} · ${quantas} sem preço conhecido`,
     diaDeNegocio: (hora: string, inicio: string) =>
       `O dia de negócio deste estabelecimento começa às ${hora}, ou seja às ${inicio} de hoje — o que foi deitado fora antes disso conta no dia anterior`,
   },
@@ -187,6 +208,14 @@ export const PT = {
   stock: {
     titulo: "Stock — o que tenho, e quanto",
     tabela: "Níveis de stock, ordenados pelo que está pior primeiro",
+    /**
+     * Só aparece com uma localização escolhida, e é a frase que impede uma
+     * linha correcta de se ler como erro de cálculo: o mínimo é por artigo
+     * (ADR 0024) e vale sobre o estabelecimento inteiro, logo "0,4 kg · ok" ao
+     * lado de "mínimo 3 kg" está certo — o resto está noutra prateleira.
+     */
+    minimoDoEstabelecimento:
+      "Está a ver uma localização. A quantidade e a validade são dela; o mínimo do estabelecimento e o estado são do estabelecimento inteiro.",
     /** A contagem anunciada a cada tecla, em `aria-live`. */
     artigos: (quantos: number) => (quantos === 1 ? "1 artigo" : `${String(quantos)} artigos`),
     /**
@@ -216,6 +245,14 @@ export const PT = {
     semStock: "sem stock",
     abaixoDoMinimo: "abaixo do mínimo",
     minimoAbreviado: "mín.",
+    /**
+     * O custo é desconhecido e a coluna do valor di-lo por extenso. O servidor
+     * serve `0.00` quando não há preço registado, e imprimir "0,00 €" seria
+     * afirmar que o lote não vale nada — a mesma classe de mentira que o zero
+     * no ledger (ADR 0034, adenda). A palavra é a que a tabela de linhas de
+     * fatura já usa para o mesmo facto.
+     */
+    semPreco: "sem preço",
     /**
      * O limiar debaixo da frase da validade, em partes nomeadas: o número vai
      * num `<span data-numeric>` para ser mono (DESIGN.md §2), logo a frase tem
@@ -268,11 +305,22 @@ export const PT = {
     registado: (quantidade: string, artigo: string, motivo: string) =>
       `Deitado fora: ${quantidade} de ${artigo} — ${motivo}.`,
     deitadoForaNaSemana: "Deitado fora nos últimos 7 dias:",
+    /**
+     * A mesma porta, em **linhas**, para quem não vê euros — e é porta e não
+     * cromado: sem ela o colaborador ficava sem caminho nenhum para a lista que
+     * ele próprio alimenta (ADR 0034, decisões 4 e 10).
+     */
+    quebrasNaSemana: (quantas: number) =>
+      quantas === 1
+        ? "1 quebra registada nos últimos 7 dias"
+        : `${String(quantas)} quebras registadas nos últimos 7 dias`,
     verOQueFoi: "Ver o que foi, e a que horas",
   },
 
   desperdicio: {
     tabela: "Movimentos de desperdício, do mais recente para o mais antigo",
+    /** O mesmo facto da coluna do valor dos alertas, na lista de quebras. */
+    semPreco: "sem preço",
     aCarregar: "A carregar o desperdício…",
     /** O título da secção e o botão dizem o mesmo, de propósito: é a mesma acção. */
     registar: "Registar desperdício",
@@ -283,19 +331,33 @@ export const PT = {
     escolhaOMotivo: "Escolha o motivo do desperdício.",
     localizacaoPrefixo: "Localização:",
     localizacao: "Localização",
-    quantidadeEm: (unidade: string) => `Quantidade em ${unidade}`,
-    exemploDeQuantidade: (unidade: string) => `por exemplo, 2000 ${unidade}`,
     /**
-     * As duas unidades na mesma frase: a de apresentação e a base. Converter
-     * unidades no cliente é a fonte nº 1 de bugs de stock (`inventory-domain`
-     * §2), por isso o ecrã diz qual é em vez de multiplicar às escondidas.
+     * Sem a unidade no rótulo desde a ADR 0034: ela passou a ser **um campo**
+     * ao lado, e repeti-la aqui dava duas respostas possíveis à mesma pergunta
+     * no mesmo sítio.
      */
-    unidadeDeRegisto: (mostrada: string, base: string) =>
-      `A lista mostra este artigo em ${mostrada}; o ledger guarda-o em ${base}, e é nesta unidade que se regista.`,
+    quantidade: "Quantidade",
+    /** O nome acessível do selector de unidade, que não precisa de rótulo visível. */
+    unidade: "Unidade",
+    exemploDeQuantidade: (unidade: string) => `por exemplo, 2 ${unidade}`,
+    /**
+     * A ajuda por baixo do campo, nos dois casos. Converter unidades no cliente
+     * é a fonte nº 1 de bugs de stock (`inventory-domain` §2), por isso o ecrã
+     * diz **quem** converte em vez de multiplicar às escondidas.
+     */
+    unidadeAEscolher: (mostrada: string, base: string) =>
+      `Escreva na unidade em que fala: ${mostrada} ou ${base}. A conversão é do servidor.`,
+    unidadeUnica: (unidade: string) => `Este artigo conta-se em ${unidade}.`,
     motivo: "Motivo",
     escolhaOMotivoPista: "Escolha o motivo",
     registado: "Desperdício registado.",
     registadoNoLote: (lote: string) => `Desperdício registado no lote ${lote}.`,
+    /**
+     * O plural existe porque uma quebra **reparte-se**: com o lote mais velho a
+     * 0,4 kg, deitar fora 2 kg são três linhas no ledger (ADR 0034, decisão 8).
+     * Dizer "registado no lote X" escondia as outras duas.
+     */
+    registadoNosLotes: (lotes: string) => `Desperdício registado nos lotes ${lotes}.`,
   },
 
   artigo: {

@@ -27,7 +27,7 @@ import {
   EsqueletoDaTabelaDeDesperdicio,
   TabelaDeDesperdicio,
 } from "../components/tabela-de-desperdicio";
-import type { Alerta, MotivoQuebra } from "../schemas";
+import type { Alerta, MotivoQuebra, ResumoDeAlertas } from "../schemas";
 import { textos } from "../textos";
 import { rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
 
@@ -71,6 +71,20 @@ function frasePorRegisto(alerta: Alerta, motivo: MotivoQuebra): string {
     alerta.short_name,
     rotuloDeMotivo(motivo),
   );
+}
+
+/**
+ * O rodapé que leva ao desperdício, com a unidade que o papel vê.
+ *
+ * Esta frase e o terceiro contador do topo são as **duas únicas portas** para a
+ * lista de desperdício, e a ADR 0034 d4 diz que ela tem de chegar a quem a
+ * cria. Para quem não vê euros, o `wasted_week_eur` chega ausente e a frase
+ * conta **linhas** — a porta não se fecha, muda de unidade.
+ */
+function fraseDaSemana(resumo: ResumoDeAlertas): string {
+  return resumo.wasted_week_eur === undefined
+    ? textos.alertas.quebrasNaSemana(resumo.wasted_week_count)
+    : textos.alertas.deitadoForaNaSemana;
 }
 
 export function EcraDeAlertas() {
@@ -245,9 +259,16 @@ export function EcraDeAlertas() {
                       // deixa nulos (uma falta não tem nenhum dos dois), e essa
                       // linha não tem esta ação.
                       location: alerta.location?.id ?? "",
+                      // Na unidade **base**, que é a do ledger: a quantidade
+                      // aqui não foi escrita por ninguém, veio do saldo do
+                      // lote, e a forma exacta dela é a base. Mandar o
+                      // `display` seria arredondar um número que já está certo.
                       quantity: alerta.quantity.base,
+                      unit: alerta.quantity.base_unit,
                       reason: motivo,
-                      ...(alerta.lot === null ? {} : { lot_code: alerta.lot.lot_code }),
+                      // Pela **chave** do lote e não pelo código: um código não
+                      // é chave, e com `lot` o servidor não tem de o resolver.
+                      ...(alerta.lot === null ? {} : { lot: alerta.lot.lot_id }),
                     },
                     {
                       onSuccess: () => {
@@ -271,8 +292,14 @@ export function EcraDeAlertas() {
           o risco: é a terceira pergunta, e o contador do topo é a primeira. */}
       {aVerDesperdicio || resumo.data === undefined ? null : (
         <p className="px-celula-x pb-3 text-xs text-muted-foreground">
-          {textos.alertas.deitadoForaNaSemana}{" "}
-          <span data-numeric>{formatMoneyRounded(resumo.data.wasted_week_eur)}</span>.{" "}
+          {fraseDaSemana(resumo.data)}
+          {resumo.data.wasted_week_eur === undefined ? null : (
+            <>
+              {" "}
+              <span data-numeric>{formatMoneyRounded(resumo.data.wasted_week_eur)}</span>
+            </>
+          )}
+          .{" "}
           <Link
             to="/alertas"
             search={(anteriores) => ({ ...anteriores, ver: "desperdicio" })}

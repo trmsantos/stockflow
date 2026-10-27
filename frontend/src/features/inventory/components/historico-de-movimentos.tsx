@@ -119,14 +119,20 @@ function LinhaDeMovimento({ movimento }: { readonly movimento: Movimento }) {
         {formatTime(movimento.occurred_at)}
       </td>
 
-      {/* A `reference` ("Produção de hoje", "FT 2026/4471") fica no `title` e não
-          numa coluna: é o identificador da operação que gerou o movimento, e a
-          sete colunas não sobra largura para ele sem apertar o autor. Quando as
-          fornadas existirem em dados reais, uma coluna "Operação" entra aqui — e
-          fica nomeado em vez de esquecido. */}
+      {/* O **rótulo** da referência ("Contagem de 24/10, Armazém") fica no
+          `title` e não numa coluna: a sete colunas não sobra largura para ele
+          sem apertar o autor. Quando as fornadas existirem em dados reais, uma
+          coluna "Operação" entra aqui — e fica nomeado em vez de esquecido.
+
+          **Nunca o `reference` cru.** Num ajuste de fecho de contagem ele é o
+          `id` da contagem em texto, e este `title` imprimia um uuid a quem lhe
+          passasse o rato por cima. O servidor serve os dois lados desde a ADR
+          0034 — o cru, porque há lookups e um índice parcial por ele, e o
+          rótulo, que é o que se mostra. O que vem de fora deste módulo chega
+          sem rótulo, e sem rótulo não se escreve nada. */}
       <td
         className={`${CLASSE_CELULA} w-52 ${economico ? "" : "text-muted-foreground"}`}
-        {...(movimento.reference === null ? {} : { title: movimento.reference })}
+        {...(movimento.reference_label === null ? {} : { title: movimento.reference_label })}
       >
         {rotuloDeMovimento(movimento.movement_type)}
       </td>
@@ -144,9 +150,14 @@ function LinhaDeMovimento({ movimento }: { readonly movimento: Movimento }) {
 
       {/* Toda a linha tem autor, e é a sonda da Q7: numa coluna vê-se se é sempre
           a mesma pessoa a registar, o que numa lista de cartões exigia ler sete
-          linhas inteiras. */}
+          linhas inteiras.
+
+          Vazia quando quem agiu já não tem nome neste estabelecimento — o autor
+          é o `display_name` da pertença e **nunca** o email, logo sem pertença
+          não há nada a imprimir. É o caso raro; a coluna continua a existir
+          porque a ausência num sítio é, ela própria, a resposta à Q7. */}
       <td className={`${CLASSE_CELULA} max-w-0`}>
-        <span className="block truncate">{movimento.created_by}</span>
+        <span className="block truncate">{movimento.created_by ?? ""}</span>
       </td>
 
       <td className={`${CLASSE_CELULA} max-w-0 text-muted-foreground`}>

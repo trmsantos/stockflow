@@ -34,7 +34,6 @@ export const PT = {
     /** E a curta num telemóvel, onde a barra tem 56px e o nome do ecrã. */
     demonstracaoCurta: "Demonstração",
     /** O badge de **ambiente**, que não existe no bundle de produção. */
-    dadosDeDemonstracao: "dados de demonstração",
   },
 
   gaveta: {

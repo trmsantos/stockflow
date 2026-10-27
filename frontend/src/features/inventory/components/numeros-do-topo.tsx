@@ -18,6 +18,16 @@ import { textos } from "../textos";
  * Os três números do topo do Stock: artigos em falta · a expirar dentro do
  * horizonte · valor de stock em euros.
  *
+ * ## O terceiro campo desaparece para quem não vê euros
+ *
+ * O `stock_value_eur` chega **ausente** ao `staff` (ADR 0032, decisão 1): a
+ * chave não vem no JSON, e não vem a `0` nem a `null` de propósito — zero é uma
+ * afirmação falsa sobre o stock e `null` imprime-se "—", que é outro facto. Com
+ * a chave ausente sai o **campo inteiro** da régua, que é a leitura certa de
+ * "não te compete": um traço no lugar seria uma pergunta por visita. É a mesma
+ * decisão que as colunas de dinheiro da receção, e a régua aguenta-a sem
+ * reconfigurar nada — os campos empacotam à esquerda e não esticam.
+ *
  * **Dois são filtros e o terceiro é uma leitura.** Os dois primeiros são
  * `<Link>`s que põem o filtro no URL — logo recarregar a página, voltar atrás e
  * mostrar o link a alguém dão o mesmo ecrã, e o Cmd+clique abre noutro
@@ -128,13 +138,16 @@ export function NumerosDoTopo({
         filtro="validade"
       />
       {/* Leitura, não filtro: um `<div>` sem `onClick` e sem `hover`, para não
-          prometer um toque que não existe. */}
-      <div className={CLASSE_CONTADOR}>
-        <CorpoDoContador
-          campo={textos.numeros.valorDeStock}
-          figura={formatMoneyRounded(resumo.stock_value_eur)}
-        />
-      </div>
+          prometer um toque que não existe. E ausente por inteiro para quem não
+          vê euros — ver o cabeçalho deste ficheiro. */}
+      {resumo.stock_value_eur === undefined ? null : (
+        <div className={CLASSE_CONTADOR}>
+          <CorpoDoContador
+            campo={textos.numeros.valorDeStock}
+            figura={formatMoneyRounded(resumo.stock_value_eur)}
+          />
+        </div>
+      )}
     </ReguaDeContadores>
   );
 }

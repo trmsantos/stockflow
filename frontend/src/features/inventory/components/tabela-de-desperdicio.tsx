@@ -40,23 +40,45 @@ import { rotuloDeMotivo, textoDeQuantidade } from "../vocabulario";
  * vê-se se é sempre a mesma pessoa a registar.
  */
 
-const COLUNAS: readonly ColunaDeTabela[] = [
-  { chave: "hora", rotulo: textos.colunas.hora, classe: "w-24 text-right" },
-  { chave: "artigo", rotulo: textos.colunas.artigo },
-  { chave: "quantidade", rotulo: textos.colunas.quantidade, classe: "w-32 text-right" },
-  { chave: "valor", rotulo: textos.colunas.valor, classe: "w-28 text-right" },
-  { chave: "motivo", rotulo: textos.colunas.motivo, classe: "w-36" },
-  { chave: "quem", rotulo: textos.colunas.quem },
-  { chave: "onde", rotulo: textos.colunas.onde },
-  { chave: "lote", rotulo: textos.colunas.lote, classe: "w-36" },
-];
+/**
+ * As oito colunas — ou sete, sem a do valor.
+ *
+ * O `value_eur` chega ausente a quem não vê euros (ADR 0032, decisão 1), e esta
+ * lista **tem** de chegar ao `staff`: é ele que a cria, e a fronteira da ADR
+ * 0034 d4 é essa (*"o `inventory` lista o ledger para quem age sobre ele"*).
+ * Por isso o que lhe falta é a coluna, e não a rota — nem uma célula vazia, que
+ * numa tabela densa é uma pergunta por linha.
+ */
+function colunasDe(comValor: boolean): readonly ColunaDeTabela[] {
+  return [
+    { chave: "hora", rotulo: textos.colunas.hora, classe: "w-24 text-right" },
+    { chave: "artigo", rotulo: textos.colunas.artigo },
+    { chave: "quantidade", rotulo: textos.colunas.quantidade, classe: "w-32 text-right" },
+    ...(comValor
+      ? [{ chave: "valor", rotulo: textos.colunas.valor, classe: "w-28 text-right" }]
+      : []),
+    { chave: "motivo", rotulo: textos.colunas.motivo, classe: "w-36" },
+    { chave: "quem", rotulo: textos.colunas.quem },
+    { chave: "onde", rotulo: textos.colunas.onde },
+    { chave: "lote", rotulo: textos.colunas.lote, classe: "w-36" },
+  ];
+}
+
+/** Pergunta-se ao payload e não ao papel — ver a `tabela-de-alertas.tsx`. */
+function mostraEuros(linhas: readonly Desperdicio[]): boolean {
+  return linhas.some((linha) => linha.value_eur !== undefined);
+}
 
 const LARGURA_MINIMA = "min-w-5xl";
 const ROTULO = textos.desperdicio.tabela;
 
 export function TabelaDeDesperdicio({ linhas }: { readonly linhas: readonly Desperdicio[] }) {
   return (
-    <MolduraDeTabela colunas={COLUNAS} larguraMinima={LARGURA_MINIMA} rotulo={ROTULO}>
+    <MolduraDeTabela
+      colunas={colunasDe(mostraEuros(linhas))}
+      larguraMinima={LARGURA_MINIMA}
+      rotulo={ROTULO}
+    >
       <tbody>
         {linhas.map((linha) => (
           <tr key={linha.id} className={`${CLASSE_LINHA} transition-colors hover:bg-surface-2`}>
@@ -69,12 +91,28 @@ export function TabelaDeDesperdicio({ linhas }: { readonly linhas: readonly Desp
             <td data-numeric className={`${CLASSE_CELULA} w-32 text-right`}>
               {textoDeQuantidade(linha.quantity)}
             </td>
-            <td data-numeric className={`${CLASSE_CELULA} w-28 text-right`}>
-              {formatMoney(linha.value_eur)}
+            {/* Um custo desconhecido diz-se por extenso, como na tabela de
+                alertas: o servidor serve `0.00` quando não há preço, e
+                "0,00 €" afirmaria que aquela quebra não custou nada. */}
+            {linha.value_eur === undefined ? null : (
+              <td data-numeric className={`${CLASSE_CELULA} w-28 text-right`}>
+                {linha.cost_status === "desconhecido" ? (
+                  <span className="text-xs text-muted-foreground">
+                    {textos.desperdicio.semPreco}
+                  </span>
+                ) : (
+                  formatMoney(linha.value_eur)
+                )}
+              </td>
+            )}
+            <td className={`${CLASSE_CELULA} w-36`}>
+              {linha.reason === null ? "" : rotuloDeMotivo(linha.reason)}
             </td>
-            <td className={`${CLASSE_CELULA} w-36`}>{rotuloDeMotivo(linha.reason)}</td>
+            {/* Vazia quando quem agiu já não tem nome neste estabelecimento: o
+                autor é o `display_name` da pertença e nunca o email, e sem
+                pertença não há nome a imprimir. */}
             <td className={`${CLASSE_CELULA} max-w-0 text-muted-foreground`}>
-              <span className="block truncate">{linha.created_by}</span>
+              <span className="block truncate">{linha.created_by ?? ""}</span>
             </td>
             <td className={`${CLASSE_CELULA} max-w-0 text-muted-foreground`}>
               <span className="block truncate">{linha.location.name}</span>
@@ -89,10 +127,11 @@ export function TabelaDeDesperdicio({ linhas }: { readonly linhas: readonly Desp
   );
 }
 
+/** Com a coluna do valor, pela razão escrita na `tabela-de-alertas.tsx`. */
 export function EsqueletoDaTabelaDeDesperdicio({ linhas = 4 }: { readonly linhas?: number }) {
   return (
     <EsqueletoDeTabela
-      colunas={COLUNAS}
+      colunas={colunasDe(true)}
       larguraMinima={LARGURA_MINIMA}
       rotulo={textos.desperdicio.aCarregar}
       linhas={linhas}

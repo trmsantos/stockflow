@@ -2,7 +2,6 @@ import { useIsFetching } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { FlaskConical } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { IndicadorDeCarga } from "@/components/indicador-de-carga";
 
 import { GavetaDeNavegacao } from "./gaveta-de-navegacao";
@@ -43,21 +42,22 @@ import { textos } from "./textos";
  * porque é uma contagem, não há estado a sincronizar: quando a última consulta
  * assenta, o indicador desaparece sozinho.
  *
- * ## Dois sinais de "dados a fingir", e **não** se juntam num badge só
+ * ## Eram dois sinais de "dados a fingir". Ficou **um**, e o que o outro dizia
  *
- * É a parte fácil de "simplificar" para o lado errado, e a ADR 0018 escreveu-a
- * antes de alguém a tentar. As duas afirmações são diferentes:
+ * A regra que os separava continua certa e é por isso que está escrita: as duas
+ * afirmações eram diferentes, e colapsá-las num badge só dava um sinal de
+ * produção testável apenas onde está sempre ligado.
  *
- *  - **"o servidor de fixtures respondeu"** é sobre o ambiente de
- *    desenvolvimento. É o `Badge` de `import.meta.env.DEV`, que em produção não
- *    existe no bundle;
- *  - **"estás no estabelecimento de demonstração"** é sobre o **tenant**, e tem
- *    de funcionar **em produção**, que é onde ela importa.
- *
- * Colapsá-las dava um sinal de produção que só é testável num ambiente onde está
- * sempre ligado — e o modo de falha é ele nunca aparecer onde interessa e
- * ninguém notar. Em desenvolvimento, num demo, aparecem os dois, e isso é
- * correcto: são duas coisas verdadeiras ao mesmo tempo.
+ *  - **"o servidor de fixtures respondeu"** era sobre o ambiente de
+ *    desenvolvimento — um `Badge` dentro de `import.meta.env.DEV`, que em
+ *    produção não existia no bundle. **Saiu a 2026-10-27 com a pasta
+ *    `fixtures/`** (ADR 0034, decisão 7): o Django serve os últimos sete
+ *    recursos, nada mais responde a fingir, e um badge a dizer que sim é a
+ *    única coisa que restava a mentir sobre a origem dos dados. Um sinal cujo
+ *    referente foi apagado não se mantém "por via das dúvidas" — é
+ *    exactamente o inventário que apodrece sozinho;
+ *  - **"estás no estabelecimento de demonstração"** é sobre o **tenant**, tem
+ *    de funcionar **em produção**, que é onde importa, e fica.
  *
  * A faixa vive **aqui** e não em cada ecrã porque esta barra é `sticky`: está
  * sempre à vista, em todos os ecrãs, e é isso que a torna o que limita alguém a
@@ -112,7 +112,7 @@ export function AppHeader({
       )}
 
       {/* `ml-auto` aqui e não no badge: o indicador é o primeiro elemento da
-          direita e tem de o ser com ou sem os badges, que são condicionais. */}
+          direita e tem de o ser com ou sem a faixa, que é condicional. */}
       <span className="ml-auto flex shrink-0 items-center gap-3">
         {aCarregar ? <IndicadorDeCarga /> : null}
 
@@ -132,16 +132,6 @@ export function AppHeader({
             <span className="hidden sm:inline">{textos.cabecalho.demonstracao}</span>
             <span className="sm:hidden">{textos.cabecalho.demonstracaoCurta}</span>
           </span>
-        ) : null}
-
-        {import.meta.env.DEV ? (
-          // Em desenvolvimento os dados de domínio vêm do servidor de fixtures
-          // (ADR 0008, decisão 3) — a autenticação, não: essa é o backend a
-          // sério. Dizê-lo no ecrã é a mesma honestidade da abertura da sessão 0.
-          // Em produção este ramo não existe.
-          <Badge variant="outline" className="shrink-0">
-            {textos.cabecalho.dadosDeDemonstracao}
-          </Badge>
         ) : null}
       </span>
     </header>

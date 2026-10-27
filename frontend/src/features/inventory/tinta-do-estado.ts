@@ -96,6 +96,18 @@ export function tintaDoTextoDeGravidade(gravidade: Gravidade): string {
   return urgencia === undefined ? "" : (TINTA_DO_TEXTO.get(urgencia) ?? "");
 }
 
+/**
+ * A urgência de uma gravidade do servidor, para se poder compor com outras.
+ *
+ * É o par da `urgenciaDoEstado` e existe desde a ADR 0034 (decisão 9): o
+ * `nearest_expiry` passou a trazer `severity`, logo a urgência de uma validade
+ * **lê-se** em vez de se recalcular. A tradução das três palavras do contrato
+ * para as duas desta camada continua a acontecer num sítio só — este mapa.
+ */
+export function urgenciaDeGravidade(gravidade: Gravidade): Urgencia | null {
+  return URGENCIA_DO_ALERTA.get(gravidade) ?? null;
+}
+
 export function tintaDoTrilhoDeGravidade(gravidade: Gravidade): string {
   const urgencia = URGENCIA_DO_ALERTA.get(gravidade);
   return urgencia === undefined ? "" : (TINTA_DO_TRILHO.get(urgencia) ?? "");
