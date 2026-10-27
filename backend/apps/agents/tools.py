@@ -717,15 +717,14 @@ def _lotes_a_vencer(contexto: ContextoDaTool, args: LotesAVencerArgs) -> dict[st
     linhas = []
     for lote in lotes:
         dias_para = (lote.expires_on - hoje).days
-        if dias_para < 0:
-            estado = "vencido"
-            gravidade = "critico" if lote.expiry_kind == "use_by" else "aviso"
-        elif dias_para == 0:
-            estado = "vence_hoje"
-            gravidade = "aviso" if lote.expiry_kind == "use_by" else "info"
-        else:
-            estado = "a_vencer"
-            gravidade = "info"
+        # O **estado** é vocabulário desta tool e decide-se aqui; a **gravidade**
+        # vem da porta e não se recalcula. Até 2026-10-27 esta função tinha a sua
+        # própria tabela — era a quinta da casa — e discordava das outras em três
+        # células: dava `aviso` a um `use_by` que vence hoje, `info` a um que
+        # vence dentro de três dias, e tratava um lote sem rótulo como se fosse
+        # um DDM, que é o erro caro (ADR 0034, decisão 9).
+        estado = "vencido" if dias_para < 0 else "vence_hoje" if dias_para == 0 else "a_vencer"
+        gravidade = lote.gravidade
         linhas.append(
             {
                 "product_id": lote.product_id,
