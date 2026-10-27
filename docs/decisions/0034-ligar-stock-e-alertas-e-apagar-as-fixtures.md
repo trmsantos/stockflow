@@ -1,5 +1,18 @@
 # ADR 0034 — Ligar o Stock e os Alertas, e apagar o servidor de dados falsos
 
+> **Emendada pela adenda de 2026-10-27 (no fim deste ficheiro), depois do `domain-expert` e de
+> quatro decisões do dono.** O corpo abaixo é a versão aprovada e fica de pé; o que a adenda
+> **corrige** é: a **decisão 6** deixava a calibração da gravidade por decidir e contava **três**
+> definições — está decidida (tabela por `kind`) e são **quatro**, sendo a quarta a única que o
+> utilizador vê; a **decisão 5** diz que o `expiring_count` dos Alertas conta **lotes** e passa a
+> contar **linhas da lista**; na tabela do contrato mudam o `Alerta.id` (colide), o corpo do
+> `POST waste` (deixa de ser em unidade base), o `kind` e o `lot_code` (nuláveis) e o
+> `nearest_expiry` (ganha `severity`); o **defeito (b)** do `reference` resolve-se sem mudar o que
+> se grava, e o **defeito (c)** do mínimo por artigo passa de "tem de o dizer" a regra escrita. A
+> adenda acrescenta ainda uma correcção que não é de contrato e que torna falsa a frase *"é leitura,
+> serialização e uma renomeação de corpos de entrada"*: **o FEFO partido do `registar_waste` é
+> reparado nesta fatia**. Nada que a adenda não nomeie mudou.
+
 **Contexto.** Os ecrãs `/stock`, `/stock/$artigo` e `/alertas` são os **últimos** servidos por
 `frontend/fixtures/` — seis rotas em `stock.ts` e `alertas.ts`. Atrás delas o Django serve quatro
 rotas do painel (ADR 0024, fatia 4) e três `POST` de movimentos (ADR 0025), e **os dois lados
@@ -163,3 +176,237 @@ fatia que a paga**: há um agregado de desperdício defensável para o `staff` q
 custo unitário (uma contagem de linhas, uma quantidade por artigo), ou a resposta certa é a régua
 encolher de quatro contadores para dois? (e) O desperdício de "esta semana" são sete dias de negócio
 rolantes a contar do de hoje — confirmar contra a janela do `reporting`, que é de mês civil.
+
+---
+
+## Adenda (2026-10-27) — a gravidade decidida, o FEFO reparado, e o terceiro contador do `staff`
+
+As cinco consultas acima foram feitas e têm resposta; o dono tomou quatro decisões em cima delas.
+Fica **adenda e não ADR nova** pelo critério da 0032 d7 ao contrário: não se revoga ADR nenhuma, não
+há fatia nova, e tudo isto é a consequência directa da consulta que **esta mesma ADR exigiu antes do
+`backend`**. Quem ler o corpo acima tem de ler isto, e por isso o aviso está no topo do ficheiro.
+As decisões 8 a 11 continuam a numeração da ADR, para se poderem citar ("0034 d9").
+
+### Decisão 8 — O FEFO partido do `registar_waste` repara-se nesta fatia
+
+**O que está lá, medido.** O `backend/apps/inventory/services.py:537-540` levanta
+`ValidationError({"lot_id": …})` quando `lot_id is None` e `produto.track_lots`, enquanto o docstring
+da mesma função promete *"Usa FEFO para escolher o lote se não for fornecido"* e *"lot_id: UUID ou
+None (se None, usa FEFO)"*. O `get_fefo_lot` só é chamado no ramo em que o lote **já veio**, onde
+faz apenas validação. Do outro lado, o `formulario-de-desperdicio.tsx` **nunca envia lote** e já lê
+`registadoNoLote(lot_code)` da resposta: o cliente foi escrito contra o comportamento prometido.
+Resultado: registar quebra pelo ecrã do artigo dá **400 em todos os artigos com `track_lots=True`** —
+e é o ecrã mais usado pelo `staff`. Não é dívida a nomear: é o caminho de escrita que esta fatia
+liga, e ligá-lo partido não é ligá-lo.
+
+**A regra.** Sem `lot` no corpo, o servidor escolhe por FEFO **na localização pedida**:
+`expires_at ASC NULLS LAST`, depois `received_at ASC`, **só entre lotes com saldo > 0 ali**. Não
+havendo nenhum, o 400 diz *"não há saldo deste artigo nesta localização"* e **nunca** "lote
+obrigatório": a segunda frase manda a pessoa procurar um campo que o ecrã não tem, e esconde a causa
+real, que é a localização estar vazia. O lote sintético continua a ser encontrado pelo mesmo
+caminho, porque também é um lote com saldo — o ramo especial de hoje (`code=f"__{product_id}__"`,
+sem olhar à localização) deixa de ser preciso e **deixa de poder tirar stock de uma localização onde
+ele não está**.
+
+**O caso limite, decidido: quebra de 2 kg com o lote FEFO a 0,4 kg reparte-se.** A hipótese do
+`domain-expert` é a certa e já tem precedente escrito na casa — é o que o consumo de receitas faz
+(ADR 0026, FEFO até esgotar). Gera-se **um movimento por lote**, por ordem FEFO, até perfazer a
+quantidade, **numa transação** e com a mesma `reference` nas N linhas. Em concreto:
+
+- a `reference` comum é um `uuid4` do gesto, escrito **só quando há mais do que uma linha** — com
+  uma linha não há nada para agrupar, e o índice parcial `inv_stockmv_tenant_ref_idx` existe na
+  maior tabela do sistema: só se paga escrita nele quando compra alguma coisa;
+- não colide com o lookup das contagens (`selectors.py:1037` e `:1064` filtram também
+  `movement_type="adjustment"`), e o `MovementDTO` já tem o campo (`services.py:181`), logo o
+  `record_movements` grava as N linhas sem mecanismo novo;
+- **o 201 passa a ser `{movements: [Movimento, …]}`, sempre lista, mesmo com um lote só.** Uma
+  resposta que é objecto no caso normal e lista no caso raro é um cliente que funciona até ao dia em
+  que o lote acaba a meio. É a forma que o 201 da transferência já tem (ADR 0032 d4), e a frase do
+  ecrã passa de *"registado no lote X"* a nomear os lotes que foram — a palavra é do cliente;
+- **se o saldo da localização não chegar para a quantidade pedida, não se reparte até onde dá**:
+  é 400 com o que há. Escrever menos do que foi pedido, em silêncio, é a quebra a entrar errada num
+  ledger sem desfazer. (Stock negativo continua a ser possível por outras portas — ADR 0012 — mas
+  não como efeito secundário de uma repartição.)
+
+### Decisão 9 — A tabela de gravidade, como o `domain-expert` a propôs, e o corte dos 3 dias é hipótese
+
+**São quatro definições e não três.** A d6 contou três no backend e falhou a que conta:
+`frontend/src/features/inventory/leitura-da-validade.ts::leituraDe` decide a **palavra e a cor** a
+partir de `days_away`/`kind`/`limiarEmDias`, e alimenta `urgenciaDaValidade` →
+`tintaDoTrilhoDoNivel`. É a **única que o utilizador vê**, e existe por uma razão estrutural e não
+por desleixo: o `nearest_expiry` não traz gravidade nenhuma, logo o cliente é **obrigado** a
+recalculá-la para pintar o trilho. Unificar no servidor sem lhe dar o campo era deixar a quarta
+definição de pé. **O `nearest_expiry` ganha `severity`** (e o `Alerta.lot` com ele); o cliente mantém
+só a palavra, porque i18n é dele, e tira **cor e urgência** do servidor — a `urgenciaDaValidade`
+deixa de ler o `corDoTexto` da `Leitura` e passa a ler o `severity`. Num alerta de validade, o
+`Alerta.severity` e o `lot.severity` são **o mesmo número pela mesma função**.
+
+`dias = expires_on − hoje`, com **hoje = dia civil** (`timezone.localdate`), já decidido na ADR 0028
+e não reaberto aqui:
+
+| dias | `use_by` | `best_before` | `kind` vazio |
+|---|---|---|---|
+| `< 0` | danger | warning | danger |
+| `0` | danger | info | danger |
+| `1–3` | warning | info | warning |
+| `4–limiar(7)` | info | info | info |
+
+**O tecto é legal e escreve-se.** `use_by` é **DLC** (Reg. UE 1169/2011 art. 24 e Reg. CE 178/2002
+art. 14(5)): passada a data o género é não seguro e **não se vende**. `best_before` é **DDM**
+(DL 26/2016): passada a data ainda se vende se estiver íntegro. Logo **um `best_before` nunca chega a
+`danger`** — é um limite do domínio e não uma preferência de paleta, e quem lhe mexer está a dizer
+"deita fora" sobre mercadoria vendável. Daí que as duas definições do servidor estejam **ambas
+erradas**: o `selectors.stock_alerts` dá `critical` a tudo o que venceu (um iogurte com DDM de ontem
+vira alarme vermelho) e o `api._gravidade_da_validade:709-716` dá **aviso** a um `use_by` que vence
+hoje (o dia em que ainda se consome é o dia em que se decide, e é `danger`). O `kind` vazio lê-se
+pela regra estrita: sub-avisar é o erro caro.
+
+**Janela ≠ corte, e é isto que devolve significado ao âmbar.** Hoje o limiar de 7 dias faz também de
+corte de gravidade, logo **tudo o que entra na lista é pelo menos âmbar** e âmbar deixa de querer
+dizer nada. Com a tabela, o limiar decide **o que aparece** e a gravidade decide **como aparece**:
+um lote a 5 dias entra na lista a `info`. A lista fica com linhas calmas, e isso é o ponto.
+
+**O corte dos 1–3 dias é hipótese, marcada como tal.** Não vem de lei nenhuma — vem de "dá para
+escoar num fim-de-semana". Fica por **validar com um utilizador real** antes de se tratar como
+facto; é a candidata óbvia a mudar, e muda numa constante.
+
+### Decisão 10 — O `staff` não perde o terceiro contador: entram duas contagens
+
+`wasted_today_count` e `wasted_week_count` entram no `ResumoDeAlertas` e estão **presentes para os
+três papéis**. O `wasted_today_eur` e o `wasted_week_eur` continuam **ausentes** para o `staff`, como
+a d6 e a ADR 0032 d1 mandam.
+
+**A razão é de navegação e não de simetria.** Os dois números em euros são as **duas únicas portas**
+para a lista de desperdício: o contador em `numeros-dos-alertas.tsx:110-117` liga a `?ver=desperdicio`
+e o rodapé de `screens/alertas.tsx:272-284` é a frase *"ver o que foi"*. Sem eles, o `staff` fica com
+dois contadores e **sem caminho nenhum** para a lista que a **d4 desta ADR** diz expressamente que
+tem de lhe chegar — a rota existiria sem ter quem lá entre.
+
+**Porque é que uma contagem não reconstrói o custo.** A reconstrução que a ADR 0032 fechou é sempre
+uma **divisão**: `value_eur ÷ quantity` devolve o custo unitário, e com uma só quebra no dia o
+`wasted_today_eur` dá-o sozinho. Um `COUNT(id)` **não tem euros em ponta nenhuma** — não há numerador
+nem denominador —, logo nenhuma sequência de observações o reconstrói. **Mas só enquanto o `COUNT`
+ficar fora de um `values().annotate()` que inclua `unit_cost`**: agrupar a contagem por custo
+unitário serve o custo unitário na chave do grupo, e a fuga volta pela mesma porta com outro nome. É
+o defeito exacto que a ADR 0032 mediu no `stock_summary` (o `Case` dentro do `values()` a entrar no
+`GROUP BY`), e tem de haver um teste que leia o SQL e não só o JSON.
+
+Por cima das contagens entra a **cobertura**, pela régua da 0032: `wasted_today_lines_without_cost` e
+`wasted_week_lines_without_cost` — **linhas e não euros**, iguais para os três papéis, como o
+`quantity_without_cost` dos níveis. Sem isso, "7 quebras hoje" e "7 quebras hoje, 4 sem preço
+conhecido" são a mesma frase.
+
+### Decisão 11 — A unidade entra no corpo do `POST` de quebra, e a conversão é do servidor
+
+O corpo passa a ser `quantity: Decimal>0` **mais** `unit`, e o `unit` tem de ser o `base_unit` ou o
+`display_unit` **daquele artigo** — qualquer outro é 400, e não existe motor genérico de conversão
+(ADR 0011). A conversão faz-se **no servidor**, nunca no cliente: é a regra da ADR 0030 d1 e do
+`inventory-domain` §2, e é a mesma razão pela qual as quantidades viajam como quarteto. O ecrã
+**pré-selecciona o `display_unit`** (é a unidade em que a pessoa fala) e o 201 devolve a quantidade
+como `Quantidade`, com o `display` preenchido, para a frase de confirmação dizer "2 kg" a quem
+escreveu 2.
+
+Isto fecha um buraco que a versão aprovada escrevia por extenso — *"quantity: Decimal>0 (unidade
+BASE)"* — contra um formulário que apresenta a unidade mostrada ao lado do campo e normaliza só a
+vírgula decimal (`formulario-de-desperdicio.tsx:79-86`). Entre `g` e `kg` há um factor de 1000, o
+destino é um ledger **append-only** (ADR 0006: sem `UPDATE`, sem `DELETE`) e o erro não tem botão de
+desfazer. Um número sem unidade explícita num corpo de escrita é uma convenção, e convenções não
+sobrevivem a dois ecrãs.
+
+### O que isto muda no contrato (e o que rebentava o cliente em silêncio)
+
+- **`kind` passa a nulável nos dois sítios** (`nearest_expiry` e `Alerta.lot`). O
+  `tipoValidadeSchema` é `z.enum(["use_by","best_before"])` e **não aceita `""`**, enquanto o
+  `expiry_kind` do `catalog` é `""` por omissão (`catalog/models.py:117`): o serializer traduz
+  `""` → `null`, e um artigo sem rótulo lê-se pela coluna estrita da tabela da d9.
+- **`lot_code` de lote sintético sai `null` nos quatro sítios onde aparece** (`nearest_expiry`,
+  `Movimento`, `Alerta.lot`, `Desperdicio`), pela `selectors.e_lote_sintetico` que já existe
+  (`__<uuid>__`). O `validadeProximaSchema.lot_code` é hoje `z.string().min(1)` e passa a
+  `.nullable()` — sem isto, a primeira produção de receita no ecrã de Alertas rebenta a página.
+- **O `Alerta.id` colide, e muda de forma.** O alerta de validade é por lote **× localização** — um
+  lote transferido tem saldo em duas —, logo `"expiry:<lot_id>"` produz **dois ids iguais** e o
+  `aberta` do `screens/alertas.tsx` expande a linha errada. Passa a `"expiry:<lot_id>:<location_id>"`
+  (o `"missing:<product_id>"` fica). **Agregar por lote não é alternativa**: o `location` passaria a
+  `null` e o `POST` de quebra da linha levaria `""`, que é 400 — o alerta deixaria de ser accionável,
+  que é a única coisa que ele tem.
+- **`expires_at` passa a `DateField`**, por `timezone.localdate` (defeito (a) do corpo). Um instante
+  tem fuso e a data da embalagem não muda com quem a lê; o cliente valida `z.iso.date()`.
+- **`reference`: não se muda o que se grava.** O `selectors.py:1037` e o `:1064` fazem lookup por
+  `reference=str(stock_count_id)` e há índice parcial em `models.py:236-241`. Servem-se **dois campos
+  novos** — `reference_kind` e `reference_label` — e o ecrã imprime o rótulo, nunca o cru. Isto
+  resolve o defeito (b) sem atravessar fronteira nenhuma: **a contagem é modelo do próprio
+  `inventory`**, logo nomear "Contagem de 24/10, Armazém" não obriga o módulo a saber nada do
+  `purchasing`. O que vier de fora do módulo fica sem rótulo, e sem rótulo o ecrã não imprime nada.
+- **`Desperdicio` e `Alerta` ganham `cost_status`** (as três palavras da ADR 0032, adenda), e o
+  resumo ganha a cobertura da d10.
+- **Invariante testável, e é ela que impede a divergência de voltar:** *cada contador é igual ao
+  `count` da lista que filtra, no mesmo âmbito*. `expiring_count` ↔ `/stock/alerts?risco=expira`,
+  `missing_count` ↔ `?risco=falta`, `wasted_*_count` ↔ `/stock/alerts/waste?periodo=…`,
+  `below_min_count` ↔ `/stock/levels?filtro=falta`, `expiring_count` do Stock ↔ `?filtro=validade`.
+  Daqui sai a correcção à **d5**: o `expiring_count` dos Alertas conta **linhas da lista** e não
+  lotes — com o alerta a ser por lote × localização, "lotes" nem sequer estava bem definido. E a
+  consulta (c) fica respondida: são dois números porque contam **duas listas**, cada um igual à sua.
+- **`status`, `min_quantity` e `filtro=falta` são sempre do estabelecimento**, também com `?loja=`;
+  o `?loja=` escopa **só** `quantity` e `by_location`. É o defeito (c) a passar de aviso a regra: o
+  mínimo é por artigo (ADR 0024) e compará-lo contra o saldo de uma loja inventava faltas. O ecrã
+  **tem de escrever "mínimo do estabelecimento"**, senão "0,4 kg · ok" lê-se como erro de cálculo.
+- **`nearest_expiry` é no âmbito pedido** (consulta (b)): com `?loja=`, é o lote com saldo **naquela
+  localização**. Mostrar a validade de outra loja ao lado do saldo desta é uma frase falsa sobre o
+  que está à frente de quem lê.
+- **`wasted_week` são sete dias de negócio rolantes incluindo hoje** (consulta (e)), igual ao `7d`
+  que o `reporting` já tem (`periodos.py:56` e `:137`) e **não** o mês civil. A aritmética é **de
+  calendário**: `hoje − timedelta(days=6)` sobre a **data**, e só depois `combine` com o
+  `business_day_starts_at`. `agora − timedelta(days=7)` põe um dia inteiro no balde errado no domingo
+  da mudança da hora. O `inventory` **não pode importar o `reporting`** (ADR 0029 d6), logo duplica
+  três linhas — e o teste que paga a duplicação é um que corre **no dia da mudança da hora**, não um
+  que compare as duas funções.
+- **`unit_cost = 0` com `cost_is_estimate=False` (`services.py:568`) grava um zero mentiroso** num
+  ledger append-only. Sem nível com custo: `cost_is_estimate=True` e o 201 devolve
+  `cost_status: "desconhecido"`. **Nunca se bloqueia o registo por falta de preço** — quem está a
+  deitar fora não anda à procura de uma fatura. (Não é o `estimado` que a ADR 0032 deixou
+  inalcançável; é o `desconhecido` a deixar de se disfarçar de zero.)
+- **`stock_value_eur` não soma linhas negativas.** Um `Sum` ingénuo no Django soma-as e o valor do
+  stock desce por causa de um saldo que ninguém tem; o fixture já as saltava, e o servidor tem de
+  fazer o mesmo. As linhas negativas continuam visíveis na lista com `status: "negativo"`, que é onde
+  elas significam alguma coisa.
+
+### Os dois relógios, e porque é que isto não é um defeito
+
+**O mesmo ecrã tem dois relógios e está certo.** A validade é **dia civil** — a lei não sabe a que
+horas a pastelaria abre — e o desperdício é **dia de negócio** (ADR 0029, `business_day_starts_at`).
+Às 02:00, o "hoje" do desperdício ainda é ontem e o "expira hoje" já é o dia novo, e as duas frases
+estão certas ao mesmo tempo. Quem unificar os relógios parte uma das duas verdades: ou o lote passa a
+vencer à hora a que o patrão abre a porta, ou a quebra das 02:00 salta para o dia seguinte e o
+fecho do dia deixa de bater certo. Está escrito aqui para a próxima "correcção" não ser esta.
+
+### Fora de âmbito — nomeado e não resolvido
+
+**Mínimo por (artigo, localização)** — é a dívida de que o defeito (c) é o sintoma, e custa coluna,
+ecrã e migração. **`shelf_life_after_opening_days`** — o HACCP exige a validade secundária depois de
+aberto, a app não a conhece e por isso **sub-avisa**; um ecrã de Alertas vazio **não pode** ler-se
+como "está tudo em dia", e enquanto esta não existir não é isso que ele diz. **Janela histórica de
+quebras para inspeção da ASAE** — o `periodo` nasce `hoje|semana`, mas o selector recebe
+`[desde, até)`, de propósito: acrescentar datas passa a ser **um parâmetro e não uma reescrita**.
+**A lista de vencidos sem fundo inferior** — um lote vencido há seis meses continua a aparecer, para
+sempre, e empurra para baixo o que é accionável. **O toque único que escreve o lote inteiro num
+ledger sem desfazer, e a ausência de UI para o movimento inverso** — hoje corrige-se um engano com um
+`adjustment` que o ecrã não oferece. **A incoerência entre o `below_min_count` do Stock e o
+`missing_count` dos Alertas**, visível a quem muda de ecrã com `?loja=` posto: são dois contadores do
+mesmo facto em dois sítios, e só um deles é lido ao lado de um filtro de loja.
+
+### Impacto que esta adenda acrescenta
+
+Continua **zero tabelas, zero colunas, zero migrações, zero políticas RLS, zero Celery, zero
+eventos**. O que deixa de ser verdade é *"é leitura, serialização e uma renomeação de corpos de
+entrada"*: a **d8** e a **d11** mexem num caminho de **escrita** (`registar_waste` — FEFO,
+repartição, unidade, `cost_is_estimate`), e isso muda a ordem da d7 numa coisa — o `POST
+/stock/movements/waste` deixa de ser o passo barato do (5) e é o que leva mais testes: FEFO na
+localização pedida, repartição por dois lotes com `reference` comum, saldo insuficiente, artigo sem
+preço, e as duas unidades. No cliente, mais `.optional()`/`.nullable()` do que a lista do corpo:
+`kind` e `lot_code` nuláveis no `validadeProximaSchema`, `severity` novo lá dentro, `unit` no
+`quebraParaRegistarSchema`, a resposta da quebra a passar a `{movements: […]}`, `cost_status` em
+`desperdicioSchema` e `alertaSchema`, e no `resumoDeAlertasSchema` os dois `wasted_*_count` e os dois
+`wasted_*_lines_without_cost` — estes quatro **presentes para os três papéis**, logo sem
+`.optional()`, e é exactamente aí que um `.optional()` a mais esconderia um campo em falta.
+`uv run manage.py spectacular` e `pnpm gen:api`, e o ecrã fotografado **com cada papel**: o `staff`
+tem agora um terceiro contador que o `owner` também tem, mas com outro número.
