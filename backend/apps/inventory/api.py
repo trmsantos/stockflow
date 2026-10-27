@@ -190,6 +190,13 @@ class LoteAVencer:
     #: A data no calendário local — é por ela que se compara.
     expires_on: date
     saldo: Decimal
+    #: `critico`, `aviso` ou `info`, já decidida pela porta.
+    #:
+    #: **Vem no DTO de propósito, e não é cortesia.** Enquanto cada consumidor
+    #: recebia `expires_on` e `expiry_kind` e decidia sozinho, havia cinco
+    #: tabelas de gravidade nesta casa e discordavam umas das outras. Um campo
+    #: calculado aqui não se pode recalcular mal (ADR 0034, decisão 9).
+    gravidade: str
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -295,7 +302,16 @@ def lotes_a_vencer(
         tenant_id=tenant_id, hoje=hoje, dias=dias, location_id=location_id, limite=limite
     )
     truncado = len(linhas) > limite
-    return tuple(LoteAVencer(**linha) for linha in linhas[:limite]), truncado
+    lotes = tuple(
+        LoteAVencer(
+            **linha,
+            gravidade=_gravidade_da_validade(
+                expires_on=linha["expires_on"], expiry_kind=linha["expiry_kind"], hoje=hoje
+            ),
+        )
+        for linha in linhas[:limite]
+    )
+    return lotes, truncado
 
 
 def movimentos_resumidos(
@@ -717,7 +733,7 @@ _PALAVRA_DA_GRAVIDADE: dict[str, str] = {
 }
 
 
-def _gravidade_da_validade(lote: LoteAVencer, *, hoje: date) -> str:
+def _gravidade_da_validade(*, expires_on: date, expiry_kind: str, hoje: date) -> str:
     """A gravidade de um lote a vencer, pela **mesma** função que o ecrã usa.
 
     Era uma segunda definição e discordava da do `selectors.stock_alerts`: esta
@@ -727,8 +743,8 @@ def _gravidade_da_validade(lote: LoteAVencer, *, hoje: date) -> str:
     As duas estavam erradas, e a tabela que as substitui está em
     `selectors.gravidade_da_validade`, com a lei que a justifica.
     """
-    dias = (lote.expires_on - hoje).days
-    gravidade = selectors.gravidade_da_validade(dias=dias, kind=lote.expiry_kind)
+    dias = (expires_on - hoje).days
+    gravidade = selectors.gravidade_da_validade(dias=dias, kind=expiry_kind)
     return _PALAVRA_DA_GRAVIDADE[gravidade]
 
 
@@ -914,7 +930,7 @@ def resumo_de_alertas(
         validade = tuple(
             AlertaResumo(
                 tipo="validade",
-                gravidade=_gravidade_da_validade(lote, hoje=hoje),
+                gravidade=lote.gravidade,
                 product_id=lote.product_id,
                 product_name=lote.product_name,
                 sku=lote.sku,

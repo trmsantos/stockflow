@@ -398,10 +398,9 @@ class TestATabelaDaGravidade:
         """
         hoje = date(2026, 6, 15)
         for dias, kind, esperada in CELULAS_DA_GRAVIDADE:
-            lote = SimpleNamespace(
-                expires_on=hoje + timedelta(days=dias), expiry_kind=kind
+            do_porto = inventory_api._gravidade_da_validade(
+                expires_on=hoje + timedelta(days=dias), expiry_kind=kind, hoje=hoje
             )
-            do_porto = inventory_api._gravidade_da_validade(lote, hoje=hoje)
             assert do_porto == inventory_api._PALAVRA_DA_GRAVIDADE[esperada], (
                 dias,
                 kind,

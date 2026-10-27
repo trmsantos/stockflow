@@ -336,9 +336,17 @@ def test_lotes_a_vencer_janela_rolante_por_data_sobre_o_dia_de_negocio(loja: Loj
     assert por_lote["ONTEM"]["saldo"] == "1 L"
 
 
-def test_use_by_vencido_e_critico_best_before_e_aviso_e_sem_rotulo_e_best_before(
+def test_use_by_vencido_e_critico_best_before_e_aviso_e_sem_rotulo_conta_como_use_by(
     loja: Loja,
 ) -> None:
+    """Um lote sem rótulo lê-se pela coluna **estrita**, e isso mudou.
+
+    Até 2026-10-27 esta tool tinha a sua própria tabela de gravidade — a quinta
+    da casa — e tratava `expiry_kind = ""` como se fosse um DDM: o Sal vencido
+    saía a `aviso`. A ADR 0034 d9 decidiu o contrário, e a razão é a assimetria
+    do dano: um vermelho a mais custa uma conversa, um vermelho a menos custa
+    vender mercadoria fora da data-limite de consumo.
+    """
     hoje = date(2026, 10, 14)
     ontem = hoje - timedelta(days=1)
     leite = _produto(loja.tenant, "Leite", expiry_kind="use_by")
@@ -354,9 +362,48 @@ def test_use_by_vencido_e_critico_best_before_e_aviso_e_sem_rotulo_e_best_before
     assert por_nome["Leite"]["rotulo"] == "consumir até"
     assert por_nome["Farinha"]["gravidade"] == "aviso"
     assert por_nome["Farinha"]["rotulo"] == "consumir de preferência antes de"
-    assert por_nome["Sal"]["gravidade"] == "aviso"
+    assert por_nome["Sal"]["gravidade"] == "critico"
     assert por_nome["Sal"]["rotulo"] == "sem rótulo"
     assert {linha["estado"] for linha in dados["linhas"]} == {"vencido"}
+
+
+@pytest.mark.parametrize(
+    ("dias", "kind", "esperada"),
+    [
+        (-1, "use_by", "critico"),
+        (-1, "best_before", "aviso"),
+        (-1, "", "critico"),
+        (0, "use_by", "critico"),
+        (0, "best_before", "info"),
+        (0, "", "critico"),
+        (1, "use_by", "aviso"),
+        (3, "use_by", "aviso"),
+        (3, "best_before", "info"),
+        (3, "", "aviso"),
+        (5, "use_by", "info"),
+        (5, "best_before", "info"),
+    ],
+)
+def test_a_gravidade_vem_da_porta_e_esta_tool_nao_a_decide(
+    loja: Loja, dias: int, kind: str, esperada: str
+) -> None:
+    """A tabela inteira, pela tool, prendida à da porta.
+
+    O teste acima mede uma célula com a frase que a explica; este mede as doze
+    e existe para outra coisa: se alguém voltar a escrever uma tabela aqui
+    dentro — foi assim que nasceram as cinco —, ela discordará da porta em
+    alguma célula e isto parte. É o mesmo mecanismo que o
+    `test_as_duas_portas_do_servidor_leem_a_mesma_funcao` usa do outro lado.
+    """
+    hoje = date(2026, 10, 14)
+    produto = _produto(loja.tenant, f"Artigo {dias} {kind or 'sem'}", expiry_kind=kind)
+    lote = _lote(loja.tenant, produto, "X", validade=hoje + timedelta(days=dias))
+    _nivel(loja.tenant, produto, loja.loja, "500", lote=lote)
+
+    dados, _ = _executar(_contexto(loja.tenant, hoje=hoje), "lotes_a_vencer")
+
+    linha = next(x for x in dados["linhas"] if x["nome"] == produto.short_name)
+    assert linha["gravidade"] == esperada, (dias, kind)
 
 
 def test_um_lote_sem_saldo_nao_vence_em_lado_nenhum(loja: Loja) -> None:
