@@ -468,6 +468,23 @@ SPECTACULAR_SETTINGS = {
         # nascer num ficheiro de settings.
         "EstadoDoCustoEnum": "apps.inventory.selectors.ESTADOS_DO_CUSTO",
         "PernaDeTransferenciaEnum": ["transfer_out", "transfer_in"],
+        # Os três enums que a ADR 0034 trouxe aos sete recursos de `/stock`. Os
+        # nomes derivados do campo colidiam com conjuntos que já existem: o
+        # `kind` do `purchasing` (goods/deposit/charge/document_ref) e o
+        # `reason` dos cinco motivos de uma quebra. Apontam para as tuplas e não
+        # para listas copiadas, pela mesma razão do `EstadoDoCustoEnum`.
+        "TipoDeValidadeEnum": "apps.inventory.selectors.TIPOS_DE_VALIDADE",
+        "MotivoDeAlertaEnum": "apps.inventory.serializers.MOTIVOS_DE_ALERTA",
+        "EstadoDoNivelEnum": "apps.inventory.selectors.ESTADOS_DO_NIVEL",
+        "GravidadeEnum": "apps.inventory.selectors.GRAVIDADES",
+        # E as duas que **já cá estavam** e deixaram de poder usar o nome do
+        # campo: o `kind` de uma linha de receção e os cinco motivos de uma
+        # quebra chamavam-se `KindEnum` e `ReasonEnum` porque eram os únicos
+        # com esses nomes. Com a ADR 0034 passaram a ter companhia e o
+        # drf-spectacular resolvia a colisão com um sufixo de hash em **todos**
+        # os lados — nomear só os novos não chega.
+        "TipoDeLinhaDeRececaoEnum": ["goods", "deposit", "charge", "document_ref"],
+        "MotivoDeQuebraEnum": "apps.inventory.serializers.MOTIVOS_DE_MOVIMENTO",
         "IdDeParteDeSalariosEnum": [
             "base",
             "social_security",

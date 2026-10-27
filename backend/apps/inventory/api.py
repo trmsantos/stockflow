@@ -706,14 +706,30 @@ class CustoPorLocalizacao:
 DIAS_DE_VALIDADE = selectors.DIAS_DE_VALIDADE_DO_PAINEL
 
 
+#: O vocabulário desta porta é o do assistente (`critico|aviso|info`) e o do
+#: ecrã é o do cliente (`danger|warning|info`). São as mesmas três gravidades
+#: com dois nomes, e a tradução vive aqui — numa linha — em vez de haver duas
+#: funções a decidi-las (ADR 0034, decisão 9).
+_PALAVRA_DA_GRAVIDADE: dict[str, str] = {
+    selectors.GRAVIDADE_PERIGO: "critico",
+    selectors.GRAVIDADE_AVISO: "aviso",
+    selectors.GRAVIDADE_INFO: "info",
+}
+
+
 def _gravidade_da_validade(lote: LoteAVencer, *, hoje: date) -> str:
-    """Vencido com "consumir até" é crítico; o resto é aviso ou informação."""
+    """A gravidade de um lote a vencer, pela **mesma** função que o ecrã usa.
+
+    Era uma segunda definição e discordava da do `selectors.stock_alerts`: esta
+    dava **aviso** a um `use_by` que vence hoje (o dia em que ainda se consome é
+    o dia em que se decide, e é `danger`) e aquela dava `critical` a tudo o que
+    tinha vencido, incluindo um DDM — mercadoria vendável marcada a vermelho.
+    As duas estavam erradas, e a tabela que as substitui está em
+    `selectors.gravidade_da_validade`, com a lei que a justifica.
+    """
     dias = (lote.expires_on - hoje).days
-    if dias < 0:
-        return "critico" if lote.expiry_kind == "use_by" else "aviso"
-    if dias == 0:
-        return "aviso" if lote.expiry_kind == "use_by" else "info"
-    return "info"
+    gravidade = selectors.gravidade_da_validade(dias=dias, kind=lote.expiry_kind)
+    return _PALAVRA_DA_GRAVIDADE[gravidade]
 
 
 def _nomes_de_quem_age(contagens: Sequence[object], *, tenant_id: UUID) -> dict[UUID, str]:

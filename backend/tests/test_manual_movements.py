@@ -102,8 +102,11 @@ class TestWasteMovement:
                 user=user, quantidade=Decimal("100"),
             )
 
-            # Execute
-            movement_id = registar_waste(
+            # Execute. Desde a ADR 0034, decisão 8, o serviço devolve **uma
+            # lista**: a quebra reparte-se por lotes quando o primeiro não
+            # chega, e uma resposta que muda de forma no caso raro é um cliente
+            # que funciona até ao dia em que o lote acaba a meio.
+            [movement_id] = registar_waste(
                 tenant_id=tenant.id,
                 product_id=product.id,
                 location_id=location.id,
