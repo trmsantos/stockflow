@@ -1747,7 +1747,9 @@ class TestONomeDeQuemAgeNaoEUmEmail:
             _receber(
                 casa, produto, casa.armazem, lote, quantidade=Decimal("1000"), custo=Decimal("2")
             )
-            movimento_id = registar_waste(
+            # Uma lista desde a ADR 0034, decisão 8: a quebra reparte-se por
+            # lotes e o 201 é sempre `{movements: [...]}`, mesmo com um só.
+            [movimento_id] = registar_waste(
                 tenant_id=casa.tenant.id,
                 product_id=produto.id,
                 location_id=casa.armazem.id,

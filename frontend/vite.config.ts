@@ -3,8 +3,6 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 
-import { servidorDeFixtures } from "./fixtures/servidor.ts";
-
 // Portas do ADR 0002 — nenhuma default, para não colidir com outros projetos na
 // mesma máquina. Dentro do compose o contentor ouve na porta canónica (5173) e é
 // publicado em 5183 no host, por isso a porta é sobreponível por ambiente. A
@@ -13,50 +11,28 @@ import { servidorDeFixtures } from "./fixtures/servidor.ts";
 const DEV_PORT = Number(process.env.FRONTEND_DEV_PORT ?? 5183);
 const API_ORIGIN = process.env.BACKEND_ORIGIN ?? "http://127.0.0.1:8090";
 
-/**
- * Os dados falsos do shell (ADR 0008, decisão 3). O plugin vive em
- * `fixtures/`, fora de `src/`, e tem `apply: "serve"` — não participa em
- * `vite build` e não há artefacto de produção que o contenha. No dia em que o
- * último fixture sair, sai a pasta e sai esta linha.
+/*
+ * **O servidor de dados falsos saiu daqui a 2026-10-27 (ADR 0034, decisão 7),
+ * e saiu por apagamento e não por desligar.**
  *
- * Os três controlos são lidos aqui, no Node, porque é neste ficheiro que o
- * `process.env` é permitido (SECURITY.md §7): nenhum deles tem prefixo `VITE_`
- * e nenhum entra no bundle. Os estados do DESIGN.md §3 pedem-se por caminho:
- *   FIXTURES_ERRO=/api/v1/stock/levels pnpm dev   → 500 naquele caminho
- *   FIXTURES_VAZIO=/api/v1/stock/levels pnpm dev  → results: []
- *   FIXTURES_ATRASO_MS=1500 pnpm dev              → para ver os skeletons
+ * Era um plugin com `apply: "serve"` em `fixtures/`, fora de `src/`, que
+ * respondia aos `/api/v1/…` que o Django ainda não tinha. Com os sete recursos
+ * do Stock e dos Alertas servidos pelo Django, o `ROTAS` ficou vazio e a pasta
+ * inteira foi-se — a decisão 3 da ADR 0008 **termina por apagamento**, e o
+ * `scripts/check-fixtures.mjs` fica no `pnpm lint` precisamente para o provar:
+ * ele falha nos dois sentidos, e sem a pasta exige que este ficheiro já não
+ * fale dela.
  *
- * E um quarto, que não é um estado de dados: `FIXTURES_SEM_SESSAO=<caminho>`
- * responde **403 `sem_sessao`** naquele caminho, que é a sessão a expirar a
- * meio. Não é fingir uma sessão — é o contrário, e a razão está no
- * `fixtures/servidor.ts`.
- *
- * **Não há um quinto.** Havia — `FIXTURES_RESTRITO` respondia o 403 de papel do
- * painel —, e saiu a 2026-10-19 com o `apps.reporting` ligado (ADR 0029): a
- * recusa passou a ser a do Django, decidida pelo `permission_classes` da view.
- * Uma imitação de autorização ao lado da autorização a sério é um caminho que
- * nunca mais corre.
+ * **A perda, nomeada:** os modos `FIXTURES_ERRO`, `FIXTURES_VAZIO`,
+ * `FIXTURES_SEM_SESSAO` e `FIXTURES_ATRASO_MS` — e o `?_fixture=…` por pedido —
+ * ficam **sem gatilho**. Eram a forma de ver os estados do DESIGN.md §3 sem
+ * dados, com erro, ou com a sessão a expirar a meio. O vazio passa a ser um
+ * estabelecimento semeado sem stock (ADR 0018); os outros dois não têm hoje
+ * substituto, e isso é perda e não esquecimento.
  */
-const ATRASO_DE_FIXTURES = Number(process.env.FIXTURES_ATRASO_MS ?? 250);
-
-function caminhos(valor: string | undefined): string[] {
-  return (valor ?? "")
-    .split(",")
-    .map((caminho) => caminho.trim())
-    .filter((caminho) => caminho !== "");
-}
 
 export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    servidorDeFixtures({
-      atrasoMs: ATRASO_DE_FIXTURES,
-      vazios: caminhos(process.env.FIXTURES_VAZIO),
-      erros: caminhos(process.env.FIXTURES_ERRO),
-      semSessao: caminhos(process.env.FIXTURES_SEM_SESSAO),
-    }),
-  ],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

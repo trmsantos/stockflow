@@ -14,7 +14,12 @@ import {
 import { mensagemDeErro } from "@/lib/api/errors";
 
 import { useRegistarDesperdicio } from "../api";
-import { motivoQuebraSchema, type MotivoQuebra, type NivelDeStock } from "../schemas";
+import {
+  motivoQuebraSchema,
+  type MotivoQuebra,
+  type Movimento,
+  type NivelDeStock,
+} from "../schemas";
 import { textos } from "../textos";
 import { MOTIVOS_DE_DESPERDICIO, rotuloDeMotivo } from "../vocabulario";
 
@@ -34,10 +39,30 @@ import { MOTIVOS_DE_DESPERDICIO, rotuloDeMotivo } from "../vocabulario";
  * terceiro diálogo seria a fricção que faz o dono parar por causa da UI e não
  * por causa do stock, que é precisamente o sinal que a Q1 quer medir.
  *
- * A quantidade escreve-se na **unidade base** do artigo. Converter unidades no
- * cliente é a fonte nº 1 de bugs de stock (`inventory-domain` §2) e o contrato
- * de escrita só aceita a unidade base; por isso o ecrã diz qual é, em vez de
- * fingir que aceita litros e multiplicar por mil às escondidas.
+ * ## A unidade é um campo, e isso fechou o buraco mais caro deste ecrã
+ *
+ * O corpo da quebra leva `quantity` **e** `unit` desde a ADR 0034 (decisão 11),
+ * e o campo nasce com a **unidade de apresentação** escolhida — é a unidade em
+ * que a pessoa fala. Antes, o contrato dizia "unidade BASE" e o ecrã mostrava a
+ * unidade de apresentação ao lado do campo: às 6 da manhã, em pé, quem deita
+ * fora dois pães escreve `2` e ficavam **2 g** registados num ledger
+ * append-only, sem botão de desfazer.
+ *
+ * A conversão é do **servidor**, sempre: converter unidades no cliente é a
+ * fonte nº 1 de bugs de stock (`inventory-domain` §2), e o que o 201 devolve já
+ * vem convertido, para a frase de confirmação dizer "2 kg" a quem escreveu 2.
+ *
+ * Com uma unidade só (quando a base e a de apresentação coincidem — `un`, por
+ * exemplo) não há selector nenhum: um controlo que não escolhe é cromado, e a
+ * unidade fica escrita ao lado do campo na mesma.
+ *
+ * ## O lote não se escolhe, e o 201 traz os que foram
+ *
+ * Aqui a acção parte do artigo e não de um lote, logo o corpo vai sem `lot` e o
+ * servidor escolhe por FEFO na localização pedida — repartindo por quantos
+ * forem precisos. É por isso que a confirmação nomeia **os lotes**, no plural:
+ * uma quebra de 2 kg com o lote mais velho a 0,4 kg são três linhas no ledger,
+ * e dizer "registado no lote X" escondia as outras duas.
  */
 
 /** A mesma forma que o `decimal` do `schemas.ts`, sem sinal: é um valor absoluto. */
@@ -48,24 +73,57 @@ interface Erros {
   readonly motivo?: string;
 }
 
+/**
+ * A frase de confirmação, construída sobre a **lista** de movimentos do 201.
+ *
+ * A quantidade é a soma? Não: é a de cada linha, e o que se nomeia são os
+ * lotes. Uma quebra reparte-se por ordem de validade quando o lote mais velho
+ * não chega, e quem acabou de carregar no botão tem de saber de onde saiu — é
+ * essa a diferença entre um registo e um número que apareceu.
+ *
+ * Três casos, e nenhum deles é "registado no lote X" quando há mais do que um:
+ *  - um movimento, com código de lote: nomeia-o;
+ *  - um movimento sem código (lote sintético) ou nenhum: diz só que ficou
+ *    registado, porque não há nome a dar;
+ *  - vários: nomeia-os todos, separados por vírgula. São dois ou três na
+ *    prática, e a lista cabe na linha.
+ */
+function fraseDoRegisto(movimentos: readonly Movimento[]): string {
+  const codigos = movimentos
+    .map((movimento) => movimento.lot_code)
+    .filter((codigo): codigo is string => codigo !== null);
+
+  if (codigos.length === 0) return textos.desperdicio.registado;
+  if (codigos.length === 1) return textos.desperdicio.registadoNoLote(codigos[0] ?? "");
+  return textos.desperdicio.registadoNosLotes(codigos.join(", "));
+}
+
 export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStock }) {
   const idQuantidade = useId();
   const idErroDeQuantidade = useId();
   const idMotivo = useId();
   const idErroDeMotivo = useId();
   const idUnidade = useId();
+  const idSeletorDeUnidade = useId();
   const idLocalizacao = useId();
 
   const primeiraLocalizacao = nivel.by_location[0]?.location;
+  const unidadeBase = nivel.quantity.base_unit;
+  const unidadeMostrada = nivel.quantity.display_unit;
+  // As unidades que o servidor aceita para **este** artigo, e só essas: a base
+  // e a de apresentação. Qualquer outra é 400, porque não há motor genérico de
+  // conversão (ADR 0011). Uma só quando coincidem — e aí não há escolha.
+  const unidades =
+    unidadeBase === unidadeMostrada ? [unidadeBase] : [unidadeMostrada, unidadeBase];
+
   const [localizacao, setLocalizacao] = useState(primeiraLocalizacao?.id ?? "");
+  // Pré-seleccionada a de apresentação: é a unidade em que a pessoa fala.
+  const [unidade, setUnidade] = useState(unidadeMostrada);
   const [quantidade, setQuantidade] = useState("");
   const [motivo, setMotivo] = useState<MotivoQuebra | "">("");
   const [erros, setErros] = useState<Erros>({});
 
   const registar = useRegistarDesperdicio();
-
-  const unidadeBase = nivel.quantity.base_unit;
-  const unidadeMostrada = nivel.quantity.display_unit;
 
   if (primeiraLocalizacao === undefined) {
     return (
@@ -83,7 +141,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
     const problemas: Erros = {
       ...(DECIMAL_POSITIVO.test(valor) && Number(valor) > 0
         ? {}
-        : { quantidade: textos.desperdicio.escrevaAQuantidade(unidadeBase) }),
+        : { quantidade: textos.desperdicio.escrevaAQuantidade(unidade) }),
       ...(motivo === "" ? { motivo: textos.desperdicio.escolhaOMotivo } : {}),
     };
 
@@ -101,7 +159,16 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
     if (problemas.motivo !== undefined || motivo === "") return;
 
     registar.mutate(
-      { product: nivel.product, location: localizacao, quantity: valor, reason: motivo },
+      {
+        product: nivel.product,
+        location: localizacao,
+        quantity: valor,
+        // A unidade viaja **explícita**. Sem ela era uma convenção, e uma
+        // convenção não sobrevive a dois ecrãs — entre `g` e `kg` há um factor
+        // de 1000 e o destino não tem desfazer.
+        unit: unidade,
+        reason: motivo,
+      },
       {
         onSuccess: () => {
           setQuantidade("");
@@ -140,28 +207,71 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
         )}
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor={idQuantidade}>{textos.desperdicio.quantidadeEm(unidadeBase)}</Label>
-          <Input
-            id={idQuantidade}
-            name="quantidade"
-            type="text"
-            inputMode="decimal"
-            autoComplete="off"
-            value={quantidade}
-            onChange={(evento) => {
-              setQuantidade(evento.target.value);
-            }}
-            placeholder={textos.desperdicio.exemploDeQuantidade(unidadeBase)}
-            aria-invalid={erros.quantidade === undefined ? undefined : true}
-            aria-describedby={
-              erros.quantidade === undefined ? idUnidade : `${idUnidade} ${idErroDeQuantidade}`
-            }
-          />
-          {unidadeBase === unidadeMostrada ? null : (
-            <p id={idUnidade} className="text-xs text-muted-foreground">
-              {textos.desperdicio.unidadeDeRegisto(unidadeMostrada, unidadeBase)}
-            </p>
-          )}
+          <Label htmlFor={idQuantidade}>{textos.desperdicio.quantidade}</Label>
+          {/* O número e a unidade lado a lado, porque são **uma** resposta:
+              "dois quilos" lê-se de uma vez e não em duas perguntas. O campo
+              estica, o selector tem a largura do que lá cabe (`kg`, `un`), e os
+              dois têm a altura de controlo do DESIGN.md §2 — 40px em desktop,
+              44px num ecrã de toque pelo `pointer: coarse` do `base.css`. */}
+          {/* Com tecto, pela mesma razão que o campo de procurar do Stock o
+              tem: sem ele o campo esticava até aos ~890px da área de conteúdo
+              em desktop e punha a unidade a quase um metro do número que ela
+              qualifica — que é o oposto do que este par existe para fazer.
+              Medido na fotografia a 1280px. */}
+          <div className="flex max-w-sm items-stretch gap-2">
+            <Input
+              id={idQuantidade}
+              name="quantidade"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              value={quantidade}
+              onChange={(evento) => {
+                setQuantidade(evento.target.value);
+              }}
+              placeholder={textos.desperdicio.exemploDeQuantidade(unidade)}
+              className="min-w-0 flex-1"
+              aria-invalid={erros.quantidade === undefined ? undefined : true}
+              aria-describedby={
+                erros.quantidade === undefined ? idUnidade : `${idUnidade} ${idErroDeQuantidade}`
+              }
+            />
+            {unidades.length === 1 ? (
+              // Uma unidade só: não há nada a escolher, e um selector de uma
+              // opção é um controlo que não escolhe. A unidade continua à
+              // vista, que é o que importa.
+              // `items-stretch` na linha e nenhuma altura escrita aqui: a
+              // unidade acompanha o campo, que é 32px em desktop e 44px num
+              // ecrã de toque (o `pointer: coarse` do `base.css`). Um número no
+              // JSX desalinhava-se de um dos dois.
+              <span className="flex shrink-0 items-center text-sm text-muted-foreground">
+                {unidade}
+              </span>
+            ) : (
+              <>
+                <Label htmlFor={idSeletorDeUnidade} className="sr-only">
+                  {textos.desperdicio.unidade}
+                </Label>
+                <Select value={unidade} onValueChange={setUnidade}>
+                  <SelectTrigger id={idSeletorDeUnidade} className="w-24 shrink-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {unidades.map((opcao) => (
+                      <SelectItem key={opcao} value={opcao}>
+                        {opcao}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+          </div>
+          <p id={idUnidade} className="text-xs text-muted-foreground">
+            {unidades.length === 1
+              ? textos.desperdicio.unidadeUnica(unidade)
+              : textos.desperdicio.unidadeAEscolher(unidadeMostrada, unidadeBase)}
+          </p>
           {erros.quantidade === undefined ? null : (
             <p id={idErroDeQuantidade} className="text-sm text-danger">
               {erros.quantidade}
@@ -217,11 +327,7 @@ export function FormularioDeDesperdicio({ nivel }: { readonly nivel: NivelDeStoc
         {registar.isSuccess ? (
           <>
             <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-success" />
-            <span>
-              {registar.data.lot_code === null
-                ? textos.desperdicio.registado
-                : textos.desperdicio.registadoNoLote(registar.data.lot_code)}
-            </span>
+            <span>{fraseDoRegisto(registar.data.movements)}</span>
           </>
         ) : null}
       </p>

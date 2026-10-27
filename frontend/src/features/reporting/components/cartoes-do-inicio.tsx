@@ -9,7 +9,6 @@ import {
   useAlertas,
   useContagensAbertas,
   useNiveisDeStock,
-  useResumoDeStock,
 } from "@/features/inventory/api";
 import { tintaDoTrilhoDoEstado, useRececoes } from "@/features/purchasing/api";
 import { isApiError, mensagemDeErro } from "@/lib/api/errors";
@@ -318,16 +317,13 @@ export function CartaoDeContar() {
  * ------------------------------------------------------------------------- */
 
 export function CartaoDeStock() {
+  // **Um pedido e não dois desde a ADR 0034.** Havia aqui um `useResumoDeStock`
+  // só para o limiar de dias, porque o trilho precisava dele para recalcular a
+  // urgência da validade. Agora ela vem no `severity` do lote, decidida pela
+  // mesma função do servidor que decide a do alerta — logo o limiar deixou de
+  // ter leitor neste cartão, e um pedido que não alimenta nada é um pedido a
+  // menos num Wi-Fi mau.
   const niveis = useNiveisDeStock();
-  // O limiar de dias é do servidor e entra no trilho: sem ele, uma linha a
-  // expirar hoje ficava sem marca aqui e com marca no ecrã de Stock. É a mesma
-  // chave que o ecrã de Stock consolidado lê, logo não é um pedido a mais para
-  // quem lá vai a seguir.
-  const resumo = useResumoDeStock();
-  const limiarEmDias = resumo.data?.expiring_within_days ?? 0;
-
-  const aCarregar = niveis.isPending || resumo.isPending;
-  const falhou = niveis.isError || resumo.isError;
   const linhas = (niveis.data?.results ?? []).slice(0, LINHAS_DE_PREVIA);
 
   return (
@@ -337,12 +333,11 @@ export function CartaoDeStock() {
           {textos.inicio.stock}
         </Link>
       }
-      aCarregar={aCarregar}
+      aCarregar={niveis.isPending}
       rotuloDeCarga={textos.inicio.aCarregarStock}
-      erro={falhou ? mensagemDeErro(niveis.error ?? resumo.error) : null}
+      erro={niveis.isError ? mensagemDeErro(niveis.error) : null}
       aoTentarOutraVez={() => {
         void niveis.refetch();
-        void resumo.refetch();
       }}
       vazio={linhas.length === 0 ? textos.inicio.vazioStock : null}
     >
@@ -353,7 +348,7 @@ export function CartaoDeStock() {
             nome={nivel.short_name}
             // As duas razões compostas numa, pela função que a tabela de Stock
             // também usa: quantidade contra mínimo **e** prazo.
-            trilho={tintaDoTrilhoDoNivel(nivel.status, nivel.nearest_expiry, limiarEmDias)}
+            trilho={tintaDoTrilhoDoNivel(nivel.status, nivel.nearest_expiry)}
           >
             <span
               data-numeric

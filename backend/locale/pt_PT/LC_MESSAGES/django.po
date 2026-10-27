@@ -332,9 +332,6 @@ msgstr "O lote é obrigatório para artigos rastreados."
 msgid "Lot not found or has no stock at source location."
 msgstr "Lote não encontrado ou sem stock na localização de origem."
 
-msgid "Lot not found or has no stock."
-msgstr "Lote não encontrado ou sem stock."
-
 msgid "Lot not found."
 msgstr "Lote não encontrado."
 
@@ -352,6 +349,28 @@ msgstr "A quantidade tem de ser positiva."
 
 msgid "Synthetic lot not found. Create stock first."
 msgstr "Lote sintético não encontrado. Crie stock primeiro."
+
+# ---------------------------------------------------------------------------
+# Os sete recursos de `/stock` — ADR 0034 (apps/inventory/{views,serializers,
+# services}.py). O "Lot not found or has no stock." saiu daqui: era do ramo do
+# `registar_waste` que recusava a quebra sem lote, e esse ramo morreu com a
+# decisão 8 — sem saldo, a frase nomeia a **localização** e nunca o lote.
+# ---------------------------------------------------------------------------
+
+msgid "Not a valid UUID."
+msgstr "Não é um UUID válido."
+
+msgid "The 'artigo' query parameter is required."
+msgstr "O parâmetro 'artigo' é obrigatório."
+
+msgid "There is no stock of this product at this location (available: %(disponivel)s)."
+msgstr "Não há saldo deste artigo nesta localização (disponível: %(disponivel)s)."
+
+msgid "Unknown filter. Use {opcoes}."
+msgstr "Filtro desconhecido. Use {opcoes}."
+
+msgid "Use the base unit or the display unit of this product."
+msgstr "Use a unidade base ou a unidade de apresentação deste artigo."
 
 # ---------------------------------------------------------------------------
 # Increment 1: SKU e controlo por lotes (apps/catalog/services.py), contagens

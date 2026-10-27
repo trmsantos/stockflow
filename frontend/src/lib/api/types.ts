@@ -970,8 +970,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Alertas de falta, validade a vencer e vencida
-         * @description Alertas de falta, validade a vencer e vencida.
+         * O que está em risco: validades a vencer e artigos em falta
+         * @description Uma lista, dois motivos, ordenada no servidor por gravidade.
          */
         get: operations["stock_alerts"];
         put?: never;
@@ -982,7 +982,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/stock/by-location": {
+    "/api/v1/stock/alerts/summary": {
         parameters: {
             query?: never;
             header?: never;
@@ -990,10 +990,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Stock por (product, lot) em localização
-         * @description Stock por (product, lot) nessa localização.
+         * Os contadores do ecrã de Alertas, mais o desperdício do dia e da semana
+         * @description Três contadores, duas janelas de desperdício e a hora do negócio.
+         *
+         *     A hora é **dado do servidor** por estabelecimento: na pastelaria o dia
+         *     começa no início da produção e não no fim do serviço de um restaurante
+         *     (ADR 0029). O `wasted_since` viaja com ela para o rótulo poder dizer
+         *     "hoje (desde as 04:00)" sem o cliente calcular nada.
          */
-        get: operations["stock_by_location"];
+        get: operations["stock_alerts_summary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1002,7 +1007,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/stock/by-product": {
+    "/api/v1/stock/alerts/waste": {
         parameters: {
             query?: never;
             header?: never;
@@ -1010,10 +1015,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Stock por (location, lot) desse produto
-         * @description Stock por (location, lot) desse produto.
+         * As linhas de quebra do dia de negócio, com quem as registou
+         * @description As linhas de quebra da janela, da mais recente para a mais antiga.
          */
-        get: operations["stock_by_product"];
+        get: operations["stock_alerts_waste"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1100,6 +1105,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stock/levels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stock por artigo: saldo, mínimo, estado, validade e onde está
+         * @description Uma linha por artigo, o pior primeiro.
+         */
+        get: operations["stock_levels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/movements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * O ledger de um artigo, do mais recente para o mais antigo
+         * @description `GET /stock/movements?artigo=<uuid>` — **obrigatório**, 400 sem ele.
+         *
+         *     Obrigatório porque o ledger de um estabelecimento inteiro não é uma
+         *     lista que alguém leia: a pergunta é sempre "o que aconteceu a este
+         *     artigo", e é o ecrã do artigo que a faz.
+         */
+        get: operations["stock_movements_listar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stock/movements/adjustment": {
         parameters: {
             query?: never;
@@ -1150,8 +1199,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Registar desperdício
-         * @description Registar um desperdício (POST /stock/movements/waste).
+         * Registar uma quebra (FEFO na localização pedida, repartida se preciso)
+         * @description Registar uma quebra. O 201 é `{movements: [...]}`, **sempre lista**.
+         *
+         *     A unidade vem no corpo e a conversão é aqui, na camada do contrato —
+         *     o serviço fala sempre em unidade base, como nas linhas de contagem
+         *     (ADR 0034, decisão 11).
          */
         post: operations["stock_movements_waste"];
         delete?: never;
@@ -1168,8 +1221,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Resumo de stock agregado por produto
-         * @description Resumo de stock agregado por produto.
+         * Os quatro números do topo do ecrã de Stock
+         * @description Os quatro números do topo — e cada contador é o `count` da sua lista.
          */
         get: operations["stock_summary"];
         put?: never;
@@ -1275,59 +1328,68 @@ export interface components {
             rota: components["schemas"]["RotaEnum"];
             rotulo_id: components["schemas"]["RotuloIdEnum"];
         };
-        /** @description Entrada de ajuste (POST /stock/movements/adjustment). */
-        AdjustmentRequest: {
+        /**
+         * @description `POST /stock/movements/adjustment`: a correcção, com sinal.
+         *
+         *     A quantidade continua a ser em unidade **base**: a decisão 11 da ADR 0034
+         *     deu o `unit` à quebra, que é a que o ecrã serve, e esta rota não tem ecrã
+         *     nenhum nesta fatia. Está nomeado aqui para a assimetria ser visível a quem
+         *     lhe der um.
+         */
+        AjusteInRequest: {
             /**
              * Format: uuid
              * @description UUID da localização
              */
-            location_id: string;
+            location: string;
+            /** Format: uuid */
+            lot?: string | null;
             /**
              * Format: uuid
-             * @description UUID do lote (obrigatório se product.track_lots=True)
+             * @description UUID do artigo
              */
-            lot_id?: string | null;
-            /**
-             * Format: uuid
-             * @description UUID do produto
-             */
-            product_id: string;
+            product: string;
             /**
              * Format: decimal
-             * @description Quantidade ± (positivo = entrada, negativo = saída)
+             * @description Quantidade ± em unidade base (positivo = entrada).
              */
             quantity: string;
-            /**
-             * @description Motivo do ajuste
-             *
-             *     * `expired` - expired
-             *     * `spoiled` - spoiled
-             *     * `prep_loss` - prep_loss
-             *     * `breakage` - breakage
-             *     * `other` - other
-             */
-            reason: components["schemas"]["ReasonEnum"];
-            /** @description Detalhes opcionais se reason='other' */
+            reason: components["schemas"]["MotivoDeQuebraEnum"];
             reason_detail?: string;
         };
-        /** @description Alerta de stock (falta, validade a vencer, vencida) (fatia 4). */
-        Alert: {
-            /** @description shortage|expiring_soon|expired */
-            readonly alert_type?: string;
+        /**
+         * @description Uma linha do `GET /stock/alerts`: duas perguntas, **uma** lista.
+         *
+         *     O `id` não é um uuid: é `expiry:<lot_id>:<location_id>` ou
+         *     `missing:<product_id>`. A localização entra na chave porque um lote
+         *     transferido tem saldo em duas prateleiras e `expiry:<lot_id>` produzia
+         *     **dois ids iguais** — o painel expandia a linha errada. Agregar por lote
+         *     não era alternativa: o `location` passava a `null` e o `POST` de quebra da
+         *     linha levaria `""`, que é 400.
+         *
+         *     `value_eur` só vai a `owner|manager`. Num alerta de validade é o valor em
+         *     risco; num de falta é o que custa voltar ao mínimo — e o ecrã diz qual dos
+         *     dois é. O `cost_status` fica para todos: é qualidade de dados e não um euro.
+         */
+        AlertaOut: {
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
+            readonly id?: string;
+            /** @description `null` numa falta: o mínimo é do artigo e vale sobre o consolidado. */
+            readonly location?: components["schemas"]["LocalizacaoReferencia"] | null;
+            readonly lot?: components["schemas"]["ValidadeProximaOut"] | null;
+            readonly min_quantity?: components["schemas"]["QuantidadeOut"] | null;
+            /** Format: uuid */
+            readonly product?: string;
+            readonly quantity?: components["schemas"]["QuantidadeOut"];
+            readonly reason?: components["schemas"]["MotivoDeAlertaEnum"];
+            readonly severity?: components["schemas"]["GravidadeEnum"];
+            readonly short_name?: string;
+            readonly threshold_days?: number | null;
             /**
-             * Format: date-time
-             * @description Data de validade (NULL se sem data)
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
              */
-            readonly expires_at?: string | null;
-            /** Format: uuid */
-            readonly location_id?: string | null;
-            readonly location_name?: string | null;
-            readonly lot_code?: string | null;
-            /** Format: uuid */
-            readonly product_id?: string;
-            readonly product_name?: string;
-            /** @description critical|warning|info */
-            readonly severity?: string;
+            readonly value_eur?: string;
         };
         /**
          * @description O corpo do `POST /auth/ativar`: o fragmento do link e, talvez, a password.
@@ -1625,12 +1687,44 @@ export interface components {
             /** Format: decimal */
             share: string;
         };
+        /**
+         * @description Uma linha do `GET /stock/alerts/waste`: o que se deitou fora, e quem.
+         *
+         *     É do `inventory` e não do `reporting`, e a fronteira está escrita: *o
+         *     `reporting` agrega o negócio num período e é do dono; o `inventory` lista o
+         *     ledger para quem age sobre ele* (ADR 0034, decisão 4). Esta lista fica ao
+         *     lado do botão que a cria e tem de chegar ao `staff` — por isso o que lhe
+         *     falta é só o `value_eur`.
+         *
+         *     `quantity` vem **positiva**: o sinal do ledger já foi lido, e "perdeste −2
+         *     kg" não é uma frase.
+         */
+        DesperdicioOut: {
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
+            readonly created_by?: string | null;
+            /** Format: uuid */
+            readonly id?: string;
+            readonly location?: components["schemas"]["LocalizacaoReferencia"];
+            readonly lot_code?: string | null;
+            /** Format: date-time */
+            readonly occurred_at?: string;
+            /** Format: uuid */
+            readonly product?: string;
+            readonly quantity?: components["schemas"]["QuantidadeOut"];
+            readonly reason?: components["schemas"]["MotivoDeQuebraEnum"] | components["schemas"]["BlankEnum"];
+            readonly short_name?: string;
+            /**
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
+             */
+            readonly value_eur?: string;
+        };
         /** @description Quanto se perdeu por motivo. Ordenada pelo servidor, a maior primeiro. */
         DesperdicioPorMotivoOut: {
             /** Format: decimal */
             amount_eur: string;
             movements: number;
-            reason: components["schemas"]["ReasonEnum"];
+            reason: components["schemas"]["MotivoDeQuebraEnum"];
             /** Format: decimal */
             share: string;
         };
@@ -1881,6 +1975,14 @@ export interface components {
          * @enum {string}
          */
         EstadoDoDocumentoEnum: "aguarda_captura" | "expirado" | "a_normalizar" | "a_extrair" | "lido" | "ilegivel" | "erro" | "descartado";
+        /**
+         * @description * `negativo` - negativo
+         *     * `esgotado` - esgotado
+         *     * `baixo` - baixo
+         *     * `ok` - ok
+         * @enum {string}
+         */
+        EstadoDoNivelEnum: "negativo" | "esgotado" | "baixo" | "ok";
         /**
          * @description * `` - Sem rótulo
          *     * `use_by` - consumir até
@@ -2134,6 +2236,13 @@ export interface components {
          */
         GranularityEnum: "day" | "week";
         /**
+         * @description * `danger` - danger
+         *     * `warning` - warning
+         *     * `info` - info
+         * @enum {string}
+         */
+        GravidadeEnum: "danger" | "warning" | "info";
+        /**
          * @description * `purchases` - purchases
          *     * `goods_consumed` - goods_consumed
          *     * `waste` - waste
@@ -2242,14 +2351,6 @@ export interface components {
          */
         KeyEnum: "today" | "7d" | "30d" | "month" | "prev_month";
         /**
-         * @description * `goods` - goods
-         *     * `deposit` - deposit
-         *     * `charge` - charge
-         *     * `document_ref` - document_ref
-         * @enum {string}
-         */
-        KindEnum: "goods" | "deposit" | "charge" | "document_ref";
-        /**
          * @description * `pt-pt` - Português (Portugal)
          *     * `en` - English
          * @enum {string}
@@ -2335,7 +2436,7 @@ export interface components {
             expires_at?: string | null;
             invoice_unit: string;
             /** @default goods */
-            kind: components["schemas"]["KindEnum"];
+            kind: components["schemas"]["TipoDeLinhaDeRececaoEnum"];
             /** Format: decimal */
             line_total?: string | null;
             /** Format: uuid */
@@ -2410,7 +2511,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             invoice_unit: string;
-            kind: components["schemas"]["KindEnum"];
+            kind: components["schemas"]["TipoDeLinhaDeRececaoEnum"];
             /** Format: decimal */
             line_total?: string | null;
             location: components["schemas"]["LocalizacaoReference"];
@@ -2565,6 +2666,152 @@ export interface components {
             status: components["schemas"]["EstadoDaMensagemEnum"];
             tool_calls: components["schemas"]["ToolCallOut"][];
         };
+        /**
+         * @description * `expiry` - expiry
+         *     * `missing` - missing
+         * @enum {string}
+         */
+        MotivoDeAlertaEnum: "expiry" | "missing";
+        /**
+         * @description * `expired` - expired
+         *     * `spoiled` - spoiled
+         *     * `prep_loss` - prep_loss
+         *     * `breakage` - breakage
+         *     * `other` - other
+         * @enum {string}
+         */
+        MotivoDeQuebraEnum: "expired" | "spoiled" | "prep_loss" | "breakage" | "other";
+        /**
+         * @description * `receipt` - receipt
+         *     * `return` - return
+         *     * `consumption` - consumption
+         *     * `waste` - waste
+         *     * `adjustment` - adjustment
+         *     * `transfer_out` - transfer_out
+         *     * `transfer_in` - transfer_in
+         *     * `production_out` - production_out
+         *     * `production_in` - production_in
+         * @enum {string}
+         */
+        MovementTypeEnum: "receipt" | "return" | "consumption" | "waste" | "adjustment" | "transfer_out" | "transfer_in" | "production_out" | "production_in";
+        /**
+         * @description Uma linha do ledger: `GET /stock/movements` e o 201 da quebra.
+         *
+         *     **A mesma forma nas duas portas**, de propósito: o que o 201 devolve é o
+         *     que a lista vai mostrar a seguir, e duas formas do mesmo facto são duas
+         *     oportunidades de divergirem.
+         *
+         *     `quantity` vem **com sinal** — entradas positivas, saídas negativas —,
+         *     porque aqui a linha é o ledger e o sinal é o facto. (Na lista de
+         *     desperdício vem positiva: lá a pergunta é "quanto se perdeu".)
+         *
+         *     `unit_cost` só sai a `owner|manager`, e vem `null` quando o custo é
+         *     desconhecido: zero não é um preço de zero euros (ADR 0024, decisão 5).
+         *
+         *     ## Os dois campos novos da referência, e o uuid que o ecrã não imprime
+         *
+         *     O `reference` de um ajuste de fecho é o **id cru da contagem** e o ecrã
+         *     dizia "texto curto, para mostrar". Não se muda o que se grava — há um
+         *     índice parcial e dois lookups por essa string —, servem-se
+         *     `reference_kind` e `reference_label`, e o ecrã imprime o rótulo. O que vier
+         *     de fora deste módulo fica sem rótulo, e sem rótulo o ecrã não imprime nada.
+         */
+        MovimentoOut: {
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
+            /** @description O `display_name` da pertença, nunca o email. `null` quando quem agiu já não tem nome aqui. */
+            readonly created_by?: string | null;
+            /** Format: uuid */
+            readonly id?: string;
+            readonly location?: components["schemas"]["LocalizacaoReferencia"];
+            /** @description `null` num lote sintético. */
+            readonly lot_code?: string | null;
+            readonly movement_type?: components["schemas"]["MovementTypeEnum"];
+            /** Format: date-time */
+            readonly occurred_at?: string;
+            readonly quantity?: components["schemas"]["QuantidadeOut"];
+            /**
+             * @description `""` quando o movimento não tem motivo.
+             *
+             *     * `expired` - expired
+             *     * `spoiled` - spoiled
+             *     * `prep_loss` - prep_loss
+             *     * `breakage` - breakage
+             *     * `other` - other
+             */
+            readonly reason?: components["schemas"]["MotivoDeQuebraEnum"] | components["schemas"]["BlankEnum"];
+            readonly reference?: string | null;
+            readonly reference_kind?: string | null;
+            readonly reference_label?: string | null;
+            /**
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
+             */
+            readonly unit_cost?: string | null;
+        };
+        /**
+         * @description Uma linha do `GET /stock/levels`: **um artigo**, somado sobre os lotes.
+         *
+         *     Era o `/stock/summary` do servidor e mudou de casa na ADR 0034, decisão 1 —
+         *     o caminho `/stock/summary` ficou livre para os quatro números do cliente. O
+         *     grão de lote vivia no `by-location`/`by-product`, que morreram inteiros por
+         *     não terem consumidor nenhum.
+         *
+         *     ## O que sai por papel, e o que nunca sai
+         *
+         *     `unit_cost` e `total_value` só vão a `owner|manager` (ADR 0032, decisão 1),
+         *     e vão **os dois juntos**: um reconstrói o outro com a quantidade que já
+         *     está no payload, logo esconder um só é teatro.
+         *
+         *     O que fica para toda a gente: a quantidade (as quantidades são o produto),
+         *     o mínimo, o estado, a validade mais próxima, a repartição, e a
+         *     **cobertura** — `quantity_without_cost` é quantidade e não euro, e é o que
+         *     diz se o valor está subestimado em 5 % ou em 95 %.
+         *
+         *     A invariante da ADR 0032 continua a fechar ao cêntimo:
+         *     `unit_cost × (quantity − quantity_without_cost) == total_value`, com as
+         *     duas pontas do divisor servidas a quem não vê euros.
+         *
+         *     ## `status` e `min_quantity` são **do estabelecimento**, também com `?loja=`
+         *
+         *     O mínimo é por artigo (ADR 0024) e compará-lo contra o saldo de uma loja
+         *     inventava faltas. O `?loja=` escopa só `quantity`, `by_location`,
+         *     `nearest_expiry` e o valor. **O ecrã tem de escrever "mínimo do
+         *     estabelecimento"**, senão "0,4 kg · ok" lê-se como erro de cálculo.
+         */
+        NivelDeStockOut: {
+            readonly by_location?: components["schemas"]["NivelPorLocalizacaoOut"][];
+            /** @description Do **artigo**, logo do estabelecimento inteiro. */
+            readonly min_quantity?: components["schemas"]["QuantidadeOut"];
+            readonly nearest_expiry?: components["schemas"]["ValidadeProximaOut"] | null;
+            /** Format: uuid */
+            readonly product?: string;
+            readonly quantity?: components["schemas"]["QuantidadeOut"];
+            /** @description Quanta desta quantidade está em níveis sem preço registado. Zero é cobertura total; igual ao `quantity` é não haver preço nenhum. */
+            readonly quantity_without_cost?: components["schemas"]["QuantidadeOut"];
+            readonly short_name?: string;
+            readonly status?: components["schemas"]["EstadoDoNivelEnum"];
+            /**
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
+             */
+            readonly total_value?: string;
+            /**
+             * Format: decimal
+             * @description Custo médio ponderado da quantidade **com** preço — nunca diluído pela parte sem preço. NULL quando nenhuma tem. Ausente para quem não vê euros.
+             */
+            readonly unit_cost?: string | null;
+        };
+        /**
+         * @description Quanto deste artigo está em cada prateleira. Sem euros, de propósito.
+         *
+         *     A repartição é **o produto**: é ela que responde a "onde está?" e é dela
+         *     que o selector de loja do ecrã tira as opções. Localizações a zero não
+         *     entram — uma loja sem nada deste artigo não é um sítio onde ele está.
+         */
+        NivelPorLocalizacaoOut: {
+            readonly location?: components["schemas"]["LocalizacaoReferencia"];
+            readonly quantity?: components["schemas"]["QuantidadeOut"];
+        };
         /** @enum {unknown} */
         NullEnum: null;
         /**
@@ -2598,6 +2845,21 @@ export interface components {
             normalized: boolean;
             position: number;
             width: number | null;
+        };
+        PaginatedAlertaOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["AlertaOut"][];
         };
         PaginatedContagemOutList: {
             /** @example 123 */
@@ -2643,6 +2905,21 @@ export interface components {
              */
             previous?: string | null;
             results: components["schemas"]["ConviteOut"][];
+        };
+        PaginatedDesperdicioOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["DesperdicioOut"][];
         };
         PaginatedDocumentoOutList: {
             /** @example 123 */
@@ -2703,6 +2980,36 @@ export interface components {
              */
             previous?: string | null;
             results: components["schemas"]["LocalizacaoOut"][];
+        };
+        PaginatedMovimentoOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["MovimentoOut"][];
+        };
+        PaginatedNivelDeStockOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["NivelDeStockOut"][];
         };
         PaginatedProdutoOutList: {
             /** @example 123 */
@@ -3035,14 +3342,56 @@ export interface components {
             readonly display_unit?: string;
         };
         /**
-         * @description * `expired` - expired
-         *     * `spoiled` - spoiled
-         *     * `prep_loss` - prep_loss
-         *     * `breakage` - breakage
-         *     * `other` - other
-         * @enum {string}
+         * @description `POST /stock/movements/waste`: o que se perdeu, onde, e em que unidade.
+         *
+         *     ## O `unit` é obrigatório, e isso fechou um buraco medido
+         *
+         *     A versão aprovada da ADR 0034 escrevia *"quantity: Decimal>0 (unidade
+         *     BASE)"* contra um formulário que apresenta a **unidade mostrada** ao lado
+         *     do campo e só normaliza a vírgula decimal. Entre `g` e `kg` há um factor de
+         *     1000, o destino é um ledger append-only (ADR 0006: sem `UPDATE`, sem
+         *     `DELETE`) e o erro não tem botão de desfazer. Um número sem unidade
+         *     explícita num corpo de escrita é uma convenção, e convenções não sobrevivem
+         *     a dois ecrãs (decisão 11).
+         *
+         *     A unidade tem de ser a **base** ou a de **apresentação daquele artigo** —
+         *     qualquer outra é 400, e não existe motor genérico de conversão (ADR 0011).
+         *     A conversão é do servidor, nunca do cliente.
+         *
+         *     ## O `lot` é opcional, e omiti-lo é o caso normal
+         *
+         *     Sem lote, o servidor escolhe por FEFO na localização pedida e reparte por
+         *     quantos forem precisos. Com lote — o caso do ecrã de Alertas, onde o alerta
+         *     **é** sobre um lote —, sai tudo desse. O campo era `lot_code` e passou a
+         *     `lot`: um código não é chave e obrigava o servidor a resolvê-lo.
          */
-        ReasonEnum: "expired" | "spoiled" | "prep_loss" | "breakage" | "other";
+        QuebraInRequest: {
+            /**
+             * Format: uuid
+             * @description UUID da localização
+             */
+            location: string;
+            /**
+             * Format: uuid
+             * @description Omitido, o servidor escolhe por FEFO na localização pedida.
+             */
+            lot?: string | null;
+            /**
+             * Format: uuid
+             * @description UUID do artigo
+             */
+            product: string;
+            /**
+             * Format: decimal
+             * @description Quantidade > 0, na unidade de `unit`.
+             */
+            quantity: string;
+            reason: components["schemas"]["MotivoDeQuebraEnum"];
+            /** @description Texto livre que acompanha o motivo. */
+            reason_detail?: string;
+            /** @description `base_unit` ou `display_unit` **daquele artigo**. Outra é 400. */
+            unit: string;
+        };
         /** @description Entrada para criar receção. */
         RececaoIn: {
             customer_name?: string;
@@ -3190,6 +3539,19 @@ export interface components {
             detail: string;
         };
         /**
+         * @description O 201 de `POST /stock/movements/waste`: **sempre uma lista**.
+         *
+         *     Mesmo com um lote só. Uma resposta que é objecto no caso normal e lista no
+         *     caso raro é um cliente que funciona até ao dia em que o lote acaba a meio
+         *     (ADR 0034, decisão 8) — e é a forma que o 201 da transferência já tem.
+         *
+         *     Sem mixin próprio: o dinheiro está nas linhas, e o `context` chega-lhes
+         *     pelo `root`.
+         */
+        RespostaDeQuebraOut: {
+            readonly movements?: components["schemas"]["MovimentoOut"][];
+        };
+        /**
          * @description * `depreciation` - depreciation
          *     * `financing` - financing
          *     * `income_tax` - income_tax
@@ -3197,6 +3559,75 @@ export interface components {
          * @enum {string}
          */
         ResultExcludesEnum: "depreciation" | "financing" | "income_tax" | "owner_compensation";
+        /**
+         * @description Os contadores do topo do ecrã de Alertas (`GET /stock/alerts/summary`).
+         *
+         *     Endpoint e não derivação da lista (ADR 0034, decisão 5): a lista vem
+         *     paginada a 50 e os dois agregados do desperdício são janelas de dia de
+         *     negócio que a lista de alertas não contém.
+         *
+         *     ## O `staff` perde dois euros e ganha quatro contagens
+         *
+         *     `wasted_today_eur` e `wasted_week_eur` continuam ausentes para quem não vê
+         *     euros. Em troca, `wasted_*_count` e `wasted_*_lines_without_cost` estão
+         *     **presentes para os três papéis** — são contagens e não euros, e um
+         *     `COUNT(id)` não tem numerador nem denominador, logo nenhuma sequência de
+         *     observações reconstrói um custo unitário a partir dele (ADR 0034, d10).
+         *
+         *     A razão é de **navegação**: os dois números em euros eram as duas únicas
+         *     portas para a lista de desperdício, e a decisão 4 diz expressamente que
+         *     essa lista tem de chegar ao `staff`. Sem contador, a rota existia sem ter
+         *     quem lá entrasse.
+         *
+         *     A cobertura entra pela régua da ADR 0032: "7 quebras hoje" e "7 quebras
+         *     hoje, 4 sem preço conhecido" não são a mesma frase.
+         */
+        ResumoDeAlertasOut: {
+            /** @description `"04:00"`, hora local do estabelecimento. */
+            readonly business_day_starts_at?: string;
+            /** @description Linhas da lista de alertas de validade. */
+            readonly expiring_count?: number;
+            readonly expiring_within_days?: number;
+            readonly missing_count?: number;
+            /** Format: date-time */
+            readonly wasted_since?: string;
+            readonly wasted_today_count?: number;
+            /**
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
+             */
+            readonly wasted_today_eur?: string;
+            readonly wasted_today_lines_without_cost?: number;
+            readonly wasted_week_count?: number;
+            /**
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
+             */
+            readonly wasted_week_eur?: string;
+            readonly wasted_week_lines_without_cost?: number;
+        };
+        /**
+         * @description Os quatro números do topo do ecrã de Stock (`GET /stock/summary`).
+         *
+         *     `below_min_count` e `expiring_count` são, por construção, o `count` de
+         *     `/stock/levels?filtro=falta` e de `?filtro=validade` no mesmo âmbito — ver
+         *     `selectors.resumo_de_stock`. O `expiring_within_days` viaja com o número
+         *     para o ecrã poder mostrar o limiar em vez de o esconder num painel de
+         *     configurações.
+         *
+         *     O `expiring_count` daqui conta **artigos**; o do `/stock/alerts/summary`
+         *     conta **linhas da lista de alertas**. São dois factos com dois rótulos.
+         */
+        ResumoDeStockOut: {
+            readonly below_min_count?: number;
+            readonly expiring_count?: number;
+            readonly expiring_within_days?: number;
+            /**
+             * Format: decimal
+             * @description Σ do valor dos artigos com saldo positivo — um saldo negativo não baixa o valor do stock. Ausente para quem não vê euros.
+             */
+            readonly stock_value_eur?: string;
+        };
         /**
          * @description `GET /reporting/summary`. **Sem total de gastos e sem resultado**, de propósito.
          *
@@ -3251,7 +3682,7 @@ export interface components {
             base_per_invoice_unit?: string | null;
             /** Format: date */
             expires_at?: string | null;
-            kind?: components["schemas"]["KindEnum"];
+            kind?: components["schemas"]["TipoDeLinhaDeRececaoEnum"];
             /** Format: uuid */
             location?: string;
             lot_code?: string;
@@ -3390,50 +3821,6 @@ export interface components {
          */
         SessaoOutEstadoEnum: "anonimo" | "sem_estabelecimento" | "escolha_pendente" | "ativa";
         /**
-         * @description Uma linha do `by-location` / `by-product`: **um lote**, onde ele está.
-         *
-         *     É aqui que o marcador qualitativo é exacto e por isso é aqui que ele é uma
-         *     palavra: a linha é um lote, e um lote tem preço ou não tem. As três palavras
-         *     possíveis e a razão de serem três estão no `selectors.ESTADOS_DO_CUSTO`.
-         */
-        StockDetail: {
-            /**
-             * @description Qualidade do custo deste lote. `estimado` não aparece no painel, que lê a projeção: ver a dívida nomeada em `ESTADOS_DO_CUSTO`.
-             *
-             *     * `conhecido` - conhecido
-             *     * `estimado` - estimado
-             *     * `desconhecido` - desconhecido
-             */
-            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
-            /**
-             * Format: date-time
-             * @description Data de validade (NULL se sem data)
-             */
-            readonly expires_at?: string | null;
-            /** Format: uuid */
-            readonly location_id?: string | null;
-            readonly location_name?: string | null;
-            readonly lot_code?: string | null;
-            /** Format: uuid */
-            readonly product_id?: string;
-            readonly product_name?: string;
-            /**
-             * Format: decimal
-             * @description Quantidade em unidade base
-             */
-            readonly quantity?: string;
-            /**
-             * Format: decimal
-             * @description Valor da quantidade com preço registado: `unit_cost × (quantity − quantity_without_cost)`. Zero quando nenhuma tem preço — é a soma de nada. Ausente para quem não vê euros.
-             */
-            readonly total_value?: string;
-            /**
-             * Format: decimal
-             * @description Custo unitário médio ponderado da quantidade **com** preço registado — nunca diluído pela parte sem preço. NULL quando nenhuma tem. Ausente para quem não vê euros.
-             */
-            readonly unit_cost?: string | null;
-        };
-        /**
          * @description O 201 de `POST /stock/movements/{waste,adjustment}`.
          *
          *     Até 2026-10-21 este serializer **não serializava nada**: estava declarado no
@@ -3473,50 +3860,6 @@ export interface components {
             /** Format: decimal */
             display: string;
             display_unit: string;
-        };
-        /**
-         * @description Uma linha do `GET /stock/summary`: **um** artigo, somado em todos os lotes.
-         *
-         *     Uma linha por artigo e não uma por custo distinto — ver o defeito (b) no
-         *     `selectors.stock_summary`: contar as linhas chegou a dizer quantos custos
-         *     diferentes um artigo tem, que é um oráculo sobre preços sem nenhuma chave de
-         *     preço no payload.
-         *
-         *     ## Cobertura e não um `cost_status`, e é a diferença entre agregado e lote
-         *
-         *     O facto "esta entrada ficou sem preço" é **por lote**: é o defeito de uma
-         *     receção concreta. Num artigo com dois lotes, um com preço e outro sem, não
-         *     há palavra que descreva a linha agregada — e inventar uma quarta
-         *     ("parcialmente desconhecido") era recriar a divergência de vocabulário que a
-         *     ADR 0032 fechou. O que um agregado mostra é a **cobertura**: quanta
-         *     quantidade não tem preço. É quantidade e não euro, diz se o valor está
-         *     subestimado em 5 % ou em 95 %, e é o mesmo feitio do `linhas_sem_custo` do
-         *     desperdício e do `ingredientes_sem_custo` de uma receita.
-         */
-        StockSummary: {
-            /** Format: uuid */
-            readonly product_id?: string;
-            readonly product_name?: string;
-            /**
-             * Format: decimal
-             * @description Quantidade em unidade base
-             */
-            readonly quantity?: string;
-            /**
-             * Format: decimal
-             * @description Quanta desta quantidade está em níveis sem preço registado. Zero é cobertura total, e igual ao `quantity` é não haver preço nenhum. O que sobra (`quantity` menos isto) é a quantidade que pagou o `total_value`.
-             */
-            readonly quantity_without_cost?: string;
-            /**
-             * Format: decimal
-             * @description Valor da quantidade com preço registado: `unit_cost × (quantity − quantity_without_cost)`. Zero quando nenhuma tem preço — é a soma de nada. Ausente para quem não vê euros.
-             */
-            readonly total_value?: string;
-            /**
-             * Format: decimal
-             * @description Custo unitário médio ponderado da quantidade **com** preço registado — nunca diluído pela parte sem preço. NULL quando nenhuma tem. Ausente para quem não vê euros.
-             */
-            readonly unit_cost?: string | null;
         };
         /**
          * @description O 201 de `POST /stock/movements/transfer` — e é novo porque **não existia**.
@@ -3598,6 +3941,20 @@ export interface components {
             nome: string;
             papel: components["schemas"]["PapelEnum"];
         };
+        /**
+         * @description * `goods` - goods
+         *     * `deposit` - deposit
+         *     * `charge` - charge
+         *     * `document_ref` - document_ref
+         * @enum {string}
+         */
+        TipoDeLinhaDeRececaoEnum: "goods" | "deposit" | "charge" | "document_ref";
+        /**
+         * @description * `use_by` - use_by
+         *     * `best_before` - best_before
+         * @enum {string}
+         */
+        TipoDeValidadeEnum: "use_by" | "best_before";
         /** @description Uma entrada do rasto, já revalidada à leitura (`chamadas_validadas`). */
         ToolCallOut: {
             args: {
@@ -3609,33 +3966,34 @@ export interface components {
             rows: number;
             truncated: boolean;
         };
-        /** @description Entrada de transferência (POST /stock/movements/transfer). */
-        TransferRequest: {
+        /**
+         * @description `POST /stock/movements/transfer`: de onde, para onde, quanto.
+         *
+         *     Quantidade em unidade **base**, pela mesma razão do `AjusteInSerializer`.
+         */
+        TransferenciaInRequest: {
             /**
              * Format: uuid
              * @description UUID da localização de origem
              */
-            from_location_id: string;
+            from_location: string;
+            /** Format: uuid */
+            lot?: string | null;
             /**
              * Format: uuid
-             * @description UUID do lote (obrigatório se product.track_lots=True)
+             * @description UUID do artigo
              */
-            lot_id?: string | null;
-            /**
-             * Format: uuid
-             * @description UUID do produto
-             */
-            product_id: string;
+            product: string;
             /**
              * Format: decimal
-             * @description Quantidade > 0 (em unidade base)
+             * @description Quantidade > 0 em unidade base.
              */
             quantity: string;
             /**
              * Format: uuid
              * @description UUID da localização de destino
              */
-            to_location_id: string;
+            to_location: string;
         };
         /**
          * @description * `revenue` - revenue
@@ -3665,6 +4023,42 @@ export interface components {
             id: string;
             tema: components["schemas"]["TemaEnum"];
         };
+        /**
+         * @description O lote que vence primeiro, com a data, os dias e **a gravidade**.
+         *
+         *     Três formas que mudaram com a ADR 0034 e que o cliente valida à chegada:
+         *
+         *     * `expires_at` é uma **data** e não um instante (defeito (a)): um instante
+         *       tem fuso e a data impressa na embalagem não muda com quem a lê;
+         *     * `kind` é **nulável**: o `expiry_kind` do `catalog` é `""` por omissão e o
+         *       `tipoValidadeSchema` do cliente não aceita `""`, logo traduz-se para
+         *       `null` e a gravidade lê-se pela coluna estrita da tabela da decisão 9;
+         *     * `lot_code` é **nulável**: um lote sintético (`__<uuid>__`) existe para o
+         *       ledger ter uma chave e não para alguém o ler. Sem isto, a primeira
+         *       produção de receita rebentava o ecrã de Alertas.
+         *
+         *     A `severity` é nova e é o que fecha a quarta definição de gravidade: sem
+         *     ela o cliente é **obrigado** a recalcular a cor para pintar o trilho (ADR
+         *     0034, decisão 9). A palavra continua a ser dele, porque i18n é dele; a cor
+         *     e a urgência passam a ser do servidor.
+         */
+        ValidadeProximaOut: {
+            /** @description Dias até à validade; negativo se já passou. */
+            readonly days_away?: number;
+            /** Format: date */
+            readonly expires_at?: string;
+            /**
+             * @description `null` num artigo sem rótulo de validade.
+             *
+             *     * `use_by` - use_by
+             *     * `best_before` - best_before
+             */
+            readonly kind?: (components["schemas"]["TipoDeValidadeEnum"] | components["schemas"]["NullEnum"]) | null;
+            readonly lot_code?: string | null;
+            /** Format: uuid */
+            readonly lot_id?: string;
+            readonly severity?: components["schemas"]["GravidadeEnum"];
+        };
         /** @description Breakdown de IVA. */
         VatBreakdown: {
             /** Format: decimal */
@@ -3691,41 +4085,6 @@ export interface components {
          * @enum {string}
          */
         WarningsEnum: "total_nao_bate" | "taxa_desconhecida" | "sem_taxa" | "sem_quantidade" | "sem_conversao" | "preco_desviado" | "confianca_baixa";
-        /** @description Entrada de desperdício (POST /stock/movements/waste). */
-        WasteRequest: {
-            /**
-             * Format: uuid
-             * @description UUID da localização
-             */
-            location_id: string;
-            /**
-             * Format: uuid
-             * @description UUID do lote (obrigatório se product.track_lots=True)
-             */
-            lot_id?: string | null;
-            /**
-             * Format: uuid
-             * @description UUID do produto
-             */
-            product_id: string;
-            /**
-             * Format: decimal
-             * @description Quantidade > 0 (em unidade base)
-             */
-            quantity: string;
-            /**
-             * @description Motivo do desperdício
-             *
-             *     * `expired` - expired
-             *     * `spoiled` - spoiled
-             *     * `prep_loss` - prep_loss
-             *     * `breakage` - breakage
-             *     * `other` - other
-             */
-            reason: components["schemas"]["ReasonEnum"];
-            /** @description Detalhes opcionais se reason='other' */
-            reason_detail?: string;
-        };
         /**
          * @description Uma zona da contagem. Nesta fatia a zona **é** a localização (ADR 0030, d3).
          *
@@ -5180,7 +5539,12 @@ export interface operations {
     };
     stock_alerts: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description A page number within the paginated result set. */
+                page?: number;
+                /** @description Sem valor, vêm os dois motivos. */
+                risco?: "expira" | "falta";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5192,12 +5556,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Alert"][];
+                    "application/json": components["schemas"]["PaginatedAlertaOutList"];
                 };
             };
         };
     };
-    stock_by_location: {
+    stock_alerts_summary: {
         parameters: {
             query?: never;
             header?: never;
@@ -5211,14 +5575,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StockDetail"][];
+                    "application/json": components["schemas"]["ResumoDeAlertasOut"];
                 };
             };
         };
     };
-    stock_by_product: {
+    stock_alerts_waste: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description A page number within the paginated result set. */
+                page?: number;
+                /** @description Janela em dias **de negócio**: `hoje` é desde o `business_day_starts_at`, `semana` são sete dias rolantes incluindo hoje. */
+                periodo?: "hoje" | "semana";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5230,7 +5599,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StockDetail"][];
+                    "application/json": components["schemas"]["PaginatedDesperdicioOutList"];
                 };
             };
         };
@@ -5410,6 +5779,58 @@ export interface operations {
             };
         };
     };
+    stock_levels: {
+        parameters: {
+            query?: {
+                /** @description `falta` é tudo o que não está `ok`; `validade` é o que entra no limiar. */
+                filtro?: "falta" | "validade";
+                /** @description Escopa a quantidade, a repartição, a validade mais próxima e o valor. **Não** escopa o `status` nem o `min_quantity`: o mínimo é por artigo e é sempre do estabelecimento. */
+                loja?: string;
+                /** @description A page number within the paginated result set. */
+                page?: number;
+                /** @description Procura no nome curto. */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedNivelDeStockOutList"];
+                };
+            };
+        };
+    };
+    stock_movements_listar: {
+        parameters: {
+            query: {
+                /** @description Obrigatório: o ledger lê-se por artigo. Sem ele é 400. */
+                artigo: string;
+                /** @description A page number within the paginated result set. */
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedMovimentoOutList"];
+                };
+            };
+        };
+    };
     stock_movements_adjustment: {
         parameters: {
             query?: never;
@@ -5419,8 +5840,8 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AdjustmentRequest"];
-                "multipart/form-data": components["schemas"]["AdjustmentRequest"];
+                "application/json": components["schemas"]["AjusteInRequest"];
+                "multipart/form-data": components["schemas"]["AjusteInRequest"];
             };
         };
         responses: {
@@ -5443,8 +5864,8 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TransferRequest"];
-                "multipart/form-data": components["schemas"]["TransferRequest"];
+                "application/json": components["schemas"]["TransferenciaInRequest"];
+                "multipart/form-data": components["schemas"]["TransferenciaInRequest"];
             };
         };
         responses: {
@@ -5467,8 +5888,8 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WasteRequest"];
-                "multipart/form-data": components["schemas"]["WasteRequest"];
+                "application/json": components["schemas"]["QuebraInRequest"];
+                "multipart/form-data": components["schemas"]["QuebraInRequest"];
             };
         };
         responses: {
@@ -5477,14 +5898,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StockMovementResponse"];
+                    "application/json": components["schemas"]["RespostaDeQuebraOut"];
                 };
             };
         };
     };
     stock_summary: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Escopa a quantidade, a repartição, a validade mais próxima e o valor. **Não** escopa o `status` nem o `min_quantity`: o mínimo é por artigo e é sempre do estabelecimento. */
+                loja?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5496,7 +5920,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["StockSummary"][];
+                    "application/json": components["schemas"]["ResumoDeStockOut"];
                 };
             };
         };

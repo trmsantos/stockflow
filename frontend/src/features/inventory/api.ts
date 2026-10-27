@@ -26,6 +26,7 @@ import {
   movimentoSchema,
   nivelDeStockSchema,
   quebraParaRegistarSchema,
+  respostaDeQuebraSchema,
   resumoDeAlertasSchema,
   resumoDeStockSchema,
   type Alerta,
@@ -47,12 +48,16 @@ import {
 /**
  * A camada de dados do módulo `inventory` — o `api.py` do frontend.
  *
- * Está escrita na **forma final** (ADR 0008, decisão 3). Não há `if (fake)`,
- * não há hook para ligar depois e não há um segundo caminho para dados reais:
- * em desenvolvimento quem responde a estes caminhos é o servidor de fixtures do
- * Vite, e no dia em que o Django os servir não muda uma linha aqui nem nos
- * ecrãs. Mesmo `fetch`, mesmo cookie de sessão, mesmo `X-Tenant-ID`, mesmo
- * envelope de paginação, mesmo Zod, mesmos `retry` e `staleTime`.
+ * Estava escrita na **forma final** antes de o Django existir (ADR 0008,
+ * decisão 3), e a ADR 0034 cobrou a promessa: os sete recursos passaram do
+ * servidor de dados falsos para o Django e **nenhum ecrã mudou de forma por
+ * causa disso**. O mesmo `fetch`, o mesmo cookie de sessão, o mesmo
+ * `X-Tenant-ID`, o mesmo envelope de paginação, o mesmo Zod, os mesmos `retry`
+ * e `staleTime`.
+ *
+ * O que mudou foi o **contrato**, e está nomeado onde mudou: os três filtros do
+ * Stock passaram a `WHERE` no servidor, a quebra mudou de caminho e de corpo, e
+ * sete chaves de dinheiro ficam ausentes para quem não as vê.
  *
  * Os ecrãs não chamam `apiRequest` nem conhecem caminhos: usam os hooks daqui.
  */
@@ -138,32 +143,71 @@ export function useInvalidarLedger(): () => Promise<void> {
   }, [queryClient, tenant]);
 }
 
-/** O que a lista e o resumo partilham: o âmbito de localização. */
+/** O âmbito do resumo: a localização, e mais nada. */
 export interface AmbitoDeStock {
   /** `id` da localização. Ausente = consolidado, todas as localizações. */
   readonly loja?: string | undefined;
 }
 
 /**
- * A lista do ecrã Stock, já ordenada **pelo servidor** ("o que está pior
- * primeiro", nunca alfabética). O cliente não reordena: uma segunda definição
- * de "pior" divergiria da dos alertas na primeira vez que o limiar mudasse.
+ * O âmbito da **lista**, que é o do resumo mais os dois filtros do topo.
+ *
+ * Os três são `WHERE` no servidor desde a ADR 0034 (decisão 2), e isso corrigiu
+ * um defeito a sério: o ecrã filtrava `?q=` e `?filtro=` em JavaScript sobre os
+ * `results`, logo com paginação a 50 procurava **só nas 50 piores linhas** e
+ * calava as outras em silêncio — e porque a ordem é "o pior primeiro",
+ * calava-as exactamente onde ninguém nota.
+ */
+export interface FiltrosDeStock extends AmbitoDeStock {
+  /**
+   * Procura no nome curto.
+   *
+   * **Perdeu os acentos na mudança, e isso é uma dívida do servidor.** O
+   * `filtrar()` que vivia no ecrã normalizava o termo *e* o nome (`NFD` +
+   * remover diacríticos), com o caso de uso escrito por extenso: *"quem procura
+   * «acucar» tem de encontrar «Açúcar»"*. O servidor faz `icontains`, que ignora
+   * a caixa e **não** ignora os acentos — medido: `?q=manteiga` e `?q=MANTEIGA`
+   * dão a linha, `?q=acucar` dá zero e `?q=açúcar` dá uma.
+   *
+   * Não se repõe aqui, e a razão é a mesma que mandou o filtro para o servidor:
+   * uma normalização no cliente só alcança a página carregada, logo o artigo que
+   * estivesse fora das 50 primeiras continuava invisível — a procurar com
+   * acentos *e* sem eles. A correcção é no `WHERE` (o `unaccent` do Postgres, ou
+   * uma coluna normalizada), e até lá quem procura numa cozinha com pressa tem
+   * de escrever o cedilha.
+   */
+  readonly q?: string | undefined;
+  /** `falta` é tudo o que não está `ok`; `validade` é o que entra no limiar. */
+  readonly filtro?: "falta" | "validade" | undefined;
+}
+
+/**
+ * A lista do ecrã Stock, já ordenada **e já filtrada** pelo servidor ("o que
+ * está pior primeiro", nunca alfabética). O cliente não reordena nem filtra:
+ * uma segunda definição de "pior" ou de "em falta" divergiria da dos alertas na
+ * primeira vez que o limiar mudasse.
  *
  * Devolve a **página inteira**, com o `count`, e não só as linhas: o servidor
  * pagina a 50 (`PAGE_SIZE`) e um catálogo real passa disso. Sem o total, o ecrã
- * mostrava as 50 piores e calava as outras — e porque a ordem é "o que está
- * pior primeiro", calava-as exactamente onde ninguém ia notar.
+ * mostrava as 50 piores e calava as outras.
+ *
+ * Os três filtros entram na `queryKey` porque são três perguntas diferentes ao
+ * servidor — e é isso que faz voltar atrás num filtro ser instantâneo, com a
+ * resposta anterior ainda em cache.
  */
 export function useNiveisDeStock(
-  ambito: AmbitoDeStock = {},
+  filtros: FiltrosDeStock = {},
 ): UseQueryResult<Paginated<NivelDeStock>> {
   const tenant = tenantDaCache();
-  const { loja } = ambito;
+  const { loja, q, filtro } = filtros;
 
   return useQuery({
-    queryKey: queryKeys.list(tenant, RECURSO_NIVEIS, { loja }),
+    queryKey: queryKeys.list(tenant, RECURSO_NIVEIS, { loja, q, filtro }),
     queryFn: ({ signal }) =>
-      apiRequest(CAMINHO_NIVEIS, paginated(nivelDeStockSchema), { query: { loja }, signal }),
+      apiRequest(CAMINHO_NIVEIS, paginated(nivelDeStockSchema), {
+        query: { loja, q, filtro },
+        signal,
+      }),
   });
 }
 
@@ -180,7 +224,15 @@ export function useArtigoEmStock(produto: string): UseQueryResult<NivelDeStock |
   const tenant = tenantDaCache();
 
   return useQuery({
-    queryKey: queryKeys.list(tenant, RECURSO_NIVEIS, { loja: undefined }),
+    // A **mesma** chave que o ecrã de Stock sem filtros usa, para o detalhe não
+    // pagar um pedido que a lista já pagou. Os três filtros entram vazios de
+    // propósito: o detalhe mostra o artigo em todas as localizações, porque é
+    // de uma delas que se vai registar o desperdício.
+    queryKey: queryKeys.list(tenant, RECURSO_NIVEIS, {
+      loja: undefined,
+      q: undefined,
+      filtro: undefined,
+    }),
     queryFn: ({ signal }) =>
       apiRequest(CAMINHO_NIVEIS, paginated(nivelDeStockSchema), { signal }),
     // `null` e não `undefined`: um `select` que devolve `undefined` deixa o
@@ -221,7 +273,19 @@ export function useMovimentosDoArtigo(produto: string): UseQueryResult<Paginated
 }
 
 /**
- * Registar um desperdício: **um POST que cria um movimento**, e nada mais.
+ * Registar um desperdício: **um POST que cria um ou mais movimentos**.
+ *
+ * ## Um gesto, N linhas, e por isso a resposta é uma lista
+ *
+ * Uma quebra de 2 kg com o lote FEFO a 0,4 kg **reparte-se** pelos lotes
+ * seguintes, por ordem de validade, numa transação e com a mesma referência
+ * (ADR 0034, decisão 8). O 201 é por isso `{movements: [...]}`, sempre lista,
+ * mesmo com um lote só: uma resposta que fosse objecto no caso normal e lista
+ * no caso raro era um cliente que funciona até ao dia em que o lote acaba a
+ * meio. Quem a lê nomeia **os lotes**, no plural, em vez de "o lote X".
+ *
+ * O caminho é `/stock/movements/waste` e não `/stock/movements`: o `POST` na
+ * colecção deixou de existir, e os três de escrita têm cada um o seu verbo.
  *
  * Não há update optimista, e não é por descuido. Um movimento é append-only na
  * própria base de dados (ADR 0006: `REVOKE UPDATE, DELETE` em
@@ -237,7 +301,7 @@ export function useRegistarDesperdicio() {
 
   return useMutation({
     mutationFn: (quebra: QuebraParaRegistar) =>
-      apiRequest(CAMINHO_MOVIMENTOS, movimentoSchema, {
+      apiRequest(`${CAMINHO_MOVIMENTOS}/waste`, respostaDeQuebraSchema, {
         method: "POST",
         // Validado à saída com o mesmo schema que o servidor usa à entrada: um
         // corpo mal formado falha aqui, com o campo errado nomeado, em vez de
@@ -687,9 +751,12 @@ export function useCriarLocalizacao() {
  *  - `textoDeQuantidade` decide as casas decimais pela unidade (o menor dígito
  *    visível é a unidade base). Uma segunda cópia escrevia "1500,000 g";
  *  - `leituraDaValidade` é a distinção `use_by`/`best_before` — "expira hoje"
- *    contra "perde qualidade em 2 dias" — e o tecto de cor do `best_before`. É a
- *    regra que o guião da sessão 0 §2 nomeia como condição para o dono confiar
- *    nos alertas, e a última coisa nesta casa que pode ter duas versões;
+ *    contra "perde qualidade em 2 dias". É a regra que o guião da sessão 0 §2
+ *    nomeia como condição para o dono confiar nos alertas. **O tecto de cor do
+ *    `best_before` deixou de ser daqui com a ADR 0034**: a gravidade vem no
+ *    `severity` do lote e um DDM nunca chega a `danger` no servidor, por ser
+ *    mercadoria vendável. O que fica deste lado é a palavra, porque i18n é do
+ *    cliente;
  *  - os dois `tintaDoTrilho*` são a cor do sinal, e a miniatura tem de dar
  *    exactamente a mesma que a tabela que ela previsualiza. Uma linha marcada no
  *    Início e apagada nos Alertas é pior do que uma linha sem marca nenhuma.

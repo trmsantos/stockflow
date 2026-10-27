@@ -43,6 +43,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 from rest_framework import serializers as drf
@@ -66,6 +67,20 @@ from apps.inventory.views import SO_OWNER_OU_MANAGER
 from apps.shared.db import tenant_scope
 
 CREDENCIAL = "custos-de-stock-teste-123"
+
+
+@pytest.fixture(autouse=True)
+def _cache_limpa():
+    """O throttle do DRF conta em cache, e a cache é local ao processo.
+
+    Sem isto, o balde `user` de 600/min acumula entre testes do mesmo processo
+    — e estes ficheiros fazem centenas de pedidos autenticados — e um teste
+    começa a falhar com 429 por causa dos que correram antes. É a mesma
+    fixture do `test_autenticacao.py`, pela mesma razão.
+    """
+    cache.clear()
+    yield
+    cache.clear()
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -176,6 +191,26 @@ def _receber(
         )
 
 
+def _quebrar(
+    casa: SimpleNamespace, *, quantidade: str, lote: Lot | None = None
+) -> Any:
+    """Uma quebra pela porta da frente, com o corpo da ADR 0034 (sem `_id`)."""
+    corpo: dict[str, Any] = {
+        "product": str(casa.farinha.id),
+        "location": str(casa.loja.id),
+        "quantity": quantidade,
+        "unit": "un",
+        "reason": "spoiled",
+    }
+    if lote is not None:
+        corpo["lot"] = str(lote.id)
+    resposta = _sessao(casa.staff.email).post(
+        "/api/v1/stock/movements/waste", corpo, format="json"
+    )
+    assert resposta.status_code == 201, resposta.content
+    return resposta
+
+
 def _sessao(email: str) -> APIClient:
     """Sessão a sério: o `TenantMiddleware` precisa dela para abrir o âmbito."""
     cliente = Client()
@@ -192,8 +227,21 @@ def _sessao(email: str) -> APIClient:
 
 
 def _itens(resposta: Any) -> list[dict[str, Any]]:
+    """As linhas de uma página do DRF.
+
+    Era `["items"]`: as quatro rotas do painel devolviam
+    `{items, total, page, page_size}` com `page: 1` fixo — um envelope que não
+    paginava e que mentia sobre o fazer. A ADR 0034, decisão 3, trocou-o pelo
+    do DRF, que é o que o `paginated()` do cliente valida.
+    """
     assert resposta.status_code == 200, resposta.content
-    return resposta.json()["items"]
+    return resposta.json()["results"]
+
+
+def _corpo(resposta: Any) -> dict[str, Any]:
+    """O corpo de uma resposta que não é lista (os dois resumos)."""
+    assert resposta.status_code == 200, resposta.content
+    return resposta.json()
 
 
 def _loja_com_dois_artigos(nome: str) -> SimpleNamespace:
@@ -223,66 +271,87 @@ def _loja_com_dois_artigos(nome: str) -> SimpleNamespace:
 # 1. O painel: as três rotas, nos dois sentidos
 # ---------------------------------------------------------------------------
 class TestOPainelDeStock:
-    """Decisão 2: `unit_cost` e `total_value` saem do payload de quem não vê euros."""
+    """Decisão 2: as chaves de dinheiro saem do payload de quem não vê euros.
 
-    def test_o_resumo_nao_traz_euros_ao_colaborador(self):
+    Os caminhos mudaram com a ADR 0034 — o `/stock/summary` do servidor passou
+    a `/stock/levels` e o `by-location`/`by-product` morreram inteiros —, mas a
+    política é a mesma e é ela que estes testes prendem.
+    """
+
+    def test_os_niveis_nao_trazem_euros_ao_colaborador(self):
         casa = _loja_com_dois_artigos("resumo")
-        itens = _itens(_sessao(casa.staff.email).get("/api/v1/stock/summary"))
+        itens = _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))
 
         assert len(itens) == 2
         for item in itens:
             for chave in EUROS_DO_PAINEL:
                 assert chave not in item, f"{chave} chegou a quem não vê euros"
 
-    def test_o_gerente_recebe_os_euros_do_resumo(self):
+    def test_o_gerente_recebe_os_euros_dos_niveis(self):
         casa = _loja_com_dois_artigos("resumo-gerente")
-        itens = _itens(_sessao(casa.gerente.email).get("/api/v1/stock/summary"))
+        itens = _itens(_sessao(casa.gerente.email).get("/api/v1/stock/levels"))
 
-        por_nome = {item["product_name"]: item for item in itens}
+        por_nome = {item["short_name"]: item for item in itens}
         # 100 × 0,50 + 20 × 0,75 = 65,00; o custo é a média **ponderada**.
         assert por_nome["Farinha T65"]["total_value"] == "65.00"
         assert por_nome["Farinha T65"]["unit_cost"] == "0.541667"
         assert por_nome["Açúcar"]["total_value"] == "36.00"
 
-    def test_o_detalhe_por_localizacao_nao_traz_euros_ao_colaborador(self):
-        casa = _loja_com_dois_artigos("por-local")
-        caminho = f"/api/v1/stock/by-location?location_id={casa.loja.id}"
+    def test_o_valor_do_stock_nao_chega_ao_colaborador(self):
+        """A chave nova da ADR 0034: o `stock_value_eur` dos quatro números."""
+        casa = _loja_com_dois_artigos("valor-do-stock")
 
-        for item in _itens(_sessao(casa.staff.email).get(caminho)):
-            for chave in EUROS_DO_PAINEL:
-                assert chave not in item, chave
+        do_staff = _corpo(_sessao(casa.staff.email).get("/api/v1/stock/summary"))
+        assert "stock_value_eur" not in do_staff
+        # E o que ele precisa para trabalhar continua lá, inteiro.
+        assert do_staff["below_min_count"] == 0
+        assert do_staff["expiring_within_days"] == 7
 
-        gerente = {
-            item["lot_code"]: item
-            for item in _itens(_sessao(casa.gerente.email).get(caminho))
-        }
-        assert gerente["FA-1"]["unit_cost"] == "0.500000"
-        assert gerente["FA-1"]["total_value"] == "50.00"
+        do_gerente = _corpo(_sessao(casa.gerente.email).get("/api/v1/stock/summary"))
+        assert do_gerente["stock_value_eur"] == "101.00"
 
-    def test_o_detalhe_por_artigo_nao_traz_euros_ao_colaborador(self):
-        casa = _loja_com_dois_artigos("por-artigo")
-        caminho = f"/api/v1/stock/by-product?product_id={casa.farinha.id}"
-
-        for item in _itens(_sessao(casa.staff.email).get(caminho)):
-            for chave in EUROS_DO_PAINEL:
-                assert chave not in item, chave
-
-        gerente = {
-            item["lot_code"]: item
-            for item in _itens(_sessao(casa.gerente.email).get(caminho))
-        }
-        assert gerente["FA-2"]["unit_cost"] == "0.750000"
-        assert gerente["FA-2"]["total_value"] == "15.00"
-
-    def test_os_alertas_nao_trazem_euros_a_ninguem_e_continuam_iguais(self):
-        """A rota que já não tinha euros não ganhou nenhum, e não perdeu nada."""
+    def test_os_alertas_escondem_o_valor_e_mais_nada(self):
+        """O `value_eur` sai; a linha — que é accionável — fica igual."""
         casa = _loja_com_dois_artigos("alertas")
+        # Um lote dentro do limiar de sete dias e um artigo em falta: a lista
+        # tem de ter as duas famílias para a comparação dizer alguma coisa.
+        a_vencer = _lote(casa, casa.farinha, codigo="FA-3", dias=2)
+        _receber(casa, casa.farinha, casa.loja, a_vencer,
+                 quantidade=Decimal("5"), custo=Decimal("0.60"))
+        falta = _artigo(casa, nome="Sal", minimo=Decimal("10"))
+        _receber(casa, falta, casa.loja, _lote(casa, falta, codigo="SA-1"),
+                 quantidade=Decimal("1"), custo=Decimal("0.30"))
+
         do_staff = _itens(_sessao(casa.staff.email).get("/api/v1/stock/alerts"))
         do_dono = _itens(_sessao(casa.dono.email).get("/api/v1/stock/alerts"))
 
-        assert do_staff == do_dono, "os alertas são os mesmos para os dois papéis"
-        for item in do_staff:
-            assert not [c for c in item if "eur" in c or "cost" in c or "value" in c]
+        assert len(do_staff) == len(do_dono) == 2
+        for linha_do_staff, linha_do_dono in zip(do_staff, do_dono, strict=True):
+            assert "value_eur" not in linha_do_staff
+            assert "value_eur" in linha_do_dono
+            assert linha_do_staff == {
+                chave: valor
+                for chave, valor in linha_do_dono.items()
+                if chave != "value_eur"
+            }
+
+    def test_o_desperdicio_esconde_o_valor_e_a_lista_chega_aos_tres_papeis(self):
+        """A decisão 4: esta lista é do `inventory` e **tem** de chegar ao `staff`."""
+        casa = self_casa = _loja_com_dois_artigos("desperdicio")
+        _quebrar(self_casa, quantidade="2.000")
+
+        do_staff = _itens(
+            _sessao(casa.staff.email).get("/api/v1/stock/alerts/waste")
+        )
+        do_dono = _itens(_sessao(casa.dono.email).get("/api/v1/stock/alerts/waste"))
+
+        assert len(do_staff) == len(do_dono) == 1
+        assert "value_eur" not in do_staff[0]
+        assert do_dono[0]["value_eur"] == "1.00"
+        # O que ele precisa para reconhecer a linha fica todo.
+        assert do_staff[0]["short_name"] == "Farinha T65"
+        assert do_staff[0]["quantity"]["base"] == "2.000"
+        assert do_staff[0]["created_by"] == "João Colaborador"
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +360,7 @@ class TestOPainelDeStock:
 class TestAsQuantidadesNaoDesaparecem:
     """Os dois defeitos de query que a ADR 0032 nomeou nas consequências."""
 
-    def test_o_resumo_devolve_a_quantidade(self):
+    def test_os_niveis_devolvem_a_quantidade(self):
         """O defeito (a): a rota entregava o valor em euros e **não** o saldo.
 
         O selector anotava `total_quantity`, o serializer declarava `quantity`,
@@ -300,30 +369,38 @@ class TestAsQuantidadesNaoDesaparecem:
         quantidade**, que é o sintoma que ninguém via.
         """
         casa = _loja_com_dois_artigos("quantidade")
-        itens = _itens(_sessao(casa.staff.email).get("/api/v1/stock/summary"))
-        por_nome = {item["product_name"]: item for item in itens}
+        itens = _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))
+        por_nome = {item["short_name"]: item for item in itens}
 
         assert "quantity" in por_nome["Farinha T65"], "a rota não devolveu a quantidade"
-        assert por_nome["Farinha T65"]["quantity"] == "120.000"
-        assert por_nome["Açúcar"]["quantity"] == "30.000"
+        assert por_nome["Farinha T65"]["quantity"]["base"] == "120.000"
+        assert por_nome["Açúcar"]["quantity"]["base"] == "30.000"
 
-    def test_o_detalhe_devolve_a_quantidade_de_cada_lote(self):
-        """O mesmo buraco no `by-location` e no `by-product`."""
-        casa = _loja_com_dois_artigos("quantidade-detalhe")
-        por_lote = {
-            item["lot_code"]: item
-            for item in _itens(
-                _sessao(casa.staff.email).get(
-                    f"/api/v1/stock/by-location?location_id={casa.loja.id}"
-                )
-            )
+    def test_a_reparticao_por_localizacao_e_do_colaborador(self):
+        """O `by_location` é o que responde a "onde está?", e não tem euros.
+
+        Substitui o que o `by-location`/`by-product` mediam: a quantidade por
+        prateleira. O grão de lote morreu com essas rotas (ADR 0034, decisão
+        1), o de localização mudou-se para dentro da linha do artigo.
+        """
+        casa = _casa("reparticao")
+        farinha = _artigo(casa, nome="Farinha")
+        lote = _lote(casa, farinha, codigo="F-1")
+        _receber(casa, farinha, casa.loja, lote,
+                 quantidade=Decimal("40"), custo=Decimal("1"))
+        _receber(casa, farinha, casa.armazem, lote,
+                 quantidade=Decimal("60"), custo=Decimal("1"))
+
+        linha = _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))[0]
+        por_loja = {
+            parcela["location"]["name"]: parcela["quantity"]["base"]
+            for parcela in linha["by_location"]
         }
+        assert por_loja == {"Loja": "40.000", "Armazém": "60.000"}
+        for parcela in linha["by_location"]:
+            assert not [c for c in parcela if "eur" in c or "cost" in c]
 
-        assert por_lote["FA-1"]["quantity"] == "100.000"
-        assert por_lote["FA-2"]["quantity"] == "20.000"
-        assert por_lote["AC-1"]["quantity"] == "30.000"
-
-    def test_o_resumo_soma_as_localizacoes_e_o_filtro_restringe(self):
+    def test_os_niveis_somam_as_localizacoes_e_o_filtro_restringe(self):
         """A agregação é por artigo: dois sítios, uma linha, a soma dos dois."""
         casa = _casa("duas-localizacoes")
         farinha = _artigo(casa, nome="Farinha")
@@ -334,29 +411,27 @@ class TestAsQuantidadesNaoDesaparecem:
                  quantidade=Decimal("60"), custo=Decimal("1"))
 
         api = _sessao(casa.staff.email)
-        todos = _itens(api.get("/api/v1/stock/summary"))
+        todos = _itens(api.get("/api/v1/stock/levels"))
         assert len(todos) == 1
-        assert todos[0]["quantity"] == "100.000"
+        assert todos[0]["quantity"]["base"] == "100.000"
 
-        so_na_loja = _itens(
-            api.get(f"/api/v1/stock/summary?location_id={casa.loja.id}")
-        )
+        so_na_loja = _itens(api.get(f"/api/v1/stock/levels?loja={casa.loja.id}"))
         assert len(so_na_loja) == 1
-        assert so_na_loja[0]["quantity"] == "40.000"
+        assert so_na_loja[0]["quantity"]["base"] == "40.000"
 
 
 # ---------------------------------------------------------------------------
 # 3. Fuga (a): contar as linhas dizia quantos custos existem
 # ---------------------------------------------------------------------------
 class TestContarLinhasNaoDizQuantosCustosExistem:
-    """O defeito (b) das consequências da ADR, lido como **fuga de informação**.
+    """O defeito (b) das consequências da ADR 0032, lido como **fuga de informação**.
 
     O `Case` sobre `quantity` vivia **fora** de um agregado dentro de um
     `values().annotate()`, logo o Django punha `quantity` e `unit_cost` no
-    `GROUP BY`: um artigo com três lotes a três preços saía em **três** linhas
-    do `/stock/summary`. O colaborador não via nenhum euro e ficava a saber
-    exactamente quantos preços distintos aquele artigo tem no armazém — e via-o
-    mudar quando chegava uma entrada mais cara.
+    `GROUP BY`: um artigo com três lotes a três preços saía em **três** linhas.
+    O colaborador não via nenhum euro e ficava a saber exactamente quantos
+    preços distintos aquele artigo tem no armazém — e via-o mudar quando
+    chegava uma entrada mais cara.
 
     Nenhum teste de "chaves de dinheiro" apanha isto, porque não há aqui chave
     nenhuma de dinheiro: a fuga está na **cardinalidade**.
@@ -372,13 +447,13 @@ class TestContarLinhasNaoDizQuantosCustosExistem:
                 quantidade=Decimal("10"), custo=Decimal(custo),
             )
 
-        itens = _itens(_sessao(casa.staff.email).get("/api/v1/stock/summary"))
+        itens = _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))
 
         assert len(itens) == 1, (
             "três lotes a três preços deram três linhas: contar as linhas "
-            "do resumo dizia quantos custos distintos o artigo tem"
+            "dizia quantos custos distintos o artigo tem"
         )
-        assert itens[0]["quantity"] == "30.000"
+        assert itens[0]["quantity"]["base"] == "30.000"
 
     def test_o_colaborador_e_o_gerente_veem_o_mesmo_numero_de_linhas(self):
         """A cardinalidade não pode depender do papel — nem ao contrário."""
@@ -391,14 +466,37 @@ class TestContarLinhasNaoDizQuantosCustosExistem:
                 quantidade=Decimal("7"), custo=Decimal(custo),
             )
 
-        do_staff = _itens(_sessao(casa.staff.email).get("/api/v1/stock/summary"))
-        do_dono = _itens(_sessao(casa.dono.email).get("/api/v1/stock/summary"))
+        do_staff = _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))
+        do_dono = _itens(_sessao(casa.dono.email).get("/api/v1/stock/levels"))
 
         assert len(do_staff) == len(do_dono) == 1
-        # E o detalhe continua a ser por lote para os dois: é lá que o lote é
-        # trabalho de campo, e são dois lotes mesmo.
-        caminho = f"/api/v1/stock/by-product?product_id={farinha.id}"
-        assert len(_itens(_sessao(casa.staff.email).get(caminho))) == 2
+        # E a repartição também não conta custos: dois lotes na mesma
+        # prateleira são **uma** parcela, não duas.
+        assert len(do_staff[0]["by_location"]) == 1
+
+    def test_os_alertas_sao_por_lote_e_localizacao_e_nao_por_custo(self):
+        """O alerta é de grão lote × localização — dois lotes, dois alertas.
+
+        A cardinalidade aqui **é** o número de lotes a vencer, e isso é o
+        produto: o alerta tem de ser accionável sobre um lote concreto. O que
+        não pode é variar com o número de **custos**, e é isso que o segundo
+        lote com o mesmo preço prende.
+        """
+        casa = _casa("alertas-cardinalidade")
+        farinha = _artigo(casa, nome="Farinha")
+        for indice in range(2):
+            lote = _lote(casa, farinha, codigo=f"A-{indice}", dias=2 + indice)
+            # **O mesmo custo nos dois**: se a linha fosse por custo, dava uma.
+            _receber(
+                casa, farinha, casa.loja, lote,
+                quantidade=Decimal("5"), custo=Decimal("1.25"),
+            )
+
+        alertas = _itens(
+            _sessao(casa.staff.email).get("/api/v1/stock/alerts?risco=expira")
+        )
+        assert len(alertas) == 2
+        assert len({a["id"] for a in alertas}) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -407,69 +505,80 @@ class TestContarLinhasNaoDizQuantosCustosExistem:
 class TestAOrdemNaoDizOPreco:
     """Nenhuma rota servida ao colaborador ordena por valor, custo ou derivado.
 
-    Uma ordenação é invisível a qualquer teste de campos: o payload pode não ter
-    um único euro e a **sequência** contar o preço relativo de tudo o que lá
-    está — "o mais caro primeiro" é a informação quase inteira. Por isso os
+    Uma ordenação é invisível a qualquer teste de campos: o payload pode não
+    ter um único euro e a **sequência** contar o preço relativo de tudo o que
+    lá está — "o mais caro primeiro" é a informação quase inteira. Por isso os
     dados destes testes são construídos de propósito com a ordem dos euros
     **ao contrário** da ordem servida: se alguém trocar o `order_by`, a
     asserção parte.
+
+    O desempate por `value_eur` que o `ordenar()` do fixture fazia **não**
+    atravessa (ADR 0034, decisão 6).
     """
 
-    def test_o_resumo_vem_por_nome_e_nunca_por_valor(self):
-        casa = _casa("ordem-resumo")
-        # Alfabeticamente: Açúcar, Farinha, Trigo. Por valor: Trigo (900),
-        # Açúcar (300), Farinha (10). As duas ordens não têm nada em comum.
-        for nome, quantidade, custo in (
-            ("Açúcar", "100", "3"),
-            ("Farinha", "10", "1"),
-            ("Trigo", "90", "10"),
+    def test_os_niveis_vem_por_estado_e_validade_e_nunca_por_valor(self):
+        """Estado, depois `days_away` (NULLS LAST), depois o nome."""
+        casa = _casa("ordem-niveis")
+        # O que está pior é o mais barato; por valor a ordem inverte-se.
+        for nome, dias, quantidade, custo in (
+            ("Tarde", 60, "90", "10"),
+            ("Cedo", 2, "10", "0.10"),
+            ("Sem data", None, "50", "5"),
         ):
             artigo = _artigo(casa, nome=nome)
-            lote = _lote(casa, artigo, codigo=f"{nome}-1")
+            lote = _lote(casa, artigo, codigo=f"{nome}-1", dias=dias)
             _receber(casa, artigo, casa.loja, lote,
                      quantidade=Decimal(quantidade), custo=Decimal(custo))
 
         nomes = [
-            item["product_name"]
-            for item in _itens(_sessao(casa.staff.email).get("/api/v1/stock/summary"))
+            item["short_name"]
+            for item in _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))
         ]
-        assert nomes == ["Açúcar", "Farinha", "Trigo"]
-
-    def test_o_detalhe_vem_por_fefo_e_nunca_por_valor(self):
-        """FEFO é decidido pela validade, que não diz preço nenhum."""
-        casa = _casa("ordem-detalhe")
-        farinha = _artigo(casa, nome="Farinha")
-        # O que expira primeiro é o mais barato: por valor a ordem inverte-se.
-        for codigo, dias, custo in (("CEDO", 2, "0.10"), ("TARDE", 60, "9.00")):
-            lote = _lote(casa, farinha, codigo=codigo, dias=dias)
-            _receber(casa, farinha, casa.loja, lote,
-                     quantidade=Decimal("10"), custo=Decimal(custo))
-
-        api = _sessao(casa.staff.email)
-        por_local = _itens(
-            api.get(f"/api/v1/stock/by-location?location_id={casa.loja.id}")
+        assert nomes == ["Cedo", "Tarde", "Sem data"], (
+            "a ordem é estado → days_away (NULLS LAST) → nome, e nunca valor"
         )
-        assert [item["lot_code"] for item in por_local] == ["CEDO", "TARDE"]
 
-        por_artigo = _itens(
-            api.get(f"/api/v1/stock/by-product?product_id={farinha.id}")
-        )
-        assert [item["lot_code"] for item in por_artigo] == ["CEDO", "TARDE"]
+    def test_um_artigo_em_falta_vem_antes_de_um_artigo_caro(self):
+        """O estado ganha ao relógio, e o relógio ganha ao nome. Valor, nunca."""
+        casa = _casa("ordem-estado")
+        caro = _artigo(casa, nome="Caro")
+        vazio = _artigo(casa, nome="Vazio", minimo=Decimal("10"))
+        _receber(casa, caro, casa.loja, _lote(casa, caro, codigo="C-1", dias=1),
+                 quantidade=Decimal("100"), custo=Decimal("50"))
+        _receber(casa, vazio, casa.loja, _lote(casa, vazio, codigo="V-1", dias=90),
+                 quantidade=Decimal("1"), custo=Decimal("0.01"))
 
-    def test_os_alertas_vem_por_validade_e_nunca_por_valor(self):
+        nomes = [
+            item["short_name"]
+            for item in _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))
+        ]
+        assert nomes == ["Vazio", "Caro"]
+
+    def test_os_alertas_vem_por_gravidade_e_validade_e_nunca_por_valor(self):
         casa = _casa("ordem-alertas")
         farinha = _artigo(casa, nome="Farinha")
+        # "JA" vence amanhã (danger pela tabela da d9) e é o mais barato.
         for codigo, dias, custo in (("JA", 1, "0.10"), ("DEPOIS", 5, "9.00")):
             lote = _lote(casa, farinha, codigo=codigo, dias=dias)
             _receber(casa, farinha, casa.loja, lote,
                      quantidade=Decimal("10"), custo=Decimal(custo))
 
         validades = [
-            item["lot_code"]
+            item["lot"]["lot_code"]
             for item in _itens(_sessao(casa.staff.email).get("/api/v1/stock/alerts"))
-            if item["lot_code"]
+            if item["lot"]
         ]
         assert validades == ["JA", "DEPOIS"]
+
+    def test_o_desperdicio_vem_do_mais_recente_e_nunca_por_valor(self):
+        """A última coisa que se deitou fora é a que se reconhece."""
+        casa = _loja_com_dois_artigos("ordem-desperdicio")
+        # O primeiro é o maior em euros; se a ordem fosse por valor vinha à frente.
+        _quebrar(casa, quantidade="10.000", lote=casa.lote_b)
+        _quebrar(casa, quantidade="1.000", lote=casa.lote_a)
+
+        linhas = _itens(_sessao(casa.dono.email).get("/api/v1/stock/alerts/waste"))
+        assert [linha["value_eur"] for linha in linhas] == ["0.50", "7.50"]
 
 
 # ---------------------------------------------------------------------------
@@ -553,10 +662,11 @@ class TestOLimiarDoFechoNaoChegaAQuemNaoVeEuros:
 # 6. Os três 201 de `stock/movements/*`
 # ---------------------------------------------------------------------------
 class TestOs201DosMovimentos:
-    """Decisão 4: os três passaram a ser serializados, e a transferência ganhou
-    o serializer de saída que nunca teve — o `extend_schema` apontava para um
-    que descreve **um** movimento e o corpo que sai tem `transfer_id` e
-    `movements`."""
+    """Decisão 4 da ADR 0032: os três passaram a ser serializados.
+
+    E a ADR 0034 mudou-lhes os corpos: **sem sufixos `_id`** nos três, `unit`
+    obrigatório na quebra, e o 201 da quebra passou a `{movements: [...]}`.
+    """
 
     def _casa_com_stock(self, nome: str) -> SimpleNamespace:
         casa = _casa(nome)
@@ -566,43 +676,50 @@ class TestOs201DosMovimentos:
                  quantidade=Decimal("100"), custo=Decimal("0.5"))
         return casa
 
-    def _corpo(self, casa: SimpleNamespace) -> dict[str, Any]:
+    def _corpo_da_quebra(self, casa: SimpleNamespace) -> dict[str, Any]:
         return {
-            "product_id": str(casa.farinha.id),
-            "location_id": str(casa.loja.id),
-            "lot_id": str(casa.lote.id),
+            "product": str(casa.farinha.id),
+            "location": str(casa.loja.id),
+            "lot": str(casa.lote.id),
             "quantity": "2.000",
+            "unit": "un",
             "reason": "spoiled",
         }
 
     def test_o_desperdicio_nao_devolve_o_custo_ao_colaborador(self):
         casa = self._casa_com_stock("waste")
         resposta = _sessao(casa.staff.email).post(
-            "/api/v1/stock/movements/waste", self._corpo(casa), format="json"
+            "/api/v1/stock/movements/waste", self._corpo_da_quebra(casa), format="json"
         )
 
         assert resposta.status_code == 201, resposta.content
+        [linha] = resposta.json()["movements"]
         for chave in EUROS_DO_MOVIMENTO:
-            assert chave not in resposta.json(), chave
+            assert chave not in linha, chave
         # O trabalho de campo fica inteiro.
-        assert resposta.json()["quantity"] == "2.000"
-        assert resposta.json()["product_name"] == "Farinha"
-        assert resposta.json()["location_name"] == "Loja"
-        assert resposta.json()["lot_code"] == "L-1"
-        assert resposta.json()["cost_status"] == CUSTO_CONHECIDO
+        assert linha["quantity"]["base"] == "-2.000"
+        assert linha["location"]["name"] == "Loja"
+        assert linha["lot_code"] == "L-1"
+        assert linha["cost_status"] == CUSTO_CONHECIDO
 
     def test_o_desperdicio_devolve_o_custo_ao_gerente(self):
         casa = self._casa_com_stock("waste-gerente")
         resposta = _sessao(casa.gerente.email).post(
-            "/api/v1/stock/movements/waste", self._corpo(casa), format="json"
+            "/api/v1/stock/movements/waste", self._corpo_da_quebra(casa), format="json"
         )
 
         assert resposta.status_code == 201, resposta.content
-        assert resposta.json()["unit_cost"] == "0.500000"
+        assert resposta.json()["movements"][0]["unit_cost"] == "0.500000"
 
     def test_o_ajuste_segue_a_mesma_regra(self):
         casa = self._casa_com_stock("ajuste")
-        corpo = self._corpo(casa) | {"quantity": "-3.000"}
+        corpo = {
+            "product": str(casa.farinha.id),
+            "location": str(casa.loja.id),
+            "lot": str(casa.lote.id),
+            "quantity": "-3.000",
+            "reason": "spoiled",
+        }
 
         do_staff = _sessao(casa.staff.email).post(
             "/api/v1/stock/movements/adjustment", corpo, format="json"
@@ -621,10 +738,10 @@ class TestOs201DosMovimentos:
         """Esconder numa só dava o mesmo número pelo outro lado."""
         casa = self._casa_com_stock("transferencia")
         corpo = {
-            "product_id": str(casa.farinha.id),
-            "from_location_id": str(casa.loja.id),
-            "to_location_id": str(casa.armazem.id),
-            "lot_id": str(casa.lote.id),
+            "product": str(casa.farinha.id),
+            "from_location": str(casa.loja.id),
+            "to_location": str(casa.armazem.id),
+            "lot": str(casa.lote.id),
             "quantity": "5.000",
         }
 
@@ -633,8 +750,6 @@ class TestOs201DosMovimentos:
         )
         assert do_staff.status_code == 201, do_staff.content
         corpo_do_staff = do_staff.json()
-        # A forma que o serializer novo descreve — e que o schema antigo não
-        # tinha: `transfer_id` e `movements`.
         assert set(corpo_do_staff) == {"transfer_id", "movements", "created_at"}
         assert corpo_do_staff["transfer_id"] is not None
         assert len(corpo_do_staff["movements"]) == 2
@@ -652,6 +767,22 @@ class TestOs201DosMovimentos:
         assert do_gerente.status_code == 201
         for perna in do_gerente.json()["movements"]:
             assert perna["unit_cost"] == "0.500000"
+
+    def test_o_ledger_de_um_artigo_esconde_o_custo_e_mostra_o_resto(self):
+        """`GET /stock/movements?artigo=` — a rota nova, com a mesma política."""
+        casa = self._casa_com_stock("ledger")
+        _sessao(casa.staff.email).post(
+            "/api/v1/stock/movements/waste", self._corpo_da_quebra(casa), format="json"
+        )
+
+        caminho = f"/api/v1/stock/movements?artigo={casa.farinha.id}"
+        do_staff = _itens(_sessao(casa.staff.email).get(caminho))
+        do_dono = _itens(_sessao(casa.dono.email).get(caminho))
+
+        assert [linha["movement_type"] for linha in do_staff] == ["waste", "receipt"]
+        for linha in do_staff:
+            assert "unit_cost" not in linha
+        assert do_dono[0]["unit_cost"] == "0.500000"
 
 
 # ---------------------------------------------------------------------------
@@ -674,26 +805,31 @@ class TestOMarcadorDeCusto:
         assert (CUSTO_CONHECIDO, CUSTO_ESTIMADO, CUSTO_DESCONHECIDO) == ESTADOS_DO_CUSTO
 
     def test_um_lote_sem_preco_e_desconhecido_para_os_dois_papeis(self):
-        """O facto é **por lote**: é o defeito de uma receção concreta."""
+        """O facto é **por lote**: é o defeito de uma receção concreta.
+
+        Mudou de rota com a ADR 0034 — o `by-product` morreu —, e o sítio onde
+        o grão de lote continua a existir é o alerta de validade. A palavra é a
+        mesma e chega aos dois papéis: é qualidade de dados, não um euro.
+        """
         casa = _casa("sem-preco")
         farinha = _artigo(casa, nome="Farinha")
-        com_preco = _lote(casa, farinha, codigo="COM", dias=10)
-        sem_preco = _lote(casa, farinha, codigo="SEM", dias=20)
+        com_preco = _lote(casa, farinha, codigo="COM", dias=3)
+        sem_preco = _lote(casa, farinha, codigo="SEM", dias=5)
         _receber(casa, farinha, casa.loja, com_preco,
                  quantidade=Decimal("30"), custo=Decimal("2"))
         _receber(casa, farinha, casa.loja, sem_preco,
                  quantidade=Decimal("70"), custo=Decimal("0"))
 
-        caminho = f"/api/v1/stock/by-product?product_id={farinha.id}"
+        caminho = "/api/v1/stock/alerts?risco=expira"
         for email in (casa.staff.email, casa.gerente.email):
             por_lote = {
-                item["lot_code"]: item
+                item["lot"]["lot_code"]: item
                 for item in _itens(_sessao(email).get(caminho))
             }
             assert por_lote["COM"]["cost_status"] == CUSTO_CONHECIDO
             assert por_lote["SEM"]["cost_status"] == CUSTO_DESCONHECIDO
             # A quantidade do lote sem preço **não** desaparece.
-            assert por_lote["SEM"]["quantity"] == "70.000"
+            assert por_lote["SEM"]["quantity"]["base"] == "70.000"
 
     def test_o_agregado_mostra_a_cobertura_e_nao_uma_quarta_palavra(self):
         """Com lotes mistos o que se mostra é **quanta** quantidade não tem preço.
@@ -712,18 +848,18 @@ class TestOMarcadorDeCusto:
         _receber(casa, farinha, casa.loja, sem_preco,
                  quantidade=Decimal("70"), custo=Decimal("0"))
 
-        resumo = _itens(_sessao(casa.staff.email).get("/api/v1/stock/summary"))
+        resumo = _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))
         assert len(resumo) == 1
-        assert resumo[0]["quantity"] == "100.000"
-        assert resumo[0]["quantity_without_cost"] == "70.000"
+        assert resumo[0]["quantity"]["base"] == "100.000"
+        assert resumo[0]["quantity_without_cost"]["base"] == "70.000"
         # E **nenhuma palavra** na linha agregada: não há uma que descreva "um
         # lote com preço e outro sem" sem inventar a quarta.
         assert "cost_status" not in resumo[0]
 
         # E o gerente vê que o valor está subestimado: 30 × 2 e mais nada.
-        do_gerente = _itens(_sessao(casa.gerente.email).get("/api/v1/stock/summary"))
+        do_gerente = _itens(_sessao(casa.gerente.email).get("/api/v1/stock/levels"))
         assert do_gerente[0]["total_value"] == "60.00"
-        assert do_gerente[0]["quantity_without_cost"] == "70.000"
+        assert do_gerente[0]["quantity_without_cost"]["base"] == "70.000"
 
     def test_estimado_e_divida_nomeada_e_nao_uma_quarta_palavra(self):
         """A terceira palavra existe, a função sabe produzi-la, e hoje ninguém a serve.
@@ -753,20 +889,22 @@ class TestOMarcadorDeCusto:
         resposta = _sessao(casa.staff.email).post(
             "/api/v1/stock/movements/waste",
             {
-                "product_id": str(farinha.id),
-                "location_id": str(casa.loja.id),
-                "lot_id": str(lote.id),
+                "product": str(farinha.id),
+                "location": str(casa.loja.id),
+                "lot": str(lote.id),
                 "quantity": "1.000",
+                "unit": "un",
                 "reason": "breakage",
             },
             format="json",
         )
         assert resposta.status_code == 201, resposta.content
-        assert resposta.json()["cost_status"] == CUSTO_CONHECIDO, (
+        [linha] = resposta.json()["movements"]
+        assert linha["cost_status"] == CUSTO_CONHECIDO, (
             "a dívida foi paga: a proveniência do custo chegou ao movimento "
             "manual — actualiza esta asserção para `estimado`"
         )
-        assert "unit_cost" not in resposta.json()
+        assert "unit_cost" not in linha
 
 
 # ---------------------------------------------------------------------------
@@ -792,8 +930,10 @@ class TestOCustoUnitarioNaoEDiluido:
         """O caso exacto do `domain-expert`: 30 un a 2,00 € e 70 un sem preço."""
         casa = _casa(nome)
         casa.farinha = _artigo(casa, nome="Farinha")
-        com_preco = _lote(casa, casa.farinha, codigo="COM", dias=10)
-        sem_preco = _lote(casa, casa.farinha, codigo="SEM", dias=20)
+        # Dentro do limiar de sete dias, para a mesma casa servir o teste do
+        # alerta de grão lote sem repetir os andaimes.
+        com_preco = _lote(casa, casa.farinha, codigo="COM", dias=3)
+        sem_preco = _lote(casa, casa.farinha, codigo="SEM", dias=5)
         _receber(casa, casa.farinha, casa.loja, com_preco,
                  quantidade=Decimal("30"), custo=Decimal("2"))
         _receber(casa, casa.farinha, casa.loja, sem_preco,
@@ -803,14 +943,14 @@ class TestOCustoUnitarioNaoEDiluido:
     def test_trinta_a_dois_euros_e_setenta_sem_preco_dao_dois_euros(self):
         """0,60 €/un era o número que alguém lia para decidir uma compra."""
         casa = self._farinha_com_lote_com_preco_e_outro_sem("diluicao")
-        linha = _itens(_sessao(casa.gerente.email).get("/api/v1/stock/summary"))[0]
+        linha = _itens(_sessao(casa.gerente.email).get("/api/v1/stock/levels"))[0]
 
         assert linha["unit_cost"] == "2.000000", (
             "o custo unitário voltou a ser diluído pela quantidade sem preço"
         )
         assert linha["total_value"] == "60.00"
-        assert linha["quantity"] == "100.000"
-        assert linha["quantity_without_cost"] == "70.000"
+        assert linha["quantity"]["base"] == "100.000"
+        assert linha["quantity_without_cost"]["base"] == "70.000"
 
     def test_a_invariante_fecha_ao_centimo(self):
         """`unit_cost × (quantity − quantity_without_cost) == total_value`.
@@ -828,11 +968,11 @@ class TestOCustoUnitarioNaoEDiluido:
             _receber(casa, acucar, casa.loja, lote,
                      quantidade=Decimal(quantidade), custo=Decimal(custo))
 
-        linhas = _itens(_sessao(casa.dono.email).get("/api/v1/stock/summary"))
+        linhas = _itens(_sessao(casa.dono.email).get("/api/v1/stock/levels"))
         assert len(linhas) == 2
         for linha in linhas:
-            com_preco = Decimal(linha["quantity"]) - Decimal(
-                linha["quantity_without_cost"]
+            com_preco = Decimal(linha["quantity"]["base"]) - Decimal(
+                linha["quantity_without_cost"]["base"]
             )
             reconstruido = (Decimal(linha["unit_cost"]) * com_preco).quantize(
                 Decimal("0.01")
@@ -856,41 +996,39 @@ class TestOCustoUnitarioNaoEDiluido:
         _receber(casa, farinha, casa.loja, lote,
                  quantidade=Decimal("40"), custo=Decimal("0"))
 
-        linha = _itens(_sessao(casa.gerente.email).get("/api/v1/stock/summary"))[0]
+        linha = _itens(_sessao(casa.gerente.email).get("/api/v1/stock/levels"))[0]
         assert linha["unit_cost"] is None
         assert linha["total_value"] == "0.00"
-        assert linha["quantity"] == "40.000"
-        assert linha["quantity_without_cost"] == "40.000"
+        assert linha["quantity"]["base"] == "40.000"
+        assert linha["quantity_without_cost"]["base"] == "40.000"
 
         # E ao colaborador continuam a faltar as duas chaves de euro, com a
         # quantidade toda lá: a política não muda com o divisor.
-        do_staff = _itens(_sessao(casa.staff.email).get("/api/v1/stock/summary"))[0]
+        do_staff = _itens(_sessao(casa.staff.email).get("/api/v1/stock/levels"))[0]
         for chave in EUROS_DO_PAINEL:
             assert chave not in do_staff
-        assert do_staff["quantity"] == "40.000"
+        assert do_staff["quantity"]["base"] == "40.000"
 
-    def test_o_lote_sem_preco_do_detalhe_diz_o_mesmo(self):
-        """No detalhe a linha é **um lote**, logo o divisor é tudo ou nada.
+    def test_o_lote_sem_preco_do_alerta_diz_o_mesmo(self):
+        """Num alerta a linha é **um lote**, logo o divisor é tudo ou nada.
 
-        Tem preço (e o custo é o do lote) ou não tem (e não há custo nenhum). É
-        por isso que o detalhe nunca pôde diluir e é aqui que o marcador é uma
-        palavra em vez de uma cobertura.
+        Tem preço (e o valor em risco é o do lote) ou não tem (e não há valor
+        nenhum). É por isso que a linha de grão lote nunca pôde diluir e é
+        nela que o marcador é uma palavra em vez de uma cobertura. Era o
+        `by-product` que a servia; morreu com a ADR 0034 e o grão de lote
+        ficou onde é accionável.
         """
         casa = self._farinha_com_lote_com_preco_e_outro_sem("detalhe-sem-preco")
         por_lote = {
-            item["lot_code"]: item
+            item["lot"]["lot_code"]: item
             for item in _itens(
-                _sessao(casa.gerente.email).get(
-                    f"/api/v1/stock/by-product?product_id={casa.farinha.id}"
-                )
+                _sessao(casa.gerente.email).get("/api/v1/stock/alerts?risco=expira")
             )
         }
 
-        assert por_lote["COM"]["unit_cost"] == "2.000000"
-        assert por_lote["COM"]["total_value"] == "60.00"
+        assert por_lote["COM"]["value_eur"] == "60.00"
         assert por_lote["COM"]["cost_status"] == CUSTO_CONHECIDO
-        assert por_lote["SEM"]["unit_cost"] is None
-        assert por_lote["SEM"]["total_value"] == "0.00"
+        assert por_lote["SEM"]["value_eur"] == "0.00"
         assert por_lote["SEM"]["cost_status"] == CUSTO_DESCONHECIDO
 
 
@@ -939,14 +1077,15 @@ class TestOTrabalhoDeCampoNaoPerdeNada:
         assert contou.json()["counted"]["base"] == "97.000"
         assert contou.json()["difference"]["base"] == "-3.000"
 
-        # Perder.
+        # Perder — e **sem lote no corpo**, que é como o ecrã o envia: o FEFO
+        # é do servidor desde a ADR 0034, decisão 8.
         perdeu = staff.post(
             "/api/v1/stock/movements/waste",
             {
-                "product_id": str(farinha.id),
-                "location_id": str(casa.loja.id),
-                "lot_id": str(lote.id),
+                "product": str(farinha.id),
+                "location": str(casa.loja.id),
                 "quantity": "1.500",
+                "unit": "un",
                 "reason": "expired",
             },
             format="json",
@@ -957,10 +1096,10 @@ class TestOTrabalhoDeCampoNaoPerdeNada:
         transferiu = staff.post(
             "/api/v1/stock/movements/transfer",
             {
-                "product_id": str(farinha.id),
-                "from_location_id": str(casa.loja.id),
-                "to_location_id": str(casa.armazem.id),
-                "lot_id": str(lote.id),
+                "product": str(farinha.id),
+                "from_location": str(casa.loja.id),
+                "to_location": str(casa.armazem.id),
+                "lot": str(lote.id),
                 "quantity": "10.000",
             },
             format="json",
@@ -968,13 +1107,8 @@ class TestOTrabalhoDeCampoNaoPerdeNada:
         assert transferiu.status_code == 201, transferiu.content
 
         # E o saldo que ele vê reflecte tudo o que fez: 100 − 1,5 − 10 na loja.
-        por_local = {
-            item["lot_code"]: item
-            for item in _itens(
-                staff.get(f"/api/v1/stock/by-location?location_id={casa.loja.id}")
-            )
-        }
-        assert por_local["T-1"]["quantity"] == "88.500"
+        linha = _itens(staff.get(f"/api/v1/stock/levels?loja={casa.loja.id}"))[0]
+        assert linha["quantity"]["base"] == "88.500"
 
 
 # ---------------------------------------------------------------------------
@@ -990,22 +1124,45 @@ class TestOTrabalhoDeCampoNaoPerdeNada:
 #: O teste falha nos **dois** sentidos: uma chave nova sem entrada aqui, ou uma
 #: entrada aqui sem campo lá. É a oitava chave que a ADR 0032 quer apanhar.
 CHAVES_QUE_PARECEM_DINHEIRO: dict[tuple[str, str], str] = {
-    ("CustoDeStockOutSerializer", "unit_cost"): "mixin",
-    ("CustoDeStockOutSerializer", "total_value"): "mixin",
-    ("StockSummarySerializer", "unit_cost"): "mixin",
-    ("StockSummarySerializer", "total_value"): "mixin",
+    # --- Os sete recursos de `/stock` (ADR 0034) ---
+    ("NivelDeStockOutSerializer", "unit_cost"): "mixin",
+    ("NivelDeStockOutSerializer", "total_value"): "mixin",
     # A cobertura do agregado: é **quantidade**, e é o que substitui a palavra
     # numa linha que soma lotes com preço e lotes sem.
-    ("StockSummarySerializer", "quantity_without_cost"): "não é dinheiro",
-    ("StockDetailSerializer", "unit_cost"): "mixin",
-    ("StockDetailSerializer", "total_value"): "mixin",
-    ("StockDetailSerializer", "cost_status"): "não é dinheiro",
+    ("NivelDeStockOutSerializer", "quantity_without_cost"): "não é dinheiro",
+    ("ResumoDeStockOutSerializer", "stock_value_eur"): "mixin",
+    ("MovimentoOutSerializer", "unit_cost"): "mixin",
+    ("MovimentoOutSerializer", "cost_status"): "não é dinheiro",
+    ("AlertaOutSerializer", "value_eur"): "mixin",
+    ("AlertaOutSerializer", "cost_status"): "não é dinheiro",
+    ("DesperdicioOutSerializer", "value_eur"): "mixin",
+    ("DesperdicioOutSerializer", "cost_status"): "não é dinheiro",
+    ("ResumoDeAlertasOutSerializer", "wasted_today_eur"): "mixin",
+    ("ResumoDeAlertasOutSerializer", "wasted_week_eur"): "mixin",
+    # As duas da cobertura (decisão 10): **contagens de linhas**, presentes
+    # para os três papéis. Um `COUNT(id)` não tem euros em ponta nenhuma — não
+    # há numerador nem denominador —, logo nenhuma sequência de observações
+    # reconstrói o custo unitário a partir delas. A condição está no
+    # `aggregate()` do `contadores_de_desperdicio` e tem teste próprio que lê
+    # o SQL (`test_stock_e_alertas.py`). Os dois `wasted_*_count` não aparecem
+    # nesta tabela porque o filtro de nomes não lhes toca — e é isso que o
+    # `test_os_quatro_contadores_novos_chegam_aos_tres_papeis` cobre.
+    (
+        "ResumoDeAlertasOutSerializer",
+        "wasted_today_lines_without_cost",
+    ): "não é dinheiro",
+    (
+        "ResumoDeAlertasOutSerializer",
+        "wasted_week_lines_without_cost",
+    ): "não é dinheiro",
+    # --- Os 201 dos movimentos manuais (ADR 0025, ADR 0032) ---
     ("MovimentoDeStockOutSerializer", "unit_cost"): "mixin",
     ("MovimentoDeStockOutSerializer", "cost_status"): "não é dinheiro",
     ("StockMovementResponseSerializer", "unit_cost"): "mixin",
     ("StockMovementResponseSerializer", "cost_status"): "não é dinheiro",
     ("PernaDeTransferenciaOutSerializer", "unit_cost"): "mixin",
     ("PernaDeTransferenciaOutSerializer", "cost_status"): "não é dinheiro",
+    # --- A contagem física (ADR 0030) ---
     ("LinhaDeContagemOutSerializer", "difference_eur"): "mixin",
     # As quatro do fecho: a rota é de `owner|manager` (ADR 0030) e esses são
     # exactamente os `PAPEIS_QUE_VEEM_EUROS` — ver
@@ -1064,9 +1221,15 @@ class TestAsChavesDeDinheiroDoModulo:
             else:
                 assert campo not in campos_do_mixin, f"{classe}.{campo}"
 
-    def test_os_alertas_continuam_sem_nenhuma_chave_de_dinheiro(self):
-        """A rota que a ADR deixou intacta: "hoje não traz euros", e continua."""
-        campos = set(serializers_do_inventory.AlertSerializer().fields)
+    def test_a_reparticao_por_localizacao_nao_tem_chave_de_dinheiro_nenhuma(self):
+        """O `by_location` é quantidade pura, e é o que o `staff` mais lê.
+
+        Substitui a asserção sobre o `AlertSerializer`, que a ADR 0032 deixara
+        intacto por não ter euros: com a ADR 0034 o alerta **ganhou** um
+        `value_eur`, protegido pelo mixin e inscrito na tabela acima. O campo
+        que continua a não poder ter euro nenhum é este.
+        """
+        campos = set(serializers_do_inventory.NivelPorLocalizacaoOutSerializer().fields)
         assert not [
             campo
             for campo in campos

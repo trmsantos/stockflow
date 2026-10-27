@@ -17,15 +17,11 @@ React 18 · TypeScript strict · Vite · Tailwind v4 · shadcn/ui · TanStack Ro
 Portas sobreponíveis por ambiente, sem prefixo `VITE_` porque não entram no bundle:
 `FRONTEND_DEV_PORT` (default 5183; o contentor do compose usa 5173) e `BACKEND_ORIGIN`.
 
-Em desenvolvimento há quatro variáveis, lidas no `vite.config.ts`: `FIXTURES_ATRASO_MS`
-(default 250), `FIXTURES_VAZIO`, `FIXTURES_ERRO` e `FIXTURES_SEM_SESSAO` (listas de caminhos
-separadas por vírgula). Por pedido há também `?_fixture=vazio|erro|sem_sessao`, para sondar com
-`curl` sem reiniciar — nada em `src/` envia esse parâmetro.
-
-O `sem_sessao` responde **403 com o corpo do `TenantMiddleware`** e é a sessão a expirar a meio.
-Não é fingir uma sessão — a ADR 0010 proíbe-o, porque uma sessão falsa muda *autorização* em vez de
-forma de dados; uma recusa é o contrário disso, e é a única forma de ver o caminho que leva a pessoa
-de volta a `/entrar` com o `destino` preenchido.
+**Não há mais variáveis de desenvolvimento.** Havia quatro — `FIXTURES_ATRASO_MS`,
+`FIXTURES_VAZIO`, `FIXTURES_ERRO` e `FIXTURES_SEM_SESSAO` — e saíram com o servidor de dados falsos
+(ADR 0034, decisão 7). A perda está nomeada ali e repete-se aqui: os estados "vazio", "erro" e
+"sessão expirada a meio" deixaram de ter gatilho. O vazio passa a ser um estabelecimento semeado sem
+stock (ADR 0018); os outros dois não têm hoje substituto.
 
 ## Onde estão as decisões
 
@@ -72,23 +68,21 @@ de volta a `/entrar` com o `destino` preenchido.
 - `src/lib/format.ts` — `Intl` para pt-PT: quantidades com 3 decimais, euros, datas e dias
   relativos. Nenhum formato à mão.
 
-## `fixtures/` — os dados falsos do shell
+## `fixtures/` — apagada, e o gate que o prova ficou
 
-Vivem **fora de `src/`** e são servidos por um plugin do Vite com `apply: "serve"`, que responde
-aos `/api/v1/…` que o Django ainda não tem e faz `next()` em tudo o resto (ADR 0008, decisão 3).
-Nada em `src/` os importa, por isso não estão no grafo de módulos: **não existe build do shell com
-dados falsos**, e mostra-se ao dono com `pnpm dev --host` num telemóvel na mesma rede. O `api.ts` de
-cada feature escreve-se na forma final desde o primeiro dia — mesmo `fetch`, mesmo cookie, mesmo
-`X-Tenant-ID`, mesmo envelope de paginação, mesmo Zod. Não há `if (fake)` em sítio nenhum.
+Houve uma pasta `fixtures/`, fora de `src/`, servida por um plugin do Vite com `apply: "serve"` que
+respondia aos `/api/v1/…` que o Django ainda não tinha (ADR 0008, decisão 3). A promessa era que o
+`api.ts` de cada feature se escrevia na forma final desde o primeiro dia — mesmo `fetch`, mesmo
+cookie, mesmo `X-Tenant-ID`, mesmo envelope, mesmo Zod — e que a remoção era por recurso, sem um
+ecrã mudar uma linha. **A ADR 0034 cobrou a promessa e ela pagou-se**: com os sete recursos do Stock
+e dos Alertas ligados ao Django, o último fixture saiu, a pasta foi-se, e com ela a linha do
+`vite.config.ts` e a entrada no `include` do `tsconfig.json`.
 
-Stock é um ledger **também na mentira**: o estado em memória guarda `StockMovement`s e deriva os
-níveis; não há campo de quantidade que se escreva. Cada resposta é validada, no servidor de dev,
-pelo mesmo schema Zod que o cliente usa à chegada. A remoção é por recurso: apaga-se
-`fixtures/<recurso>.ts` no dia em que o endpoint existir, e nenhum ecrã muda uma linha.
-
-O `pnpm lint` corre o `scripts/check-fixtures.mjs`, que falha se algum ficheiro de `src/` importar
-de `fixtures/`, se o plugin perder o `apply: "serve"`, se um fixture não trouxer a sentinela
-`dados-falsos-stockflow`, ou se `fixtures` sair do `include` do `tsconfig.json`.
+**O `scripts/check-fixtures.mjs` fica**, e é por isso que esta secção também fica. Ele falha nos
+dois sentidos: com a pasta, exigia que nada em `src/` a importasse, que o plugin tivesse
+`apply: "serve"` e que todo o ficheiro trouxesse a sentinela `dados-falsos-stockflow`; **sem** a
+pasta, exige que o `vite.config.ts` e o `tsconfig.json` já não falem dela. É ele que torna "a
+decisão 3 terminou por apagamento" uma medição e não uma frase.
 
 ## `/dev/tokens`
 

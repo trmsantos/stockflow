@@ -6,7 +6,7 @@ de RLS (SECURITY.md §1).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -49,9 +49,24 @@ __all__ = [
     "CUSTO_CONHECIDO",
     "CUSTO_DESCONHECIDO",
     "CUSTO_ESTIMADO",
+    "DIAS_DE_AVISO_DE_VALIDADE",
+    "ESTADOS_DO_NIVEL",
+    "FILTROS_DO_NIVEL",
+    "GRAVIDADES",
+    "GRAVIDADE_AVISO",
+    "GRAVIDADE_INFO",
+    "GRAVIDADE_PERIGO",
+    "PERIODOS_DE_DESPERDICIO",
+    "RISCOS_DO_ALERTA",
+    "TIPOS_DE_VALIDADE",
+    "VALIDADE_DDM",
+    "VALIDADE_DLC",
     "ajustes_da_contagem",
+    "alertas_de_stock",
     "artigo_tem_lote",
     "artigos_abaixo_do_minimo",
+    "contadores_de_alertas",
+    "contadores_de_desperdicio",
     "contagem_aberta",
     "contagens_com_progresso",
     "contagens_do_ambito",
@@ -62,7 +77,10 @@ __all__ = [
     "desperdicio_agregado_por_motivo",
     "desperdicio_por_artigo_e_motivo",
     "e_lote_sintetico",
+    "gravidade_da_validade",
+    "janela_de_desperdicio",
     "linhas_da_contagem",
+    "linhas_de_desperdicio",
     "listar_contagens",
     "listar_localizacoes",
     "localizacoes_do_ambito",
@@ -70,10 +88,15 @@ __all__ = [
     "lotes_dos_artigos",
     "movimentos_agregados_por_dia_de_negocio",
     "movimentos_agregados_por_tipo",
+    "movimentos_do_artigo",
     "movimentos_do_periodo",
     "movimentos_resumidos",
+    "niveis_de_stock",
+    "niveis_filtrados",
     "niveis_para_contagem",
     "producoes_por_periodo",
+    "resumo_de_stock",
+    "rotulos_de_referencia",
     "saldo_do_artigo_na_localizacao",
     "saldos_do_artigo",
     "saldos_por_artigo_ate",
@@ -81,10 +104,6 @@ __all__ = [
     "ultima_contagem_fechada_em",
     "valor_de_stock",
     "valor_dos_ajustes_por_artigo",
-    "stock_alerts",
-    "stock_summary",
-    "stock_by_location",
-    "stock_by_product",
 ]
 
 #: Os estados de um artigo contra o seu mínimo (ADR 0027, regras de domínio):
@@ -99,6 +118,153 @@ DIAS_DE_VALIDADE_DO_PAINEL = 7
 #: Quantos lotes a vencer o painel lista no máximo. Um alerta é para agir, e
 #: uma lista de duzentos não é accionável — o ecrã Alertas tem o resto.
 LIMITE_DE_LOTES_DO_PAINEL = 200
+
+# ===========================================================================
+# Os dois relógios deste módulo, e porque é que não são um defeito (ADR 0034).
+#
+# **A validade é dia civil** (`timezone.localdate()`) e **o desperdício é dia
+# de negócio** (`business_day_starts_at`). Os dois aparecem no mesmo ecrã e os
+# dois estão certos: a lei não sabe a que horas a pastelaria abre, e o fecho do
+# dia não sabe o que diz a embalagem. Às 02:00, o "hoje" do desperdício ainda é
+# ontem e o "expira hoje" já é o dia novo, e as duas frases são verdadeiras ao
+# mesmo tempo.
+#
+# Quem unificar os relógios parte uma das duas verdades: ou o lote passa a
+# vencer à hora a que o patrão abre a porta, ou a quebra das 02:00 salta para o
+# dia seguinte e o fecho do dia deixa de bater certo. Está escrito aqui para a
+# próxima "correcção" não ser esta.
+# ===========================================================================
+
+#: Os quatro estados de uma linha do ecrã de Stock, na ordem em que a lista os
+#: mostra: **o pior primeiro**. A ordem é um facto do contrato e não uma
+#: preferência de ecrã — uma segunda definição de "pior" no cliente divergiria
+#: da dos alertas no dia em que uma delas mudasse.
+ESTADOS_DO_NIVEL: tuple[str, ...] = ("negativo", "esgotado", "baixo", "ok")
+
+#: Os dois filtros que o ecrã de Stock envia em `?filtro=`. União fechada: um
+#: terceiro valor é 400 e não uma lista a fingir que filtrou.
+FILTROS_DO_NIVEL: tuple[str, str] = ("falta", "validade")
+
+#: Os dois riscos que o ecrã de Alertas envia em `?risco=`. Mesma regra.
+RISCOS_DO_ALERTA: tuple[str, str] = ("expira", "falta")
+
+#: As duas janelas que o ecrã de Alertas pede em `?periodo=`. A fatia nasce com
+#: duas de propósito, e o selector recebe `[desde, até)`: uma janela histórica
+#: para uma inspeção da ASAE passa a ser **um parâmetro e não uma reescrita**.
+PERIODOS_DE_DESPERDICIO: tuple[str, str] = ("hoje", "semana")
+
+#: Quantos dias de negócio rolantes "esta semana" cobre, **incluindo hoje** —
+#: igual ao `7d` do painel (ADR 0029) e nunca o mês civil.
+DIAS_DA_SEMANA_DE_NEGOCIO = 7
+
+#: As duas palavras do `expiry_kind` do `catalog`, escritas aqui porque é aqui
+#: que decidem uma cor. `use_by` é **DLC** (Reg. UE 1169/2011 art. 24 e Reg. CE
+#: 178/2002 art. 14(5)): passada a data o género é não seguro e não se vende.
+#: `best_before` é **DDM** (DL 26/2016): passada a data ainda se vende se
+#: estiver íntegro.
+VALIDADE_DLC = "use_by"
+VALIDADE_DDM = "best_before"
+#: A união fechada que o contrato serve. Numa constante porque o
+#: `ENUM_NAME_OVERRIDES` do `base.py` aponta para ela: sem um nome fixo, o
+#: drf-spectacular resolve a colisão com o `kind` do `purchasing` por um sufixo
+#: de hash — um nome que muda sozinho e um warning que é exit 1 no `gen:api`.
+TIPOS_DE_VALIDADE: tuple[str, str] = (VALIDADE_DLC, VALIDADE_DDM)
+
+#: As três palavras com que o cliente pinta um alerta — as do `gravidadeSchema`.
+GRAVIDADE_PERIGO = "danger"
+GRAVIDADE_AVISO = "warning"
+GRAVIDADE_INFO = "info"
+GRAVIDADES: tuple[str, str, str] = (GRAVIDADE_PERIGO, GRAVIDADE_AVISO, GRAVIDADE_INFO)
+
+#: O corte dos "poucos dias" (ADR 0034, decisão 9). **É hipótese e está marcada
+#: como tal**: não vem de lei nenhuma, vem de "dá para escoar num fim-de-semana".
+#: Fica por validar com um utilizador real antes de se tratar como facto, e é a
+#: candidata óbvia a mudar — por isso muda **nesta constante** e em mais lado
+#: nenhum.
+DIAS_DE_AVISO_DE_VALIDADE = 3
+
+
+def gravidade_da_validade(*, dias: int, kind: str | None) -> str:
+    """A gravidade de uma validade: **uma** função, chamada pelas duas portas.
+
+    `dias = expires_on − hoje`, com **hoje = dia civil** (ADR 0028, não
+    reaberto). A tabela é a da ADR 0034, decisão 9:
+
+    | dias | `use_by` | `best_before` | `kind` vazio |
+    |---|---|---|---|
+    | `< 0` | danger | warning | danger |
+    | `0` | danger | info | danger |
+    | `1–3` | warning | info | warning |
+    | `4–limiar` | info | info | info |
+
+    **O tecto do `best_before` é legal e não é paleta.** Um DDM passado ainda é
+    mercadoria vendável (DL 26/2016), logo nunca chega a `danger`: quem lhe
+    mexer está a dizer "deita fora" sobre o que se pode vender. Um DLC que
+    vence **hoje** é `danger` e não aviso — o dia em que ainda se consome é o
+    dia em que se decide.
+
+    O `kind` vazio lê-se pela coluna estrita: sub-avisar é o erro caro, e a app
+    ainda não conhece a validade secundária depois de aberto (HACCP), logo já
+    sub-avisa por omissão.
+
+    **Janela ≠ corte.** O limiar de dias decide o que **aparece** na lista; esta
+    função decide **como** aparece. Um lote a cinco dias entra a `info`, e é
+    isso que devolve significado ao âmbar.
+
+    Até 2026-10-27 havia duas versões disto no servidor e discordavam uma da
+    outra: o `selectors.stock_alerts` dava `critical` a tudo o que tinha
+    vencido (um iogurte com DDM de ontem virava alarme vermelho) e o
+    `api._gravidade_da_validade` dava **aviso** a um `use_by` que vence hoje. As
+    duas estavam erradas, e o cliente tinha ainda a sua.
+    """
+    if kind == VALIDADE_DDM:
+        return GRAVIDADE_AVISO if dias < 0 else GRAVIDADE_INFO
+    if dias <= 0:
+        return GRAVIDADE_PERIGO
+    if dias <= DIAS_DE_AVISO_DE_VALIDADE:
+        return GRAVIDADE_AVISO
+    return GRAVIDADE_INFO
+
+
+def _dia_de_negocio_de(*, instante: datetime, inicio_do_dia: time) -> date:
+    """A que dia de negócio pertence um instante. Às 02:00 ainda é ontem.
+
+    Três linhas duplicadas do `reporting/periodos.py` **de propósito**: o
+    `inventory` não pode importar o `reporting` (ADR 0029, decisão 6) e a
+    alternativa — um `api.py` naquele módulo — foi recusada por extenso. O que
+    paga a duplicação é o teste que corre no dia da mudança da hora e compara
+    as duas implementações (`tests/test_stock_e_alertas.py`).
+    """
+    local = timezone.localtime(instante)
+    if local.time() >= inicio_do_dia:
+        return local.date()
+    return local.date() - timedelta(days=1)
+
+
+def _inicio_do_dia_de_negocio(*, dia: date, inicio_do_dia: time) -> datetime:
+    """O instante em que o dia de negócio `dia` começa, no fuso do servidor."""
+    return timezone.make_aware(datetime.combine(dia, inicio_do_dia))
+
+
+def janela_de_desperdicio(
+    *, periodo: str, inicio_do_dia: time, agora: datetime
+) -> tuple[datetime, datetime]:
+    """O `[desde, até)` de `hoje` ou `semana`, em dias **de negócio**.
+
+    A aritmética é **de calendário**: `hoje − timedelta(days=6)` sobre a
+    **data**, e só depois `combine` com a hora do estabelecimento. Um
+    `agora − timedelta(days=7)` difere numa hora no domingo da mudança da hora,
+    e essa hora põe um dia inteiro no balde errado — é a mesma razão que o
+    cabeçalho de `reporting/periodos.py` já escreve.
+
+    `até` é `agora` e não o fim do dia: um período a correr não promete o
+    futuro.
+    """
+    hoje = _dia_de_negocio_de(instante=agora, inicio_do_dia=inicio_do_dia)
+    dias = DIAS_DA_SEMANA_DE_NEGOCIO if periodo == "semana" else 1
+    primeiro = hoje - timedelta(days=dias - 1)
+    desde = _inicio_do_dia_de_negocio(dia=primeiro, inicio_do_dia=inicio_do_dia)
+    return desde, agora
 
 
 def localizacoes_do_ambito(*, tenant_id: UUID) -> QuerySet[Location]:
@@ -155,6 +321,19 @@ _QUANTIDADE = DecimalField(max_digits=16, decimal_places=3)
 #: Duas casas para o dinheiro, seis para um custo unitário — as do contrato.
 _CENTIMO = Decimal("0.01")
 _MILIONESIMO = Decimal("0.000001")
+
+#: As colunas do artigo que todas as leituras deste módulo arrastam: o nome, o
+#: `sku` e o trio que converte uma quantidade da unidade base para a de
+#: apresentação. Numa constante porque são seis strings repetidas em sete
+#: queries, e uma delas esquecida é um `KeyError` em produção.
+_CAMPOS_DO_ARTIGO = (
+    "product_id",
+    "product__short_name",
+    "product__sku",
+    "product__base_unit",
+    "product__display_unit",
+    "product__display_factor",
+)
 
 
 def _quantidade_sem_custo() -> Sum:
@@ -261,177 +440,339 @@ def _linha_de_stock(
     }
 
 
-def stock_summary(
-    *, tenant_id: UUID, location_id: UUID | None = None
-) -> list[dict[str, Any]]:
-    """Saldo agregado **por artigo**, com o valor e a cobertura do custo.
+def _estado_do_nivel(*, saldo: Decimal, minimo: Decimal) -> str:
+    """O veredicto da linha, decidido **no servidor** e sobre o estabelecimento.
 
-    Uma linha por artigo: `product_id`, `product_name`, `quantity`,
-    `quantity_without_cost`, `unit_cost` e `total_value`. Ordenada por nome, que
-    é a ordem do ecrã — e nunca por valor (ADR 0032: uma lista ordenada por
-    euros **são** os euros, servida a quem não os pode ver).
+    `negativo` < 0 < `esgotado` = 0; `baixo` é `0 < saldo < mínimo`; o resto é
+    `ok`. Um mínimo a zero é "não há mínimo" e nunca produz `baixo`.
 
-    ## Os dois defeitos que esta função teve até 2026-10-21, porque voltam
-
-    **(a) A rota não devolvia a quantidade.** A anotação chamava-se
-    `total_quantity` e o serializer declarava `quantity`: o DRF não encontrava a
-    chave, o campo era `read_only` (logo `required=False`) e saía um `SkipField`
-    silencioso — o painel de stock servia o valor em euros e **não** o saldo. A
-    cura não é renomear um dos dois até o teste passar: é esta camada devolver
-    os nomes do contrato, que é o que faz o erro ser impossível em vez de
-    improvável.
-
-    **(b) O `Case` desfazia a agregação.** `avg_unit_cost` era um `Case` sobre
-    `quantity` e `unit_cost` **fora** de qualquer agregado, dentro de um
-    `values().annotate()`: o Django põe no `GROUP BY` toda a coluna não
-    agregada, logo agrupava por (artigo, quantidade, custo) e um artigo com três
-    lotes de custos diferentes saía em **três linhas**. Contar as linhas passava
-    a dizer quantos custos distintos o artigo tem — um oráculo sobre preços que
-    nenhum teste de "chaves de dinheiro" apanha, porque não há ali chave nenhuma
-    de dinheiro. Agora todo o `Case` está **dentro** de um `Sum`.
+    **O mínimo é por artigo** (ADR 0024) e por isso este veredicto é sempre do
+    estabelecimento inteiro, também quando o pedido traz `?loja=`: comparar o
+    saldo de uma loja contra o mínimo de todas inventava faltas. O `?loja=`
+    escopa a **quantidade** e a repartição, e o ecrã tem de escrever "mínimo do
+    estabelecimento" — senão "0,4 kg · ok" lê-se como erro de cálculo.
     """
-    niveis = StockLevel.objects.filter(tenant_id=tenant_id).exclude(
-        quantity=Decimal("0")
+    if saldo < Decimal("0"):
+        return "negativo"
+    if saldo == Decimal("0"):
+        return "esgotado"
+    if minimo > Decimal("0") and saldo < minimo:
+        return "baixo"
+    return "ok"
+
+
+def _validade_mais_proxima(
+    *, tenant_id: UUID, location_id: UUID | None, hoje: date
+) -> dict[UUID, dict[str, Any]]:
+    """Por artigo, o lote **com saldo** que vence primeiro no âmbito pedido.
+
+    No âmbito pedido e não em todas as localizações (ADR 0034, consulta (b)):
+    mostrar a validade de outra loja ao lado do saldo desta é uma frase falsa
+    sobre o que está à frente de quem lê.
+
+    Sem limite de dias: a lista de Stock mostra a validade mais próxima **haja
+    ela qual for**, e quem decide se isso é um alerta é o limiar, no filtro. O
+    `join` ao `StockLevel` é o que garante que o lote ainda tem mercadoria — a
+    tabela `Lot` sozinha não sabe.
+    """
+    niveis = StockLevel.objects.filter(
+        tenant_id=tenant_id, lot__isnull=False, lot__expires_at__isnull=False
     )
     if location_id is not None:
         niveis = niveis.filter(location_id=location_id)
-
     linhas = (
-        niveis.values("product_id", "product__short_name")
-        .annotate(
-            quantidade=Sum("quantity"),
-            valor=Sum(F("quantity") * F("unit_cost"), output_field=_VALOR),
-            sem_custo=_quantidade_sem_custo(),
+        niveis.values(
+            "product_id",
+            "product__expiry_kind",
+            "lot_id",
+            "lot__code",
+            "lot__expires_at",
         )
-        .order_by("product__short_name", "product_id")
+        .annotate(saldo=Sum("quantity"))
+        .filter(saldo__gt=Decimal("0"))
+        .order_by("lot__expires_at", "lot_id")
     )
-    return [
-        _linha_de_stock(
-            linha,
-            {
-                "product_id": linha["product_id"],
-                "product_name": linha["product__short_name"],
-            },
+    por_artigo: dict[UUID, dict[str, Any]] = {}
+    for linha in linhas:
+        if linha["product_id"] in por_artigo:
+            continue
+        por_artigo[linha["product_id"]] = _validade(
+            lot_id=linha["lot_id"],
+            lot_code=linha["lot__code"],
+            expires_at=linha["lot__expires_at"],
+            expiry_kind=linha["product__expiry_kind"],
+            hoje=hoje,
         )
-        for linha in linhas
-    ]
+    return por_artigo
 
 
-def stock_by_location(
-    *, tenant_id: UUID, location_id: UUID, search_text: str = ""
-) -> list[dict[str, Any]]:
-    """Saldo por (artigo, lote) nessa localização, por FEFO.
+def _validade(
+    *,
+    lot_id: UUID,
+    lot_code: str | None,
+    expires_at: datetime,
+    expiry_kind: str | None,
+    hoje: date,
+) -> dict[str, Any]:
+    """O bloco de validade que viaja no nível e no alerta, com a gravidade.
 
-    FEFO: `expires_at` ascendente com os sem validade no fim, depois
-    `received_at`. A ordem é **de validade** e não de valor — é o que o painel
-    mostra a quem vai à prateleira, e a ADR 0032 fixa que nenhuma lista servida
-    a quem não vê euros pode ser ordenada por eles.
+    `expires_at` sai como **data** e não como instante (defeito (a) da ADR
+    0034): um instante tem fuso e a data da embalagem não muda com quem a lê.
 
-    Tinha o mesmo buraco do `quantity` que o `stock_summary`: a coluna não
-    estava sequer no `values()`, logo o `total_value` do serializer dividia por
-    uma quantidade que não existia e saía `null`.
+    `kind` sai `None` quando o artigo não tem rótulo — o `expiry_kind` do
+    `catalog` é `""` por omissão e o `tipoValidadeSchema` do cliente não aceita
+    `""`. `lot_code` sai `None` num lote sintético, pela `e_lote_sintetico`:
+    um `__<uuid>__` existe para o ledger ter uma chave, não para alguém o ler.
+
+    A `severity` vem **do servidor** porque sem ela o cliente era obrigado a
+    recalculá-la para pintar o trilho, e era essa a quarta definição (ADR 0034,
+    decisão 9).
     """
-    niveis = StockLevel.objects.filter(
-        tenant_id=tenant_id, location_id=location_id
-    ).exclude(quantity=Decimal("0"))
-    if search_text:
-        niveis = niveis.filter(
-            Q(product__short_name__icontains=search_text)
-            | Q(lot__code__icontains=search_text)
-        )
-    linhas = (
-        niveis.values(
-            "product_id",
-            "product__short_name",
-            "location_id",
-            "location__name",
-            "lot_id",
-            "lot__code",
-            "lot__expires_at",
-            "lot__received_at",
-        )
-        .annotate(
-            quantidade=Sum("quantity"),
-            valor=Sum(F("quantity") * F("unit_cost"), output_field=_VALOR),
-            sem_custo=_quantidade_sem_custo(),
-        )
-        .order_by("lot__expires_at", "lot__received_at", "product__short_name")
-    )
-    return [
-        _linha_de_stock(
-            linha,
-            {
-                "product_id": linha["product_id"],
-                "product_name": linha["product__short_name"],
-                "location_id": linha["location_id"],
-                "location_name": linha["location__name"],
-                "lot_code": linha["lot__code"],
-                "expires_at": linha["lot__expires_at"],
-            },
-        )
-        for linha in linhas
-    ]
+    expires_on = timezone.localdate(expires_at)
+    dias = (expires_on - hoje).days
+    kind = expiry_kind or None
+    return {
+        "lot_id": lot_id,
+        "lot_code": None if e_lote_sintetico(lot_code) else lot_code,
+        "expires_at": expires_on,
+        "days_away": dias,
+        "kind": kind,
+        "severity": gravidade_da_validade(dias=dias, kind=kind),
+    }
 
 
-def stock_by_product(
-    *, tenant_id: UUID, product_id: UUID, search_text: str = ""
+def niveis_de_stock(
+    *,
+    tenant_id: UUID,
+    location_id: UUID | None = None,
+    q: str = "",
+    hoje: date | None = None,
 ) -> list[dict[str, Any]]:
-    """Saldo por (localização, lote) desse artigo, por FEFO. Ver `stock_by_location`."""
-    niveis = StockLevel.objects.filter(
-        tenant_id=tenant_id, product_id=product_id
-    ).exclude(quantity=Decimal("0"))
-    if search_text:
-        niveis = niveis.filter(
-            Q(location__name__icontains=search_text)
-            | Q(lot__code__icontains=search_text)
-        )
+    """O ecrã de Stock: **uma linha por artigo**, nunca uma por lote.
+
+    É o que o `/stock/summary` do servidor era até à ADR 0034 — mudou de casa
+    para o `/stock/levels` e ganhou o que lhe faltava: o mínimo, o estado, a
+    validade mais próxima e a repartição por localização. O grão de lote vivia
+    no `by-location`/`by-product`, que morreram inteiros por não terem
+    consumidor nenhum.
+
+    ## O que o `?loja=` escopa, e o que não escopa
+
+    Escopa a `quantity`, o `by_location`, a `nearest_expiry` e o valor — é o
+    que está naquela loja. **Não** escopa o `status` nem o `min_quantity`: o
+    mínimo é por artigo (ADR 0024) e compará-lo contra o saldo de uma loja
+    inventava faltas. Ver `_estado_do_nivel`.
+
+    ## A ordem, e porque é que nunca pode ser por valor
+
+    Estado (o pior primeiro), depois `days_away` com os sem validade no fim,
+    depois o nome. Nunca por valor: uma lista ordenada por euros **são** os
+    euros, servida a quem não os pode ver (ADR 0032, adenda). O desempate por
+    `value_eur` que o fixture fazia não atravessa.
+
+    ## O `Case` dentro do `Sum`, e porque é que isso é segurança
+
+    Todo o `Case` desta query vive **dentro** de um agregado. Fora dele, o
+    Django põe a coluna no `GROUP BY` e um artigo com três lotes a três preços
+    sai em três linhas: contar as linhas passa a dizer quantos custos distintos
+    o artigo tem, que é um oráculo sobre preços sem nenhuma chave de preço no
+    payload. Foi o defeito que a ADR 0032 mediu e fechou.
+    """
+    hoje = hoje or timezone.localdate()
+    niveis = StockLevel.objects.filter(tenant_id=tenant_id)
+    if q:
+        niveis = niveis.filter(product__short_name__icontains=q)
     linhas = (
         niveis.values(
-            "product_id",
-            "product__short_name",
+            *_CAMPOS_DO_ARTIGO,
+            "product__min_quantity",
             "location_id",
             "location__name",
-            "lot_id",
-            "lot__code",
-            "lot__expires_at",
-            "lot__received_at",
+            "location__position",
         )
         .annotate(
             quantidade=Sum("quantity"),
             valor=Sum(F("quantity") * F("unit_cost"), output_field=_VALOR),
             sem_custo=_quantidade_sem_custo(),
         )
-        .order_by("lot__expires_at", "lot__received_at", "location__name")
+        .order_by("product__short_name", "product_id", "location__position", "location__name")
     )
-    return [
-        _linha_de_stock(
-            linha,
+
+    validades = _validade_mais_proxima(
+        tenant_id=tenant_id, location_id=location_id, hoje=hoje
+    )
+    por_artigo: dict[UUID, dict[str, Any]] = {}
+    for linha in linhas:
+        artigo = por_artigo.setdefault(
+            linha["product_id"],
             {
-                "product_id": linha["product_id"],
-                "product_name": linha["product__short_name"],
-                "location_id": linha["location_id"],
-                "location_name": linha["location__name"],
-                "lot_code": linha["lot__code"],
-                "expires_at": linha["lot__expires_at"],
+                "product": linha["product_id"],
+                "short_name": linha["product__short_name"],
+                "base_unit": linha["product__base_unit"],
+                "display_unit": linha["product__display_unit"],
+                "display_factor": linha["product__display_factor"],
+                "min_quantity": linha["product__min_quantity"],
+                "saldo_do_estabelecimento": Decimal("0"),
+                "quantidade": Decimal("0"),
+                "sem_custo": Decimal("0"),
+                "valor": Decimal("0"),
+                "by_location": [],
+                "no_ambito": False,
             },
         )
-        for linha in linhas
+        quantidade = linha["quantidade"] or Decimal("0")
+        # O saldo do estabelecimento soma **sempre**, porque é ele que decide o
+        # `status` contra o mínimo do artigo — também com `?loja=`.
+        artigo["saldo_do_estabelecimento"] += quantidade
+        if location_id is not None and linha["location_id"] != location_id:
+            continue
+        # A linha existe naquela prateleira: é isso que põe o artigo na lista,
+        # e **não** a quantidade ser diferente de zero. Um artigo que entrou e
+        # acabou aparece com `status: "esgotado"`, que é o que o ecrã mostra
+        # primeiro; um artigo que nunca lá esteve não aparece de todo.
+        artigo["no_ambito"] = True
+        artigo["quantidade"] += quantidade
+        artigo["sem_custo"] += linha["sem_custo"] or Decimal("0")
+        artigo["valor"] += linha["valor"] or Decimal("0")
+        if quantidade != Decimal("0"):
+            artigo["by_location"].append(
+                {
+                    "location_id": linha["location_id"],
+                    "location_name": linha["location__name"],
+                    "quantidade": quantidade,
+                }
+            )
+
+    compostas = [
+        _nivel_de_stock(artigo, validade=validades.get(artigo["product"]))
+        for artigo in por_artigo.values()
+        if artigo["no_ambito"]
     ]
+    compostas.sort(key=_ordem_do_nivel)
+    return compostas
+
+
+def _nivel_de_stock(
+    artigo: dict[str, Any], *, validade: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Uma linha composta: o saldo, o que ele vale e a cobertura do custo.
+
+    `unit_cost` e `total_value` saem daqui **sempre**; quem os tira do payload
+    é o `SemEurosParaQuemNaoVe`, no serializer. Esta camada não conhece papéis,
+    e é de propósito: uma query que ramificasse no papel era a segunda
+    definição da política que a ADR 0032 desfez.
+    """
+    quantidade = artigo["quantidade"]
+    sem_custo = artigo["sem_custo"]
+    valor = artigo["valor"].quantize(_CENTIMO, rounding=ROUND_HALF_UP)
+    return {
+        "product": artigo["product"],
+        "short_name": artigo["short_name"],
+        "base_unit": artigo["base_unit"],
+        "display_unit": artigo["display_unit"],
+        "display_factor": artigo["display_factor"],
+        "quantidade": quantidade,
+        "min_quantity": artigo["min_quantity"],
+        "status": _estado_do_nivel(
+            saldo=artigo["saldo_do_estabelecimento"], minimo=artigo["min_quantity"]
+        ),
+        "by_location": artigo["by_location"],
+        "nearest_expiry": validade,
+        "quantity_without_cost": sem_custo,
+        "unit_cost": _custo_unitario(
+            valor=valor, quantidade_com_custo=quantidade - sem_custo
+        ),
+        "total_value": valor,
+    }
+
+
+def _ordem_do_nivel(linha: dict[str, Any]) -> tuple[int, int, int, str]:
+    """Estado, depois `days_away` com NULLS LAST, depois o nome. **Nunca valor.**
+
+    O `1` antes do `days_away` é o NULLS LAST escrito à mão: uma linha sem
+    validade ordena depois de todas as que têm, seja qual for o número.
+    """
+    validade = linha["nearest_expiry"]
+    peso = (
+        ESTADOS_DO_NIVEL.index(linha["status"])
+        if linha["status"] in ESTADOS_DO_NIVEL
+        else len(ESTADOS_DO_NIVEL)
+    )
+    if validade is None:
+        return (peso, 1, 0, linha["short_name"])
+    return (peso, 0, validade["days_away"], linha["short_name"])
+
+
+def _e_a_expirar(linha: dict[str, Any], *, limiar_em_dias: int) -> bool:
+    """A linha entra no filtro `validade`? O mesmo predicado do contador."""
+    validade = linha["nearest_expiry"]
+    return validade is not None and validade["days_away"] <= limiar_em_dias
+
+
+def niveis_filtrados(
+    linhas: Sequence[dict[str, Any]], *, filtro: str, limiar_em_dias: int
+) -> list[dict[str, Any]]:
+    """O `?filtro=falta|validade` do ecrã de Stock, no servidor.
+
+    Vivia em JavaScript sobre `results` e com paginação a sério isso procurava
+    **só nas 50 piores linhas**, calando as outras em silêncio (ADR 0034,
+    decisão 2). Aqui é um predicado só, e é o **mesmo** que o `resumo_de_stock`
+    usa para contar: é assim que o contador do topo é igual ao `count` da lista
+    que ele filtra, por construção e não por coincidência.
+    """
+    if filtro == "falta":
+        return [linha for linha in linhas if linha["status"] != "ok"]
+    if filtro == "validade":
+        return [
+            linha for linha in linhas if _e_a_expirar(linha, limiar_em_dias=limiar_em_dias)
+        ]
+    return list(linhas)
+
+
+def resumo_de_stock(
+    *,
+    tenant_id: UUID,
+    location_id: UUID | None = None,
+    hoje: date | None = None,
+    limiar_em_dias: int = DIAS_DE_VALIDADE_DO_PAINEL,
+) -> dict[str, Any]:
+    """Os quatro números do topo do ecrã de Stock.
+
+    Derivados da **mesma** lista que o `/stock/levels` serve, com os **mesmos**
+    predicados: `below_min_count` é o `count` de `?filtro=falta` e
+    `expiring_count` é o de `?filtro=validade`, no mesmo âmbito. É a invariante
+    que a ADR 0034 escreveu, e tê-la por construção é o que impede a
+    divergência de voltar.
+
+    `expiring_count` conta **artigos** e o dos Alertas conta **linhas da lista
+    de alertas** (lote × localização): são dois factos com dois rótulos, e cada
+    um é igual à sua lista.
+
+    `stock_value_eur` **não soma artigos com saldo negativo ou nulo**: um `Sum`
+    ingénuo faria o valor do stock descer por causa de um saldo que ninguém
+    tem. As linhas negativas continuam visíveis na lista com `status:
+    "negativo"`, que é onde elas significam alguma coisa.
+    """
+    linhas = niveis_de_stock(tenant_id=tenant_id, location_id=location_id, hoje=hoje)
+    valor = sum(
+        (linha["total_value"] for linha in linhas if linha["quantidade"] > Decimal("0")),
+        Decimal("0"),
+    )
+    return {
+        "below_min_count": len(
+            niveis_filtrados(linhas, filtro="falta", limiar_em_dias=limiar_em_dias)
+        ),
+        "expiring_count": len(
+            niveis_filtrados(linhas, filtro="validade", limiar_em_dias=limiar_em_dias)
+        ),
+        "expiring_within_days": limiar_em_dias,
+        "stock_value_eur": valor.quantize(_CENTIMO, rounding=ROUND_HALF_UP),
+    }
 
 
 # ---------------------------------------------------------------------------
 # As leituras do assistente (ADR 0027, decisão 6) e dos alertas do painel
 # ---------------------------------------------------------------------------
-_CAMPOS_DO_ARTIGO = (
-    "product_id",
-    "product__short_name",
-    "product__sku",
-    "product__base_unit",
-    "product__display_unit",
-    "product__display_factor",
-)
-
-
 def saldos_do_artigo(
     *, tenant_id: UUID, product_id: UUID, location_id: UUID | None = None
 ) -> QuerySet[StockLevel]:
@@ -638,80 +979,322 @@ def movimentos_resumidos(
     return {"resumo": resumo, "linhas": linhas, "truncado": truncado}
 
 
-def stock_alerts(
-    *,
-    tenant_id: UUID,
-    severity: str = "",
-    product_id: UUID | None = None,
-    location_id: UUID | None = None,
+def _alertas_de_validade(
+    *, tenant_id: UUID, hoje: date, limiar_em_dias: int
 ) -> list[dict[str, Any]]:
-    """Os alertas do painel: falta, validade a vencer e validade vencida (ADR 0024).
+    """Um alerta por **lote × localização** com saldo, até `hoje + limiar`.
 
-    Vivia em `views.py`, e uma view não é chamável pela porta do módulo (ADR
-    0027, decisão 6). A mudança que não é só de sítio é a **falta**: compara o
-    saldo somado do artigo contra o mínimo do artigo (`artigos_abaixo_do_minimo`),
-    em vez de lote a lote — um artigo com 3 × 400 g contra um mínimo de 1000 g
-    deixou de alarmar. Sem `location_id` o alerta de falta não tem localização,
-    porque o saldo é de todas; com ele, é a dessa loja contra o mínimo do artigo.
+    Por lote **e** localização, e não por lote: um lote transferido tem saldo
+    em duas prateleiras, e agregá-lo punha o `location` a `null` — o `POST` de
+    quebra da linha levaria `""`, que é 400, e o alerta deixava de ser
+    accionável, que é a única coisa que ele tem. É por isso que o `id` é
+    `expiry:<lot_id>:<location_id>` e não `expiry:<lot_id>`, que colidia.
 
-    As validades estão no calendário civil (`timezone.localdate()`): são a data
-    impressa na embalagem e não se deslocam pelo relógio do negócio. É a **mesma
-    regra e o mesmo selector** que o assistente usa desde a ADR 0028.
+    Os vencidos entram e ficam no topo: a pior resposta a "o que vence esta
+    semana" é um lote vencido que ficou de fora por já ter vencido.
     """
-    alertas: list[dict[str, Any]] = []
-    hoje = timezone.localdate()
-
-    if not severity or severity == "critical":
-        nome_da_localizacao = None
-        if location_id is not None:
-            localizacao = Location.objects.filter(tenant_id=tenant_id, pk=location_id).first()
-            nome_da_localizacao = localizacao.name if localizacao is not None else None
-        for artigo in artigos_abaixo_do_minimo(tenant_id=tenant_id, location_id=location_id):
-            if product_id is not None and artigo["product_id"] != product_id:
-                continue
-            alertas.append(
-                {
-                    "alert_type": "shortage",
-                    "severity": "critical",
-                    "product_id": artigo["product_id"],
-                    "product_name": artigo["product_name"],
-                    "location_id": location_id,
-                    "location_name": nome_da_localizacao,
-                    "lot_code": None,
-                    "expires_at": None,
-                }
-            )
-
-    # **O mesmo selector do assistente**, e não uma segunda varredura do `Lot`
-    # (ADR 0028): a tabela `Lot` sozinha não sabe se ainda há mercadoria, e o
-    # painel listava lotes já consumidos até ao fim como se estivessem a vencer.
-    # A janela é a mesma e a comparação é por data civil nos dois sítios.
-    for lote in lotes_a_vencer(
-        tenant_id=tenant_id,
-        hoje=hoje,
-        dias=DIAS_DE_VALIDADE_DO_PAINEL,
-        location_id=location_id,
-        limite=LIMITE_DE_LOTES_DO_PAINEL,
-    ):
-        if product_id is not None and lote["product_id"] != product_id:
-            continue
-        vencido = lote["expires_on"] < hoje
-        gravidade = "critical" if vencido else "warning"
-        if severity and severity != gravidade:
-            continue
+    linhas = (
+        StockLevel.objects.filter(
+            tenant_id=tenant_id,
+            lot__isnull=False,
+            lot__expires_at__isnull=False,
+            lot__expires_at__date__lte=hoje + timedelta(days=limiar_em_dias),
+        )
+        .values(
+            *_CAMPOS_DO_ARTIGO,
+            "product__expiry_kind",
+            "lot_id",
+            "lot__code",
+            "lot__expires_at",
+            "location_id",
+            "location__name",
+        )
+        .annotate(
+            saldo=Sum("quantity"),
+            valor=Sum(F("quantity") * F("unit_cost"), output_field=_VALOR),
+            sem_custo=_quantidade_sem_custo(),
+        )
+        .filter(saldo__gt=Decimal("0"))
+        .order_by("lot__expires_at", "product__short_name", "lot_id")
+    )
+    alertas = []
+    for linha in linhas:
+        validade = _validade(
+            lot_id=linha["lot_id"],
+            lot_code=linha["lot__code"],
+            expires_at=linha["lot__expires_at"],
+            expiry_kind=linha["product__expiry_kind"],
+            hoje=hoje,
+        )
+        saldo = linha["saldo"] or Decimal("0")
+        valor = (linha["valor"] or Decimal("0")).quantize(
+            _CENTIMO, rounding=ROUND_HALF_UP
+        )
+        custo = _custo_unitario(
+            valor=valor,
+            quantidade_com_custo=saldo - (linha["sem_custo"] or Decimal("0")),
+        )
         alertas.append(
             {
-                "alert_type": "expired" if vencido else "expiring_soon",
-                "severity": gravidade,
-                "product_id": lote["product_id"],
-                "product_name": lote["product_name"],
-                "location_id": None,
-                "location_name": None,
-                "lot_code": lote["lot_code"],
-                "expires_at": lote["expires_at"],
+                "id": f"expiry:{linha['lot_id']}:{linha['location_id']}",
+                "product": linha["product_id"],
+                "short_name": linha["product__short_name"],
+                "base_unit": linha["product__base_unit"],
+                "display_unit": linha["product__display_unit"],
+                "display_factor": linha["product__display_factor"],
+                "reason": "expiry",
+                "severity": validade["severity"],
+                "location_id": linha["location_id"],
+                "location_name": linha["location__name"],
+                "quantidade": saldo,
+                "lot": validade,
+                "threshold_days": limiar_em_dias,
+                "min_quantity": None,
+                "value_eur": valor,
+                "cost_status": _estado_do_custo(custo),
             }
         )
     return alertas
+
+
+def _alertas_de_falta(*, tenant_id: UUID, hoje: date) -> list[dict[str, Any]]:
+    """Um alerta por artigo cujo `status` não é `ok`, no estabelecimento inteiro.
+
+    **A mesma projeção que o ecrã de Stock lê**, e não um segundo cálculo de
+    "em falta": se este recalculasse, o número do Stock e o dos Alertas
+    divergiam no dia em que um dos dois mudasse — e o dono descobria-o antes de
+    nós. Sem localização, porque o mínimo é do artigo e vale sobre o
+    consolidado: uma loja a apontar aqui era uma precisão que o dado não tem.
+
+    O euro é **o que custa voltar ao mínimo** e não o que lá está: num alerta
+    de validade o valor é o que se arrisca perder, aqui é o que se vai gastar,
+    e o ecrã diz qual dos dois é.
+    """
+    alertas = []
+    for linha in niveis_de_stock(tenant_id=tenant_id, hoje=hoje):
+        if linha["status"] == "ok":
+            continue
+        a_repor = max(Decimal("0"), linha["min_quantity"] - linha["quantidade"])
+        custo = linha["unit_cost"]
+        alertas.append(
+            {
+                "id": f"missing:{linha['product']}",
+                "product": linha["product"],
+                "short_name": linha["short_name"],
+                "base_unit": linha["base_unit"],
+                "display_unit": linha["display_unit"],
+                "display_factor": linha["display_factor"],
+                "reason": "missing",
+                "severity": (
+                    GRAVIDADE_AVISO if linha["status"] == "baixo" else GRAVIDADE_PERIGO
+                ),
+                "location_id": None,
+                "location_name": None,
+                "quantidade": linha["quantidade"],
+                "lot": None,
+                "threshold_days": None,
+                "min_quantity": linha["min_quantity"],
+                "value_eur": (
+                    (a_repor * custo).quantize(_CENTIMO, rounding=ROUND_HALF_UP)
+                    if custo is not None
+                    else Decimal("0")
+                ),
+                "cost_status": _estado_do_custo(custo),
+            }
+        )
+    return alertas
+
+
+def _ordem_do_alerta(alerta: dict[str, Any]) -> tuple[int, int, int, str]:
+    """Gravidade, depois `days_away` com NULLS LAST, depois o nome. Nunca valor.
+
+    Dentro da mesma gravidade, quem tem relógio vem antes: um lote que expira
+    hoje é mais urgente do que uma prateleira vazia, que espera pela próxima
+    entrega. O desempate por `value_eur` que o fixture fazia **não** atravessa
+    — uma lista ordenada por euros são os euros (ADR 0032, adenda).
+    """
+    peso = (
+        GRAVIDADES.index(alerta["severity"])
+        if alerta["severity"] in GRAVIDADES
+        else len(GRAVIDADES)
+    )
+    if alerta["lot"] is None:
+        return (peso, 1, 0, alerta["short_name"])
+    return (peso, 0, alerta["lot"]["days_away"], alerta["short_name"])
+
+
+def alertas_de_stock(
+    *,
+    tenant_id: UUID,
+    risco: str = "",
+    hoje: date | None = None,
+    limiar_em_dias: int = DIAS_DE_VALIDADE_DO_PAINEL,
+) -> list[dict[str, Any]]:
+    """O ecrã de Alertas: **uma** lista, dois motivos, ordenada no servidor.
+
+    `risco=expira` traz só as validades, `risco=falta` só as faltas, e sem
+    parâmetro vêm as duas. O vocabulário é o do cliente (`danger|warning|info`,
+    `expiry|missing`): esta é a lista que o utilizador vê, e traduzi-la duas
+    vezes era criar a divergência outra vez.
+
+    As validades estão no calendário **civil** (`timezone.localdate()`) e o
+    desperdício, na rota ao lado, no dia **de negócio**. Ver o bloco dos dois
+    relógios no topo deste ficheiro antes de "corrigir" um deles.
+    """
+    hoje = hoje or timezone.localdate()
+    alertas: list[dict[str, Any]] = []
+    if risco != "falta":
+        alertas += _alertas_de_validade(
+            tenant_id=tenant_id, hoje=hoje, limiar_em_dias=limiar_em_dias
+        )
+    if risco != "expira":
+        alertas += _alertas_de_falta(tenant_id=tenant_id, hoje=hoje)
+    alertas.sort(key=_ordem_do_alerta)
+    return alertas
+
+
+def contadores_de_alertas(
+    *,
+    tenant_id: UUID,
+    hoje: date | None = None,
+    limiar_em_dias: int = DIAS_DE_VALIDADE_DO_PAINEL,
+) -> dict[str, int]:
+    """`expiring_count` e `missing_count`, cada um igual ao `count` da sua lista.
+
+    Contam **linhas da lista** e não lotes: com o alerta a ser por lote ×
+    localização, "lotes" nem sequer estava bem definido (ADR 0034, adenda, a
+    correcção à decisão 5). São duas listas, logo são dois números — e é por
+    isso que o `expiring_count` daqui difere do do ecrã de Stock, que conta
+    **artigos**.
+    """
+    alertas = alertas_de_stock(
+        tenant_id=tenant_id, hoje=hoje, limiar_em_dias=limiar_em_dias
+    )
+    return {
+        "expiring_count": sum(1 for a in alertas if a["reason"] == "expiry"),
+        "missing_count": sum(1 for a in alertas if a["reason"] == "missing"),
+    }
+
+
+def linhas_de_desperdicio(
+    *, tenant_id: UUID, desde: datetime, ate: datetime
+) -> QuerySet[StockMovement]:
+    """As **linhas** de quebra de `[desde, até)`, da mais recente para a mais antiga.
+
+    Linhas e não agregado, e é a fronteira com o `reporting` escrita (ADR 0034,
+    decisão 4): *o `reporting` agrega o negócio num período e é do dono; o
+    `inventory` lista o ledger para quem age sobre ele.* Esta lista fica ao
+    lado do botão que a cria e tem de chegar ao `staff`.
+
+    `[desde, até)` e não `periodo`: acrescentar uma janela histórica para uma
+    inspeção passa a ser um parâmetro, e não uma reescrita.
+    """
+    return (
+        StockMovement.objects.filter(
+            tenant_id=tenant_id,
+            movement_type="waste",
+            occurred_at__gte=desde,
+            occurred_at__lt=ate,
+        )
+        .select_related("product", "location", "lot")
+        .order_by("-occurred_at", "-created_at", "-id")
+    )
+
+
+def contadores_de_desperdicio(
+    *, tenant_id: UUID, desde: datetime, ate: datetime
+) -> dict[str, Any]:
+    """Quantas quebras, quanto valeram e quantas não têm preço, numa janela.
+
+    ## Porque é que o `COUNT` tem de viver num `aggregate()` e nunca num `values()`
+
+    Um `COUNT(id)` não reconstrói um custo unitário: a reconstrução que a ADR
+    0032 fechou é sempre uma **divisão** (`value_eur ÷ quantity`), e uma
+    contagem não tem euros em ponta nenhuma. **Mas só enquanto ficar fora de um
+    `values().annotate()` que inclua `unit_cost`** — agrupar a contagem por
+    custo unitário serve o custo unitário na chave do grupo, e a fuga volta
+    pela mesma porta com outro nome. É o defeito exacto que a ADR 0032 mediu no
+    `stock_summary`, e há um teste que lê o SQL (`test_stock_e_alertas.py`).
+
+    A **cobertura** entra pela régua da ADR 0032: `linhas_sem_custo` são
+    **linhas e não euros**, iguais para os três papéis. Sem isso, "7 quebras
+    hoje" e "7 quebras hoje, 4 sem preço conhecido" são a mesma frase.
+    """
+    agregado = StockMovement.objects.filter(
+        tenant_id=tenant_id,
+        movement_type="waste",
+        occurred_at__gte=desde,
+        occurred_at__lt=ate,
+    ).aggregate(
+        n=Count("id"),
+        valor=Sum(F("quantity") * F("unit_cost"), output_field=_VALOR),
+        sem_custo=Count("id", filter=Q(unit_cost=Decimal("0"))),
+    )
+    return {
+        # Positivo: uma quebra está no ledger a negativo porque é uma saída, e
+        # "deitaste fora −12,40 €" não é uma frase.
+        "valor_eur": abs(agregado["valor"] or Decimal("0")).quantize(
+            _CENTIMO, rounding=ROUND_HALF_UP
+        ),
+        "n": agregado["n"] or 0,
+        "linhas_sem_custo": agregado["sem_custo"] or 0,
+    }
+
+
+def movimentos_do_artigo(*, tenant_id: UUID, product_id: UUID) -> QuerySet[StockMovement]:
+    """O ledger de um artigo, do mais recente para o mais antigo.
+
+    `occurred_at` e nunca `created_at` para ordenar (ADR 0013, decisão 8): uma
+    receção lançada na segunda-feira com a mercadoria entrada no sábado é do
+    sábado. Os dois desempates que se seguem existem para a paginação não
+    repetir nem perder linhas quando dois movimentos partilham o instante — o
+    par de uma transferência partilha-o sempre.
+    """
+    return (
+        StockMovement.objects.filter(tenant_id=tenant_id, product_id=product_id)
+        .select_related("product", "location", "lot")
+        .order_by("-occurred_at", "-created_at", "-id")
+    )
+
+
+def rotulos_de_referencia(
+    *, tenant_id: UUID, referencias: Iterable[str]
+) -> dict[str, tuple[str, str]]:
+    """`{referência: (tipo, rótulo)}` para as que este módulo sabe nomear.
+
+    O `reference` de um `adjustment` de fecho é o **id cru da contagem**
+    (`fechar_contagem` grava `reference=str(stock_count_id)`), e o ecrã dizia
+    "texto curto, para mostrar" — imprimiria um uuid. **Não se muda o que se
+    grava**: há um índice parcial em `inv_stockmv_tenant_ref_idx` e dois
+    lookups por essa string (`ajustes_da_contagem`, `valor_dos_ajustes_por_artigo`).
+    O que se serve são dois campos novos, e o ecrã imprime o rótulo.
+
+    Só nomeia o que é **deste** módulo: a contagem é modelo do próprio
+    `inventory`, logo dizer "Contagem de 24/10, Armazém" não obriga ninguém a
+    saber como o `purchasing` chama um documento. O que vier de fora fica sem
+    rótulo, e sem rótulo o ecrã não imprime nada.
+    """
+    candidatos = set()
+    for referencia in referencias:
+        if not referencia:
+            continue
+        try:
+            candidatos.add(UUID(referencia))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    if not candidatos:
+        return {}
+    contagens = StockCount.objects.filter(
+        tenant_id=tenant_id, pk__in=candidatos
+    ).select_related("location")
+    rotulos: dict[str, tuple[str, str]] = {}
+    for contagem in contagens:
+        quando = timezone.localdate(contagem.closed_at or contagem.started_at)
+        rotulos[str(contagem.pk)] = (
+            "contagem",
+            f"Contagem de {quando:%d/%m}, {contagem.location.name}",
+        )
+    return rotulos
 
 
 # ---------------------------------------------------------------------------

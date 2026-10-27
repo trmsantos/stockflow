@@ -834,10 +834,14 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^receipts/(?P<pk>[^/.]+)/lines/(?P<linha_id>[^/.]+)/confirmation$",
         "api/v1/^receipts/(?P<pk>[^/.]+)/temperature$",
         "api/v1/^receipts/summary$",
-        # Painel de stock (fatia 4): queries read-only ao ledger
+        # Os sete recursos de `/stock` (ADR 0034). O `by-location` e o
+        # `by-product` saíram da lista porque **morreram inteiros**: eram de
+        # grão lote, exigiam um filtro obrigatório e não tinham consumidor
+        # nenhum. Entraram o `levels`, o `GET /movements` e as duas rotas
+        # debaixo de `/alerts`. Todas com âmbito, que é o default.
         "api/v1/^stock/alerts$",
-        "api/v1/^stock/by-location$",
-        "api/v1/^stock/by-product$",
+        "api/v1/^stock/alerts/summary$",
+        "api/v1/^stock/alerts/waste$",
         # As seis rotas da contagem física (ADR 0030). Com âmbito, que é o
         # default, e **nenhuma** dispensa: contar é o fluxo de campo e corre no
         # telemóvel do `staff`, logo a tentação era dispensá-la de alguma coisa.
@@ -847,6 +851,8 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^stock/counts$",
         "api/v1/^stock/counts/(?P<pk>[^/.]+)/closing$",
         "api/v1/^stock/counts/(?P<pk>[^/.]+)/lines$",
+        "api/v1/^stock/levels$",
+        "api/v1/^stock/movements$",
         "api/v1/^stock/movements/adjustment$",
         "api/v1/^stock/movements/transfer$",
         "api/v1/^stock/movements/waste$",

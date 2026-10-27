@@ -181,6 +181,11 @@ class MovementDTO:
     reference: str = ""
     production_id: UUID | None = None
     reason: str = ""
+    #: O texto livre que acompanha o motivo. Estava a ser **aceite pela API e
+    #: deitado fora** — o `WasteSerializer` validava-o, o serviço recebia-o e o
+    #: DTO não o tinha, logo a coluna ficava sempre a `""`. Um campo aceite e
+    #: silenciosamente ignorado é pior do que um campo que não existe.
+    reason_detail: str = ""
     #: O par `transfer_out`/`transfer_in` partilha este id, e ele entra **na
     #: criação**: a tabela é append-only (`REVOKE UPDATE`, ADR 0006), logo
     #: escrevê-lo depois, com um `update()`, é `permission denied`.
@@ -287,6 +292,7 @@ def record_movements(
             unit_cost=mvt_dto.unit_cost,
             cost_is_estimate=mvt_dto.cost_is_estimate,
             reason=mvt_dto.reason,
+            reason_detail=mvt_dto.reason_detail,
             reference=mvt_dto.reference,
             production_id=mvt_dto.production_id,
             transfer_id=mvt_dto.transfer_id,
@@ -481,6 +487,64 @@ def get_fefo_lot(
     return lotes_com_stock[0] if lotes_com_stock else None
 
 
+#: O que uma saída tem à frente, por ordem FEFO: o nível, o lote e o custo.
+#: Uma tupla e não um dict porque é consumida duas linhas abaixo de onde nasce.
+_SaldoFEFO = tuple[UUID | None, Decimal, Decimal]
+
+
+def _saldos_fefo(
+    *, tenant_id: UUID, product_id: UUID, location_id: UUID
+) -> list[_SaldoFEFO]:
+    """Os lotes com saldo **naquela localização**, por FEFO: `(lot_id, saldo, custo)`.
+
+    `expires_at ASC NULLS LAST`, depois `received_at ASC`, e **só** entre os
+    que têm saldo positivo ali. É a mesma regra que o consumo de receitas já
+    segue (ADR 0026) e a que a ADR 0034, decisão 8, escreve para a quebra.
+
+    O lote sintético é encontrado por este caminho como qualquer outro, porque
+    também é um lote com saldo. O ramo especial que o procurava pelo código
+    (`__<product_id>__`) **sem olhar à localização** deixa de existir, e com
+    ele a porta por onde se tirava stock de uma prateleira onde ele não está.
+    """
+    niveis = (
+        StockLevel.objects.filter(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            location_id=location_id,
+            quantity__gt=Decimal("0"),
+        )
+        .select_related("lot")
+        .order_by(
+            F("lot__expires_at").asc(nulls_last=True),
+            F("lot__received_at").asc(nulls_last=True),
+            "lot_id",
+        )
+    )
+    return [(nivel.lot_id, nivel.quantity, nivel.unit_cost) for nivel in niveis]
+
+
+def _repartir_por_fefo(
+    saldos: Sequence[_SaldoFEFO], *, quantidade: Decimal
+) -> list[tuple[UUID | None, Decimal, Decimal]]:
+    """Reparte `quantidade` pelos saldos, por ordem, até perfazer. `[]` se não chega.
+
+    Lista vazia é "não há saldo que chegue" e **nunca** uma repartição parcial:
+    escrever menos do que foi pedido, em silêncio, é a quebra a entrar errada
+    num ledger sem desfazer (ADR 0034, decisão 8).
+    """
+    if sum((saldo for _, saldo, _ in saldos), Decimal("0")) < quantidade:
+        return []
+    restante = quantidade
+    reparticao: list[tuple[UUID | None, Decimal, Decimal]] = []
+    for lot_id, saldo, custo in saldos:
+        if restante <= Decimal("0"):
+            break
+        leva = min(restante, saldo)
+        reparticao.append((lot_id, leva, custo))
+        restante -= leva
+    return reparticao
+
+
 @transaction.atomic
 def registar_waste(
     *,
@@ -493,27 +557,44 @@ def registar_waste(
     reason_detail: str,
     user: Autor,
     user_name: str = "",
-) -> UUID:
-    """Registar um movimento de desperdício (waste).
+) -> list[UUID]:
+    """Registar uma quebra. Devolve os ids dos movimentos, **sempre uma lista**.
 
-    Cria um StockMovement com type=waste, quantity negativa (saída).
-    Usa FEFO para escolher o lote se não for fornecido.
+    Sem `lot_id`, o servidor escolhe por **FEFO na localização pedida** e
+    reparte por quantos lotes forem precisos — uma quebra de 2 kg com o lote
+    mais próximo de expirar a 0,4 kg gera duas linhas, na mesma transação e com
+    a mesma `reference`. Com `lot_id`, sai tudo desse lote: é o caso do ecrã de
+    Alertas, onde o alerta **é** sobre um lote e deitar fora outro seria deitar
+    fora o lote errado.
 
-    Argumentos:
-    - tenant_id, product_id, location_id: identificadores
-    - quantity: Decimal > 0 (será negativo no movimento)
-    - lot_id: UUID ou None (se None, usa FEFO)
-    - reason: um de ['expired', 'spoiled', 'prep_loss', 'breakage', 'other']
-    - reason_detail: opcional, para reason='other'; ausente é `""`
-    - user: User que cria o movimento
+    ## O que esta função fazia e deixou de fazer (ADR 0034, decisão 8)
 
-    Retorna: movement_id
+    Até 2026-10-27 levantava `ValidationError({"lot_id": …})` sempre que o
+    artigo tinha `track_lots=True` e o corpo não trazia lote — enquanto o
+    docstring prometia FEFO e o `formulario-de-desperdicio.tsx` **nunca** envia
+    lote. Resultado medido: **400 em todos os artigos com lotes**, no ecrã mais
+    usado pelo `staff`. O `get_fefo_lot` só era chamado no ramo em que o lote
+    já tinha vindo, onde fazia apenas validação.
 
-    Validações:
-    - quantity > 0
-    - reason obrigatório e em enum
-    - Lote obrigatório se product.track_lots=True
-    - Location deve estar ativa
+    A frase do 400 também mudou, e isso é parte da decisão: sem saldo diz
+    *"não há saldo deste artigo nesta localização"* e **nunca** "lote
+    obrigatório". A segunda manda a pessoa procurar um campo que o ecrã não
+    tem, e esconde a causa real.
+
+    ## O custo, e o zero que deixou de mentir
+
+    O custo de cada linha é o do **nível** de onde ela sai (ADR 0025, decisão
+    5). Quando esse nível não tem preço, o movimento grava
+    `cost_is_estimate=True` e a resposta diz `cost_status: "desconhecido"` — e
+    não um zero com `cost_is_estimate=False`, que afirmava "esta quebra custou
+    zero euros" num ledger append-only.
+
+    **Nunca se bloqueia o registo por falta de preço**: quem está a deitar fora
+    não anda à procura de uma fatura.
+
+    Argumentos: `quantity` > 0 em unidade **base** (a conversão faz-se na
+    camada do contrato, como nas linhas de contagem), `reason` num dos cinco,
+    `lot_id` opcional.
     """
     if quantity <= Decimal("0"):
         raise ValidationError({"quantity": [_("Quantity must be positive.")]})
@@ -521,69 +602,81 @@ def registar_waste(
     if reason not in dict(StockMovement.REASON_CHOICES):
         raise ValidationError({"reason": [_("Invalid reason.")]})
 
-    # Validar localização
     localizacao = Location.objects.filter(pk=location_id, tenant_id=tenant_id).first()
     if not localizacao:
-        raise ValidationError({"location_id": [_("Location not found.")]})
-
+        raise ValidationError({"location": [_("Location not found.")]})
     if not localizacao.is_active:
-        raise ValidationError({"location_id": [_("Location is inactive.")]})
+        raise ValidationError({"location": [_("Location is inactive.")]})
 
     produto = produto_por_id(tenant_id=tenant_id, product_id=product_id)
     if produto is None:
-        raise ValidationError({"product_id": [_("Product not found.")]})
+        raise ValidationError({"product": [_("Product not found.")]})
 
-    # Buscar lote a usar
-    if lot_id is None:
-        if produto.track_lots:
-            raise ValidationError({"lot_id": [_("Lot is required for tracked products.")]})
-        # Buscar lote sintético
+    if lot_id is not None:
         lote = Lot.objects.filter(
-            tenant_id=tenant_id,
-            product_id=product_id,
-            code=f"__{product_id}__",
+            tenant_id=tenant_id, pk=lot_id, product_id=product_id
         ).first()
-        if not lote:
-            raise ValidationError(
-                {"lot_id": [_("Synthetic lot not found. Create stock first.")]}
-            )
-    else:
-        lote = get_fefo_lot(
+        if lote is None:
+            raise ValidationError({"lot": [_("Lot not found.")]})
+        nivel = StockLevel.objects.filter(
             tenant_id=tenant_id,
             product_id=product_id,
             location_id=location_id,
-            lot_id=lot_id,
+            lot_id=lote.id,
+        ).first()
+        # Um lote escolhido à mão sai inteiro daquele lote, mesmo que o saldo
+        # não chegue: stock negativo continua a ser possível por outras portas
+        # (ADR 0012) e esta é uma delas — o que a decisão 8 proíbe é a
+        # repartição a escrever menos do que foi pedido sem o dizer.
+        reparticao = [
+            (lote.id, quantity, nivel.unit_cost if nivel else Decimal("0"))
+        ]
+    else:
+        saldos = _saldos_fefo(
+            tenant_id=tenant_id, product_id=product_id, location_id=location_id
         )
-        if not lote:
-            raise ValidationError({"lot_id": [_("Lot not found or has no stock.")]})
+        reparticao = _repartir_por_fefo(saldos, quantidade=quantity)
+        if not reparticao:
+            disponivel = sum((saldo for _, saldo, _ in saldos), Decimal("0"))
+            raise ValidationError(
+                {
+                    "quantity": [
+                        _(
+                            "There is no stock of this product at this location "
+                            "(available: %(disponivel)s)."
+                        )
+                        % {"disponivel": disponivel}
+                    ]
+                }
+            )
 
-    # Buscar custo do lote
-    nivel = StockLevel.objects.filter(
-        tenant_id=tenant_id,
-        product_id=product_id,
-        location_id=location_id,
-        lot_id=lote.id,
-    ).first()
-
-    unit_cost = nivel.unit_cost if nivel else Decimal("0")
-
-    # Criar movimento
-    mvt_dto = MovementDTO(
-        product_id=product_id,
-        location_id=location_id,
-        lot_id=lote.id,
-        quantity=-quantity,  # Negativo para saída
-        unit_cost=unit_cost,
-        cost_is_estimate=False,
-        movement_type="waste",
-        occurred_at=timezone.now(),
-        created_by_id=user.id,
-        created_by_name=user_name,
-        reason=reason,
-    )
-
-    movement_ids = record_movements(tenant_id=tenant_id, movements=[mvt_dto])
-    return movement_ids[0] if movement_ids else None
+    # A `reference` comum só quando há mais do que uma linha: com uma linha não
+    # há nada para agrupar, e o índice parcial `inv_stockmv_tenant_ref_idx`
+    # existe na maior tabela do sistema — só se paga escrita nele quando compra
+    # alguma coisa (ADR 0034, decisão 8).
+    referencia = str(uuid.uuid4()) if len(reparticao) > 1 else ""
+    agora = timezone.now()
+    movimentos = [
+        MovementDTO(
+            product_id=product_id,
+            location_id=location_id,
+            lot_id=lote_da_linha,
+            quantity=-quantidade_da_linha,
+            unit_cost=custo,
+            # A proveniência que falta não se disfarça de preço: ver o
+            # docstring acima e o `ESTADOS_DO_CUSTO` do `selectors.py`.
+            cost_is_estimate=custo == Decimal("0"),
+            movement_type="waste",
+            occurred_at=agora,
+            created_by_id=user.id,
+            created_by_name=user_name,
+            reason=reason,
+            reason_detail=reason_detail,
+            reference=referencia,
+        )
+        for lote_da_linha, quantidade_da_linha, custo in reparticao
+    ]
+    return record_movements(tenant_id=tenant_id, movements=movimentos)
 
 
 @transaction.atomic
@@ -619,19 +712,19 @@ def registar_adjustment(
     # Validar localização
     localizacao = Location.objects.filter(pk=location_id, tenant_id=tenant_id).first()
     if not localizacao:
-        raise ValidationError({"location_id": [_("Location not found.")]})
+        raise ValidationError({"location": [_("Location not found.")]})
 
     if not localizacao.is_active:
-        raise ValidationError({"location_id": [_("Location is inactive.")]})
+        raise ValidationError({"location": [_("Location is inactive.")]})
 
     produto = produto_por_id(tenant_id=tenant_id, product_id=product_id)
     if produto is None:
-        raise ValidationError({"product_id": [_("Product not found.")]})
+        raise ValidationError({"product": [_("Product not found.")]})
 
     # Buscar ou criar lote
     if lot_id is None:
         if produto.track_lots:
-            raise ValidationError({"lot_id": [_("Lot is required for tracked products.")]})
+            raise ValidationError({"lot": [_("Lot is required for tracked products.")]})
         # Buscar ou criar lote sintético
         lote, _criado = Lot.objects.get_or_create(
             tenant_id=tenant_id,
@@ -642,7 +735,7 @@ def registar_adjustment(
     else:
         lote = Lot.objects.filter(tenant_id=tenant_id, pk=lot_id, product_id=product_id).first()
         if not lote:
-            raise ValidationError({"lot_id": [_("Lot not found.")]})
+            raise ValidationError({"lot": [_("Lot not found.")]})
 
     # Para saídas (quantity < 0), usar FEFO; para entradas, usar o lote fornecido
     if quantity < Decimal("0"):
@@ -672,12 +765,15 @@ def registar_adjustment(
         lot_id=lote.id,
         quantity=quantity,
         unit_cost=unit_cost,
-        cost_is_estimate=False,
+        # Mesma regra da quebra (ADR 0034): um nível sem preço escreve-se
+        # "desconhecido" e não "zero euros". Ver `registar_waste`.
+        cost_is_estimate=unit_cost == Decimal("0"),
         movement_type="adjustment",
         occurred_at=timezone.now(),
         created_by_id=user.id,
         created_by_name=user_name,
         reason=reason,
+        reason_detail=reason_detail,
     )
 
     movement_ids = record_movements(tenant_id=tenant_id, movements=[mvt_dto])
@@ -717,31 +813,31 @@ def registar_transfer(
 
     if from_location_id == to_location_id:
         raise ValidationError(
-            {"to_location_id": [_("Cannot transfer to the same location.")]}
+            {"to_location": [_("Cannot transfer to the same location.")]}
         )
 
     # Validar localizações
     from_loc = Location.objects.filter(pk=from_location_id, tenant_id=tenant_id).first()
     if not from_loc:
-        raise ValidationError({"from_location_id": [_("Location not found.")]})
+        raise ValidationError({"from_location": [_("Location not found.")]})
 
     to_loc = Location.objects.filter(pk=to_location_id, tenant_id=tenant_id).first()
     if not to_loc:
-        raise ValidationError({"to_location_id": [_("Location not found.")]})
+        raise ValidationError({"to_location": [_("Location not found.")]})
 
     if not from_loc.is_active or not to_loc.is_active:
         raise ValidationError(
-            {"location_id": [_("One or both locations are inactive.")]}
+            {"location": [_("One or both locations are inactive.")]}
         )
 
     produto = produto_por_id(tenant_id=tenant_id, product_id=product_id)
     if produto is None:
-        raise ValidationError({"product_id": [_("Product not found.")]})
+        raise ValidationError({"product": [_("Product not found.")]})
 
     # Buscar lote a sair (FEFO)
     if lot_id is None:
         if produto.track_lots:
-            raise ValidationError({"lot_id": [_("Lot is required for tracked products.")]})
+            raise ValidationError({"lot": [_("Lot is required for tracked products.")]})
         # Buscar lote sintético
         lote = Lot.objects.filter(
             tenant_id=tenant_id,
@@ -750,7 +846,7 @@ def registar_transfer(
         ).first()
         if not lote:
             raise ValidationError(
-                {"lot_id": [_("Synthetic lot not found. Create stock first.")]}
+                {"lot": [_("Synthetic lot not found. Create stock first.")]}
             )
     else:
         lote = get_fefo_lot(
@@ -761,7 +857,7 @@ def registar_transfer(
         )
         if not lote:
             raise ValidationError(
-                {"lot_id": [_("Lot not found or has no stock at source location.")]}
+                {"lot": [_("Lot not found or has no stock at source location.")]}
             )
 
     # Buscar custo
@@ -786,7 +882,8 @@ def registar_transfer(
         lot_id=lote.id,
         quantity=-quantity,  # Negativo para saída
         unit_cost=unit_cost,
-        cost_is_estimate=False,
+        # Mesma regra da quebra (ADR 0034): zero não é um preço de zero euros.
+        cost_is_estimate=unit_cost == Decimal("0"),
         movement_type="transfer_out",
         occurred_at=agora,
         created_by_id=user.id,
@@ -801,7 +898,8 @@ def registar_transfer(
         lot_id=lote.id,
         quantity=quantity,  # Positivo para entrada
         unit_cost=unit_cost,
-        cost_is_estimate=False,
+        # Mesma regra da quebra (ADR 0034): zero não é um preço de zero euros.
+        cost_is_estimate=unit_cost == Decimal("0"),
         movement_type="transfer_in",
         occurred_at=agora,
         created_by_id=user.id,

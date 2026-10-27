@@ -1,14 +1,16 @@
-"""ViewSets para o inventário (ADR 0021, fatia 2; ADR 0022; ADR 0024, fatia 4;
-ADR 0025, fatia 5; ADR 0030, contagens).
+"""ViewSets para o inventário (ADR 0021, fatia 2; ADR 0022; ADR 0025, fatia 5;
+ADR 0030, contagens; ADR 0034, os sete recursos de `/stock`).
 
 Endpoints:
 - GET /api/v1/locations (por position)
 - POST /api/v1/locations
 - PATCH /api/v1/locations/{id}
+- GET /api/v1/stock/levels
 - GET /api/v1/stock/summary
-- GET /api/v1/stock/by-location
-- GET /api/v1/stock/by-product
 - GET /api/v1/stock/alerts
+- GET /api/v1/stock/alerts/summary
+- GET /api/v1/stock/alerts/waste
+- GET /api/v1/stock/movements
 - POST /api/v1/stock/movements/{waste,adjustment,transfer}
 - GET|POST /api/v1/stock/counts
 - GET|POST /api/v1/stock/counts/{id}/lines
@@ -23,6 +25,7 @@ from uuid import UUID
 
 from django.core.exceptions import ValidationError
 from django.db.models import Max, QuerySet
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
@@ -33,6 +36,7 @@ from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
+from rest_framework.serializers import ValidationError as DRFValidationError
 from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 
 from apps.accounts.api import (
@@ -40,6 +44,7 @@ from apps.accounts.api import (
     Papel,
     PertenceAoTenant,
     TemPapel,
+    inicio_do_dia_de_negocio,
     membership_atual,
     ve_euros,
 )
@@ -54,24 +59,35 @@ from apps.inventory.count_services import (
     planear_fecho,
     registar_linha_contagem,
 )
-from apps.inventory.models import Location, StockCount, StockMovement
+from apps.inventory.models import Location, StockCount, StockLevel, StockMovement
 from apps.inventory.selectors import (
+    DIAS_DE_VALIDADE_DO_PAINEL,
+    FILTROS_DO_NIVEL,
+    PERIODOS_DE_DESPERDICIO,
+    RISCOS_DO_ALERTA,
+    alertas_de_stock,
+    contadores_de_alertas,
+    contadores_de_desperdicio,
     contagens_com_progresso,
+    janela_de_desperdicio,
     linhas_da_contagem,
+    linhas_de_desperdicio,
     listar_localizacoes,
     localizacoes_do_ambito,
+    movimentos_do_artigo,
+    niveis_de_stock,
+    niveis_filtrados,
     progresso_da_contagem,
-    stock_alerts,
-    stock_by_location,
-    stock_by_product,
-    stock_summary,
+    resumo_de_stock,
+    rotulos_de_referencia,
 )
 from apps.inventory.serializers import (
-    AdjustmentSerializer,
-    AlertSerializer,
+    AjusteInSerializer,
+    AlertaOutSerializer,
     ConflitoDeContagemOutSerializer,
     ContagemInSerializer,
     ContagemOutSerializer,
+    DesperdicioOutSerializer,
     FechoDeContagemInSerializer,
     FechoDeContagemOutSerializer,
     LinhaDeContagemInSerializer,
@@ -79,17 +95,25 @@ from apps.inventory.serializers import (
     LocalizacaoInSerializer,
     LocalizacaoOutSerializer,
     LocalizacaoPatchInSerializer,
-    StockDetailSerializer,
+    MovimentoOutSerializer,
+    NivelDeStockOutSerializer,
+    QuebraInSerializer,
+    RespostaDeQuebraOutSerializer,
+    ResumoDeAlertasOutSerializer,
+    ResumoDeStockOutSerializer,
     StockMovementResponseSerializer,
-    StockSummarySerializer,
     StockTransferResponseSerializer,
-    TransferSerializer,
-    WasteSerializer,
+    TransferenciaInSerializer,
+    compor_alerta,
     compor_contagem,
+    compor_desperdicio,
     compor_fecho,
     compor_linha,
     compor_movimento,
+    compor_movimento_do_ledger,
+    compor_nivel,
     em_unidade_base,
+    em_unidade_pedida,
     zona_da_localizacao,
 )
 from apps.inventory.services import (
@@ -205,358 +229,528 @@ class LocalizacaoViewSet(
         return Response(out_ser.data, status=status.HTTP_200_OK)
 
 
+#: Os parâmetros de caminho que as sete rotas de `/stock` aceitam, declarados
+#: um a um para o `--fail-on-warn` do `pnpm gen:api` não ter nada a adivinhar.
+_P_LOJA = OpenApiParameter(
+    "loja",
+    OpenApiTypes.UUID,
+    OpenApiParameter.QUERY,
+    description=(
+        "Escopa a quantidade, a repartição, a validade mais próxima e o valor. "
+        "**Não** escopa o `status` nem o `min_quantity`: o mínimo é por artigo "
+        "e é sempre do estabelecimento."
+    ),
+)
+_P_Q = OpenApiParameter(
+    "q", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Procura no nome curto."
+)
+_P_FILTRO = OpenApiParameter(
+    "filtro",
+    OpenApiTypes.STR,
+    OpenApiParameter.QUERY,
+    enum=list(FILTROS_DO_NIVEL),
+    description="`falta` é tudo o que não está `ok`; `validade` é o que entra no limiar.",
+)
+_P_RISCO = OpenApiParameter(
+    "risco",
+    OpenApiTypes.STR,
+    OpenApiParameter.QUERY,
+    enum=list(RISCOS_DO_ALERTA),
+    description="Sem valor, vêm os dois motivos.",
+)
+_P_PERIODO = OpenApiParameter(
+    "periodo",
+    OpenApiTypes.STR,
+    OpenApiParameter.QUERY,
+    enum=list(PERIODOS_DE_DESPERDICIO),
+    description=(
+        "Janela em dias **de negócio**: `hoje` é desde o `business_day_starts_at`, "
+        "`semana` são sete dias rolantes incluindo hoje."
+    ),
+)
+_P_ARTIGO = OpenApiParameter(
+    "artigo",
+    OpenApiTypes.UUID,
+    OpenApiParameter.QUERY,
+    required=True,
+    description="Obrigatório: o ledger lê-se por artigo. Sem ele é 400.",
+)
+
+#: A frase de um parâmetro de união fechada fora da união. 400 e não uma lista
+#: a fingir que filtrou — é a regra que o `?status=` das contagens já segue.
+DETALHE_FILTRO_INVALIDO = _("Unknown filter. Use {opcoes}.")
+DETALHE_ARTIGO_OBRIGATORIO = _("The 'artigo' query parameter is required.")
+DETALHE_UUID_INVALIDO = _("Not a valid UUID.")
+
+
+def _uuid_do_parametro(valor: str | None) -> UUID | None:
+    """O `?loja=`/`?artigo=` como UUID. Levanta `ValueError` se não for um."""
+    if not valor:
+        return None
+    return UUID(valor)
+
+
+def _recusa(detalhe: Any) -> Response:
+    """400 com `detail`, a forma que o cliente já sabe ler."""
+    return Response({"detail": str(detalhe)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _da_uniao(valor: str | None, *, opcoes: tuple[str, ...]) -> str | None:
+    """O valor se estiver na união, `""` se ausente, `None` se for inválido."""
+    if not valor:
+        return ""
+    return valor if valor in opcoes else None
+
+
 @extend_schema_view(
+    levels=extend_schema(
+        operation_id="stock_levels",
+        summary="Stock por artigo: saldo, mínimo, estado, validade e onde está",
+        parameters=[_P_LOJA, _P_Q, _P_FILTRO],
+        responses={200: NivelDeStockOutSerializer(many=True)},
+    ),
     summary=extend_schema(
         operation_id="stock_summary",
-        summary="Resumo de stock agregado por produto",
-    ),
-    by_location=extend_schema(
-        operation_id="stock_by_location",
-        summary="Stock por (product, lot) em localização",
-    ),
-    by_product=extend_schema(
-        operation_id="stock_by_product",
-        summary="Stock por (location, lot) desse produto",
+        summary="Os quatro números do topo do ecrã de Stock",
+        parameters=[_P_LOJA],
+        responses={200: ResumoDeStockOutSerializer},
     ),
     alerts=extend_schema(
         operation_id="stock_alerts",
-        summary="Alertas de falta, validade a vencer e vencida",
+        summary="O que está em risco: validades a vencer e artigos em falta",
+        parameters=[_P_RISCO],
+        responses={200: AlertaOutSerializer(many=True)},
+    ),
+    alerts_summary=extend_schema(
+        operation_id="stock_alerts_summary",
+        summary="Os contadores do ecrã de Alertas, mais o desperdício do dia e da semana",
+        responses={200: ResumoDeAlertasOutSerializer},
+    ),
+    alerts_waste=extend_schema(
+        operation_id="stock_alerts_waste",
+        summary="As linhas de quebra do dia de negócio, com quem as registou",
+        parameters=[_P_PERIODO],
+        responses={200: DesperdicioOutSerializer(many=True)},
     ),
 )
-class StockPanelViewSet(viewsets.ViewSet):
-    """Painel de stock: queries read-only ao ledger (ADR 0024, ADR 0032).
+class StockPanelViewSet(viewsets.GenericViewSet):
+    """Os cinco recursos de leitura de `/stock` (ADR 0034).
 
-    **Nenhuma destas rotas tem papel** e nenhuma passou a ter: o dinheiro aqui é
-    uma coluna e não o recurso, as rotas de stock são `TODOS_OS_PAPEIS` no
-    `menu.py`, e negá-las tirava o ecrã a quem mais o usa (ADR 0032, decisão 1).
-    O que muda por papel é o payload, e quem o decide é o
+    **Nenhuma destas rotas tem papel** e nenhuma passou a ter: o dinheiro aqui
+    é uma coluna e não o recurso, as rotas de stock são `TODOS_OS_PAPEIS` no
+    `menu.py`, e negá-las tirava o ecrã a quem mais o usa (ADR 0032, decisão
+    1). O que muda por papel é o payload, e quem o decide é o
     `SemEurosParaQuemNaoVe` do `accounts.api` — um sítio só.
+
+    ## O envelope é o do DRF, e o `_pagina` morreu
+
+    As quatro rotas do painel devolviam `{items, total, page, page_size}` com
+    `page: 1` fixo: um envelope que **não pagina** e que mente sobre o fazer
+    (ADR 0034, decisão 3). Agora é `{count, next, previous, results}` com o
+    `PAGE_SIZE = 50` do `base.py`, que é o que o `paginated()` do cliente
+    valida. O `context` dos euros, que o `_pagina` montava, passou para o
+    `get_serializer_context()` — e é por isso que continua a ser impossível
+    esquecê-lo numa rota.
     """
 
     permission_classes = [IsAuthenticated, PertenceAoTenant]
-    throttle_scope = AMBITO_THROTTLE_CATALOGO
-    page_size = 50
+    #: **Sem `throttle_scope`, e de propósito.** As cinco rotas desta classe são
+    #: GET, e o `ScopedRateThrottle` dos irmãos só se junta fora dos
+    #: `SAFE_METHODS`: um `throttle_scope` aqui prometia um balde que nunca se
+    #: aplicaria. O que cobre a leitura é o balde `user`.
+    #: Vazia e como atributo de classe: o drf-spectacular lê o `queryset` da
+    #: classe fora de um pedido. Nenhuma destas rotas o usa — todas compõem a
+    #: resposta a partir de um selector.
+    queryset = StockLevel.objects.none()
+    serializer_class = NivelDeStockOutSerializer
 
-    def get_throttles(self) -> list[BaseThrottle]:
-        """Sem throttle extra em leitura."""
-        return super().get_throttles()
-
-    def _contexto(self, request: Request) -> dict[str, bool]:
+    def get_serializer_context(self) -> dict[str, Any]:
         """O contexto de serialização: quem vê euros, e nada mais.
 
         O default do mixin é **falso**, logo esquecer este contexto esconde
-        dinheiro a toda a gente em vez de o mostrar a quem não deve — a direcção
-        certa para falhar.
+        dinheiro a toda a gente em vez de o mostrar a quem não deve — a
+        direcção certa para falhar.
         """
-        return {CHAVE_DE_EUROS: ve_euros(request)}
+        return {**super().get_serializer_context(), CHAVE_DE_EUROS: ve_euros(self.request)}
 
-    def _pagina(
-        self,
-        items: list[dict[str, Any]],
-        serializador: type[Serializer],
-        request: Request,
+    def _pagina_de(
+        self, linhas: list[Any], serializador: type[Serializer], request: Request
     ) -> Response:
-        """O envelope `{items,total,page,page_size}` das quatro rotas do painel.
+        """`{count, next, previous, results}` sobre uma lista já composta."""
+        pagina = self.paginate_queryset(linhas)
+        corpo = serializador(
+            pagina if pagina is not None else linhas,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        if pagina is not None:
+            return self.get_paginated_response(corpo.data)
+        return Response(corpo.data)
 
-        Existe para o `context` não poder ser esquecido numa delas: as quatro
-        passam por aqui e o contexto é montado num sítio só.
-        """
-        serializer = serializador(items, many=True, context=self._contexto(request))
-        return Response(
-            {
-                "items": serializer.data,
-                "total": len(items),
-                "page": 1,
-                "page_size": self.page_size,
-            }
+    @action(detail=False, methods=["GET"], url_path="levels")
+    def levels(self, request: Request) -> Response:
+        """Uma linha por artigo, o pior primeiro."""
+        try:
+            loja = _uuid_do_parametro(request.query_params.get("loja"))
+        except ValueError:
+            return _recusa(DETALHE_UUID_INVALIDO)
+        filtro = _da_uniao(request.query_params.get("filtro"), opcoes=FILTROS_DO_NIVEL)
+        if filtro is None:
+            return _recusa(
+                DETALHE_FILTRO_INVALIDO.format(opcoes=" ou ".join(FILTROS_DO_NIVEL))
+            )
+
+        linhas = niveis_de_stock(
+            tenant_id=request.tenant.id,
+            location_id=loja,
+            q=request.query_params.get("q", "").strip(),
+        )
+        linhas = niveis_filtrados(
+            linhas, filtro=filtro, limiar_em_dias=DIAS_DE_VALIDADE_DO_PAINEL
+        )
+        return self._pagina_de(
+            [compor_nivel(linha) for linha in linhas],
+            NivelDeStockOutSerializer,
+            request,
         )
 
-    @extend_schema(responses={200: StockSummarySerializer(many=True)})
     @action(detail=False, methods=["GET"], url_path="summary")
     def summary(self, request: Request) -> Response:
-        """Resumo de stock agregado por produto."""
-        location_id = request.query_params.get("location_id")
-
-        if location_id:
-            try:
-                location_id = UUID(location_id)
-            except (ValueError, TypeError):
-                return Response(
-                    {"detail": "Invalid location_id"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        items = stock_summary(tenant_id=request.tenant.id, location_id=location_id)
-        return self._pagina(items, StockSummarySerializer, request)
-
-    @extend_schema(responses={200: StockDetailSerializer(many=True)})
-    @action(detail=False, methods=["GET"], url_path="by-location")
-    def by_location(self, request: Request) -> Response:
-        """Stock por (product, lot) nessa localização."""
-        location_id = request.query_params.get("location_id")
-        search_text = request.query_params.get("search_text", "")
-
-        if not location_id:
-            return Response(
-                {"detail": "location_id is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+        """Os quatro números do topo — e cada contador é o `count` da sua lista."""
         try:
-            location_id = UUID(location_id)
-        except (ValueError, TypeError):
-            return Response(
-                {"detail": "Invalid location_id"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        items = stock_by_location(
-            tenant_id=request.tenant.id,
-            location_id=location_id,
-            search_text=search_text,
+            loja = _uuid_do_parametro(request.query_params.get("loja"))
+        except ValueError:
+            return _recusa(DETALHE_UUID_INVALIDO)
+        resumo = resumo_de_stock(tenant_id=request.tenant.id, location_id=loja)
+        return Response(
+            ResumoDeStockOutSerializer(
+                resumo, context=self.get_serializer_context()
+            ).data
         )
-        return self._pagina(items, StockDetailSerializer, request)
 
-    @extend_schema(responses={200: StockDetailSerializer(many=True)})
-    @action(detail=False, methods=["GET"], url_path="by-product")
-    def by_product(self, request: Request) -> Response:
-        """Stock por (location, lot) desse produto."""
-        product_id = request.query_params.get("product_id")
-        search_text = request.query_params.get("search_text", "")
-
-        if not product_id:
-            return Response(
-                {"detail": "product_id is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            import uuid
-            product_id = uuid.UUID(product_id)
-        except (ValueError, TypeError):
-            return Response(
-                {"detail": "Invalid product_id"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        items = stock_by_product(
-            tenant_id=request.tenant.id,
-            product_id=product_id,
-            search_text=search_text,
-        )
-        return self._pagina(items, StockDetailSerializer, request)
-
-    @extend_schema(responses={200: AlertSerializer(many=True)})
     @action(detail=False, methods=["GET"], url_path="alerts")
     def alerts(self, request: Request) -> Response:
-        """Alertas de falta, validade a vencer e vencida."""
-        severity = request.query_params.get("severity", "")
-        product_id = request.query_params.get("product_id")
-        location_id = request.query_params.get("location_id")
-
-        # Parse UUIDs
-        if product_id:
-            try:
-                product_id = UUID(product_id)
-            except (ValueError, TypeError):
-                return Response(
-                    {"detail": "Invalid product_id"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        if location_id:
-            try:
-                location_id = UUID(location_id)
-            except (ValueError, TypeError):
-                return Response(
-                    {"detail": "Invalid location_id"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        alerts_data = stock_alerts(
-            tenant_id=request.tenant.id,
-            severity=severity,
-            product_id=product_id,
-            location_id=location_id,
+        """Uma lista, dois motivos, ordenada no servidor por gravidade."""
+        risco = _da_uniao(request.query_params.get("risco"), opcoes=RISCOS_DO_ALERTA)
+        if risco is None:
+            return _recusa(
+                DETALHE_FILTRO_INVALIDO.format(opcoes=" ou ".join(RISCOS_DO_ALERTA))
+            )
+        alertas = alertas_de_stock(tenant_id=request.tenant.id, risco=risco)
+        return self._pagina_de(
+            [compor_alerta(alerta) for alerta in alertas], AlertaOutSerializer, request
         )
-        return self._pagina(alerts_data, AlertSerializer, request)
+
+    @action(detail=False, methods=["GET"], url_path="alerts/summary")
+    def alerts_summary(self, request: Request) -> Response:
+        """Três contadores, duas janelas de desperdício e a hora do negócio.
+
+        A hora é **dado do servidor** por estabelecimento: na pastelaria o dia
+        começa no início da produção e não no fim do serviço de um restaurante
+        (ADR 0029). O `wasted_since` viaja com ela para o rótulo poder dizer
+        "hoje (desde as 04:00)" sem o cliente calcular nada.
+        """
+        inicio_do_dia = inicio_do_dia_de_negocio(tenant_id=request.tenant.id)
+        agora = timezone.now()
+        desde_hoje, ate = janela_de_desperdicio(
+            periodo="hoje", inicio_do_dia=inicio_do_dia, agora=agora
+        )
+        desde_semana, _ate_semana = janela_de_desperdicio(
+            periodo="semana", inicio_do_dia=inicio_do_dia, agora=agora
+        )
+        hoje = contadores_de_desperdicio(
+            tenant_id=request.tenant.id, desde=desde_hoje, ate=ate
+        )
+        semana = contadores_de_desperdicio(
+            tenant_id=request.tenant.id, desde=desde_semana, ate=ate
+        )
+        corpo = {
+            **contadores_de_alertas(tenant_id=request.tenant.id),
+            "expiring_within_days": DIAS_DE_VALIDADE_DO_PAINEL,
+            "business_day_starts_at": inicio_do_dia.strftime("%H:%M"),
+            "wasted_since": desde_hoje,
+            "wasted_today_eur": hoje["valor_eur"],
+            "wasted_week_eur": semana["valor_eur"],
+            "wasted_today_count": hoje["n"],
+            "wasted_week_count": semana["n"],
+            "wasted_today_lines_without_cost": hoje["linhas_sem_custo"],
+            "wasted_week_lines_without_cost": semana["linhas_sem_custo"],
+        }
+        return Response(
+            ResumoDeAlertasOutSerializer(
+                corpo, context=self.get_serializer_context()
+            ).data
+        )
+
+    @action(detail=False, methods=["GET"], url_path="alerts/waste")
+    def alerts_waste(self, request: Request) -> Response:
+        """As linhas de quebra da janela, da mais recente para a mais antiga."""
+        periodo = _da_uniao(
+            request.query_params.get("periodo"), opcoes=PERIODOS_DE_DESPERDICIO
+        )
+        if periodo is None:
+            return _recusa(
+                DETALHE_FILTRO_INVALIDO.format(
+                    opcoes=" ou ".join(PERIODOS_DE_DESPERDICIO)
+                )
+            )
+        inicio_do_dia = inicio_do_dia_de_negocio(tenant_id=request.tenant.id)
+        desde, ate = janela_de_desperdicio(
+            periodo=periodo or "hoje",
+            inicio_do_dia=inicio_do_dia,
+            agora=timezone.now(),
+        )
+        movimentos = linhas_de_desperdicio(
+            tenant_id=request.tenant.id, desde=desde, ate=ate
+        )
+        pagina = self.paginate_queryset(movimentos)
+        corpo = DesperdicioOutSerializer(
+            [compor_desperdicio(m) for m in (pagina if pagina is not None else movimentos)],
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        if pagina is not None:
+            return self.get_paginated_response(corpo.data)
+        return Response(corpo.data)
 
 
 @extend_schema_view(
+    list=extend_schema(
+        operation_id="stock_movements_listar",
+        summary="O ledger de um artigo, do mais recente para o mais antigo",
+        parameters=[_P_ARTIGO],
+        responses={200: MovimentoOutSerializer(many=True)},
+    ),
     waste=extend_schema(
         operation_id="stock_movements_waste",
-        summary="Registar desperdício",
-        request=WasteSerializer,
-        responses={201: StockMovementResponseSerializer},
+        summary="Registar uma quebra (FEFO na localização pedida, repartida se preciso)",
+        request=QuebraInSerializer,
+        responses={201: RespostaDeQuebraOutSerializer},
     ),
     adjustment=extend_schema(
         operation_id="stock_movements_adjustment",
         summary="Registar ajuste de stock",
-        request=AdjustmentSerializer,
+        request=AjusteInSerializer,
         responses={201: StockMovementResponseSerializer},
     ),
     transfer=extend_schema(
         operation_id="stock_movements_transfer",
         summary="Transferir stock entre localizações",
-        request=TransferSerializer,
+        request=TransferenciaInSerializer,
         responses={201: StockTransferResponseSerializer},
     ),
 )
-class StockMovementViewSet(viewsets.ViewSet):
-    """Endpoints para criar movimentos de stock manuais (desperdício, ajuste, transferência).
+class StockMovementViewSet(viewsets.GenericViewSet):
+    """O ledger: uma leitura por artigo e três escritas manuais.
 
     Sem papel, e é a decisão 3 da ADR 0032: perder e transferir é trabalho de
-    campo. O que sai do 201 é que mudou — o `unit_cost` só vai a `owner|manager`
-    —, e **a resposta passa agora por um serializer**. Até 2026-10-21 as três
-    montavam um `dict` e devolviam-no: o `StockMovementResponseSerializer` só
-    existia no `extend_schema`, nenhum mixin lhes chegava, e no caso da
-    transferência o schema declarado nem descrevia o corpo que sai.
+    campo. O que sai do 201 é que muda — o `unit_cost` só vai a
+    `owner|manager`.
+
+    **Os corpos de entrada perderam os sufixos `_id`** (ADR 0034): `product`,
+    `location`, `lot`, `from_location`, `to_location`. Nos três e não só na
+    quebra — duas convenções no mesmo ViewSet é como se escreve o 400 seguinte
+    —, e as mensagens de recusa do serviço nomeiam os mesmos campos.
     """
 
     permission_classes = [IsAuthenticated, PertenceAoTenant]
     throttle_scope = AMBITO_THROTTLE_CATALOGO
+    queryset = StockMovement.objects.none()
+    serializer_class = MovimentoOutSerializer
+
+    def get_throttles(self) -> list[BaseThrottle]:
+        """ScopedRateThrottle só nas escritas."""
+        if self.request.method in SAFE_METHODS:
+            return super().get_throttles()
+        return [*super().get_throttles(), ScopedRateThrottle()]
+
+    def get_serializer_context(self) -> dict[str, Any]:
+        """Quem vê euros neste pedido. Default falso — ver `SemEurosParaQuemNaoVe`."""
+        return {**super().get_serializer_context(), CHAVE_DE_EUROS: ve_euros(self.request)}
 
     def _contexto(self, request: Request) -> dict[str, bool]:
-        """Quem vê euros neste pedido. Default falso — ver `SemEurosParaQuemNaoVe`."""
+        """O contexto dos 201 que ainda não passam pelo `get_serializer`."""
         return {CHAVE_DE_EUROS: ve_euros(request)}
+
+    def list(self, request: Request, *args, **kwargs) -> Response:
+        """`GET /stock/movements?artigo=<uuid>` — **obrigatório**, 400 sem ele.
+
+        Obrigatório porque o ledger de um estabelecimento inteiro não é uma
+        lista que alguém leia: a pergunta é sempre "o que aconteceu a este
+        artigo", e é o ecrã do artigo que a faz.
+        """
+        artigo = request.query_params.get("artigo")
+        if not artigo:
+            return _recusa(DETALHE_ARTIGO_OBRIGATORIO)
+        try:
+            product_id = UUID(artigo)
+        except ValueError:
+            return _recusa(DETALHE_UUID_INVALIDO)
+
+        movimentos = movimentos_do_artigo(
+            tenant_id=request.tenant.id, product_id=product_id
+        )
+        pagina = self.paginate_queryset(movimentos)
+        visiveis = list(pagina if pagina is not None else movimentos)
+        rotulos = rotulos_de_referencia(
+            tenant_id=request.tenant.id,
+            referencias=[m.reference for m in visiveis],
+        )
+        corpo = MovimentoOutSerializer(
+            [compor_movimento_do_ledger(m, rotulos=rotulos) for m in visiveis],
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        if pagina is not None:
+            return self.get_paginated_response(corpo.data)
+        return Response(corpo.data)
 
     @action(detail=False, methods=["POST"], url_path="waste")
     def waste(self, request: Request) -> Response:
-        """Registar um desperdício (POST /stock/movements/waste)."""
-        serializer = WasteSerializer(data=request.data)
+        """Registar uma quebra. O 201 é `{movements: [...]}`, **sempre lista**.
+
+        A unidade vem no corpo e a conversão é aqui, na camada do contrato —
+        o serviço fala sempre em unidade base, como nas linhas de contagem
+        (ADR 0034, decisão 11).
+        """
+        serializer = QuebraInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        dados = serializer.validated_data
+
+        produto = produto_por_id(
+            tenant_id=request.tenant.id, product_id=dados["product"]
+        )
+        if produto is None:
+            return Response(
+                {"product": [str(_("Product not found."))]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            movement_id = registar_waste(
+            quantidade_base = em_unidade_pedida(
+                dados["quantity"], unidade=dados["unit"], produto=produto
+            )
+            movement_ids = registar_waste(
                 tenant_id=request.tenant.id,
-                product_id=serializer.validated_data["product_id"],
-                location_id=serializer.validated_data["location_id"],
-                quantity=serializer.validated_data["quantity"],
-                lot_id=serializer.validated_data.get("lot_id"),
-                reason=serializer.validated_data["reason"],
-                reason_detail=serializer.validated_data.get("reason_detail", ""),
+                product_id=dados["product"],
+                location_id=dados["location"],
+                quantity=quantidade_base,
+                lot_id=dados.get("lot"),
+                reason=dados["reason"],
+                reason_detail=dados.get("reason_detail", ""),
                 user=request.user,
                 user_name=request.membership.display_name,
             )
-
-            movimento = StockMovement.objects.get(pk=movement_id)
-            corpo = StockMovementResponseSerializer(
-                compor_movimento(movimento) | {"created_at": movimento.created_at},
-                context=self._contexto(request),
-            )
-            return Response(corpo.data, status=status.HTTP_201_CREATED)
-
-        except ValidationError as e:
+        except DRFValidationError as erro:
             logger.warning(
                 "waste_rejected",
-                extra={"outcome": "validation_error", "errors": e.detail},
+                extra={"outcome": "validation_error", "errors": erro.detail},
             )
-            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(
-                "waste_failed",
-                extra={"outcome": "error", "error": str(e)},
-                exc_info=True,
+            return Response(erro.detail, status=status.HTTP_400_BAD_REQUEST)
+        except ValidationError as erro:
+            logger.warning(
+                "waste_rejected",
+                extra={"outcome": "validation_error", "errors": erro.message_dict},
             )
-            return Response(
-                {"detail": "Erro ao registar desperdício"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response(erro.message_dict, status=status.HTTP_400_BAD_REQUEST)
+
+        movimentos = list(
+            StockMovement.objects.filter(
+                tenant_id=request.tenant.id, pk__in=movement_ids
+            ).select_related("product", "location", "lot")
+        )
+        por_id = {m.id: m for m in movimentos}
+        corpo = RespostaDeQuebraOutSerializer(
+            {
+                # Na ordem em que o serviço os escreveu, que é a ordem FEFO: a
+                # frase do ecrã nomeia os lotes por onde a quebra passou.
+                "movements": [
+                    compor_movimento_do_ledger(por_id[mid])
+                    for mid in movement_ids
+                    if mid in por_id
+                ]
+            },
+            context=self._contexto(request),
+        )
+        return Response(corpo.data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["POST"], url_path="adjustment")
     def adjustment(self, request: Request) -> Response:
         """Registar um ajuste de stock (POST /stock/movements/adjustment)."""
-        serializer = AdjustmentSerializer(data=request.data)
+        serializer = AjusteInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        dados = serializer.validated_data
 
         try:
             movement_id = registar_adjustment(
                 tenant_id=request.tenant.id,
-                product_id=serializer.validated_data["product_id"],
-                location_id=serializer.validated_data["location_id"],
-                quantity=serializer.validated_data["quantity"],
-                lot_id=serializer.validated_data.get("lot_id"),
-                reason=serializer.validated_data["reason"],
-                reason_detail=serializer.validated_data.get("reason_detail", ""),
+                product_id=dados["product"],
+                location_id=dados["location"],
+                quantity=dados["quantity"],
+                lot_id=dados.get("lot"),
+                reason=dados["reason"],
+                reason_detail=dados.get("reason_detail", ""),
                 user=request.user,
                 user_name=request.membership.display_name,
             )
-
-            movimento = StockMovement.objects.get(pk=movement_id)
-            corpo = StockMovementResponseSerializer(
-                compor_movimento(movimento) | {"created_at": movimento.created_at},
-                context=self._contexto(request),
-            )
-            return Response(corpo.data, status=status.HTTP_201_CREATED)
-
-        except ValidationError as e:
+        except ValidationError as erro:
             logger.warning(
                 "adjustment_rejected",
-                extra={"outcome": "validation_error", "errors": e.detail},
+                extra={"outcome": "validation_error", "errors": erro.message_dict},
             )
-            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(
-                "adjustment_failed",
-                extra={"outcome": "error", "error": str(e)},
-                exc_info=True,
-            )
-            return Response(
-                {"detail": "Erro ao registar ajuste"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response(erro.message_dict, status=status.HTTP_400_BAD_REQUEST)
+
+        movimento = StockMovement.objects.select_related("product", "location", "lot").get(
+            pk=movement_id
+        )
+        corpo = StockMovementResponseSerializer(
+            compor_movimento(movimento) | {"created_at": movimento.created_at},
+            context=self._contexto(request),
+        )
+        return Response(corpo.data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["POST"], url_path="transfer")
     def transfer(self, request: Request) -> Response:
         """Transferir stock entre localizações (POST /stock/movements/transfer)."""
-        serializer = TransferSerializer(data=request.data)
+        serializer = TransferenciaInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        dados = serializer.validated_data
 
         try:
             out_id, in_id = registar_transfer(
                 tenant_id=request.tenant.id,
-                product_id=serializer.validated_data["product_id"],
-                from_location_id=serializer.validated_data["from_location_id"],
-                to_location_id=serializer.validated_data["to_location_id"],
-                quantity=serializer.validated_data["quantity"],
-                lot_id=serializer.validated_data.get("lot_id"),
+                product_id=dados["product"],
+                from_location_id=dados["from_location"],
+                to_location_id=dados["to_location"],
+                quantity=dados["quantity"],
+                lot_id=dados.get("lot"),
                 user=request.user,
                 user_name=request.membership.display_name,
             )
-
-            out_movimento = StockMovement.objects.get(pk=out_id)
-            in_movimento = StockMovement.objects.get(pk=in_id)
-
-            corpo = StockTransferResponseSerializer(
-                {
-                    "transfer_id": out_movimento.transfer_id,
-                    "movements": [
-                        compor_movimento(out_movimento) | {"type": "transfer_out"},
-                        compor_movimento(in_movimento) | {"type": "transfer_in"},
-                    ],
-                    "created_at": out_movimento.created_at,
-                },
-                context=self._contexto(request),
-            )
-            return Response(corpo.data, status=status.HTTP_201_CREATED)
-
-        except ValidationError as e:
+        except ValidationError as erro:
             logger.warning(
                 "transfer_rejected",
-                extra={"outcome": "validation_error", "errors": e.detail},
+                extra={"outcome": "validation_error", "errors": erro.message_dict},
             )
-            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(
-                "transfer_failed",
-                extra={"outcome": "error", "error": str(e)},
-                exc_info=True,
-            )
-            return Response(
-                {"detail": "Erro ao registar transferência"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response(erro.message_dict, status=status.HTTP_400_BAD_REQUEST)
 
+        movimentos = StockMovement.objects.select_related(
+            "product", "location", "lot"
+        ).in_bulk([out_id, in_id])
+        out_movimento, in_movimento = movimentos[out_id], movimentos[in_id]
+
+        corpo = StockTransferResponseSerializer(
+            {
+                "transfer_id": out_movimento.transfer_id,
+                "movements": [
+                    compor_movimento(out_movimento) | {"type": "transfer_out"},
+                    compor_movimento(in_movimento) | {"type": "transfer_in"},
+                ],
+                "created_at": out_movimento.created_at,
+            },
+            context=self._contexto(request),
+        )
+        return Response(corpo.data, status=status.HTTP_201_CREATED)
 
 # ===========================================================================
 # Contagem física (ADR 0030, revista pela ADR 0033). Seis rotas num ViewSet, e a

@@ -146,8 +146,12 @@ function LinhaDeStock({
           A composição das duas razões **saiu daqui** para o
           `leitura-da-validade.ts` a 2026-10-06, quando a miniatura do Início
           passou a desenhar linhas de stock: duas cópias dela divergiriam em
-          silêncio, com a mesma linha marcada num ecrã e apagada no outro. */}
-      <TrilhoDaLinha tinta={tintaDoTrilhoDoNivel(nivel.status, nivel.nearest_expiry, limiarEmDias)} />
+          silêncio, com a mesma linha marcada num ecrã e apagada no outro.
+
+          **O limiar saiu da chamada com a ADR 0034**: a urgência da validade
+          deixou de ser calculada aqui e lê-se no `severity` do lote, que é a
+          mesma função do servidor que decide a gravidade do alerta. */}
+      <TrilhoDaLinha tinta={tintaDoTrilhoDoNivel(nivel.status, nivel.nearest_expiry)} />
 
       <th scope="row" className={`${CLASSE_CELULA} max-w-0 text-left font-medium`}>
         <Link

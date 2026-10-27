@@ -532,11 +532,14 @@ que esta secção dizia até 2026-10-01, e a razão está no §1: o público mud
   partir do header em mobile. **Não há tab bar** e não há uma terceira superfície de navegação. O
   menu é uma projecção por tenant sobre as rotas que existem, com um nível de agrupamento (ADR
   0009); esconder é apresentação, não autorização.
-- **Dois sinais de "dados a fingir", e não se juntam num badge só.** "O servidor de fixtures
-  respondeu" é sobre o ambiente de desenvolvimento e não existe no bundle de produção; "estás no
-  estabelecimento de demonstração" é sobre o **tenant** e tem de funcionar em produção, que é onde
-  importa. Colapsá-los dava um sinal de produção testável só onde está sempre ligado — e o modo de
-  falha é nunca aparecer onde interessa. Num demo em desenvolvimento aparecem os dois, e está certo.
+- **Eram dois sinais de "dados a fingir", e não se juntavam num badge só. Ficou um.** "O servidor de
+  fixtures respondeu" era sobre o ambiente de desenvolvimento e não existia no bundle de produção;
+  "estás no estabelecimento de demonstração" é sobre o **tenant** e tem de funcionar em produção,
+  que é onde importa. Colapsá-los dava um sinal de produção testável só onde está sempre ligado — e
+  o modo de falha é nunca aparecer onde interessa; por isso a regra de os não juntar continua
+  escrita. **O primeiro saiu a 2026-10-27 com a pasta `fixtures/`** (ADR 0034, decisão 7): o Django
+  serve os últimos sete recursos, e um badge a dizer que os dados são a fingir passou a ser a única
+  coisa a mentir sobre a origem deles. O segundo fica.
   A faixa do tenant vive na barra de topo porque ela é `sticky`: é o que limita alguém a registar no
   demo uma quebra que era a sério (ADR 0018, decisão 8 — o demo é escrevível de propósito, e o que o
   protege é a sinalização). Usa os papéis de banner que já existem (`warning-surface`,
