@@ -13,9 +13,12 @@ import { textos } from "../textos";
  * "o que aparece quando não há nada?" é uma das perguntas da sessão 0, logo o
  * estado vazio é tanto produto como a lista cheia.
  *
- * O servidor de fixtures sabe devolver `results: []` e 500 por caminho
- * (`FIXTURES_VAZIO=…`, `FIXTURES_ERRO=…`, ou `?_fixture=vazio|erro` num `curl`),
- * por isso estes três ecrãs foram vistos e medidos, não deduzidos.
+ * Até 2026-10-27 os três viam-se por encomenda: o servidor de fixtures devolvia
+ * `results: []` ou 500 a pedido (`?_fixture=vazio|erro`). Com a pasta apagada
+ * (ADR 0034, decisão 7) **esse gatilho deixou de existir**. O vazio continua a
+ * ver-se com uma procura sem correspondência ou um estabelecimento sem stock;
+ * o erro e a sessão expirada **não têm hoje forma de se provocar**, e isso é
+ * uma perda nomeada da fatia, não um esquecimento.
  */
 
 /**

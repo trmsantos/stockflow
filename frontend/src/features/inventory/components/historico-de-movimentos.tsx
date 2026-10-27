@@ -30,8 +30,8 @@ import {
  *
  * **Não há botão de editar nem de apagar, em linha nenhuma.** Um movimento é
  * append-only na própria base de dados (ADR 0006: `REVOKE UPDATE, DELETE` em
- * `inventory_stockmovement`) e corrige-se com um movimento inverso. O servidor
- * de fixtures também não tem rota para alterar — de propósito.
+ * `inventory_stockmovement`) e corrige-se com um movimento inverso — para o
+ * qual, hoje, **não há ecrã nenhum**: é dívida nomeada na ADR 0034.
  *
  * ## Tabela desde 2026-10-06, e o que a conversão arrumou
  *

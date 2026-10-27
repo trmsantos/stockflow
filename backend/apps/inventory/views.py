@@ -354,7 +354,10 @@ class StockPanelViewSet(viewsets.GenericViewSet):
     """
 
     permission_classes = [IsAuthenticated, PertenceAoTenant]
-    throttle_scope = AMBITO_THROTTLE_CATALOGO
+    #: **Sem `throttle_scope`, e de propósito.** As cinco rotas desta classe são
+    #: GET, e o `ScopedRateThrottle` dos irmãos só se junta fora dos
+    #: `SAFE_METHODS`: um `throttle_scope` aqui prometia um balde que nunca se
+    #: aplicaria. O que cobre a leitura é o balde `user`.
     #: Vazia e como atributo de classe: o drf-spectacular lê o `queryset` da
     #: classe fora de um pedido. Nenhuma destas rotas o usa — todas compõem a
     #: resposta a partir de um selector.
@@ -554,6 +557,12 @@ class StockMovementViewSet(viewsets.GenericViewSet):
     throttle_scope = AMBITO_THROTTLE_CATALOGO
     queryset = StockMovement.objects.none()
     serializer_class = MovimentoOutSerializer
+
+    def get_throttles(self) -> list[BaseThrottle]:
+        """ScopedRateThrottle só nas escritas."""
+        if self.request.method in SAFE_METHODS:
+            return super().get_throttles()
+        return [*super().get_throttles(), ScopedRateThrottle()]
 
     def get_serializer_context(self) -> dict[str, Any]:
         """Quem vê euros neste pedido. Default falso — ver `SemEurosParaQuemNaoVe`."""

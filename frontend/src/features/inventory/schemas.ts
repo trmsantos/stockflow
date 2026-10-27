@@ -279,14 +279,15 @@ export const movimentoSchema = z.object({
  * o DRF serializa `2026-10-13T11:08:06.340331+01:00`; o `z.iso.datetime()` do
  * Zod 4 **só aceita `Z`**. Medido: o formato real falha, o dos fixtures passa.
  *
- * Porque não se notou, e é a lição que importa: o servidor de fixtures usa
- * `toISOString()`, que devolve sempre `Z`. E ele valida as respostas com **este
- * mesmo schema** — o que a ADR 0008 decisão 3 celebra como "um fixture que não
- * poderia sair do endpoint real falha alto". Esse mecanismo apanha um schema
- * **demasiado largo**; não pode apanhar um schema **demasiado estreito**, porque
- * o fixture é escrito para o satisfazer. Os dados falsos eram mais complacentes
- * do que a realidade, e no dia em que estes endpoints existissem cada resposta
- * virava um erro de forma com uma mensagem que não aponta para o fuso horário. */
+ * Porque não se notou, e é a lição que sobrevive às fixtures (apagadas a
+ * 2026-10-27, ADR 0034 d7): o servidor delas usava `toISOString()`, que devolve
+ * sempre `Z`, e validava as respostas com **este mesmo schema** — o que a ADR
+ * 0008 decisão 3 celebra como "um fixture que não poderia sair do endpoint real
+ * falha alto". Esse mecanismo apanhava um schema **demasiado largo**; nunca
+ * podia apanhar um **demasiado estreito**, porque o fixture era escrito para o
+ * satisfazer. Os dados falsos eram mais complacentes do que a realidade, e o dia
+ * em que os endpoints existiram chegou: é hoje, e é por isto que a linha abaixo
+ * está como está. */
   occurred_at: z.iso.datetime({ offset: true }),
   /**
    * A referência **crua**, e o ecrã não a imprime.
