@@ -60,11 +60,14 @@ FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb235
 # e mau para CVE: o digest congela também os pacotes com falhas que o Debian já
 # corrigiu. O trivy do CI corre com `--ignore-unfixed`, logo o que ele reporta é
 # exactamente isto — falhas **com** correcção publicada que a imagem não tem.
-# Em 2026-10-06 eram oito (5 HIGH, 3 CRITICAL) nestes dois pacotes.
+# Em 2026-10-06 eram oito (5 HIGH, 3 CRITICAL) nos dois primeiros pacotes.
+# Em 2026-10-26 era uma HIGH no openssl — CVE-2026-84782, fuga de informação na
+# retransmissão do handshake DTLS —, e o cron de segunda-feira é quem a trouxe:
+# o PR que mergeou na véspera estava verde, porque o aviso ainda não existia.
 #
 # Não é `apt-get upgrade`: o `hadolint` do mesmo job recusa-o (DL3005), e com
 # razão — uma actualização em bloco muda pacotes que ninguém reviu e torna a
-# build dependente do dia. Dois nomes com duas versões dizem o que mudou.
+# build dependente do dia. Cada nome com a sua versão diz o que mudou.
 #
 # **O pino envelhece de propósito.** Quando a próxima CVE sair, o trivy fica
 # vermelho e alguém sobe a versão aqui — e a subida aparece no diff, com o nome
@@ -90,6 +93,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libpcre2-8-0=10.42-1+deb12u2 \
       perl-base=5.36.0-7+deb12u4 \
+      libssl3=3.0.22-1~deb12u2 \
+      openssl=3.0.22-1~deb12u2 \
       libvips42=8.14.1-3+deb12u3 \
       libpoppler-glib8=22.12.0-2+deb12u3 \
  && rm -rf /var/lib/apt/lists/*

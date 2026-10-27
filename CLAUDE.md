@@ -43,8 +43,10 @@ Skills externas esperadas (ver README): frontend-design, react-best-practices, s
 5. `pnpm typecheck && pnpm lint && uv run pytest` — e a suite **também sem a influência do `.env`**,
    senão o verde local não diz nada sobre o CI. Ecrã novo ou alterado: fotografar com **cada papel**.
 6. `security-reviewer` corre a skill `security-check` + checklist. Sem PASS não está feito.
-7. PR. **O CI só corre em PR** — um push sem PR aberto não dispara nada, e os 4 testes que precisam
-   de libvips só correm lá.
+7. PR. O CI corre em **PR, em push para a `main` e à segunda às 06:00 UTC** — o cron existe porque
+   o `trivy` e os dois `audit` julgam versões fixas contra bases de dados vivas e ficam vermelhos
+   sem a árvore mudar. O que não dispara nada é um push a um ramo de trabalho sem PR aberto. Os 4
+   testes que precisam de libvips só correm lá.
 
 ## Regras que não se discutem
 - **Stock é um ledger.** Nunca se altera `quantity` de um `StockLevel`; cria-se um `StockMovement`.
