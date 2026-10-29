@@ -6,7 +6,7 @@ import { ErroAoCarregar } from "@/components/erro-ao-carregar";
 import { EstadoVazio } from "@/components/estado-vazio";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { mensagemDeErro } from "@/lib/api/errors";
+import { eNaoEncontrado, mensagemDeErro } from "@/lib/api/errors";
 
 import {
   useConfirmarRececao,
@@ -115,9 +115,16 @@ export function EcraDeRececao() {
   // **Quem vê euros lê-se do cabeçalho, não do papel da sessão** (ver
   // `euros-do-papel.ts`), e lê-se **uma vez por ecrã**: a tabela e o esqueleto
   // dela têm de ter as mesmas colunas, senão o layout salta no instante em que
-  // as linhas chegam. O cabeçalho chega primeiro — vem da mesma entrada de cache
-  // que a lista —, logo o esqueleto já sabe a resposta.
-  const comEuros = dados !== null && dados !== undefined && rececaoMostraEuros(dados);
+  // as linhas chegam.
+  //
+  // A razão que aqui estava escrita — "o cabeçalho chega primeiro, vem da mesma
+  // entrada de cache que a lista" — **deixou de ser verdade** a 2026-10-29: o
+  // cabeçalho é agora um pedido com o seu próprio tempo (`GET /receipts/<id>`,
+  // ADR 0034, adenda de 29, decisão 17) e pode chegar depois das linhas. O que
+  // mantém a decisão de pé é outra coisa, e essa não mudou: a tabela e o
+  // esqueleto dela só se desenham **dentro** do ramo em que o cabeçalho já
+  // existe, logo nunca se desenham com respostas diferentes a esta pergunta.
+  const comEuros = dados !== undefined && rececaoMostraEuros(dados);
 
   const entram = entramNoStock(resultados ?? []);
   const foram = ficamDeFora(resultados ?? []);
@@ -137,17 +144,15 @@ export function EcraDeRececao() {
 
       {documento.isPending ? <EsqueletoDoCabecalho /> : null}
 
-      {documento.isError ? (
-        <ErroAoCarregar
-          titulo={textos.rececao.erroAoCarregar}
-          mensagem={mensagemDeErro(documento.error)}
-          aoTentarOutraVez={() => {
-            void documento.refetch();
-          }}
-        />
-      ) : null}
-
-      {dados === null ? (
+      {/* **O 404 antes do erro genérico** (ADR 0034, adenda de 29, decisão 17),
+          senão o que aparece a quem está ao lado de uma palete é o `detail` do
+          DRF — medido, "No Receipt matches the given query.", em inglês e com o
+          nome do modelo lá dentro. A frase é a mesma de sempre e continua
+          verdadeira: aqui há **uma** causa — ao contrário do detalhe de um
+          artigo, onde o 404 e o "nunca entrou" eram dois factos numa frase só.
+          O que mudou é o gatilho: era o `find()` na lista a falhar, é agora a
+          resposta do servidor. */}
+      {eNaoEncontrado(documento.error) ? (
         <EstadoVazio
           icone={FileQuestion}
           titulo={textos.rececao.naoExisteTitulo}
@@ -159,7 +164,17 @@ export function EcraDeRececao() {
             </Link>
           </Button>
         </EstadoVazio>
-      ) : dados === undefined ? null : (
+      ) : documento.isError ? (
+        <ErroAoCarregar
+          titulo={textos.rececao.erroAoCarregar}
+          mensagem={mensagemDeErro(documento.error)}
+          aoTentarOutraVez={() => {
+            void documento.refetch();
+          }}
+        />
+      ) : null}
+
+      {dados === undefined ? null : (
         <>
           {/* Leitura e formulário: 72rem (DESIGN.md §4). */}
           <div className="flex w-full max-w-6xl flex-col gap-3">

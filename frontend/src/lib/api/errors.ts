@@ -65,6 +65,28 @@ export function isApiError(error: unknown): error is ApiError {
 }
 
 /**
+ * **Este endereço não aponta para nada deste estabelecimento** — e é um facto,
+ * não uma falha a repetir.
+ *
+ * Vive aqui e não em cada ecrã porque é a mesma pergunta em dois caminhos (o
+ * detalhe de um artigo e o de uma receção, ADR 0034, adenda de 29, decisões 13
+ * e 17), e duas cópias de uma regra divergem na primeira correcção feita só
+ * numa delas.
+ *
+ * Quem a usa tem de a ler **antes** do ramo de erro genérico, senão é o
+ * `detail` do DRF que o `mensagemDeErro` imprime a quem está numa cozinha ou ao
+ * lado de uma palete. Medido a 2026-10-29, e são dois e nenhum é copy:
+ * *"Não encontrado."* no `/stock/levels/<artigo>` e
+ * *"No Receipt matches the given query."* — **em inglês** — no
+ * `/receipts/<id>`. Um 404 também não leva "tentar outra vez": o `retry` do
+ * `query-client.ts` já não repete 4xx, e um botão a repetir o mesmo pedido era
+ * uma saída que não sai.
+ */
+export function eNaoEncontrado(error: unknown): boolean {
+  return isApiError(error) && error.status === 404;
+}
+
+/**
  * A frase que se mostra a quem está à frente do ecrã.
  *
  * O `detail` do backend já vem pronto para mostrar e já diz o passo seguinte
