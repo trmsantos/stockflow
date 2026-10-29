@@ -1,11 +1,17 @@
 """Testes da API de receções (fatia 2 da recepção de mercadoria)."""
 
+import json
+from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-from django.test import Client
+from django.conf import settings
+from django.test import Client, override_settings
+from django.urls import resolve
 from django.utils import timezone
+from drf_spectacular.generators import SchemaGenerator
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Papel, User
@@ -789,3 +795,651 @@ class TestConfirmarUmaLinha:
         assert recusa.data["code"] == "rececao_confirmada"
         with tenant_scope(tenant.id):
             assert Receipt.objects.filter(pk=rececao.id).exists()
+
+
+# ---------------------------------------------------------------------------
+# O detalhe de uma receção: `GET /receipts/<id>` (ADR 0034, adenda de 29, d17)
+#
+# **A rota já existia** — é o `retrieve` do `RececaoViewSet`, está no
+# `schema.yaml` e no `types.ts`. O que faltava era o **cliente**: o `useRececao`
+# pedia `GET /receipts` sem filtro e escolhia com um `results.find(…)`, logo com
+# `PAGE_SIZE = 50` a 51.ª receção abria como *"esta receção não existe"*. E como
+# a lista vem por `-received_at`, a que não se alcança é a **mais antiga** — que
+# é precisamente a que ficou por rever e que o contador do topo conta.
+#
+# Nenhuma destas decisões acrescenta código ao `purchasing`: o que a 17 fecha é
+# o contrato do que já se serve. O que estes testes prendem é que o detalhe e a
+# lista **não possam divergir**, e que os euros não saiam por uma porta nova.
+# ---------------------------------------------------------------------------
+
+#: O `PAGE_SIZE` do `base.py`, fixado aqui em vez de herdado: o Django lê o
+#: `backend/.env` da máquina de quem desenvolve, e um teste sobre paginação que
+#: aceite o número que estiver configurado afirma coisas diferentes em máquinas
+#: diferentes (CLAUDE.md). O resto da configuração do DRF fica como está.
+PAGINA = 50
+DRF_COM_PAGINA_FIXA = {**settings.REST_FRAMEWORK, "PAGE_SIZE": PAGINA}
+
+
+def _loja_com_rececao_e_tres_papeis(nome: str):
+    """Um estabelecimento com dono, gerente e colaborador, e uma receção com euros.
+
+    O `_loja_com_rececao_com_precos` tem dois papéis e chega para a política;
+    aqui são precisos os **três**, porque o que se compara é o conjunto de
+    chaves de cada um contra o da sua própria linha da lista.
+    """
+    tenant = criar_tenant(name=nome)
+    with tenant_scope(tenant.id):
+        dono = User.objects.create_user(f"dono-{nome}@test.com", CREDENCIAL)
+        conceder_pertenca(
+            user=dono, tenant_id=tenant.id, role=Papel.OWNER, display_name="Dona"
+        )
+        gerente = User.objects.create_user(f"gerente-{nome}@test.com", CREDENCIAL)
+        conceder_pertenca(
+            user=gerente, tenant_id=tenant.id, role=Papel.MANAGER, display_name="Gerente"
+        )
+        colaborador = User.objects.create_user(f"staff-{nome}@test.com", CREDENCIAL)
+        conceder_pertenca(
+            user=colaborador,
+            tenant_id=tenant.id,
+            role=Papel.STAFF,
+            display_name="Colaborador",
+        )
+        loc = Location.objects.create(tenant=tenant, name="Armazém", position=1)
+        fornecedor = Supplier.objects.create(tenant=tenant, name="Makro", nif="987654321")
+        rececao = Receipt.objects.create(
+            tenant=tenant,
+            location=loc,
+            supplier=fornecedor,
+            supplier_name="Makro",
+            supplier_nif="987654321",
+            doc_type="FT",
+            doc_number="FT 2026/114",
+            received_at=timezone.now(),
+            document_total_eur=Decimal("123.45"),
+        )
+        ReceiptLine.objects.create(
+            tenant=tenant,
+            receipt=rececao,
+            location=loc,
+            position=1,
+            description="Manteiga 1 kg",
+            invoice_unit="un",
+            quantity_invoiced=Decimal("10.000"),
+            quantity_received=Decimal("10.000"),
+            unit_price=Decimal("9.4000"),
+            discount_pct=Decimal("5.000"),
+            vat_rate=Decimal("23.000"),
+            line_total=Decimal("100.00"),
+            kind="charge",
+        )
+    return SimpleNamespace(
+        tenant=tenant,
+        dono=dono,
+        gerente=gerente,
+        staff=colaborador,
+        loc=loc,
+        fornecedor=fornecedor,
+        rececao=rececao,
+    )
+
+
+def _elemento_da_lista(api: APIClient, rececao_id) -> dict:
+    """O elemento de `GET /receipts` com este `id`, procurado em todas as páginas."""
+    caminho = "/api/v1/receipts"
+    while caminho:
+        pagina = api.get(caminho)
+        assert pagina.status_code == 200, pagina.content
+        corpo = pagina.json()
+        for item in corpo["results"]:
+            if item["id"] == str(rececao_id):
+                return item
+        caminho = corpo["next"]
+    raise AssertionError(f"a receção {rececao_id} não está em nenhuma página")
+
+
+@pytest.mark.django_db(transaction=True)
+class TestODetalheDeUmaRececao:
+    """O corpo de `GET /receipts/<id>` é o elemento da lista, chave a chave."""
+
+    def test_o_detalhe_e_o_mesmo_elemento_da_lista(self):
+        """Iguais por **construção** — o mesmo serializer, o mesmo
+        `_compor_rececao` e o mesmo contexto — e este teste é o que impede
+        alguém de abrir uma segunda definição de receção.
+        """
+        casa = _loja_com_rececao_e_tres_papeis("detalhe-igual")
+        api = _sessao("gerente-detalhe-igual@test.com")
+
+        detalhe = api.get(f"/api/v1/receipts/{casa.rececao.id}")
+        assert detalhe.status_code == 200, detalhe.content
+        linha = _elemento_da_lista(api, casa.rececao.id)
+
+        assert detalhe.json() == linha, (
+            "o detalhe e a lista divergiram: não há aqui um `+ um campo` como "
+            "na ficha do artigo — zero campos novos, zero subclasse"
+        )
+
+    @override_settings(REST_FRAMEWORK=DRF_COM_PAGINA_FIXA)
+    def test_a_rececao_para_la_da_primeira_pagina_abre(self):
+        """A 51.ª receção — o defeito, medido.
+
+        Sem esta perna o teste de cima passa com o defeito intacto: a receção
+        que ele compara está sempre na primeira página. A lista vem por
+        `-received_at`, logo a inalcançável é a **mais antiga**, que é a que
+        ficou por rever.
+        """
+        casa = _loja_com_rececao_e_tres_papeis("alcance")
+        agora = timezone.now()
+        with tenant_scope(casa.tenant.id):
+            Receipt.objects.filter(pk=casa.rececao.id).update(received_at=agora)
+            mais_antiga = Receipt.objects.create(
+                tenant=casa.tenant,
+                location=casa.loc,
+                supplier=casa.fornecedor,
+                supplier_name="Makro",
+                supplier_nif="987654321",
+                doc_type="FT",
+                received_at=agora - timedelta(days=90),
+            )
+            Receipt.objects.bulk_create(
+                [
+                    Receipt(
+                        tenant=casa.tenant,
+                        location=casa.loc,
+                        supplier=casa.fornecedor,
+                        supplier_name="Makro",
+                        supplier_nif="987654321",
+                        doc_type="FT",
+                        received_at=agora - timedelta(minutes=indice + 1),
+                    )
+                    for indice in range(PAGINA - 1)
+                ]
+            )
+        api = _sessao("gerente-alcance@test.com")
+
+        primeira = api.get("/api/v1/receipts")
+        assert primeira.status_code == 200
+        assert primeira.json()["count"] == PAGINA + 1
+        assert len(primeira.json()["results"]) == PAGINA
+        assert str(mais_antiga.id) not in [
+            item["id"] for item in primeira.json()["results"]
+        ], "a mais antiga tem de ficar fora da primeira página para o teste valer"
+
+        detalhe = api.get(f"/api/v1/receipts/{mais_antiga.id}")
+        assert detalhe.status_code == 200, detalhe.content
+        assert detalhe.json()["id"] == str(mais_antiga.id)
+
+    def test_os_conjuntos_de_chaves_sao_os_mesmos_papel_a_papel(self):
+        """Presença e ausência de chave, nunca valores — e contra a lista.
+
+        É o equivalente ao teste dos euros da ficha do artigo, e é ele que
+        apanha a **porta irmã**: uma classe de detalhe que redeclarasse o
+        `CAMPOS_DE_DINHEIRO` a menos. Foi assim que a ADR 0031 fechou os euros
+        da receção e deixou o `ExtracaoOut` do documento aberto sobre a mesma
+        fatura.
+        """
+        casa = _loja_com_rececao_e_tres_papeis("chaves-por-papel")
+
+        for sufixo, ve_euros in (
+            ("dono", True),
+            ("gerente", True),
+            ("staff", False),
+        ):
+            api = _sessao(f"{sufixo}-chaves-por-papel@test.com")
+            detalhe = api.get(f"/api/v1/receipts/{casa.rececao.id}")
+            assert detalhe.status_code == 200, detalhe.content
+            corpo = detalhe.json()
+            linha = _elemento_da_lista(api, casa.rececao.id)
+
+            assert set(corpo) == set(linha), (
+                f"o detalhe de {sufixo} tem um conjunto de chaves diferente "
+                "do da linha da lista"
+            )
+            for chave in EUROS_DA_RECECAO:
+                assert (chave in corpo) is ve_euros, (sufixo, chave)
+                assert (chave in linha) is ve_euros, (sufixo, chave)
+
+    def test_a_rececao_de_outro_estabelecimento_e_um_uuid_inexistente_dao_404(self):
+        """Não há aqui o estado (b) da ficha do artigo: o 404 quer dizer **uma** coisa.
+
+        A receção não tem descarte suave, o `get_queryset` é um só para a lista
+        e para o detalhe, e nenhum outro módulo é dono da identidade de uma
+        receção — logo não há nada que exista sem ter corpo.
+        """
+        alheia = _loja_com_rececao_e_tres_papeis("detalhe-alheio")
+        _loja_com_rececao_e_tres_papeis("detalhe-proprio")
+        api = _sessao("gerente-detalhe-proprio@test.com")
+
+        assert api.get(f"/api/v1/receipts/{alheia.rececao.id}").status_code == 404
+        inexistente = "00000000-0000-4000-8000-000000000000"
+        assert api.get(f"/api/v1/receipts/{inexistente}").status_code == 404
+
+    def test_um_id_mal_formado_da_404_e_nunca_500(self):
+        """E **não** 400, ao contrário da ficha do artigo — e é decisão escrita.
+
+        O `get_object()` do DRF passa pelo `get_object_or_404`, que apanha o
+        `ValueError` e levanta `Http404`: um "abc" nunca chega ao Postgres. O
+        mesmo `pk` atravessa nove operações desta classe; fazer só o `GET`
+        responder 400 era dar duas respostas ao mesmo erro no mesmo recurso.
+        """
+        _loja_com_rececao_e_tres_papeis("id-mal-formado")
+        api = _sessao("gerente-id-mal-formado@test.com")
+
+        resposta = api.get("/api/v1/receipts/nao-e-uuid")
+
+        assert resposta.status_code == 404, resposta.content
+
+
+# ---------------------------------------------------------------------------
+# O mapa fechado dos métodos de `/receipts` (ADR 0034, adenda de 29, d18)
+#
+# O `RececaoViewSet` é um `ModelViewSet`, logo o router ligava o `put` ao
+# `update` herdado. Esse `update` pede o serializer ao `get_serializer_class`,
+# recebe o `RececaoOutSerializer` — um `serializers.Serializer` **sem
+# `update()`** — e o `save()` levanta `NotImplementedError`. A rota estava
+# **publicada** (`receipts_update`) e os campos daquele serializer não são
+# read-only: o único corpo que o contrato aceitava era exactamente o que chegava
+# ao 500. O que estava partido era o contrato, e por isso fecha-se **tirando o
+# método**.
+#
+# Este mapa é fechado e na forma do `APPEND_ONLY` do `tests/test_db_roles.py`:
+# falha nos dois sentidos. Devolver o `PUT` derruba a primeira perna; encolher a
+# lista a mais — um `http_method_names = ["get"]` apagava o ecrã Receber inteiro
+# — derruba a segunda.
+#
+# O cabeçalho `Allow` do 405 **não** serve de âncora: o DRF levanta
+# `MethodNotAllowed` e não o escreve.
+# ---------------------------------------------------------------------------
+
+#: Os dois métodos de protocolo que ficam e que não são operações do contrato:
+#: o DRF mapeia `head` → `get` na própria `as_view` e o `OPTIONS` é o preflight
+#: e a metadata.
+METODOS_DE_PROTOCOLO = frozenset({"head", "options"})
+
+#: Cada operação publicada por esta classe, por caminho. A varredura está na
+#: d18: as doze operações são estas onze mais o `PUT`, que é a única que a
+#: herança do `ModelViewSet` contribuía sem ninguém a servir.
+METODOS_SERVIDOS: dict[str, frozenset[str]] = {
+    "": frozenset({"GET", "POST"}),
+    "/summary": frozenset({"GET"}),
+    "/{id}": frozenset({"GET", "PATCH", "DELETE"}),
+    "/{id}/lines": frozenset({"GET", "POST"}),
+    "/{id}/lines/{linha}/confirmation": frozenset({"POST"}),
+    "/{id}/temperature": frozenset({"POST"}),
+    "/{id}/confirmation": frozenset({"POST"}),
+}
+
+#: O que saiu do contrato. Uma entrada, e é a razão desta decisão existir.
+METODOS_RECUSADOS: dict[str, frozenset[str]] = {"/{id}": frozenset({"PUT"})}
+
+#: Um corpo que satisfaz o `RececaoOutRequest` que o schema publicava até hoje:
+#: é o **único** corpo que aquele contrato aceitava, e era o que chegava ao 500.
+#: Com o método fora da lista, o DRF recusa no `dispatch` e o corpo nem é lido —
+#: que é exactamente o que este teste tem de provar.
+CORPO_DE_PUT_VALIDO = {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "document": None,
+    "supplier_id": None,
+    "doc_type": "FT",
+    "doc_number": "FT 2026/999",
+    "doc_date": None,
+    "received_at": "2026-10-29T08:00:00Z",
+    "confirmed_at": None,
+    "confirmed_by": None,
+    "customer_name": "",
+    "customer_nif": "",
+    "reference": "",
+}
+
+
+@pytest.mark.django_db(transaction=True)
+class TestOsMetodosDeUmaRececao:
+    """O `PUT` sai do contrato, e os outros onze ficam. Nos dois sentidos."""
+
+    def _rececao_nova(self, casa) -> Receipt:
+        """Uma receção por pedido: o `DELETE` do mapa apaga a que toca."""
+        with tenant_scope(casa.tenant.id):
+            return Receipt.objects.create(
+                tenant=casa.tenant,
+                location=casa.loc,
+                supplier=casa.fornecedor,
+                supplier_name="Makro",
+                supplier_nif="987654321",
+                doc_type="FT",
+                received_at=timezone.now(),
+            )
+
+    def _caminho(self, molde: str, rececao: Receipt) -> str:
+        linha = "00000000-0000-4000-8000-000000000002"
+        return "/api/v1/receipts" + molde.format(id=rececao.id, linha=linha)
+
+    def test_o_put_responde_405_e_nunca_500(self):
+        casa = _loja_com_rececao_e_tres_papeis("metodos-put")
+        api = _sessao("gerente-metodos-put@test.com")
+
+        for molde, metodos in METODOS_RECUSADOS.items():
+            for metodo in metodos:
+                rececao = self._rececao_nova(casa)
+                caminho = self._caminho(molde, rececao)
+                resposta = api.generic(
+                    metodo,
+                    caminho,
+                    data=json.dumps(CORPO_DE_PUT_VALIDO),
+                    content_type="application/json",
+                )
+                assert resposta.status_code == 405, (
+                    f"{metodo} {caminho} respondeu {resposta.status_code}: a "
+                    "rota voltou ao contrato (e com corpo válido dava 500)"
+                )
+
+    def test_cada_metodo_servido_responde_qualquer_coisa_menos_405(self):
+        """A segunda perna: encolher a lista apaga o ecrã Receber inteiro."""
+        casa = _loja_com_rececao_e_tres_papeis("metodos-servidos")
+        api = _sessao("gerente-metodos-servidos@test.com")
+
+        for molde, metodos in METODOS_SERVIDOS.items():
+            for metodo in sorted(metodos):
+                rececao = self._rececao_nova(casa)
+                caminho = self._caminho(molde, rececao)
+                resposta = api.generic(
+                    metodo, caminho, data="{}", content_type="application/json"
+                )
+                assert resposta.status_code != 405, f"{metodo} {caminho}"
+                assert resposta.status_code != 500, f"{metodo} {caminho}"
+
+    def test_o_mapa_e_a_lista_da_classe_dizem_o_mesmo(self):
+        """O mapa é fechado: o que o servidor recusa é o que o schema não tem.
+
+        O `http_method_names` é um atributo e não código, e é o atributo que as
+        **duas pontas** lêem: o DRF compara-o no `dispatch` e o drf-spectacular
+        cruza-o com as actions do router para decidir o que publica.
+        """
+        da_classe = set(views.RececaoViewSet.http_method_names) - METODOS_DE_PROTOCOLO
+        do_mapa = {
+            metodo.lower()
+            for metodos in METODOS_SERVIDOS.values()
+            for metodo in metodos
+        }
+        recusados = {
+            metodo.lower()
+            for metodos in METODOS_RECUSADOS.values()
+            for metodo in metodos
+        }
+
+        assert da_classe == do_mapa
+        assert recusados & da_classe == set()
+        assert METODOS_DE_PROTOCOLO <= set(views.RececaoViewSet.http_method_names), (
+            "o `head` e o `options` ficam: o DRF mapeia `head` → `get` na "
+            "própria `as_view` e o `OPTIONS` é o preflight e a metadata"
+        )
+
+    def test_os_caminhos_do_mapa_sao_mesmo_desta_classe(self):
+        """A âncora, pela razão do `TABELA_ANCORA` do `test_db_roles.py`.
+
+        Sem ela, um caminho mal escrito no mapa resolvia para lado nenhum, dava
+        404 — que não é 405 — e a segunda perna passava por vacuidade.
+        """
+        casa = _loja_com_rececao_e_tres_papeis("metodos-ancora")
+        rececao = self._rececao_nova(casa)
+
+        for molde in [*METODOS_SERVIDOS, *METODOS_RECUSADOS]:
+            resolvido = resolve(self._caminho(molde, rececao))
+            assert resolvido.func.cls is views.RececaoViewSet, molde
+
+
+# ---------------------------------------------------------------------------
+# O corpo que cada operação de `/receipts` publica (ADR 0034, adenda de 29, d19)
+#
+# Duas operações desta classe publicavam um `requestBody` **obrigatório** que o
+# handler não lê: o `POST /receipts/<id>/confirmation` não lê corpo nenhum, e o
+# `POST /receipts/<id>/temperature` lê `{conservation, celsius}`. As duas
+# publicavam o `RececaoOutRequest`, pela mesma razão do `PUT` da d18: sem
+# `request=` no `extend_schema`, o drf-spectacular cai no
+# `get_serializer_class()` da classe, que para tudo o que não é `create` nem
+# `partial_update` devolve o serializer de **saída**.
+#
+# O servidor sempre se comportou bem; o que estava errado era o contrato, e
+# portanto o `types.ts` gerado dele — um cliente que compila um corpo que o
+# servidor recusa com 400 (temperatura) ou exige um corpo para um botão
+# (confirmar).
+#
+# O mapa é fechado e na forma do `METODOS_SERVIDOS` acima: a varredura parte do
+# schema, logo uma action nova entra aqui ou derruba o teste. É isso que o torna
+# útil — apanha a próxima, e não esta.
+#
+# Lê o schema **gerado em memória** e não o `frontend/openapi/schema.yaml`
+# commitado: o ficheiro é um artefacto, regenera-o o `pnpm gen:api`, e atrasa-se
+# em relação ao código (à data desta decisão ainda publicava o `PUT` que a d18
+# tirou). Nada deste caminho vem do ambiente — o `SPECTACULAR_SETTINGS` é um
+# literal do `config/settings/base.py` que nem o `test.py` nem o `dev.py`
+# tocam —, por isso não há settings a fixar com `override_settings`.
+# ---------------------------------------------------------------------------
+
+#: Onde as operações desta classe vivem no schema: o router monta-as todas sob
+#: este prefixo, e é por ele que a varredura as encontra.
+PREFIXO_NO_SCHEMA = "/api/v1/receipts"
+
+#: Os métodos HTTP, para distinguir as operações das outras chaves que uma
+#: entrada de `paths` pode ter no OpenAPI (`parameters`, `summary`).
+METODOS_DO_OPENAPI = frozenset(
+    {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+)
+
+#: O corpo que o contrato publica para cada operação desta classe. `None` é a
+#: **ausência** de `requestBody` — que é como o drf-spectacular exprime "não
+#: leva corpo", e não um corpo vazio obrigatório. O par é
+#: `(componente, obrigatório)`; o `obrigatório` é `False` quando o serializer
+#: não tem nenhum campo obrigatório, e aí o corpo pode faltar.
+CORPOS_PUBLICADOS: dict[tuple[str, str], tuple[str, bool] | None] = {
+    ("", "GET"): None,
+    ("", "POST"): ("RececaoInRequest", True),
+    ("/summary", "GET"): None,
+    ("/{id}", "GET"): None,
+    ("/{id}", "PATCH"): ("CabecalhoInRequest", False),
+    ("/{id}", "DELETE"): None,
+    ("/{id}/lines", "GET"): None,
+    ("/{id}/lines", "POST"): ("LinhaInRequest", True),
+    ("/{id}/lines/{linha}/confirmation", "POST"): ("RevisaoDeLinhaInRequest", False),
+    ("/{id}/temperature", "POST"): ("TemperaturaInRequest", True),
+    # As duas da decisão 19. Confirmar é um gesto e não um formulário: o ecrã
+    # faz `POST` sem corpo nenhum (`useConfirmarRececao`), e o contrato passa a
+    # dizer o mesmo.
+    ("/{id}/confirmation", "POST"): None,
+}
+
+
+#: O componente que o `RececaoOutSerializer` gera quando alguém o publica como
+#: **pedido**. Só nasce se uma operação o declarar como corpo, e declará-lo é
+#: sempre o defeito desta decisão: é a resposta servida como se fosse a entrada.
+COMPONENTE_QUE_NAO_DEVE_EXISTIR = "RececaoOutRequest"
+
+
+def _schema_gerado() -> dict:
+    """O schema que o `manage.py spectacular` do `pnpm gen:api` produz."""
+    return SchemaGenerator().get_schema(request=None, public=True)
+
+
+def _corpos_do_schema(gerado: dict) -> dict[tuple[str, str], tuple[str, bool] | None]:
+    """Varre o schema gerado e devolve o corpo de cada operação de `/receipts`."""
+    corpos: dict[tuple[str, str], tuple[str, bool] | None] = {}
+
+    for caminho, operacoes in (gerado.get("paths") or {}).items():
+        if caminho != PREFIXO_NO_SCHEMA and not caminho.startswith(f"{PREFIXO_NO_SCHEMA}/"):
+            continue
+        # O schema nomeia o parâmetro do caminho pelo kwarg da view
+        # (`linha_id`); o `METODOS_SERVIDOS` escreve-o `{linha}`. Uniformiza-se
+        # aqui para os dois mapas fechados terem as mesmas chaves e poderem ser
+        # comparados um com o outro.
+        molde = caminho.removeprefix(PREFIXO_NO_SCHEMA).replace("{linha_id}", "{linha}")
+
+        for metodo, operacao in operacoes.items():
+            if metodo.lower() not in METODOS_DO_OPENAPI:
+                continue
+            corpo = operacao.get("requestBody")
+            if corpo is None:
+                corpos[(molde, metodo.upper())] = None
+                continue
+            componentes = {
+                media.get("schema", {}).get("$ref", "").rsplit("/", 1)[-1]
+                for media in corpo["content"].values()
+            }
+            # Um corpo que mude de forma com o `Content-Type` seria outro
+            # defeito, e este mapa não o saberia representar.
+            assert len(componentes) == 1, f"{metodo.upper()} {caminho}: {componentes}"
+            corpos[(molde, metodo.upper())] = (
+                componentes.pop(),
+                corpo.get("required", False),
+            )
+
+    return corpos
+
+
+class TestOsCorposQueOContratoPublica:
+    """O corpo publicado de cada operação é o corpo que o handler lê."""
+
+    def test_cada_operacao_publica_o_corpo_que_o_handler_le(self):
+        """Nos dois sentidos: o mapa é o schema e o schema é o mapa."""
+        assert _corpos_do_schema(_schema_gerado()) == CORPOS_PUBLICADOS
+
+    def test_as_duas_operacoes_da_decisao_19_em_particular(self):
+        """A regressão, dita pelo nome, para o próximo diff não a ler num dict.
+
+        O `confirmation` sai **sem `requestBody`** — a ausência da chave, que é
+        como o drf-spectacular exprime "não leva corpo" quando lhe dizem
+        `request=None`. Um corpo vazio obrigatório seria outra coisa, e seria
+        igualmente falso.
+        """
+        gerado = _schema_gerado()
+        corpos = _corpos_do_schema(gerado)
+
+        assert corpos[("/{id}/confirmation", "POST")] is None
+        assert corpos[("/{id}/temperature", "POST")] == ("TemperaturaInRequest", True)
+        # E o componente **deixa de existir**, em vez de ficar órfão: eram o
+        # `PUT` da d18 e estas duas que o seguravam, e um componente sem
+        # consumidor nenhum é a prova de que não sobrou porta irmã.
+        assert COMPONENTE_QUE_NAO_DEVE_EXISTIR not in gerado["components"]["schemas"], (
+            "o serializer de saída voltou a ser publicado como corpo de entrada"
+        )
+
+    def test_os_dois_mapas_fechados_falam_das_mesmas_operacoes(self):
+        """A âncora: este mapa e o `METODOS_SERVIDOS` da d18 têm de coincidir.
+
+        Sem ela, a varredura por prefixo podia perder uma operação desta classe
+        (ou apanhar a de outra) e o mapa dos corpos passava por vacuidade.
+        """
+        do_mapa_dos_metodos = {
+            (molde, metodo)
+            for molde, metodos in METODOS_SERVIDOS.items()
+            for metodo in metodos
+        }
+
+        assert set(CORPOS_PUBLICADOS) == do_mapa_dos_metodos
+
+
+@pytest.mark.django_db(transaction=True)
+class TestOCorpoQueOServidorLe:
+    """O outro lado do contrato: o que o servidor aceita e o que recusa."""
+
+    def _linha_confirmada(self, api, rececao) -> None:
+        """Uma linha revista, que é a pré-condição de `confirmar_rececao`.
+
+        Um encargo serve: não precisa de artigo (ADR 0021, decisão 6) e conta
+        como linha revista.
+        """
+        linha = api.post(
+            f"/api/v1/receipts/{rececao.id}/lines",
+            {**LINHA_A_MAO, "description": "PORTES", "kind": "charge"},
+            format="json",
+        )
+        assert linha.status_code == 201, linha.data
+        revista = api.post(
+            f"/api/v1/receipts/{rececao.id}/lines/{linha.data['id']}/confirmation",
+            {"kind": "charge"},
+            format="json",
+        )
+        assert revista.status_code == 201, revista.data
+
+    def test_confirmar_sem_corpo_nenhum_continua_a_confirmar(self):
+        """O pedido que o ecrã faz: `POST`, sem corpo e sem `Content-Type`.
+
+        O `content_type=None` é o que torna isto literal — o `APIClient` do DRF
+        põe sempre o header, e o browser não põe nenhum num `fetch` sem `body`.
+        """
+        tenant, _, _, rececao = _loja_com_rececao_por_rever("corpo-confirmar")
+        api = _sessao("gerente-corpo-confirmar@test.com")
+        self._linha_confirmada(api, rececao)
+
+        confirmada = api.generic(
+            "POST", f"/api/v1/receipts/{rececao.id}/confirmation", content_type=None
+        )
+
+        assert confirmada.status_code == 201, confirmada.data
+        with tenant_scope(tenant.id):
+            assert Receipt.objects.get(pk=rececao.id).confirmed_at is not None
+
+    def test_confirmar_com_um_corpo_qualquer_responde_o_mesmo(self):
+        """A prova de que isto se arruma no contrato e não na semântica.
+
+        O handler não lê `request.data`, logo o corpo que o schema publicava
+        até hoje — e qualquer outro — não muda nada do que acontece. É por isso
+        que o `request=None` não é uma restrição nova: é a descrição do que o
+        servidor já fazia.
+        """
+        tenant, _, _, rececao = _loja_com_rececao_por_rever("corpo-confirmar-ruido")
+        api = _sessao("gerente-corpo-confirmar-ruido@test.com")
+        self._linha_confirmada(api, rececao)
+
+        confirmada = api.post(
+            f"/api/v1/receipts/{rececao.id}/confirmation",
+            CORPO_DE_PUT_VALIDO,
+            format="json",
+        )
+
+        assert confirmada.status_code == 201, confirmada.data
+        with tenant_scope(tenant.id):
+            fresca = Receipt.objects.get(pk=rececao.id)
+            assert fresca.confirmed_at is not None
+            # E nada do corpo entrou: o `doc_number` do `CORPO_DE_PUT_VALIDO`
+            # não é o desta receção, que nasceu sem nenhum.
+            assert fresca.doc_number == ""
+
+    def test_a_temperatura_recusa_o_corpo_que_o_schema_publicava(self):
+        """O `RececaoOutRequest` nunca serviu aqui: 400, e nada fica registado.
+
+        É a prova de que o contrato mentia — o cliente gerado compilava este
+        corpo, e o servidor recusa-o nos dois campos que o handler lê.
+        """
+        tenant, _, _, rececao = _loja_com_rececao_por_rever("corpo-temperatura-mau")
+        api = _sessao("gerente-corpo-temperatura-mau@test.com")
+
+        recusa = api.post(
+            f"/api/v1/receipts/{rececao.id}/temperature",
+            CORPO_DE_PUT_VALIDO,
+            format="json",
+        )
+
+        assert recusa.status_code == 400, recusa.data
+        assert set(recusa.data) == {"conservation", "celsius"}
+        with tenant_scope(tenant.id):
+            fresca = Receipt.objects.get(pk=rececao.id)
+            assert fresca.chilled_temperature_c is None
+            assert fresca.frozen_temperature_c is None
+
+    def test_a_temperatura_aceita_o_corpo_do_serializer_que_o_handler_le(self):
+        """E o corpo que o contrato passa a publicar é o que funciona."""
+        tenant, _, _, rececao = _loja_com_rececao_por_rever("corpo-temperatura-bom")
+        api = _sessao("gerente-corpo-temperatura-bom@test.com")
+
+        registada = api.post(
+            f"/api/v1/receipts/{rececao.id}/temperature",
+            {"conservation": "chilled", "celsius": "3.5"},
+            format="json",
+        )
+
+        assert registada.status_code == 201, registada.data
+        medida = registada.data["temperatures"]
+        assert [t["conservation"] for t in medida] == ["chilled"]
+        assert medida[0]["celsius"] == Decimal("3.5")
+        # O nome de quem mediu é o `display_name` da pertença e nunca o email.
+        assert medida[0]["measured_by"] == "Gerente"
+        with tenant_scope(tenant.id):
+            assert Receipt.objects.get(pk=rececao.id).chilled_temperature_c == Decimal("3.5")

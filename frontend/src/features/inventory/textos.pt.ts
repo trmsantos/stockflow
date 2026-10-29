@@ -365,14 +365,47 @@ export const PT = {
     aCarregar: "A carregar o artigo…",
     minimoERegisto: (minimo: string, unidade: string) =>
       `mínimo ${minimo}, registado ao ${unidade}`,
+    /**
+     * **O âmbito ao lado do número, e não é cromado** (ADR 0034, adenda de 29,
+     * decisão 16). O detalhe é sempre do estabelecimento inteiro; quem vem da
+     * lista com a Loja 2 filtrada viu "2 kg" e abre a ficha a ver "12 kg". Sem
+     * esta palavra lê isso como erro de cálculo e deixa de confiar no ecrã — o
+     * mesmo precedente e a mesma razão do `minimoDoEstabelecimento` da lista,
+     * onde era o veredicto que mudava de âmbito e aqui é o número.
+     */
+    emTodoOEstabelecimento: "em todo o estabelecimento",
     negativoTitulo: "Ficou negativo",
     negativoCorpo:
       "O stock registado está abaixo de zero. Costuma ser uma entrada que falta registar, ou uma saída lançada a mais. Corrige-se com um movimento novo — nada se apaga.",
     erroAoCarregar: "Não foi possível carregar o artigo",
     tentarOutraVez: "Tentar outra vez",
-    semArtigoTitulo: "Este artigo não está no stock",
-    semArtigoCorpo:
-      "Ou nunca teve movimentos, ou o endereço aponta para um artigo de outro estabelecimento.",
+    /**
+     * **O vazio, e não um erro** (decisão 13): o artigo existe no catálogo e
+     * nunca houve `StockLevel` dele — nem receção, nem contagem, nem ajuste. O
+     * nome vem no corpo da resposta e entra na frase, porque "este artigo"
+     * numa ficha aberta por um link não diz qual.
+     *
+     * Sem artigo definido antes do nome, como no resto da casa: o artigo
+     * gramatical muda com o género ("o açúcar", "a farinha") e o catálogo não
+     * o sabe.
+     *
+     * **E pára aqui.** A segunda saída — *"se já cá está, conta-o numa
+     * contagem"* — seria a certa e **não se pode prometer**: a folha de
+     * contagem só materializa artigos com nível não-zero e o ecrã de contar
+     * não tem campo de procura para lá chegar. Prometer uma porta que não
+     * existe era pôr outra frase falsa neste ecrã, que é o defeito que este
+     * texto existe para corrigir.
+     */
+    nuncaEntrouTitulo: (artigo: string) => `${artigo} ainda não deu entrada no stock.`,
+    nuncaEntrouCorpo: "A primeira entrada faz-se pela fatura do fornecedor.",
+    /**
+     * **O erro, e é outro facto** (decisão 13): o `product_id` não existe neste
+     * estabelecimento. Substitui — com o vazio acima — o `semArtigoCorpo`, que
+     * juntava as duas causas numa frase e dizia a ambas "este artigo não está
+     * no stock", que é falso sobre mercadoria que existe.
+     */
+    naoExisteTitulo: "Este artigo não existe",
+    naoExisteCorpo: "O endereço não aponta para nenhum artigo deste estabelecimento.",
   },
 
   movimentos: {
