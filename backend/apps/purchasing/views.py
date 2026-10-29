@@ -898,6 +898,14 @@ class RececaoViewSet(viewsets.ModelViewSet):
         )
         return Response(output.data, status=status.HTTP_201_CREATED)
 
+    # O corpo é o que o handler lê, e tem de ser dito (ADR 0034, adenda de 29,
+    # decisão 19). Sem `request=`, o drf-spectacular cai no
+    # `get_serializer_class()` desta classe — que para qualquer acção que não
+    # seja `create` nem `partial_update` devolve o `RececaoOutSerializer` — e
+    # publicava o `RececaoOutRequest` como corpo **obrigatório** de uma
+    # operação que só aceita `{conservation, celsius}`. O `types.ts` nascia a
+    # descrever um pedido que o servidor recusa com 400.
+    @extend_schema(request=TemperaturaInSerializer)
     @action(detail=True, methods=["post"])
     def temperature(self, request, pk=None):
         """POST /receipts/{id}/temperature — registra temperatura."""
@@ -920,6 +928,14 @@ class RececaoViewSet(viewsets.ModelViewSet):
         )
         return Response(output.data, status=status.HTTP_201_CREATED)
 
+    # `request=None` é como o drf-spectacular diz "não leva corpo": a operação
+    # sai sem `requestBody` nenhum, e não com um corpo vazio obrigatório (é a
+    # mesma forma que o `fecho` do `DocumentoViewSet` usa). O handler abaixo não
+    # lê `request.data` — confirmar é um gesto, e quem confirma vem da sessão —,
+    # mas sem esta linha o `get_serializer_class()` fazia o schema publicar o
+    # `RececaoOutRequest` com `required: true`, isto é, um corpo obrigatório
+    # para o botão de confirmar.
+    @extend_schema(request=None)
     @action(detail=True, methods=["post"])
     def confirmation(self, request, pk=None):
         """POST /receipts/{id}/confirmation — confirma receção."""

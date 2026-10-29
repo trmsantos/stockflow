@@ -18,8 +18,11 @@
 > primeira serve** (`never_stocked`). Paga a dívida nº 2 que esta ADR deixou nomeada e, por decisão
 > do dono tomada depois de a adenda estar escrita, o **caminho irmão** que ela tinha nomeado como
 > fora de âmbito. Nada do que está acima deixa de ser verdade: a tabela do contrato ganha duas
-> linhas e a lista não muda. **A decisão 18, escrita no fim de 29, é a única que tira alguma coisa:
-> o `PUT /receipts/<id>` — publicado, nunca servido, só sabe dar 500 — sai do contrato neste PR.**
+> linhas e a lista não muda. **A decisão 18, escrita no fim de 29, é a primeira que tira alguma
+> coisa: o `PUT /receipts/<id>` — publicado, nunca servido, só sabe dar 500 — sai do contrato neste
+> PR. E a decisão 19, decidida a seguir, tira a outra: os dois `requestBody` que duas actions do
+> mesmo ViewSet publicam e que o handler não lê, e com eles o componente `RececaoOutRequest` que
+> eram os únicos a segurar.**
 
 **Contexto.** Os ecrãs `/stock`, `/stock/$artigo` e `/alertas` são os **últimos** servidos por
 `frontend/fixtures/` — seis rotas em `stock.ts` e `alertas.ts`. Atrás delas o Django serve quatro
@@ -451,7 +454,8 @@ era meia correcção — era deixar um comentário a invocar uma decisão revoga
 Esta casa já foi mordida duas vezes por corrigir metade de um par (a receção e o documento serviam a
 mesma fatura por portas diferentes). **A 17 não é um extra: é a outra metade**, e está escrita no fim
 desta adenda porque foi decidida depois das cinco que a precedem. **A decisão 18, que lhe fecha um
-defeito herdado, foi decidida depois dela e está escrita a seguir.**
+defeito herdado, foi decidida depois dela e está escrita a seguir; e a 19, que fecha dois defeitos da
+mesma família no mesmo ficheiro, depois dessa.**
 
 ### Decisão 12 — É uma rota de detalhe, na **mesma** view e com o **mesmo** selector
 
@@ -462,6 +466,14 @@ e **não** num ViewSet próprio: o `get_serializer_context()` que monta o contex
 (`views.py:367-374`), e uma segunda classe era um segundo sítio para o esquecer. Um `product_id` mal
 formado é **400** com o `DETALHE_UUID_INVALIDO` que o `?loja=` já usa, nunca 404 — "isto não é um
 uuid" e "este artigo não existe" são dois factos, e o segundo seria mentira.
+
+**A excepção a esse 400, medida ao implementar, e por isso escrita aqui em vez de ficar por
+descobrir.** O `url_path` da action é `(?P<product_id>[^/.]+)` — a convenção de **todos** os `pk` da
+casa —, e o padrão não casa com o ponto: `/stock/levels/nao-e-uuid` dá **400** como está escrito, mas
+`/stock/levels/nao.e.uuid` dá **404**, porque o pedido nunca chega à view. O `/receipts/nao.e.uuid`
+faz exactamente o mesmo. **Não se alargou a regex** — alargá-la fazia esta rota divergir de todas as
+outras rotas de detalhe da casa, por um caso que nenhum cliente constrói —, logo "mal formado → 400"
+lê-se "mal formado **e sem ponto** → 400".
 
 A leitura é a `niveis_de_stock` (`selectors.py:544`) com **um parâmetro novo**, `product_id`: mais um
 `WHERE` na mesma query, não uma função nova. A linha sai do mesmo `_nivel_de_stock` (`:655`), o
@@ -615,6 +627,18 @@ parâmetro de caminho **tipado** (`OpenApiTypes.UUID`, senão sai `string`); `ur
 a rota é da action. `uv run manage.py spectacular` **e** `pnpm gen:api`: há caminho novo e componente
 novo.
 
+**Dois gates de lista fechada que esta adenda não previa, e que dispararam os dois.** (i) O
+`tests/test_rls_isolation.py` tem a **lista fechada das rotas com âmbito**, na forma em cru do
+resolver, e uma rota nova entra lá: `api/v1/^stock/levels/(?P<product_id>[^/.]+)$`. (ii) O
+`tests/test_custos_de_stock.py::TestAsChavesDeDinheiroDoModulo` varre as **classes** do
+`inventory/serializers.py`, logo a subclasse da d14 conta como classe nova e as suas três entradas
+entram na tabela `CHAVES_QUE_PARECEM_DINHEIRO`. O segundo é um **bónus** e vale a pena dizê-lo: o
+`test_o_que_a_tabela_diz_que_o_mixin_esconde_esta_mesmo_no_mixin` lê o `CAMPOS_DE_DINHEIRO` **na
+subclasse**, logo uma redeclaração a menos cai ali — é um segundo guarda sobre a **d15**, independente
+do teste dos euros por papel. **Regra para a próxima adenda:** a secção "Impacto" lista os **gates de
+lista fechada** que uma rota nova toca. São precisamente os que não aparecem no diff do `spectacular`
+nem no do `pnpm gen:api`, e por isso são os que se esquecem até ficarem vermelhos.
+
 No `frontend`: o `useArtigoEmStock` passa a pedir `${CAMINHO_NIVEIS}/${produto}` com
 `queryKeys.detail(tenant, RECURSO_NIVEIS, produto)`, e o `select` e o `| null` morrem. A invalidação
 **não muda**: o `invalidarRecursos` apanha o prefixo do recurso, logo apanha o `detail`. O ecrã
@@ -625,19 +649,23 @@ que junta as duas causas numa frase, desaparece.
 
 ### Os testes, e os dois que não se dispensam
 
-Em `backend/tests/test_stock_e_alertas.py`: **(1) a mesma linha** — para um artigo que está nos dois,
-o corpo do detalhe menos o `never_stocked` é **igual** ao elemento de `/stock/levels` com o mesmo
-`product`; falha nos dois sentidos e é ele que impede a segunda definição de nascer. **(2) (b) contra
-(c), nos dois sentidos** — artigo criado no catálogo sem `StockLevel` → 200 com `never_stocked is
-True`; artigo **de outro tenant** e uuid inexistente → 404; a terceira perna, sem a qual um
-servidor que respondesse sempre `true` passava: artigo que entrou e acabou (nível a zero) → 200 com
-`never_stocked is False` e `status == "esgotado"`; e a quarta, que guarda um comportamento que hoje
-existe por acaso: artigo **arquivado** (`is_active=False`) → **200 e nunca 404**, com `StockLevel` e
-sem ele. **(3) os euros com os três papéis** — `owner`, `manager` e `staff` sobre o mesmo artigo, a
-afirmar **presença e ausência de chave** e nunca valores, mais um `assert` que compara o **conjunto
-de chaves** do detalhe com o da linha da lista, por papel: é esse que apanha a porta irmã. **(4)**
-`?loja=` no detalhe: corpo idêntico com e sem, e `by_location` com as duas localizações. **(5)**
-`product_id` mal formado → 400 com o `detail` do `?loja=`, e não 404.
+Em `backend/tests/test_stock_e_alertas.py` — **menos o (3), que vive noutro ficheiro**: **(1) a mesma
+linha** — para um artigo que está nos dois, o corpo do detalhe menos o `never_stocked` é **igual** ao
+elemento de `/stock/levels` com o mesmo `product`; falha nos dois sentidos e é ele que impede a
+segunda definição de nascer. **(2) (b) contra (c), nos dois sentidos** — artigo criado no catálogo sem
+`StockLevel` → 200 com `never_stocked is True`; artigo **de outro tenant** e uuid inexistente → 404; a
+terceira perna, sem a qual um servidor que respondesse sempre `true` passava: artigo que entrou e
+acabou (nível a zero) → 200 com `never_stocked is False` e `status == "esgotado"`; e a quarta, que
+guarda um comportamento que hoje existe por acaso: artigo **arquivado** (`is_active=False`) → **200 e
+nunca 404**, com `StockLevel` e sem ele. **(3) os euros com os três papéis, em
+`backend/tests/test_custos_de_stock.py` e não aqui** — é o ficheiro dessa política, e o docstring do
+`test_stock_e_alertas.py` di-lo por extenso: *"duplicá-las aqui era a segunda lista a divergir da
+primeira"*. `owner`, `manager` e `staff` sobre o mesmo artigo, a afirmar **presença e ausência de
+chave** e nunca valores, mais um `assert` que compara o **conjunto de chaves** do detalhe com o da
+linha da lista, por papel: é esse que apanha a porta irmã. **(4)** `?loja=` no detalhe: corpo idêntico
+com e sem, e `by_location` com as duas localizações. **(5)** `product_id` mal formado → 400 com o
+`detail` do `?loja=`, e não 404 — com a excepção do ponto, nomeada na d12: `nao.e.uuid` é 404 porque
+não casa com o `url_path`, e o teste afirma as duas pernas.
 
 **Os quatro casos-limite que se esquecem**, curtos e com sítio nos testes acima:
 
@@ -790,10 +818,11 @@ mudança de contrato que precisava do dono; o dono decidiu, e sai neste PR.
 **Impacto da decisão 17.** **Zero tabelas, zero colunas, zero migrações, zero políticas RLS, zero
 Celery, zero eventos** — e, ao contrário das 12–16, **zero endpoints novos**: esta decisão não
 acrescenta uma linha ao diff do `uv run manage.py spectacular` e do `pnpm gen:api`, **mas o diff
-deixou de poder sair vazio — a d18, no mesmo PR, tira o `receipts_update` do contrato, e o diff
-esperado é exactamente essa rota a menos e mais nada**. No `backend`: nada além dos testes de (g). No
-`frontend`: o `useRececao` troca a lista por `${CAMINHO_RECECOES}/${rececao}` com
-`queryKeys.detail(tenant, RECURSO_RECECOES, rececao)`, e o `select` e o `| null` morrem; o
+deixou de poder sair vazio — a d18, no mesmo PR, tira o `receipts_update` do contrato** (e a **d19**,
+decidida depois das duas, acrescenta-lhe os dois `requestBody` que mentem e o componente que eles
+seguravam: o diff esperado está escrito no fim da d19, e é lá que se lê, não aqui). No `backend`: nada
+além dos testes de (g). No `frontend`: o `useRececao` troca a lista por `${CAMINHO_RECECOES}/${rececao}`
+com `queryKeys.detail(tenant, RECURSO_RECECOES, rececao)`, e o `select` e o `| null` morrem; o
 `invalidarRececoes` **não muda**, porque invalida por `queryKeys.resource` e esse prefixo apanha o
 `detail`; o `screens/rececao.tsx` troca o ramo `dados === null` pelo ramo do 404, **antes** do ramo de
 erro genérico; e os dois comentários caducos — o do `api.ts:112-124`, que afirma que a rota não existe
@@ -846,7 +875,8 @@ escreve. (O preço, dito: a lista vale para a classe inteira, logo uma action fu
 `POST /receipts/<id>/confirmation`; `GET /receipts/summary`. **Todas têm corpo escrito nesta classe
 menos o `PUT`** — a herança do `ModelViewSet` contribui com um método, e é o partido. **Não há um
 segundo**: nada mais está publicado sem quem o sirva, e é essa varredura que torna a lista acima uma
-escolha e não um palpite.
+escolha e não um palpite. (A varredura é sobre **handlers**; a **d19** mede a outra direcção e
+encontra dois, e por isso esta frase continua verdadeira no que afirma.)
 
 **O teste, em `backend/tests/test_rececoes.py`, (6).** Um mapa fechado de (caminho, método), na forma
 do `APPEND_ONLY` do `tests/test_db_roles.py`: o `PUT /receipts/<id>`, com um corpo que satisfaz o
@@ -861,6 +891,52 @@ inteiro — derruba a segunda. O cabeçalho `Allow` do 405 **não** serve de ân
 `pnpm gen:api`; com a d18 passa a ser **uma rota a menos** — o caminho `/api/v1/receipts/{id}` perde a
 chave `put`, o `types.ts` perde a operação `receipts_update`, e mais nada muda. Qualquer outra linha
 no diff é alguém a mudar o contrato sem o dizer. Nenhum Zod mexe: o cliente nunca chamou esta rota.
+**A d19, decidida depois desta e no mesmo PR, alarga este critério — o diff esperado passa a ser o da
+d19, e é lá que está escrito.**
+
+### Decisão 19 — Os dois `requestBody` que mentem, e a lição dos três no mesmo dia
+
+**Medido, não deduzido.** Duas operações do `RececaoViewSet` publicam um `requestBody` **obrigatório**
+(`required: true`) que o handler não lê: o `POST /receipts/<id>/confirmation`
+(`backend/apps/purchasing/views.py:924`) **não lê corpo nenhum** e publica o `RececaoOutRequest`
+(`frontend/openapi/schema.yaml:1441-1449`); o `POST /receipts/<id>/temperature` (`views.py:902`) lê o
+`TemperaturaInSerializer` (`:909`) e publica o **mesmo** `RececaoOutRequest` (`schema.yaml:1564-1572`).
+A causa é uma e é comum: o `extend_schema` destas actions não declara `request=`, logo o
+drf-spectacular cai no `get_serializer_class()` e apanha o `RececaoOutSerializer` — a resposta da
+classe, servida como se fosse o pedido.
+
+**É a mesma espécie da d18, e a d18 não a apanhou por desenho e não por descuido.** Ali havia um
+método publicado **sem quem o sirva**; aqui há um corpo publicado **que ninguém lê**. A varredura da
+d18 foi sobre *handlers* — "o que está publicado tem quem o sirva?" — e estas duas **têm** handler: o
+que mente não é o método, é o corpo. Debaixo das duas está a mesma coisa: o `get_serializer_class()` a
+servir de resposta por omissão a uma pergunta que ninguém fez.
+
+**A decisão: declara-se o corpo em cada uma.** `request=TemperaturaInSerializer` na temperatura,
+`request=None` na confirmação. **Zero mudança de comportamento**: o servidor já acerta hoje — a
+confirmação ignora o que lhe mandem e a temperatura valida pelo serializer certo. O que está partido é
+o **contrato**, e com ele o `types.ts` que o cliente gera, que hoje exige ao programador o objecto de
+uma **receção inteira** para confirmar uma receção.
+
+**O diff esperado, que é o critério de aceitação do PR.** Estas duas eram os **únicos** consumidores
+do `RececaoOutRequest` depois de a d18 tirar o `PUT` — é por isso que o componente sobreviveu à d18 e
+é isso que o torna falsificável aqui. O `pnpm gen:api` passa a mostrar, e nada mais: o `put` de
+`/api/v1/receipts/{id}` a menos (d18), os dois `requestBody` corrigidos, e o componente
+`RececaoOutRequest` a **desaparecer** do `schema.yaml` e do `types.ts`. Nenhum Zod mexe: o cliente
+nunca enviou corpo a nenhuma das duas.
+
+**O teste, em `backend/tests/test_rececoes.py`, (7).** Um mapa fechado de
+(`operation_id` → corpo publicado), na forma do `METODOS_SERVIDOS` da d18 e lido do
+`SchemaGenerator().get_schema()` como o `test_health.py:184` já faz: a confirmação **sem**
+`requestBody`, a temperatura com o `TemperaturaInRequest`, e o `RececaoOutRequest` **ausente** dos
+componentes. Falha nos dois sentidos. A segunda perna é a do comportamento, e é curta: a confirmação
+com um corpo arbitrário responde o mesmo que sem corpo — é o que prova que isto se arruma no contrato
+e não na semântica.
+
+**A lição, que é o que vale para a próxima.** Três defeitos desta família apareceram no **mesmo
+ficheiro no mesmo dia**: um método sem corpo (d18) e dois corpos sem método (d19). O que os une não é
+o `RececaoViewSet` — é o `get_serializer_class()` a responder por omissão onde ninguém perguntou, e
+isso existe em todas as classes da casa. Se três apareceram num ficheiro, **o padrão é provavelmente
+da casa e não deste**. A varredura que daí sai fica nomeada e por fazer, no "Fora de âmbito".
 
 ### Fora de âmbito — nomeado
 
@@ -870,6 +946,14 @@ volta a ser pergunta legítima no dia em que o mínimo for por (artigo, localiza
 de misturar âmbitos. **O caminho irmão saiu desta lista**: o `useRececao` passou a estar **dentro** do
 âmbito por decisão do dono e é a **decisão 17**, acima — o que aqui ficava escrito era que esta
 adenda o deixava de pé, e já não deixa.
+
+**A varredura da família da d19, em toda a casa — por fazer, e o dono não a mandou fazer neste PR.**
+É isto: **todos os ViewSets, à procura de operações cujo `requestBody` publicado não seja o que o
+handler lê**. Fica nomeada porque o sinal está medido e não é local — três defeitos da mesma família
+num ficheiro só (d18 e d19), com uma causa (`get_serializer_class()` a responder por omissão) que
+nenhuma das duas decisões conserta fora da classe onde foram vistas. O que daí deve sair é um **gate**
+e não uma lista: a lista apodrece — esta ADR já o viu acontecer duas vezes —, e um gate que leia o
+schema gerado falha nos dois sentidos sem ninguém o regenerar.
 
 **Artigo com mínimo definido e sem `StockLevel` nenhum é uma falta — decidido pelo dono a
 2026-10-29, por implementar em fatia própria.** Hoje nunca aparece como falta, e é deliberado: o
