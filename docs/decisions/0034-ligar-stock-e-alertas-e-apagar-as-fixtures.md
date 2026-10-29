@@ -955,6 +955,48 @@ nenhuma das duas decisões conserta fora da classe onde foram vistas. O que daí
 e não uma lista: a lista apodrece — esta ADR já o viu acontecer duas vezes —, e um gate que leia o
 schema gerado falha nos dois sentidos sem ninguém o regenerar.
 
+**E a direcção da resposta tem cinco, no mesmo ViewSet — medidas ao implementar a d19 e deixadas de
+pé neste PR, por decisão do dono.** A causa é a mesma: sem `responses=` no `extend_schema`, o
+drf-spectacular decide sozinho — o componente sai do `get_serializer_class()` e o status sai da
+convenção da action. Medidas no `frontend/openapi/schema.yaml` contra o handler em
+`backend/apps/purchasing/views.py`, para quem abrir a fatia não ter de as medir outra vez:
+
+- `POST /receipts` (`receipts_create`) publica **`201: RececaoIn`** — o serializer de **entrada**
+  servido como resposta de criação; o handler devolve `RececaoOut` (`views.py:759-762`). O `200` do
+  caminho de repetição (`:763-769`) não está publicado de todo.
+- `PATCH /receipts/{id}` (`receipts_partial_update`) publica `200: CabecalhoIn`, pela mesma via; o
+  handler devolve `RececaoOut` (`:792-795`).
+- `GET /receipts/summary` publica `200: RececaoOut`; o handler serializa `ResumoDeRececoesOut`
+  (`:961-965`).
+- `POST /receipts/{id}/confirmation` publica `200`; o handler devolve **201** (`:953`).
+- `POST /receipts/{id}/temperature` publica `200`; o handler devolve **201** (`:929`).
+
+**Porque é que a d19 não as apanhou: ela fecha a direcção do pedido.** A varredura da d19 foi sobre
+**corpos de entrada** — "o corpo publicado é o que o handler lê?" — e estas cinco estão na direcção
+da **resposta**. É a mesma frase que a d19 escreveu sobre a d18, uma volta mais à frente: uma
+varredura só alcança a pergunta que faz.
+
+**Nada parte hoje, e é isso que as mantém fora deste PR.** Os schemas Zod do cliente são escritos à
+mão e validam as respostas a sério, logo o ecrã continua a ler o que o servidor manda; quem mente é
+só o `types.ts`. É **dívida de contrato e não defeito em produção**, e é por aí que a fatia tem de
+ser priorizada. O custo de as trazer para aqui era concreto: o diff do `pnpm gen:api` é o único gate
+que existe sobre o contrato, e cinco operações de resposta misturadas com o trabalho dos ecrãs
+tornam-no ilegível — que é como estas coisas passam.
+
+**A forma da fatia: um gate nas duas direcções e em toda a casa.** O precedente existe e tem nome —
+o `CORPOS_PUBLICADOS` + `TestOsCorposQueOContratoPublica` que a d19 deixou em
+`backend/tests/test_rececoes.py` é um mapa fechado que falha nos dois sentidos, mas para **uma**
+classe e **uma** direcção. A fatia generaliza-o: **todos** os ViewSets e as **duas** direcções —
+corpo publicado × corpo lido, e resposta publicada × resposta servida, **componente e status**. O que
+não deve sair daqui é uma lista de `extend_schema` corrigidos.
+
+**A contagem honesta, que é o argumento a favor do gate: quatro rondas no mesmo contrato, no mesmo
+dia.** A d17 foi ao contrato do que esta classe já servia e encontrou o `PUT`; a d18 tirou o método
+publicado sem quem o sirva; a d19 corrigiu os dois corpos de entrada que nenhum handler lê; estas
+cinco respostas são a quarta. São **oito** operações erradas num ficheiro em doze horas, e isso não é
+uma propriedade deste ficheiro — é o `get_serializer_class()` a responder por omissão onde ninguém
+perguntou, que existe em todas as classes da casa.
+
 **Artigo com mínimo definido e sem `StockLevel` nenhum é uma falta — decidido pelo dono a
 2026-10-29, por implementar em fatia própria.** Hoje nunca aparece como falta, e é deliberado: o
 `selectors.py:810-813` parte do `StockLevel` e o docstring (`:805`) exclui por extenso *"artigos sem
