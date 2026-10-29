@@ -91,6 +91,8 @@ __all__ = [
     "movimentos_do_artigo",
     "movimentos_do_periodo",
     "movimentos_resumidos",
+    "nivel_do_artigo",
+    "nivel_sem_entradas",
     "niveis_de_stock",
     "niveis_filtrados",
     "niveis_para_contagem",
@@ -462,7 +464,11 @@ def _estado_do_nivel(*, saldo: Decimal, minimo: Decimal) -> str:
 
 
 def _validade_mais_proxima(
-    *, tenant_id: UUID, location_id: UUID | None, hoje: date
+    *,
+    tenant_id: UUID,
+    location_id: UUID | None,
+    hoje: date,
+    product_id: UUID | None = None,
 ) -> dict[UUID, dict[str, Any]]:
     """Por artigo, o lote **com saldo** que vence primeiro no âmbito pedido.
 
@@ -474,12 +480,19 @@ def _validade_mais_proxima(
     ela qual for**, e quem decide se isso é um alerta é o limiar, no filtro. O
     `join` ao `StockLevel` é o que garante que o lote ainda tem mercadoria — a
     tabela `Lot` sozinha não sabe.
+
+    O `product_id` é **mais um `WHERE`** e não um caminho novo (ADR 0034,
+    adenda de 29, decisão 12): a rota de detalhe lê um artigo só e não paga a
+    varredura das validades do estabelecimento inteiro para deitar fora todas
+    menos uma.
     """
     niveis = StockLevel.objects.filter(
         tenant_id=tenant_id, lot__isnull=False, lot__expires_at__isnull=False
     )
     if location_id is not None:
         niveis = niveis.filter(location_id=location_id)
+    if product_id is not None:
+        niveis = niveis.filter(product_id=product_id)
     linhas = (
         niveis.values(
             "product_id",
@@ -546,6 +559,7 @@ def niveis_de_stock(
     tenant_id: UUID,
     location_id: UUID | None = None,
     q: str = "",
+    product_id: UUID | None = None,
     hoje: date | None = None,
 ) -> list[dict[str, Any]]:
     """O ecrã de Stock: **uma linha por artigo**, nunca uma por lote.
@@ -577,11 +591,21 @@ def niveis_de_stock(
     sai em três linhas: contar as linhas passa a dizer quantos custos distintos
     o artigo tem, que é um oráculo sobre preços sem nenhuma chave de preço no
     payload. Foi o defeito que a ADR 0032 mediu e fechou.
+
+    ## O `product_id`, e porque é que não é uma função nova
+
+    `GET /stock/levels/<product_id>` lê daqui (ADR 0034, adenda de 29, decisão
+    12): é **mais um `WHERE`** na mesma query, para a linha do detalhe sair do
+    mesmo `_nivel_de_stock`, com o mesmo `_estado_do_nivel` e a mesma
+    `_validade`. Uma segunda função a compor "nível" era uma segunda definição
+    de nível, que é o que a adenda proíbe por extenso.
     """
     hoje = hoje or timezone.localdate()
     niveis = StockLevel.objects.filter(tenant_id=tenant_id)
     if q:
         niveis = niveis.filter(product__short_name__icontains=q)
+    if product_id is not None:
+        niveis = niveis.filter(product_id=product_id)
     linhas = (
         niveis.values(
             *_CAMPOS_DO_ARTIGO,
@@ -599,7 +623,7 @@ def niveis_de_stock(
     )
 
     validades = _validade_mais_proxima(
-        tenant_id=tenant_id, location_id=location_id, hoje=hoje
+        tenant_id=tenant_id, location_id=location_id, hoje=hoje, product_id=product_id
     )
     por_artigo: dict[UUID, dict[str, Any]] = {}
     for linha in linhas:
@@ -684,6 +708,66 @@ def _nivel_de_stock(
         ),
         "total_value": valor,
     }
+
+
+def nivel_do_artigo(
+    *, tenant_id: UUID, product_id: UUID, hoje: date | None = None
+) -> dict[str, Any] | None:
+    """A linha de **um** artigo, ou `None` se ele não tem `StockLevel` nenhum.
+
+    O corpo do `GET /stock/levels/<product_id>` (ADR 0034, adenda de 29,
+    decisão 12). É a `niveis_de_stock` com o `product_id` posto e **não** uma
+    leitura nova: a linha que sai daqui é, chave a chave, a que a lista serve
+    para o mesmo artigo — e há um teste que o afirma nos dois sentidos.
+
+    Sem `?loja=`, e isso é decisão e não omissão (decisão 16): o detalhe é
+    sempre do estabelecimento inteiro, porque é do `by_location` que o
+    formulário escolhe **onde** registar a quebra.
+
+    `None` quer dizer "não há história nenhuma deste artigo neste
+    estabelecimento" — nem receção, nem contagem, nem ajuste. **Não** quer
+    dizer que o artigo não existe: quem sabe isso é o `catalog`, e é a view
+    que lhe pergunta para distinguir o vazio (200) do erro (404).
+    """
+    linhas = niveis_de_stock(tenant_id=tenant_id, product_id=product_id, hoje=hoje)
+    return linhas[0] if linhas else None
+
+
+def nivel_sem_entradas(*, produto: Any) -> dict[str, Any]:
+    """O nível de um artigo que **nunca entrou**: o mesmo nível, com zeros.
+
+    O estado (b) da decisão 13: existe no catálogo, não tem `StockLevel`
+    nenhum. Sai do **mesmo** `_nivel_de_stock` que a lista usa — com saldo
+    zero, sem repartição e sem validade — para o corpo ter a forma da linha e
+    não a de um segundo recurso.
+
+    Recebe um `ProdutoResumo` do `catalog.api` (a aresta permitida), e é dele
+    que vêm as **unidades**: um artigo sem entradas tem `display_unit` e
+    `display_factor` como qualquer outro, logo o corpo traz a quantidade na
+    unidade em que a pessoa fala e não cai para a unidade base só porque o
+    saldo é zero.
+
+    O `status` sai `"esgotado"` pelo `_estado_do_nivel`, sem ramo novo — e
+    **nenhuma superfície o escreve** sobre um artigo com `never_stocked: true`
+    (decisão 13): "esgotado" é uma afirmação sobre consumo, e sobre o que nunca
+    entrou é falsa no sentido que importa. Quem serve a superfície lê o campo.
+    """
+    return _nivel_de_stock(
+        {
+            "product": produto.id,
+            "short_name": produto.short_name,
+            "base_unit": produto.base_unit,
+            "display_unit": produto.display_unit,
+            "display_factor": produto.display_factor,
+            "min_quantity": produto.min_quantity,
+            "saldo_do_estabelecimento": Decimal("0"),
+            "quantidade": Decimal("0"),
+            "sem_custo": Decimal("0"),
+            "valor": Decimal("0"),
+            "by_location": [],
+        },
+        validade=None,
+    )
 
 
 def _ordem_do_nivel(linha: dict[str, Any]) -> tuple[int, int, int, str]:

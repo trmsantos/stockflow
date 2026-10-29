@@ -355,6 +355,93 @@ class TestOPainelDeStock:
 
 
 # ---------------------------------------------------------------------------
+# 1b. A ficha de um artigo: `GET /stock/levels/<product_id>`
+#
+# A porta nova da adenda de 2026-10-29 à ADR 0034 (decisão 15). O que ela
+# proíbe é o reflexo contrário ao que parece prudente: **redeclarar o
+# `CAMPOS_DE_DINHEIRO` numa subclasse de detalhe**. É literalmente a porta irmã
+# por onde o dinheiro sai, e é o padrão que esta casa já apanhou duas vezes —
+# a ADR 0031 fechou os euros da receção e deixou o `ExtracaoOut` do documento
+# aberto **sobre a mesma fatura**.
+#
+# Por isso o `assert` que interessa não é "o `staff` não tem `unit_cost`": é
+# **o conjunto de chaves do detalhe contra o da linha da lista, por papel**.
+# Uma subclasse que redeclarasse a lista a menos passava no primeiro e caía
+# neste. Afirma presença e ausência de chave, e nunca valores: um
+# `assert resposta["unit_cost"] is None` passaria com a fuga meio tapada.
+#
+# Os testes de forma desta rota (os três estados, o `?loja=`, o uuid mal
+# formado) vivem no `test_stock_e_alertas.py`, que é o ficheiro dela.
+# ---------------------------------------------------------------------------
+class TestAFichaDeUmArtigoSegueAMesmaPolitica:
+    """Decisão 15: os euros herdam-se, e o detalhe não é uma quarta porta."""
+
+    def _ficha(self, email: str, produto: Product) -> dict[str, Any]:
+        return _corpo(_sessao(email).get(f"/api/v1/stock/levels/{produto.id}"))
+
+    def _linha(self, email: str, produto: Product) -> dict[str, Any]:
+        linhas = [
+            item
+            for item in _itens(_sessao(email).get("/api/v1/stock/levels"))
+            if item["product"] == str(produto.id)
+        ]
+        assert len(linhas) == 1
+        return linhas[0]
+
+    def test_as_chaves_de_dinheiro_da_ficha_sao_as_da_linha_da_lista(self):
+        """Os três papéis, nas duas metades, e por **conjunto de chaves**."""
+        casa = _loja_com_dois_artigos("ficha-por-papel")
+
+        for membro, ve_euros in (
+            (casa.dono, True),
+            (casa.gerente, True),
+            (casa.staff, False),
+        ):
+            ficha = self._ficha(membro.email, casa.farinha)
+            linha = self._linha(membro.email, casa.farinha)
+
+            for chave in EUROS_DO_PAINEL:
+                assert (chave in ficha) is ve_euros, (membro.email, chave)
+                assert (chave in linha) is ve_euros, (membro.email, chave)
+
+            assert set(ficha) - set(linha) == {"never_stocked"}, (
+                f"a ficha de {membro.email} tem chaves que a linha não tem: "
+                "é a segunda porta do mesmo dinheiro a abrir-se"
+            )
+            assert set(linha) - set(ficha) == set(), (
+                f"a ficha de {membro.email} perdeu chaves da linha"
+            )
+
+    def test_a_cobertura_do_custo_continua_a_chegar_aos_tres_papeis(self):
+        """`quantity_without_cost` é **quantidade** e não euro, também aqui."""
+        casa = _loja_com_dois_artigos("ficha-cobertura")
+
+        for membro in (casa.dono, casa.gerente, casa.staff):
+            ficha = self._ficha(membro.email, casa.farinha)
+            assert "quantity_without_cost" in ficha, membro.email
+            assert "never_stocked" in ficha, membro.email
+
+    def test_o_artigo_que_nunca_entrou_nao_serve_um_zero_a_quem_nao_ve_euros(self):
+        """Em (b) o `total_value` seria `0` — e um zero é uma afirmação sobre o preço.
+
+        É o caso em que a herança tem de valer: o artigo não tem linha nenhuma
+        no `inventory`, o corpo é construído a partir do `ProdutoResumo`, e as
+        duas chaves têm de ficar **ausentes** para o colaborador na mesma.
+        """
+        casa = _loja_com_dois_artigos("ficha-sem-entradas")
+        nunca = _artigo(casa, nome="Fermento")
+
+        do_staff = self._ficha(casa.staff.email, nunca)
+        do_gerente = self._ficha(casa.gerente.email, nunca)
+
+        assert do_staff["never_stocked"] is True
+        for chave in EUROS_DO_PAINEL:
+            assert chave not in do_staff, chave
+            assert chave in do_gerente, chave
+        assert set(do_gerente) - set(do_staff) == set(EUROS_DO_PAINEL)
+
+
+# ---------------------------------------------------------------------------
 # 2. As quantidades. A outra metade da política: **nada** desaparece.
 # ---------------------------------------------------------------------------
 class TestAsQuantidadesNaoDesaparecem:
@@ -1130,6 +1217,15 @@ CHAVES_QUE_PARECEM_DINHEIRO: dict[tuple[str, str], str] = {
     # A cobertura do agregado: é **quantidade**, e é o que substitui a palavra
     # numa linha que soma lotes com preço e lotes sem.
     ("NivelDeStockOutSerializer", "quantity_without_cost"): "não é dinheiro",
+    # A ficha de um artigo (ADR 0034, adenda de 29, decisão 15). As três
+    # entradas são **herdadas** e é esse o ponto: o `NivelDoArtigoOut` declara
+    # um campo só (`never_stocked`) e **não** redeclara o `CAMPOS_DE_DINHEIRO`
+    # — redeclará-lo é a porta irmã por onde o dinheiro sai. O
+    # `test_o_que_a_tabela_diz_que_o_mixin_esconde_esta_mesmo_no_mixin` lê o
+    # atributo **na subclasse**, logo uma redeclaração a menos cai aqui.
+    ("NivelDoArtigoOutSerializer", "unit_cost"): "mixin",
+    ("NivelDoArtigoOutSerializer", "total_value"): "mixin",
+    ("NivelDoArtigoOutSerializer", "quantity_without_cost"): "não é dinheiro",
     ("ResumoDeStockOutSerializer", "stock_value_eur"): "mixin",
     ("MovimentoOutSerializer", "unit_cost"): "mixin",
     ("MovimentoOutSerializer", "cost_status"): "não é dinheiro",

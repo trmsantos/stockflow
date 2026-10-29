@@ -64,6 +64,7 @@ __all__ = [
     "LocalizacaoPatchInSerializer",
     "MovimentoOutSerializer",
     "NivelDeStockOutSerializer",
+    "NivelDoArtigoOutSerializer",
     "NivelPorLocalizacaoOutSerializer",
     "QuebraInSerializer",
     "RespostaDeQuebraOutSerializer",
@@ -95,6 +96,7 @@ __all__ = [
     "compor_movimento",
     "compor_movimento_do_ledger",
     "compor_nivel",
+    "compor_nivel_do_artigo",
     "em_unidade_base",
     "em_unidade_pedida",
     "estado_do_custo",
@@ -307,6 +309,40 @@ class NivelDeStockOutSerializer(SemEurosParaQuemNaoVe, serializers.Serializer):
         decimal_places=2,
         read_only=True,
         help_text="Ausente para quem não vê euros.",
+    )
+
+
+class NivelDoArtigoOutSerializer(NivelDeStockOutSerializer):
+    """O corpo do `GET /stock/levels/<product_id>`: a linha **mais um campo**.
+
+    ADR 0034, adenda de 29, decisão 14. Os outros doze campos não se repetem —
+    herdam-se —, e do lado do cliente também não nasce um segundo schema: é o
+    `nivelDeStockSchema.extend({ never_stocked })`.
+
+    ## O `CAMPOS_DE_DINHEIRO` **não** se redeclara aqui
+
+    Herda-se, e é a decisão 15 por extenso: redeclará-lo é literalmente a porta
+    irmã por onde o dinheiro sai, que é o padrão que esta casa já apanhou duas
+    vezes — a ADR 0031 fechou os euros da receção e deixou o `ExtracaoOut` do
+    documento aberto **sobre a mesma fatura**. O contexto é o mesmo
+    `get_serializer_context()` do `StockPanelViewSet`, e o seu default é falso.
+
+    ## Porque é que o campo **não** vai na lista
+
+    Lá seria `false` por construção — a lista parte do `StockLevel` e nunca
+    alcança um artigo que nunca entrou —, e um campo que nunca varia num sítio
+    é onde se começa a não olhar para ele.
+    """
+
+    never_stocked = serializers.BooleanField(
+        read_only=True,
+        help_text=(
+            "**Nunca houve `StockLevel` deste artigo** — nem receção, nem "
+            "contagem, nem ajuste. Não é saldo zero: um artigo que entrou e "
+            "acabou tem saldo zero e `never_stocked: false`. É o "
+            "`nunca_entrou` do assistente (ADR 0027) com o nome em inglês que "
+            "o resto de `/stock` usa."
+        ),
     )
 
 
@@ -1260,6 +1296,20 @@ def compor_nivel(linha: dict[str, Any]) -> dict[str, Any]:
         "unit_cost": linha["unit_cost"],
         "total_value": linha["total_value"],
     }
+
+
+def compor_nivel_do_artigo(
+    linha: dict[str, Any], *, never_stocked: bool
+) -> dict[str, Any]:
+    """O corpo do `GET /stock/levels/<product_id>`: o `compor_nivel` **mais um**.
+
+    Construído por cima do `compor_nivel` e não ao lado dele (ADR 0034, adenda
+    de 29, decisão 14): assim o corpo do detalhe **é** o elemento da lista mais
+    `never_stocked`, por construção e não por coincidência. O teste que compara
+    os dois falha nos dois sentidos, e é ele que impede a segunda definição de
+    nível de nascer.
+    """
+    return {**compor_nivel(linha), "never_stocked": never_stocked}
 
 
 def compor_alerta(alerta: dict[str, Any]) -> dict[str, Any]:

@@ -1520,3 +1520,320 @@ class TestAProcuraEOsFiltrosSaoDoServidor:
         em_falta = _pagina(api.get("/api/v1/stock/levels?filtro=falta"))
         assert em_falta["count"] == 1
         assert em_falta["results"][0]["short_name"] == "Zz Vazio"
+
+
+# ===========================================================================
+# 13. A ficha de um artigo: `GET /stock/levels/<product_id>`
+#
+# A adenda de 2026-10-29 à ADR 0034 (decisões 12 a 16). O defeito que ela fecha
+# estava medido: o cliente pedia a **lista sem filtros** e escolhia a linha com
+# um `find()`, logo um artigo para lá das 50 piores abria com a frase *"Este
+# artigo não está no stock"* — falsa sobre mercadoria que existe, no ecrã a
+# partir do qual se regista a quebra.
+#
+# Os dois testes que a adenda marca como não dispensáveis estão aqui:
+#
+# * `test_o_detalhe_e_a_mesma_linha_que_a_lista` — falha nos dois sentidos e é
+#   ele que impede uma **segunda definição de nível** de nascer;
+# * `TestOVazioEOErro` — as quatro pernas de (b) contra (c). Sem a do artigo
+#   que *entrou e acabou*, um servidor que respondesse sempre `never_stocked:
+#   true` passava.
+#
+# As chaves de **dinheiro por papel** desta rota vivem no
+# `test_custos_de_stock.py`, que é o ficheiro dessa política (ver o cabeçalho
+# deste módulo): é lá que está o `assert` que compara o conjunto de chaves do
+# detalhe com o da linha da lista, papel a papel.
+# ===========================================================================
+def _detalhe(api: APIClient, produto: Product) -> dict[str, Any]:
+    return _corpo(api.get(f"/api/v1/stock/levels/{produto.id}"))
+
+
+def _linha_da_lista(api: APIClient, produto: Product, *, q: str = "") -> dict[str, Any]:
+    """O elemento de `/stock/levels` com este `product`, no mesmo âmbito."""
+    sufixo = f"?q={q}" if q else ""
+    pagina = _pagina(api.get(f"/api/v1/stock/levels{sufixo}"))
+    linhas = [linha for linha in pagina["results"] if linha["product"] == str(produto.id)]
+    assert len(linhas) == 1, f"o artigo não está na lista: {pagina['count']} linhas"
+    return linhas[0]
+
+
+def _arquivar(casa: SimpleNamespace, produto: Product) -> None:
+    """`is_active=False` — a mercadoria sai da lista de compras e fica auditável."""
+    with tenant_scope(casa.tenant.id):
+        Product.objects.filter(pk=produto.id).update(is_active=False)
+
+
+class TestODetalheEAMesmaLinha:
+    """O corpo do detalhe **é** o elemento da lista mais `never_stocked`.
+
+    Por construção (o `compor_nivel_do_artigo` chama o `compor_nivel`) e não
+    por coincidência — e este teste é o que impede alguém de a desfazer.
+    """
+
+    def _casa_com_um_artigo_completo(self, nome: str) -> SimpleNamespace:
+        """Um artigo com tudo o que a linha serve: lotes, duas prateleiras, mínimo."""
+        casa = _casa(nome)
+        farinha = _artigo(casa, nome="Farinha", minimo=Decimal("5000"))
+        cedo = _lote(casa, farinha, codigo="F-CEDO", dias=2)
+        tarde = _lote(casa, farinha, codigo="F-TARDE", dias=90)
+        _receber(casa, farinha, casa.loja, cedo, quantidade=Decimal("1000"))
+        _receber(casa, farinha, casa.armazem, tarde, quantidade=Decimal("500"))
+        casa.farinha = farinha
+        return casa
+
+    def test_o_detalhe_e_a_mesma_linha_que_a_lista(self):
+        casa = self._casa_com_um_artigo_completo("detalhe-igual")
+        api = _sessao(casa.dono.email)
+
+        detalhe = _detalhe(api, casa.farinha)
+        linha = _linha_da_lista(api, casa.farinha)
+
+        assert set(detalhe) - set(linha) == {"never_stocked"}, (
+            "o detalhe ganhou um campo que a lista não tem: é a segunda "
+            "definição de nível a nascer"
+        )
+        assert set(linha) - set(detalhe) == set(), (
+            "o detalhe perdeu um campo da linha"
+        )
+        assert {
+            chave: valor for chave, valor in detalhe.items() if chave != "never_stocked"
+        } == linha
+
+    def test_o_detalhe_alcanca_o_artigo_que_a_lista_trunca(self):
+        """O defeito medido: o artigo para lá das 50 piores linhas.
+
+        Sem esta perna, o teste de cima passa com o defeito intacto — porque
+        o artigo que ele compara está sempre na primeira página.
+        """
+        casa = _casa("detalhe-para-la-das-50")
+        for indice in range(60):
+            comum = _artigo(casa, nome=f"Artigo {indice:02d}")
+            _receber(
+                casa, comum, casa.loja,
+                _lote(casa, comum, codigo=f"L-{indice}", dias=None),
+                quantidade=Decimal("1000"),
+            )
+        # No fim da ordem alfabética e `ok`, logo no fim da ordem da lista.
+        zimbro = _artigo(casa, nome="Zimbro")
+        _receber(
+            casa, zimbro, casa.loja, _lote(casa, zimbro, codigo="Z-1", dias=None),
+            quantidade=Decimal("1000"),
+        )
+        api = _sessao(casa.dono.email)
+
+        primeira = _pagina(api.get("/api/v1/stock/levels"))
+        assert primeira["count"] == 61
+        assert str(zimbro.id) not in [linha["product"] for linha in primeira["results"]]
+
+        detalhe = _detalhe(api, zimbro)
+        assert detalhe["never_stocked"] is False
+        assert detalhe["short_name"] == "Zimbro"
+        # E continua a ser a mesma linha: a comparação faz-se contra a lista
+        # alcançada com `?q=`, que é a única maneira de lá chegar hoje.
+        linha = _linha_da_lista(api, zimbro, q="zimbro")
+        assert {
+            chave: valor for chave, valor in detalhe.items() if chave != "never_stocked"
+        } == linha
+
+
+class TestOVazioEOErro:
+    """(b) contra (c): o vazio é 200 e o erro é 404, e são quatro pernas.
+
+    Quem distingue os dois é o `catalog.api.produto_por_id` — no estado (b) o
+    `inventory` não tem linha nenhuma para olhar, logo a pergunta "este artigo
+    existe?" não é dele.
+    """
+
+    def test_o_artigo_que_nunca_entrou_e_200_e_nao_404(self):
+        casa = _casa("nunca-entrou")
+        acucar = _artigo(casa, nome="Açúcar amarelo")
+
+        detalhe = _detalhe(_sessao(casa.dono.email), acucar)
+
+        assert detalhe["never_stocked"] is True
+        assert detalhe["short_name"] == "Açúcar amarelo", (
+            "o ecrã **nomeia** o artigo no vazio, e o nome vem no corpo"
+        )
+        assert detalhe["quantity"]["base"] == "0.000"
+        assert detalhe["by_location"] == []
+        assert detalhe["nearest_expiry"] is None
+        assert detalhe["unit_cost"] is None
+
+    def test_a_unidade_de_quem_nunca_entrou_e_a_do_catalogo(self):
+        """Não se cai para a unidade base só porque o saldo é zero.
+
+        O `ProdutoResumo` tem `display_unit` e `display_factor`, logo o corpo
+        de (b) traz a `Quantidade` completa — na unidade em que a pessoa fala.
+        """
+        casa = _casa("unidade-de-quem-nunca-entrou")
+        azeite = _artigo(
+            casa, nome="Azeite", base_unit=UnidadeBase.MILILITRO, display_unit="l",
+            display_factor=Decimal("1000"), minimo=Decimal("3000"),
+        )
+
+        detalhe = _detalhe(_sessao(casa.staff.email), azeite)
+
+        assert detalhe["quantity"] == {
+            "base": "0.000", "base_unit": "ml", "display": "0.000", "display_unit": "l",
+        }
+        assert detalhe["min_quantity"] == {
+            "base": "3000.000", "base_unit": "ml", "display": "3.000", "display_unit": "l",
+        }
+
+    def test_o_artigo_de_outro_estabelecimento_e_um_uuid_inexistente_dao_404(self):
+        """O 404 é da política de RLS: ninguém compara tenants em Python."""
+        casa = _casa("tenant-proprio")
+        outra = _casa("tenant-alheio")
+        alheio = _artigo(outra, nome="Farinha da outra casa")
+        _receber(
+            outra, alheio, outra.loja, _lote(outra, alheio, codigo="X-1"),
+            quantidade=Decimal("1000"),
+        )
+        api = _sessao(casa.dono.email)
+
+        assert api.get(f"/api/v1/stock/levels/{alheio.id}").status_code == 404
+        inexistente = "00000000-0000-4000-8000-000000000000"
+        assert api.get(f"/api/v1/stock/levels/{inexistente}").status_code == 404
+
+    def test_o_artigo_que_entrou_e_acabou_e_200_com_never_stocked_falso(self):
+        """A perna sem a qual um servidor que respondesse sempre `true` passava.
+
+        `never_stocked` é **ausência de `StockLevel`** e não saldo zero: as
+        duas condições divergem exactamente aqui.
+        """
+        casa = _casa("entrou-e-acabou")
+        farinha = _artigo(casa, nome="Farinha")
+        lote = _lote(casa, farinha, codigo="F-1", dias=None)
+        _receber(casa, farinha, casa.loja, lote, quantidade=Decimal("1000"))
+        _receber(casa, farinha, casa.loja, lote, quantidade=Decimal("-1000"))
+
+        detalhe = _detalhe(_sessao(casa.dono.email), farinha)
+
+        assert detalhe["never_stocked"] is False
+        assert detalhe["status"] == "esgotado"
+        assert detalhe["quantity"]["base"] == "0.000"
+        assert detalhe["by_location"] == [], (
+            "entrou e acabou também não tem onde pousar uma quebra"
+        )
+
+    def test_o_artigo_arquivado_e_200_com_stocklevel_e_sem_ele(self):
+        """Arquivado é (a) ou (b), **nunca** (c) — e passa a ser estado escrito.
+
+        O `catalog.api.produto_por_id` lê por `(tenant_id, id)` sem filtrar
+        `is_active`: mercadoria que existiu continua auditável. Hoje isso
+        acontece por acaso, e basta alguém "corrigir" aquele `get` para a ficha
+        de um artigo arquivado passar a 404 em silêncio.
+        """
+        casa = _casa("arquivado")
+        com_stock = _artigo(casa, nome="Farinha velha")
+        _receber(
+            casa, com_stock, casa.loja,
+            _lote(casa, com_stock, codigo="V-1", dias=None),
+            quantidade=Decimal("1000"),
+        )
+        sem_stock = _artigo(casa, nome="Nata descontinuada")
+        _arquivar(casa, com_stock)
+        _arquivar(casa, sem_stock)
+        api = _sessao(casa.dono.email)
+
+        com = _detalhe(api, com_stock)
+        assert com["never_stocked"] is False
+        assert com["quantity"]["base"] == "1000.000"
+
+        sem = _detalhe(api, sem_stock)
+        assert sem["never_stocked"] is True
+
+
+class TestOsCasosLimiteDaFicha:
+    """Os quatro que se esquecem, e que a adenda nomeia um por um."""
+
+    def test_um_saldo_negativo_e_um_terceiro_facto(self):
+        """Nem "tem" nem "nunca teve": `never_stocked: false` e `negativo`."""
+        casa = _casa("ficha-negativa")
+        nata = _artigo(casa, nome="Nata")
+        _receber(
+            casa, nata, casa.loja, _lote(casa, nata, codigo="M-1", dias=None),
+            quantidade=Decimal("-500"),
+        )
+
+        detalhe = _detalhe(_sessao(casa.dono.email), nata)
+
+        assert detalhe["never_stocked"] is False
+        assert detalhe["status"] == "negativo"
+
+    def test_um_lote_sintetico_nao_escreve_um_codigo_que_ninguem_leu(self):
+        """`lot_code` a `null`: o `__<uuid>__` existe para o ledger ter chave."""
+        casa = _casa("ficha-lote-sintetico")
+        farinha = _artigo(casa, nome="Farinha", track_lots=False)
+        sintetico = _lote(casa, farinha, codigo=f"__{farinha.id}__", dias=2)
+        _receber(casa, farinha, casa.loja, sintetico, quantidade=Decimal("1000"))
+
+        detalhe = _detalhe(_sessao(casa.dono.email), farinha)
+
+        assert detalhe["nearest_expiry"]["lot_code"] is None
+        assert detalhe["nearest_expiry"]["lot_id"] == str(sintetico.id)
+
+    def test_um_lote_sem_validade_sai_sem_validade_nenhuma(self):
+        """E não "sem validade" escrito: o certo é **não escrever nada**."""
+        casa = _casa("ficha-sem-validade")
+        sal = _artigo(casa, nome="Sal", expiry_kind="")
+        _receber(
+            casa, sal, casa.loja, _lote(casa, sal, codigo="S-1", dias=None),
+            quantidade=Decimal("1000"),
+        )
+
+        assert _detalhe(_sessao(casa.dono.email), sal)["nearest_expiry"] is None
+
+
+class TestOAmbitoDaFicha:
+    """O `?loja=` **não existe** nesta rota (decisão 16), e o uuid mal formado é 400."""
+
+    def test_a_loja_no_pedido_e_ignorada_e_o_corpo_e_o_mesmo(self):
+        """O detalhe é sempre do estabelecimento inteiro.
+
+        É do `by_location` que o formulário escolhe **onde** registar a quebra:
+        um detalhe escopado a uma loja escondia as outras e tirava à pessoa a
+        única coisa accionável do ecrã.
+        """
+        casa = _casa("ficha-sem-loja")
+        farinha = _artigo(casa, nome="Farinha")
+        lote = _lote(casa, farinha, codigo="F-1", dias=None)
+        _receber(casa, farinha, casa.loja, lote, quantidade=Decimal("1000"))
+        _receber(casa, farinha, casa.armazem, lote, quantidade=Decimal("500"))
+        api = _sessao(casa.dono.email)
+
+        sem_loja = _detalhe(api, farinha)
+        com_loja = _corpo(
+            api.get(f"/api/v1/stock/levels/{farinha.id}?loja={casa.loja.id}")
+        )
+
+        assert com_loja == sem_loja
+        assert sem_loja["quantity"]["base"] == "1500.000"
+        assert {parcela["location"]["name"] for parcela in sem_loja["by_location"]} == {
+            "Loja", "Armazém",
+        }
+
+    def test_um_product_id_mal_formado_e_400_com_o_detalhe_do_loja(self):
+        """São dois factos: «isto não é um uuid» e «este artigo não existe»."""
+        casa = _casa("ficha-uuid-invalido")
+        api = _sessao(casa.staff.email)
+
+        recusa = api.get("/api/v1/stock/levels/nao-e-uuid")
+        do_loja = api.get("/api/v1/stock/levels?loja=nao-e-uuid")
+
+        assert recusa.status_code == 400, recusa.content
+        assert do_loja.status_code == 400
+        assert recusa.json()["detail"] == do_loja.json()["detail"]
+
+    def test_a_ficha_chega_ao_colaborador_como_as_outras_leituras(self):
+        """Nenhuma rota de stock ganhou papel: o que muda é o payload."""
+        casa = _casa("ficha-sem-papel")
+        farinha = _artigo(casa, nome="Farinha")
+        _receber(
+            casa, farinha, casa.loja, _lote(casa, farinha, codigo="F-1", dias=None),
+            quantidade=Decimal("1000"),
+        )
+
+        assert _sessao(casa.staff.email).get(
+            f"/api/v1/stock/levels/{farinha.id}"
+        ).status_code == 200

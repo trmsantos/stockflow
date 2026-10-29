@@ -646,6 +646,32 @@ class RececaoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, PertenceAoTenant]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "rececoes"
+    #: **O `PUT` sai do contrato** (ADR 0034, adenda de 29, decisão 18). O
+    #: `ModelViewSet` ligava o `put` ao `update` herdado, que pede o serializer
+    #: ao `get_serializer_class` e recebe o `RececaoOutSerializer` — um
+    #: `serializers.Serializer` **sem `update()`** —, logo o `save()` levantava
+    #: `NotImplementedError`. Os campos daquele serializer não são read-only, o
+    #: que faz do **único corpo que o contrato publicado aceita** exactamente o
+    #: que chegava ao 500: corpo errado → 400, corpo certo → 500, sem terceiro
+    #: caminho. Não corrompia nada (o erro é antes de qualquer escrita), e é
+    #: por isso que se fecha **tirando o método** e não escrevendo-lhe um
+    #: corpo: o que estava partido era o contrato.
+    #:
+    #: É um atributo e não código porque é o atributo que **as duas pontas
+    #: lêem**: o DRF compara-o no `dispatch` (405 antes de haver view) e o
+    #: drf-spectacular cruza-o com as actions do router para decidir o que
+    #: publica. Uma lista, dois efeitos, sem poderem divergir — o que o
+    #: servidor recusa é o que o schema não tem. Um `update()` a levantar 405 à
+    #: mão fazia o contrário: recusava com elegância uma rota que continuava
+    #: publicada e que o `pnpm gen:api` continuava a gerar.
+    #:
+    #: O `patch` fica (é o que o ecrã usa para o cabeçalho, pelo
+    #: `CabecalhoInSerializer`), o `trace` sai de caminho, e o `head` e o
+    #: `options` ficam: o DRF mapeia `head` → `get` na própria `as_view` e o
+    #: `OPTIONS` é o preflight e a metadata. O preço, dito: a lista vale para a
+    #: classe inteira, logo uma action futura em `PUT` nasceria 405 até alguém
+    #: mexer nesta linha. É a direcção certa para falhar.
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     # `none()` ao nível da classe, como o `LocalizacaoViewSet`: é daqui que o
     # drf-spectacular deriva o tipo do `pk` do caminho — o `get_queryset` lê o
     # `request.tenant`, que não existe na geração do schema, e sem isto o `id`
