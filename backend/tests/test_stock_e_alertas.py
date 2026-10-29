@@ -38,6 +38,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from django.conf import settings
 from django.core.cache import cache
 from django.db import connection
 from django.test import Client, override_settings
@@ -77,6 +78,15 @@ pytestmark = pytest.mark.django_db(transaction=True)
 #: desenvolve: sem isto, "a suite passou" dizia coisas diferentes em máquinas
 #: diferentes (CLAUDE.md).
 FUSO = "Europe/Lisbon"
+
+#: O `PAGE_SIZE` do `base.py`, fixado aqui em vez de herdado — pela mesma razão
+#: do `FUSO` e no mesmo padrão do `test_rececoes.py`: um teste sobre paginação
+#: que aceite o número que estiver configurado afirma coisas diferentes em
+#: máquinas diferentes (CLAUDE.md). O resto da configuração do DRF fica como
+#: está. O decorador é **por método**: o `override_settings` recusa classes que
+#: não sejam `SimpleTestCase`, e estas são classes simples de `pytest`.
+PAGINA = 50
+DRF_COM_PAGINA_FIXA = {**settings.REST_FRAMEWORK, "PAGE_SIZE": PAGINA}
 
 
 # ---------------------------------------------------------------------------
@@ -1479,7 +1489,7 @@ class TestAProcuraEOsFiltrosSaoDoServidor:
 
     def _casa(self, nome: str) -> SimpleNamespace:
         casa = _casa(nome)
-        for indice in range(60):
+        for indice in range(PAGINA):
             artigo = _artigo(casa, nome=f"Artigo {indice:02d}")
             _receber(
                 casa, artigo, casa.loja,
@@ -1496,18 +1506,20 @@ class TestAProcuraEOsFiltrosSaoDoServidor:
         )
         return casa
 
+    @override_settings(REST_FRAMEWORK=DRF_COM_PAGINA_FIXA)
     def test_a_procura_atravessa_a_paginacao(self):
         casa = self._casa("procura")
         api = _sessao(casa.staff.email)
         primeira = _pagina(api.get("/api/v1/stock/levels"))
-        assert primeira["count"] == 61
-        assert len(primeira["results"]) == 50
+        assert primeira["count"] == PAGINA + 1
+        assert len(primeira["results"]) == PAGINA
         assert "Zimbro" not in [linha["short_name"] for linha in primeira["results"]]
 
         procurado = _pagina(api.get("/api/v1/stock/levels?q=zimbro"))
         assert procurado["count"] == 1
         assert procurado["results"][0]["short_name"] == "Zimbro"
 
+    @override_settings(REST_FRAMEWORK=DRF_COM_PAGINA_FIXA)
     def test_o_filtro_de_falta_atravessa_a_paginacao(self):
         casa = self._casa("filtro-falta")
         # Um artigo em falta, alfabeticamente no fim.
@@ -1599,14 +1611,15 @@ class TestODetalheEAMesmaLinha:
             chave: valor for chave, valor in detalhe.items() if chave != "never_stocked"
         } == linha
 
+    @override_settings(REST_FRAMEWORK=DRF_COM_PAGINA_FIXA)
     def test_o_detalhe_alcanca_o_artigo_que_a_lista_trunca(self):
-        """O defeito medido: o artigo para lá das 50 piores linhas.
+        """O defeito medido: o artigo para lá das piores linhas da primeira página.
 
         Sem esta perna, o teste de cima passa com o defeito intacto — porque
         o artigo que ele compara está sempre na primeira página.
         """
-        casa = _casa("detalhe-para-la-das-50")
-        for indice in range(60):
+        casa = _casa("detalhe-para-la-da-pagina")
+        for indice in range(PAGINA):
             comum = _artigo(casa, nome=f"Artigo {indice:02d}")
             _receber(
                 casa, comum, casa.loja,
@@ -1622,8 +1635,11 @@ class TestODetalheEAMesmaLinha:
         api = _sessao(casa.dono.email)
 
         primeira = _pagina(api.get("/api/v1/stock/levels"))
-        assert primeira["count"] == 61
-        assert str(zimbro.id) not in [linha["product"] for linha in primeira["results"]]
+        assert primeira["count"] == PAGINA + 1
+        assert len(primeira["results"]) == PAGINA
+        assert str(zimbro.id) not in [linha["product"] for linha in primeira["results"]], (
+            "o Zimbro tem de ficar fora da primeira página para o teste valer"
+        )
 
         detalhe = _detalhe(api, zimbro)
         assert detalhe["never_stocked"] is False
