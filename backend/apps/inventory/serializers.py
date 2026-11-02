@@ -31,15 +31,23 @@ from apps.inventory.selectors import (
     TIPOS_DE_VALIDADE,
     e_lote_sintetico,
 )
-
-#: O tecto da coluna `Decimal(12,3)` do `StockCountLine`, na unidade **base**.
-#: Vive aqui e não no serviço porque é aqui que a conversão faz o número crescer.
-MAXIMO_DA_QUANTIDADE = Decimal("999999999.999")
-
-DETALHE_QUANTIDADE_GRANDE = _("This amount is too large for a count.")
-DETALHE_UNIDADE_DESCONHECIDA = _(
-    "Use the base unit or the display unit of this product."
+from apps.shared.serializers import (
+    DETALHE_QUANTIDADE_GRANDE,
+    MAXIMO_DA_QUANTIDADE,
+    QuantidadeOutSerializer,
+    em_unidade_pedida,
+    quantidade_bruta,
 )
+
+#: O quarteto, as duas direcções da conversão e o tecto da coluna
+#: `Decimal(12,3)` **mudaram-se para o `apps/shared/serializers.py`** a
+#: 2026-11-02 (ADR 0035) e continuam a sair daqui pelo `__all__`: o `recipes`
+#: serve as mesmas quantidades e aceita as mesmas unidades, e não pode importar
+#: este ficheiro (a aresta é `recipes -> inventory.api`). Declará-los lá dava um
+#: segundo componente `QuantidadeDaReceitaOut` no OpenAPI com os mesmos quatro
+#: campos e uma **segunda definição** da regra "a unidade é a base ou a de
+#: apresentação daquele artigo, e mais nenhuma". O nome do componente é o da
+#: classe, pelo que esta mudança **não mexe no schema**.
 
 #: As uniões fechadas do contrato, lidas **do modelo** e não copiadas à mão: o
 #: `StockMovement` é o dono dos nove tipos e dos cinco motivos, e uma segunda
@@ -165,21 +173,6 @@ class LocalizacaoPatchInSerializer(serializers.Serializer):
 # módulo as compõem: uma quantidade é sempre um quarteto, uma localização é
 # sempre `{id, name}`, e uma validade é sempre a data, os dias e a gravidade.
 # ===========================================================================
-
-
-class QuantidadeOutSerializer(serializers.Serializer):
-    """Uma quantidade nas duas formas: a do ledger e a de mostrar.
-
-    O ledger guarda sempre a unidade **base** (g, ml, un) e o ecrã mostra a de
-    apresentação (kg, l, un). A conversão é do servidor: converter unidades no
-    cliente é a fonte nº 1 de bugs de stock (`inventory-domain` §2), e sem o par
-    o ecrã mostra "3400,000 g" a quem diz "3,4 kg".
-    """
-
-    base = serializers.DecimalField(max_digits=12, decimal_places=3, read_only=True)
-    base_unit = serializers.CharField(read_only=True)
-    display = serializers.DecimalField(max_digits=12, decimal_places=3, read_only=True)
-    display_unit = serializers.CharField(read_only=True)
 
 
 class LocalizacaoReferenciaSerializer(serializers.Serializer):
@@ -1000,25 +993,6 @@ def compor_movimento(movimento: Any) -> dict[str, Any]:
     }
 
 
-def quantidade_bruta(
-    valor: Decimal, *, base_unit: str, display_unit: str, display_factor: Decimal | None
-) -> dict[str, Any]:
-    """O quarteto, a partir das três colunas soltas em vez de um objecto.
-
-    Existe porque os selectors do painel devolvem linhas de `values()` e não
-    instâncias: o trio que converte vem como três chaves, e materializar um
-    `Product` por linha só para ler três atributos era uma query por artigo.
-    O `quantidade()` daqui ao lado é a mesma função com um objecto à frente.
-    """
-    factor = display_factor or Decimal("1")
-    return {
-        "base": valor,
-        "base_unit": base_unit,
-        "display": (valor / factor).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
-        "display_unit": display_unit,
-    }
-
-
 def quantidade(valor: Decimal, *, produto: Any) -> dict[str, Any]:
     """Uma quantidade da unidade base para as duas formas que o cliente lê.
 
@@ -1235,32 +1209,6 @@ def compor_fecho(previsto: Any) -> dict[str, Any]:
 # mesma de sempre: o selector não sabe o que é um quarteto de quantidade, e o
 # serializer não sabe fazer uma query.
 # ---------------------------------------------------------------------------
-def em_unidade_pedida(valor: Decimal, *, unidade: str, produto: Any) -> Decimal:
-    """Converte `valor` da unidade pedida para a do ledger. Outra unidade é 400.
-
-    A unidade tem de ser o `base_unit` ou o `display_unit` **daquele artigo**:
-    não existe motor genérico de conversão (ADR 0011) e inventar um aqui era
-    aceitar "l" num artigo que se conta às unidades. A conversão é do servidor,
-    nunca do cliente (ADR 0030, decisão 1, e `inventory-domain` §2).
-
-    O tecto da coluna é verificado **aqui**, porque é aqui que o número cresce:
-    o serializer valida 12 dígitos na unidade de quem escreve e a multiplicação
-    pode pô-los a 15.
-    """
-    if produto is None:
-        return valor
-    if unidade == produto.base_unit:
-        em_base = valor
-    elif unidade == produto.display_unit:
-        factor = produto.display_factor or Decimal("1")
-        em_base = (valor * factor).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
-    else:
-        raise serializers.ValidationError({"unit": [DETALHE_UNIDADE_DESCONHECIDA]})
-    if em_base > MAXIMO_DA_QUANTIDADE:
-        raise serializers.ValidationError({"quantity": [DETALHE_QUANTIDADE_GRANDE]})
-    return em_base
-
-
 def _unidades(linha: dict[str, Any]) -> dict[str, Any]:
     """As três chaves que o `quantidade_bruta` precisa, tiradas de uma linha."""
     return {

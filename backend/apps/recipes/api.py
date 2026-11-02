@@ -2,6 +2,8 @@
 
 Fatia 6: produção de receitas.
 ADR 0028: **leitura** — a ficha técnica, as produções recentes e os dois custos.
+ADR 0035, fatia A: a ficha é por **fornada**, o custo teórico é **um** número do
+estabelecimento, e o custo de cada ingrediente é uma **escada de cinco degraus**.
 
 Expõe DTOs (frozen dataclasses) e funções que outros módulos chamam via api.py.
 Nenhuma escrita direta: tudo via services.py.
@@ -22,32 +24,64 @@ Como nas outras portas: as quantidades vêm na unidade **base** do artigo, com
 `display_unit` e `display_factor` ao lado para quem lê as apresentar. Nenhuma
 conversão acontece aqui.
 
-A ficha é por **uma unidade de apresentação do acabado** (um quilo de massa, uma
-unidade de pastel) e traz duas colunas por ingrediente: a da lista
-(`quantity_per_base_unit`, o que a receita escreve) e a do **consumo real**
-(lista ÷ `yield_factor`, o que de facto sai do stock). As duas existem porque
-são números diferentes e a confusão entre eles é o erro clássico do rendimento.
+A ficha é por **fornada** (ADR 0035, decisão 8): o `batch_size` diz quanto
+acabado sai de uma execução, e cada linha traz duas colunas — a da lista
+(`quantidade_lista`, o que a receita escreve **para a fornada**) e a do **consumo
+real** (lista ÷ `yield_factor`, o que de facto sai do stock). As duas existem
+porque são números diferentes e a confusão entre elas é o erro clássico do
+rendimento.
+
+*(O cabeçalho que aqui estava dizia "a ficha é por **uma unidade de apresentação**
+do acabado" enquanto o DTO ao lado dizia "por unidade **base**" e a implementação
+seguia o segundo: num artigo com base em gramas e apresentação em quilos as duas
+frases diferiam por **mil vezes** no custo. Nenhuma das duas sobreviveu à decisão
+8, e o cabeçalho corrigiu-se com o resto — ADR 0035, "Defeitos nomeados".)*
+
+## O custo, e porque é **um** número e não uma linha por localização
+
+O `_custos()` devolvia uma linha por localização e calculava cada uma com
+`por_artigo.get(product_id, 0)`: um ingrediente sem CMP naquela localização era
+**saltado em silêncio**. Numa pastelaria com Armazém e Cozinha a farinha está num
+e o creme no outro, logo **todas** as linhas saíam incompletas e **todas** por
+baixo. A ADR 0035, decisão 3, revoga essa forma: há **uma** definição, que é o
+mesmo `unit_cost` que o ecrã de Stock mostra, do estabelecimento inteiro, pela
+mesma função. Nenhum degrau da escada lê o `inventory_productcost`, que é por
+loja e reinstalava em silêncio o que a decisão revogou.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from django.utils import timezone
 
 from apps.inventory import api as inventory_api
+from apps.inventory.api import (
+    CUSTO_CONHECIDO,
+    CUSTO_DESCONHECIDO,
+    CUSTO_ESTIMADO,
+    ESTADOS_DO_CUSTO,
+)
 from apps.recipes import selectors as _selectors
 from apps.recipes.services import produzir
 
 __all__ = [
+    "CUSTO_CONHECIDO",
+    "CUSTO_DESCONHECIDO",
+    "CUSTO_ESTIMADO",
+    "ESTADOS_DO_CUSTO",
+    "PROFUNDIDADE_MAXIMA",
     "CustoDaReceita",
     "IngredienteDaReceita",
     "ReceitaDetalhe",
     "ReceitaResumo",
     "contar_receitas_por_ingrediente",
+    "fichas_das_receitas",
     "procurar_receitas",
     "producoes_por_periodo",
     "produzir",
@@ -55,10 +89,22 @@ __all__ = [
     "receita_por_id",
 ]
 
+#: Até onde se procura a "última produção" para o custo real, e até onde se lê o
+#: último preço do ledger no degrau 3 da escada. Um ano: mais antigo do que isso
+#: é um custo que já não diz nada sobre o de hoje.
+_JANELA_DO_CUSTO_REAL = timedelta(days=365)
+
+#: Quantos níveis de semi-acabado a leitura cascateia (`inventory-domain` §4, e
+#: ADR 0035, decisão 10, degrau 4). Três é o tecto do domínio: massa folhada →
+#: base de pastel → pastel de nata. Mais do que isto é quase sempre erro de
+#: dados, e a terminação não depende deste número — depende do conjunto de
+#: visitados, que existe de qualquer forma.
+PROFUNDIDADE_MAXIMA = 3
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReceitaResumo:
-    """Uma receita como a lista a mostra: o acabado, o rendimento e se está em uso."""
+    """Uma receita como a lista a mostra: o acabado, a fornada e o rendimento."""
 
     id: UUID
     product_id: UUID
@@ -68,17 +114,29 @@ class ReceitaResumo:
     display_unit: str
     display_factor: Decimal
     is_active: bool
+    #: Quanto acabado sai de **uma** fornada, na unidade base (ADR 0035, d8).
+    batch_size: Decimal
     yield_factor: Decimal
     n_ingredientes: int
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class IngredienteDaReceita:
-    """Um ingrediente da ficha, nas suas duas quantidades.
+    """Um ingrediente da ficha, nas suas duas quantidades e com o seu custo.
 
-    `quantidade_lista` é o que a receita escreve por unidade base de acabado;
-    `quantidade_real` é `lista ÷ yield_factor`, o que sai do stock para o
-    acabado sair à quantidade pedida. Com rendimento 100 % são iguais.
+    `quantidade_lista` é o que a receita escreve **para uma fornada**;
+    `quantidade_real` é `lista ÷ yield_factor`, o que sai do stock para a fornada
+    sair à quantidade pedida. Com rendimento 100 % são iguais.
+
+    `unit_cost` é o custo de uma unidade base deste ingrediente pela escada da
+    decisão 10, e `cost_status` diz com que certeza — `conhecido` só no primeiro
+    degrau. `None` com `desconhecido` quer dizer uma coisa só: *não há número
+    nenhum*, e é o que o ecrã imprime como "—".
+
+    `is_active` é do **artigo** e não da linha: um artigo arquivado dentro de uma
+    ficha activa aceita-se e assinala-se (ADR 0035). Quem recusa é a produção, na
+    fatia B — arquivar um artigo não pode partir a gravação de uma ficha que já o
+    continha.
     """
 
     product_id: UUID
@@ -87,43 +145,78 @@ class IngredienteDaReceita:
     base_unit: str
     display_unit: str
     display_factor: Decimal
+    is_active: bool
     quantidade_lista: Decimal
     quantidade_real: Decimal
+    unit_cost: Decimal | None
+    line_cost: Decimal | None
+    cost_status: str
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class CustoDaReceita:
-    """Os dois custos de uma receita, rotulados — e nunca um só número.
+    """O custo de ingredientes de uma ficha: **um** número, do estabelecimento.
 
-    `teorico` é `Σ(consumo real × CMP actual)` numa localização: o que **custaria
-    hoje**. `incompleto` fica a `True` quando algum ingrediente não tem CMP
-    (zero é "preço desconhecido", ADR 0024), e aí o teórico está por baixo do
-    real sem que isso seja uma poupança.
+    Nunca "custo do prato" (ADR 0035, decisão 9): é o *food cost*, só matéria, e
+    chamar-lhe custo do prato era falso por um factor de 2 a 4 numa pastelaria,
+    onde a mão-de-obra domina um produto com 20 cêntimos de matéria.
 
-    `real` é o `unit_cost` do `production_in` da **última produção**: o que
-    custou de facto, com os custos gravados no momento (ADR 0026, decisão 2).
-    Nunca se recalcula o passado com os preços de hoje (ADR 0014).
+    Três números, e os três derivam do mesmo numerador por arredondar:
+
+    * `batch_cost` = Σ(`line_cost`) — o que a **fornada** custa;
+    * `unit_cost` = `batch_cost ÷ batch_size` — por unidade **base** do acabado;
+    * `display_cost` = `unit_cost × display_factor` — por unidade de
+      **apresentação**, que é a pergunta do dono (*"quanto me custa um pastel"*).
+
+    A divisão é **no fim** (decisão 8): dividir por linha e somar dá um total
+    diferente do da fornada, e o dono vai somar à mão. O arredondamento é só na
+    saída, no serializer.
+
+    `cost_status` é o agregado: **nunca** `conhecido` se alguma linha não o for,
+    `desconhecido` só quando **nenhuma** linha tem custo — e aí os três euros
+    saem `None`, que é a afirmação verdadeira. `ingredients_without_cost` é uma
+    **contagem** e não um euro, logo vai para os três papéis; é uma cobertura
+    mais fraca do que a `quantity_without_cost` da ADR 0032 — um ingrediente em
+    dez pode ser 90 % do custo — e não há forma melhor sem revelar euros. É por
+    isso que o `cost_status` **por linha** existe ao lado.
+
+    `real` é o `unit_cost` do `production_in` da **última produção**: o que custou
+    de facto, com os custos gravados no momento (ADR 0026, decisão 2). Nunca se
+    recalcula o passado com os preços de hoje (ADR 0014). **Não entra no contrato
+    HTTP da fatia A** (decisão 2): sem produções seria `null` em 100 % das
+    linhas, e uma coluna de "—" no dia do lançamento ensina o dono que a coluna
+    está partida. Fica aqui porque o assistente já o serve desde a ADR 0028, e
+    só se calcula no caminho de **detalhe** — na lista seria uma leitura por
+    receita, que é o N+1 que a decisão 3 matou.
     """
 
-    location_id: UUID | None
-    location_name: str
-    teorico: Decimal | None
-    incompleto: bool
-    ingredientes_sem_custo: int
+    batch_cost: Decimal | None
+    unit_cost: Decimal | None
+    display_cost: Decimal | None
+    cost_status: str
+    ingredients_without_cost: int
     real: Decimal | None
     real_em: datetime | None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ReceitaDetalhe:
-    """A ficha técnica inteira: o resumo, os ingredientes e os custos."""
+    """A ficha técnica inteira: o resumo, os ingredientes e o custo."""
 
     resumo: ReceitaResumo
     ingredientes: tuple[IngredienteDaReceita, ...]
-    custos: tuple[CustoDaReceita, ...]
+    custo: CustoDaReceita
 
 
-def _resumo(receita: object, *, n_ingredientes: int) -> ReceitaResumo:
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _CustoDeIngrediente:
+    """O que a escada devolve por artigo: um número e a certeza dele."""
+
+    unit_cost: Decimal | None
+    cost_status: str
+
+
+def _resumo(receita: Any, *, n_ingredientes: int) -> ReceitaResumo:
     produto = receita.product
     return ReceitaResumo(
         id=receita.id,
@@ -134,6 +227,7 @@ def _resumo(receita: object, *, n_ingredientes: int) -> ReceitaResumo:
         display_unit=produto.display_unit,
         display_factor=produto.display_factor,
         is_active=receita.is_active,
+        batch_size=receita.batch_size,
         yield_factor=receita.yield_factor,
         n_ingredientes=n_ingredientes,
     )
@@ -191,91 +285,272 @@ def contar_receitas_por_ingrediente(*, tenant_id: UUID, product_id: UUID) -> int
     )
 
 
+def fichas_das_receitas(
+    *, tenant_id: UUID, receitas: Sequence[Any], agora: datetime | None = None
+) -> tuple[ReceitaDetalhe, ...]:
+    """As fichas de uma **página** de receitas, com o custo calculado em lote.
+
+    É esta a função que o `GET /recipes` e o `GET /recipes/<id>` usam, e é uma só
+    de propósito: a linha da lista tem de ser a mesma coisa que o cabeçalho da
+    ficha, por construção e não por coincidência (é o argumento da ADR 0034,
+    adenda de 29, decisão 14, aplicado aqui).
+
+    **A escada corre em lote, não por linha** (ADR 0035, decisão 10): duas
+    leituras para as linhas de todas as receitas da página, e depois a escada uma
+    vez sobre o conjunto de **todos** os ingredientes — não um degrau por
+    ingrediente. A decisão 3 matou um N+1 e isto não o reabre.
+
+    Não calcula o custo **real** (o da última produção): isso é por receita e
+    seria uma leitura por linha da lista. Quem o quer é o `receita_por_id`.
+    """
+    receitas = list(receitas)
+    if not receitas:
+        return ()
+    agora = agora or timezone.now()
+    linhas = _selectors.ingredientes_das_receitas(
+        tenant_id=tenant_id, recipe_ids=[r.id for r in receitas]
+    )
+    por_receita: dict[UUID, list[Any]] = {r.id: [] for r in receitas}
+    for linha in linhas:
+        por_receita.setdefault(linha.recipe_id, []).append(linha)
+
+    custos = _custos_dos_ingredientes(
+        tenant_id=tenant_id,
+        product_ids=[linha.ingredient_product_id for linha in linhas],
+        desde=agora - _JANELA_DO_CUSTO_REAL,
+        profundidade=0,
+        visitados=frozenset(),
+    )
+    fichas = []
+    for receita in receitas:
+        suas = por_receita.get(receita.id, [])
+        ingredientes = _ingredientes(receita=receita, linhas=suas, custos=custos)
+        fichas.append(
+            ReceitaDetalhe(
+                resumo=_resumo(receita, n_ingredientes=len(suas)),
+                ingredientes=ingredientes,
+                custo=_agregar(receita=receita, ingredientes=ingredientes),
+            )
+        )
+    return tuple(fichas)
+
+
 def receita_por_id(*, tenant_id: UUID, recipe_id: UUID) -> ReceitaDetalhe | None:
-    """A ficha técnica de uma receita, com ingredientes e custos por localização."""
+    """A ficha técnica de uma receita, com ingredientes e custo.
+
+    Uma receita **inactiva** responde como qualquer outra: mercadoria que
+    existiu continua auditável, e esconder a ficha fazia "não tenho essa
+    receita" mentir.
+    """
     receita = _selectors.receita_do_ambito(tenant_id=tenant_id, recipe_id=recipe_id)
     if receita is None:
         return None
-    linhas = _selectors.ingredientes_das_receitas(tenant_id=tenant_id, recipe_ids=[receita.id])
-    rendimento = receita.yield_factor if receita.yield_factor > 0 else Decimal("1")
-    ingredientes = tuple(
-        IngredienteDaReceita(
-            product_id=linha.ingredient_product_id,
-            product_name=linha.ingredient_product.short_name,
-            sku=linha.ingredient_product.sku,
-            base_unit=linha.ingredient_product.base_unit,
-            display_unit=linha.ingredient_product.display_unit,
-            display_factor=linha.ingredient_product.display_factor,
-            quantidade_lista=linha.quantity_per_base_unit,
-            quantidade_real=linha.quantity_per_base_unit / rendimento,
-        )
-        for linha in linhas
-    )
-    return ReceitaDetalhe(
-        resumo=_resumo(receita, n_ingredientes=len(linhas)),
-        ingredientes=ingredientes,
-        custos=_custos(tenant_id=tenant_id, receita=receita, ingredientes=ingredientes),
-    )
-
-
-def _custos(
-    *, tenant_id: UUID, receita: object, ingredientes: tuple[IngredienteDaReceita, ...]
-) -> tuple[CustoDaReceita, ...]:
-    """O teórico por localização e o real da última produção.
-
-    Uma linha por localização que tenha CMP de pelo menos um ingrediente, mais
-    a linha "sem localização" quando só há o real. Sem localizações com custo e
-    sem produções, devolve vazio — e quem lê diz "ainda não sei o custo".
-    """
-    cmps: dict[UUID, dict[UUID, Decimal]] = {}
-    for ingrediente in ingredientes:
-        for custo in inventory_api.custos_medios_por_artigo(
-            tenant_id=tenant_id, product_id=ingrediente.product_id
-        ):
-            cmps.setdefault(custo.location_id, {})[ingrediente.product_id] = custo.unit_cost
-    nomes = {
-        loc.id: loc.name for loc in inventory_api.listar_localizacoes(tenant_id=tenant_id)
-    }
+    ficha = fichas_das_receitas(tenant_id=tenant_id, receitas=[receita])[0]
     real, real_em = _ultima_producao(tenant_id=tenant_id, product_id=receita.product_id)
-    custos: list[CustoDaReceita] = []
-    for location_id, por_artigo in cmps.items():
-        teorico = Decimal("0")
-        sem_custo = 0
-        for ingrediente in ingredientes:
-            unitario = por_artigo.get(ingrediente.product_id, Decimal("0"))
-            if unitario <= 0:
-                sem_custo += 1
-                continue
-            teorico += ingrediente.quantidade_real * unitario
-        custos.append(
-            CustoDaReceita(
-                location_id=location_id,
-                location_name=nomes.get(location_id, ""),
-                teorico=teorico,
-                incompleto=sem_custo > 0,
-                ingredientes_sem_custo=sem_custo,
-                real=real,
-                real_em=real_em,
-            )
-        )
-    if not custos and real is not None:
-        custos.append(
-            CustoDaReceita(
-                location_id=None,
-                location_name="",
-                teorico=None,
-                incompleto=True,
-                ingredientes_sem_custo=len(ingredientes),
-                real=real,
-                real_em=real_em,
-            )
-        )
-    return tuple(sorted(custos, key=lambda c: c.location_name))
+    return ReceitaDetalhe(
+        resumo=ficha.resumo,
+        ingredientes=ficha.ingredientes,
+        custo=CustoDaReceita(
+            batch_cost=ficha.custo.batch_cost,
+            unit_cost=ficha.custo.unit_cost,
+            display_cost=ficha.custo.display_cost,
+            cost_status=ficha.custo.cost_status,
+            ingredients_without_cost=ficha.custo.ingredients_without_cost,
+            real=real,
+            real_em=real_em,
+        ),
+    )
 
 
-#: Até onde se procura a "última produção" para o custo real. Um ano: mais
-#: antigo do que isso é um custo que já não diz nada sobre o de hoje.
-_JANELA_DO_CUSTO_REAL = timedelta(days=365)
+# ---------------------------------------------------------------------------
+# A escada dos cinco degraus (ADR 0035, decisão 10)
+# ---------------------------------------------------------------------------
+def _custos_dos_ingredientes(
+    *,
+    tenant_id: UUID,
+    product_ids: Sequence[UUID],
+    desde: datetime,
+    profundidade: int,
+    visitados: frozenset[UUID],
+) -> Mapping[UUID, _CustoDeIngrediente]:
+    """O custo de cada ingrediente, pela escada, **para o conjunto todo de uma vez**.
+
+    | # | quando | número | palavra |
+    |---|---|---|---|
+    | 1 | há quantidade com custo e **toda** tem preço | o `unit_cost` do stock | `conhecido` |
+    | 2 | há quantidade com custo e parte não tem preço | o mesmo | `estimado` |
+    | 3 | não há quantidade com custo | o último `unit_cost > 0` do ledger | `estimado` |
+    | 4 | nada no ledger, mas o artigo tem **ficha activa** | o custo dessa ficha | `estimado` |
+    | 5 | nada disto | nenhum — `None` | `desconhecido` |
+
+    Os degraus 1 a 3 são do `inventory` e saem da sua porta em **duas** queries
+    (`custos_de_artigos`): é lá que vive o que é um custo de stock, e é a mesma
+    função que o ecrã de Stock usa — quem compara a ficha com o `/stock` vê o
+    mesmo número (decisão 3).
+
+    O degrau 4 é daqui, porque é aqui que vive o que é uma ficha. Cascateia por
+    **níveis** e não por ingrediente: cada nível é uma chamada à escada com o
+    conjunto inteiro dos ingredientes das fichas desse nível, logo o custo de uma
+    página inteira de receitas é um número fixo de queries e não um por
+    ingrediente.
+
+    ## Terminação, e porque não depende da guarda de escrita
+
+    Duas redes, e as duas estão sempre ligadas: a `PROFUNDIDADE_MAXIMA` e o
+    conjunto de **visitados**, que carrega os artigos já expandidos em níveis
+    mais acima. Um ciclo no grafo é sempre erro de dados e a escrita recusa-o
+    (`services.py`), mas **a guarda de escrita só vale até à última escrita** e a
+    leitura de hoje corre sobre dados escritos antes dela. Um artigo já visitado
+    não se expande outra vez e fica no degrau 5.
+
+    ## O que o degrau 4 devolve quando a sub-ficha está ela própria incompleta
+
+    Devolve o que ela sabe, e o rótulo **nunca** é `conhecido`: um semi-acabado
+    com um ingrediente sem preço dá um número por baixo, e quem o recebe fica
+    `estimado` por construção. O que ele **não** faz é somar ao
+    `ingredients_without_cost` de quem está acima — a cobertura mede a ficha que
+    se está a ler, não o grafo todo. É a mesma fraqueza que a decisão 6 já nomeia
+    para a cobertura, um nível mais abaixo.
+    """
+    ids = list(dict.fromkeys(product_ids))
+    if not ids:
+        return {}
+    do_inventario = inventory_api.custos_de_artigos(
+        tenant_id=tenant_id, product_ids=ids, desde=desde
+    )
+    custos: dict[UUID, _CustoDeIngrediente] = {
+        product_id: _CustoDeIngrediente(
+            unit_cost=custo.unit_cost, cost_status=custo.cost_status
+        )
+        for product_id, custo in do_inventario.items()
+    }
+    por_cascatear = [
+        product_id
+        for product_id in ids
+        if custos[product_id].cost_status == CUSTO_DESCONHECIDO
+        and product_id not in visitados
+    ]
+    if not por_cascatear or profundidade >= PROFUNDIDADE_MAXIMA:
+        return custos
+
+    fichas = [
+        receita
+        for receita in _selectors.receitas_dos_artigos(
+            tenant_id=tenant_id, product_ids=por_cascatear
+        )
+        if receita.is_active
+    ]
+    if not fichas:
+        return custos
+    linhas = _selectors.ingredientes_das_receitas(
+        tenant_id=tenant_id, recipe_ids=[ficha.id for ficha in fichas]
+    )
+    de_baixo = _custos_dos_ingredientes(
+        tenant_id=tenant_id,
+        product_ids=[linha.ingredient_product_id for linha in linhas],
+        desde=desde,
+        profundidade=profundidade + 1,
+        visitados=visitados | set(por_cascatear),
+    )
+    por_ficha: dict[UUID, list[Any]] = {ficha.id: [] for ficha in fichas}
+    for linha in linhas:
+        por_ficha.setdefault(linha.recipe_id, []).append(linha)
+    for ficha in fichas:
+        ingredientes = _ingredientes(
+            receita=ficha, linhas=por_ficha.get(ficha.id, []), custos=de_baixo
+        )
+        agregado = _agregar(receita=ficha, ingredientes=ingredientes)
+        if agregado.unit_cost is None:
+            continue
+        # Sempre **estimado**: é o custo teórico de outra ficha, não um preço
+        # pago. Nunca `conhecido`, mesmo que a sub-ficha o fosse.
+        custos[ficha.product_id] = _CustoDeIngrediente(
+            unit_cost=agregado.unit_cost, cost_status=CUSTO_ESTIMADO
+        )
+    return custos
+
+
+def _ingredientes(
+    *, receita: Any, linhas: Sequence[Any], custos: Mapping[UUID, _CustoDeIngrediente]
+) -> tuple[IngredienteDaReceita, ...]:
+    """As linhas de uma ficha, já com as duas quantidades e o custo de cada uma."""
+    rendimento = receita.yield_factor if receita.yield_factor > 0 else Decimal("1")
+    saida = []
+    for linha in linhas:
+        artigo = linha.ingredient_product
+        real = linha.quantity_per_base_unit / rendimento
+        custo = custos.get(linha.ingredient_product_id)
+        unitario = custo.unit_cost if custo is not None else None
+        saida.append(
+            IngredienteDaReceita(
+                product_id=linha.ingredient_product_id,
+                product_name=artigo.short_name,
+                sku=artigo.sku,
+                base_unit=artigo.base_unit,
+                display_unit=artigo.display_unit,
+                display_factor=artigo.display_factor,
+                is_active=artigo.is_active,
+                quantidade_lista=linha.quantity_per_base_unit,
+                quantidade_real=real,
+                unit_cost=unitario,
+                line_cost=None if unitario is None else real * unitario,
+                cost_status=custo.cost_status if custo is not None else CUSTO_DESCONHECIDO,
+            )
+        )
+    return tuple(saida)
+
+
+def _agregar(
+    *, receita: Any, ingredientes: Sequence[IngredienteDaReceita]
+) -> CustoDaReceita:
+    """Σ(linhas) ÷ fornada, com a divisão no fim e sem arredondar pelo caminho.
+
+    `real` e `real_em` saem `None`: quem os preenche é o `receita_por_id`, que é
+    o único caminho onde custam uma leitura por receita.
+    """
+    fornada = receita.batch_size if receita.batch_size > 0 else Decimal("1")
+    total = Decimal("0")
+    com_custo = 0
+    conhecidos = 0
+    sem_custo = 0
+    for ingrediente in ingredientes:
+        if ingrediente.line_cost is None:
+            sem_custo += 1
+            continue
+        com_custo += 1
+        if ingrediente.cost_status == CUSTO_CONHECIDO:
+            conhecidos += 1
+        total += ingrediente.line_cost
+    if com_custo == 0:
+        # Nenhuma linha tem custo — e uma ficha **sem linhas** cai aqui pelo
+        # mesmo caminho, que é a afirmação certa: não há número nenhum.
+        return CustoDaReceita(
+            batch_cost=None,
+            unit_cost=None,
+            display_cost=None,
+            cost_status=CUSTO_DESCONHECIDO,
+            ingredients_without_cost=sem_custo,
+            real=None,
+            real_em=None,
+        )
+    unitario = total / fornada
+    factor = receita.product.display_factor or Decimal("1")
+    return CustoDaReceita(
+        batch_cost=total,
+        unit_cost=unitario,
+        display_cost=unitario * factor,
+        # Nunca `conhecido` se alguma linha não o for (decisão 10, degrau 2):
+        # com parte do stock sem preço o CMP está **por baixo**, e dizer
+        # `conhecido` afirmava uma precisão que a ficha não tem.
+        cost_status=(
+            CUSTO_CONHECIDO
+            if conhecidos == len(ingredientes) and ingredientes
+            else CUSTO_ESTIMADO
+        ),
+        ingredients_without_cost=sem_custo,
+        real=None,
+        real_em=None,
+    )
 
 
 def _ultima_producao(

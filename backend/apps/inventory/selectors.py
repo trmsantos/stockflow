@@ -104,6 +104,7 @@ __all__ = [
     "saldos_por_artigo_ate",
     "saldos_por_artigo_na_localizacao",
     "ultima_contagem_fechada_em",
+    "ultimo_custo_do_ledger",
     "valor_de_stock",
     "valor_dos_ajustes_por_artigo",
 ]
@@ -468,7 +469,7 @@ def _validade_mais_proxima(
     tenant_id: UUID,
     location_id: UUID | None,
     hoje: date,
-    product_id: UUID | None = None,
+    product_ids: Sequence[UUID] | None = None,
 ) -> dict[UUID, dict[str, Any]]:
     """Por artigo, o lote **com saldo** que vence primeiro no âmbito pedido.
 
@@ -481,18 +482,19 @@ def _validade_mais_proxima(
     `join` ao `StockLevel` é o que garante que o lote ainda tem mercadoria — a
     tabela `Lot` sozinha não sabe.
 
-    O `product_id` é **mais um `WHERE`** e não um caminho novo (ADR 0034,
+    Os `product_ids` são **mais um `WHERE`** e não um caminho novo (ADR 0034,
     adenda de 29, decisão 12): a rota de detalhe lê um artigo só e não paga a
     varredura das validades do estabelecimento inteiro para deitar fora todas
-    menos uma.
+    menos uma. Eram um `product_id` só até à ADR 0035, que precisa dos
+    ingredientes de uma ficha de uma vez — ver `niveis_de_stock`.
     """
     niveis = StockLevel.objects.filter(
         tenant_id=tenant_id, lot__isnull=False, lot__expires_at__isnull=False
     )
     if location_id is not None:
         niveis = niveis.filter(location_id=location_id)
-    if product_id is not None:
-        niveis = niveis.filter(product_id=product_id)
+    if product_ids is not None:
+        niveis = niveis.filter(product_id__in=list(product_ids))
     linhas = (
         niveis.values(
             "product_id",
@@ -559,7 +561,7 @@ def niveis_de_stock(
     tenant_id: UUID,
     location_id: UUID | None = None,
     q: str = "",
-    product_id: UUID | None = None,
+    product_ids: Sequence[UUID] | None = None,
     hoje: date | None = None,
 ) -> list[dict[str, Any]]:
     """O ecrã de Stock: **uma linha por artigo**, nunca uma por lote.
@@ -592,20 +594,30 @@ def niveis_de_stock(
     o artigo tem, que é um oráculo sobre preços sem nenhuma chave de preço no
     payload. Foi o defeito que a ADR 0032 mediu e fechou.
 
-    ## O `product_id`, e porque é que não é uma função nova
+    ## Os `product_ids`, e porque é que não são uma função nova
 
     `GET /stock/levels/<product_id>` lê daqui (ADR 0034, adenda de 29, decisão
     12): é **mais um `WHERE`** na mesma query, para a linha do detalhe sair do
     mesmo `_nivel_de_stock`, com o mesmo `_estado_do_nivel` e a mesma
     `_validade`. Uma segunda função a compor "nível" era uma segunda definição
     de nível, que é o que a adenda proíbe por extenso.
+
+    Era **um** id e passou a ser uma **sequência** com a ADR 0035: o custo
+    teórico de uma ficha precisa do `unit_cost` dos seus ingredientes todos, e
+    tem de ser **o mesmo número que o ecrã de Stock mostra, pela mesma função**
+    (decisão 3) — logo um `IN` e uma leitura, nunca uma chamada por
+    ingrediente. `None` continua a ser "o estabelecimento inteiro"; uma
+    sequência **vazia** é "nenhum artigo" e devolve lista vazia, que é o que
+    distingue as duas.
     """
     hoje = hoje or timezone.localdate()
+    if product_ids is not None and not product_ids:
+        return []
     niveis = StockLevel.objects.filter(tenant_id=tenant_id)
     if q:
         niveis = niveis.filter(product__short_name__icontains=q)
-    if product_id is not None:
-        niveis = niveis.filter(product_id=product_id)
+    if product_ids is not None:
+        niveis = niveis.filter(product_id__in=list(product_ids))
     linhas = (
         niveis.values(
             *_CAMPOS_DO_ARTIGO,
@@ -623,7 +635,7 @@ def niveis_de_stock(
     )
 
     validades = _validade_mais_proxima(
-        tenant_id=tenant_id, location_id=location_id, hoje=hoje, product_id=product_id
+        tenant_id=tenant_id, location_id=location_id, hoje=hoje, product_ids=product_ids
     )
     por_artigo: dict[UUID, dict[str, Any]] = {}
     for linha in linhas:
@@ -729,8 +741,54 @@ def nivel_do_artigo(
     dizer que o artigo não existe: quem sabe isso é o `catalog`, e é a view
     que lhe pergunta para distinguir o vazio (200) do erro (404).
     """
-    linhas = niveis_de_stock(tenant_id=tenant_id, product_id=product_id, hoje=hoje)
+    linhas = niveis_de_stock(tenant_id=tenant_id, product_ids=[product_id], hoje=hoje)
     return linhas[0] if linhas else None
+
+
+def ultimo_custo_do_ledger(
+    *, tenant_id: UUID, product_ids: Sequence[UUID], desde: datetime
+) -> dict[UUID, Decimal]:
+    """O último `unit_cost > 0` de cada artigo no ledger, desde `desde`.
+
+    É o **degrau 3** da escada do custo de uma ficha técnica (ADR 0035, decisão
+    10) e existe por uma razão medida: o `_custo_unitario` devolve `None`
+    quando não há quantidade com custo, logo o creme que acaba ao domingo
+    apagava o custo do pastel **no dia de maior movimento**. Um custo que
+    desaparece porque o frigorífico esvaziou é um custo em que o dono deixa de
+    acreditar.
+
+    **Sem agrupar por localização, e de propósito.** O `inventory_productcost`
+    tem este número por loja e usá-lo reinstalava em silêncio a forma por
+    localização que a decisão 3 da mesma ADR revogou — a farinha no Armazém e o
+    creme na Cozinha davam duas linhas, as duas incompletas e as duas por
+    baixo. O ledger não tem esse problema porque aqui a pergunta é "qual foi o
+    último preço a que este artigo foi avaliado", e essa não tem prateleira.
+
+    `unit_cost > 0` porque zero é "preço desconhecido" (ADR 0024, decisão 5) e
+    não um preço; `desde` porque um preço de há dois anos não diz nada sobre o
+    de hoje — a janela é de quem chama, e é de um ano nos dois chamadores.
+
+    **Uma query para todos os artigos**, com `DISTINCT ON`: a página de uma
+    lista de receitas pede isto uma vez e não uma vez por ingrediente. A d3
+    matou um N+1 e isto não o reabre.
+    """
+    if not product_ids:
+        return {}
+    linhas = (
+        StockMovement.objects.filter(
+            tenant_id=tenant_id,
+            product_id__in=list(product_ids),
+            occurred_at__gte=desde,
+            unit_cost__gt=Decimal("0"),
+        )
+        # O `DISTINCT ON` do Postgres exige que a primeira coluna da ordenação
+        # seja a do `distinct`; o `-id` desempata dois movimentos no mesmo
+        # instante de forma estável.
+        .order_by("product_id", "-occurred_at", "-id")
+        .distinct("product_id")
+        .values("product_id", "unit_cost")
+    )
+    return {linha["product_id"]: linha["unit_cost"] for linha in linhas}
 
 
 def nivel_sem_entradas(*, produto: Any) -> dict[str, Any]:

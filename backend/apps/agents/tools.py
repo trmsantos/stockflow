@@ -1384,7 +1384,15 @@ def _receitas(contexto: ContextoDaTool, args: ReceitasArgs) -> dict[str, Any]:
                 "receita_id": receita.id,
                 "artigo": receita.product_name,
                 "sku": receita.sku,
-                "por": f"1 {receita.display_unit}",
+                # A **fornada**, e não "por 1 kg": desde a ADR 0035 a ficha é
+                # por fornada, e dizer "por 1 kg" sobre linhas escritas para
+                # 2,4 kg é falso por um factor de 2,4.
+                "fornada": _quantidade(
+                    receita.batch_size,
+                    base_unit=receita.base_unit,
+                    display_unit=receita.display_unit,
+                    display_factor=receita.display_factor,
+                )["texto"],
                 "rendimento": _rendimento(receita.yield_factor),
                 "n_ingredientes": receita.n_ingredientes,
                 "ativa": receita.is_active,
@@ -1400,67 +1408,79 @@ def _receitas(contexto: ContextoDaTool, args: ReceitasArgs) -> dict[str, Any]:
 
 
 def _receita(contexto: ContextoDaTool, args: ReceitaArgs) -> dict[str, Any]:
+    """A ficha técnica de uma receita: a fornada, as linhas e o custo dela.
+
+    ## O que mudou com a ADR 0035, fatia A
+
+    A ficha passou a ser por **fornada** e não por uma unidade do acabado, logo
+    as quantidades vêm como estão e **não** se multiplicam pelo `display_factor`
+    — era o que esta função fazia, por causa de um cabeçalho do `recipes/api.py`
+    que estava errado e que a ADR nomeou como defeito. Num artigo com base em
+    gramas e apresentação em quilos a diferença era de **mil vezes**.
+
+    O custo passou a ser **um** número do estabelecimento, em vez de uma lista
+    por localização em que cada linha saltava em silêncio os ingredientes sem
+    CMP naquela prateleira (decisão 3). Em troca vem a palavra da certeza —
+    `conhecido|estimado|desconhecido`, as mesmas três da casa — e a contagem de
+    quantos ingredientes não têm custo nenhum, que **não** é euro e vai para os
+    três papéis.
+    """
     detalhe = recipes_api.receita_por_id(tenant_id=contexto.tenant_id, recipe_id=args.id)
     if detalhe is None:
         raise ErroDeTool("receita_nao_encontrada")
     resumo = detalhe.resumo
-    # A ficha é por **uma unidade de apresentação do acabado** (um quilo de
-    # massa, uma unidade de pastel): a porta devolve por unidade base, e é o
-    # `display_factor` do acabado que leva as duas colunas à apresentação.
-    por_apresentacao = Decimal(resumo.display_factor)
+    unidades_do_acabado = {
+        "base_unit": resumo.base_unit,
+        "display_unit": resumo.display_unit,
+        "display_factor": resumo.display_factor,
+    }
     ingredientes = [
         {
             "product_id": ingrediente.product_id,
             "artigo": ingrediente.product_name,
             "sku": ingrediente.sku,
             "na_lista": _quantidade(
-                ingrediente.quantidade_lista * por_apresentacao,
+                ingrediente.quantidade_lista,
                 base_unit=ingrediente.base_unit,
                 display_unit=ingrediente.display_unit,
                 display_factor=ingrediente.display_factor,
             )["texto"],
             "consumo_real": _quantidade(
-                ingrediente.quantidade_real * por_apresentacao,
+                ingrediente.quantidade_real,
                 base_unit=ingrediente.base_unit,
                 display_unit=ingrediente.display_unit,
                 display_factor=ingrediente.display_factor,
             )["texto"],
+            "certeza_do_custo": ingrediente.cost_status,
+            **_dinheiro(contexto, ingrediente.line_cost, chave="custo_na_fornada"),
         }
         for ingrediente in detalhe.ingredientes
     ]
-    custos = [
-        {
-            "localizacao": custo.location_name or "sem localização",
-            **_dinheiro(
-                contexto,
-                custo.teorico * por_apresentacao if custo.teorico is not None else None,
-                chave="custo_teorico",
-            ),
-            **_dinheiro(
-                contexto,
-                custo.real * por_apresentacao if custo.real is not None else None,
-                chave="custo_real",
-            ),
-            "real_em": custo.real_em,
-            "incompleto": custo.incompleto,
-            "ingredientes_sem_custo": custo.ingredientes_sem_custo,
-        }
-        for custo in detalhe.custos
-    ]
+    custo = detalhe.custo
     return {
         "receita_id": resumo.id,
         "artigo": resumo.product_name,
         "sku": resumo.sku,
-        "por": f"1 {resumo.display_unit} de {resumo.product_name}",
+        "fornada": _quantidade(resumo.batch_size, **unidades_do_acabado)["texto"],
         "rendimento": _rendimento(resumo.yield_factor),
         "ativa": resumo.is_active,
         "linhas": ingredientes,
         "n": len(ingredientes),
-        "custos": custos if _pode_ver_euros(contexto) else [],
+        "certeza_do_custo": custo.cost_status,
+        "ingredientes_sem_custo": custo.ingredients_without_cost,
+        **_dinheiro(contexto, custo.batch_cost, chave="custo_da_fornada"),
+        **_dinheiro(
+            contexto,
+            custo.display_cost,
+            chave=f"custo_de_ingredientes_por_{resumo.display_unit}",
+        ),
+        **_dinheiro(contexto, custo.real, chave="custo_real_da_ultima_producao"),
+        "custo_real_em": custo.real_em,
         "euros_visiveis": _pode_ver_euros(contexto),
         "nota": (
-            "o consumo real é a quantidade da lista a dividir pelo rendimento: "
-            "é o que sai do stock para o acabado sair à quantidade pedida"
+            "as quantidades são **por fornada**; o consumo real é a quantidade "
+            "da lista a dividir pelo rendimento, e é o que sai do stock. O custo "
+            "é só de ingredientes (food cost) — não inclui mão-de-obra"
         ),
     }
 
@@ -1729,8 +1749,9 @@ _TOOLS: tuple[Tool, ...] = (
     ),
     Tool(
         nome="receita",
-        descricao="A ficha técnica de uma receita: ingredientes por unidade do acabado, na "
-        "lista e em consumo real, e o rendimento. Exige o id, obtido por receitas.",
+        descricao="A ficha técnica de uma receita: a fornada, os ingredientes dela na "
+        "lista e em consumo real, o rendimento e o custo de ingredientes. Exige o id, "
+        "obtido por receitas.",
         schema=ReceitaArgs,
         papeis=TODOS_OS_PAPEIS,
         executar=_receita,

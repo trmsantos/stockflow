@@ -69,16 +69,25 @@ class TestProducao:
                 track_lots=True,  # Produto acabado com rastreio
             )
 
-            # Receita: 100 pastéis com yield_factor 0.9
+            # Receita: fornada de **1** pastel, com yield_factor 0.9.
+            #
+            # `batch_size=1` é o caso particular que a ADR 0035, decisão 8,
+            # deixa explícito: a ficha passou a ser por fornada e o modelo de
+            # ontem — uma linha por unidade do acabado — é uma fornada de 1.
+            # Com este valor os números deste ficheiro são exactamente os de
+            # antes, e é isso que o torna a prova de que a divisão nova no
+            # `produzir()` não mexeu em nada. O caso `batch_size > 1` tem o seu
+            # próprio teste, mais abaixo.
             receita = Recipe.objects.create(
                 tenant=tenant,
                 product=pasteis,
                 is_active=True,
+                batch_size=Decimal("1"),
                 yield_factor=Decimal("0.9"),
             )
 
-            # Linhas: 10 g de massa + 5 ovos por receita
-            # (quantidade_per_base_unit está em unidade base do ingrediente)
+            # Linhas: 10 g de massa + 5 ovos por fornada
+            # (quantity_per_base_unit está em unidade base do ingrediente)
             RecipeLineItem.objects.create(
                 tenant=tenant,
                 recipe=receita,

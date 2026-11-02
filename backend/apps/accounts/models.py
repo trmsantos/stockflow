@@ -904,6 +904,13 @@ class RotaDeMenu(models.TextChoices):
     #: `/assistente` existir na árvore e no registo do cliente.
     ASSISTENTE = "assistente", "Assistente"
     STOCK = "stock", "Stock"
+    #: As fichas técnicas (ADR 0035, fatia A). Entrou a 2026-11-02 pela mesma
+    #: ordem do `assistente`: o id primeiro aqui, o `pnpm gen:api` leva-o ao
+    #: `RotaIdEnum` do `types.ts`, e o `Record<RotaId, …>` do shell não compila
+    #: até a rota `/receitas` existir na árvore e no registo do cliente. O erro
+    #: é o mecanismo, e entre os dois passos o `pnpm typecheck` falha com
+    #: `TS2741`.
+    RECEITAS = "receitas", "Receitas"
     CONTAR = "contar", "Contar"
     RECEBER = "receber", "Receber"
 

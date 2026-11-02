@@ -470,3 +470,38 @@ msgstr "Esta conversa chegou ao limite de perguntas. Começa uma nova."
 
 msgid "Choose the item for this line before confirming it, or leave the line out of this entry."
 msgstr "Escolha o artigo desta linha antes de a confirmar, ou deixe a linha fora desta entrada."
+
+# ---------------------------------------------------------------------------
+# As fichas técnicas (ADR 0035, fatia A): `apps/recipes/{services,serializers,
+# views}.py`.
+# ---------------------------------------------------------------------------
+# "Fornada" e não "lote": lote é o `Lot` do ledger, a caixa que veio do
+# fornecedor com um prazo. Fornada é o que sai de uma execução da ficha, e é a
+# palavra que um pasteleiro usa.
+
+msgid "A recipe needs at least one ingredient."
+msgstr "Uma receita precisa de pelo menos um ingrediente."
+
+msgid "Batch size must be greater than zero."
+msgstr "A fornada tem de ser maior do que zero."
+
+msgid "Yield factor must be greater than zero."
+msgstr "O rendimento tem de ser maior do que zero."
+
+msgid "Each ingredient needs a quantity greater than zero."
+msgstr "Cada ingrediente precisa de uma quantidade maior do que zero."
+
+msgid "The same ingredient cannot appear twice in a recipe."
+msgstr "O mesmo ingrediente não pode aparecer duas vezes na mesma receita."
+
+msgid "This product is an ingredient of itself, directly or through another recipe."
+msgstr "Este artigo é ingrediente de si próprio, directamente ou através de outra receita."
+
+msgid "Send batch_size and batch_unit together: a number without a unit is not a batch."
+msgstr "Envia o batch_size e o batch_unit juntos: um número sem unidade não é uma fornada."
+
+msgid "This product already has a recipe."
+msgstr "Este artigo já tem receita."
+
+msgid "Unknown state. Use activas or todas."
+msgstr "Estado desconhecido. Usa activas ou todas."

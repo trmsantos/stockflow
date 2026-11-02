@@ -60,10 +60,17 @@ __all__ = [
 TODOS_OS_PAPEIS: frozenset[str] = frozenset(Papel.values)
 SO_O_DONO: frozenset[str] = frozenset({Papel.OWNER})
 
-#: As rotas que uma acção pode nomear. As sete primeiras são o `RotaDeMenu` do
-#: `accounts/models.py`; as três últimas são rotas que existem na árvore do
-#: cliente e **não** no menu: o detalhe de um artigo, o detalhe de uma receção e
-#: as Definições. Um id fora desta lista não sai no contrato.
+#: As rotas que uma acção pode nomear. As oito do `RotaDeMenu` do
+#: `accounts/models.py` mais três que existem na árvore do cliente e **não** no
+#: menu: o detalhe de um artigo, o detalhe de uma receção e as Definições. Um id
+#: fora desta lista não sai no contrato.
+#:
+#: O `receitas` entrou a 2026-11-02 com a fatia A da ADR 0035, que é a que lhe
+#: deu rota. **Não entrou um `receita` de detalhe**: `/receitas/<id>` existe na
+#: árvore, mas um id de rota novo é um `rotulo_id` novo e uma entrada nova no
+#: registo do cliente, e a ADR autorizou **um** de cada. As tools de receitas
+#: levam ao ecrã da lista, que é um destino verdadeiro e mais fraco — está
+#: nomeado no relatório da fatia.
 ROTAS: tuple[str, ...] = (
     "inicio",
     "painel",
@@ -71,6 +78,7 @@ ROTAS: tuple[str, ...] = (
     "assistente",
     "stock",
     "artigo",
+    "receitas",
     "contar",
     "receber",
     "rececao",
@@ -87,6 +95,9 @@ PARAMETROS_POR_ROTA: Mapping[str, frozenset[str]] = {
     "assistente": frozenset({"conversa"}),
     "stock": frozenset({"loja", "filtro", "q"}),
     "artigo": frozenset({"artigo"}),
+    # Sem search params: a lista de fichas abre-se inteira, e o `q` do ecrã é
+    # estado local enquanto ninguém precisar de o partilhar por URL.
+    "receitas": frozenset(),
     "contar": frozenset({"zona"}),
     "receber": frozenset({"estado"}),
     "rececao": frozenset({"rececao"}),
@@ -120,6 +131,10 @@ ROTULOS: tuple[str, ...] = (
     "ver_rececoes",
     "ver_rececao",
     "ver_contagens",
+    # ADR 0035, fatia A. Tem de entrar **à mão** no
+    # `frontend/src/features/assistente/schemas.ts` e no `vocabulario.ts` — é a
+    # fronteira dos Zod escritos à mão, que nenhum gate atravessa.
+    "ver_receitas",
     "ver_painel",
     "ver_stock",
     "ver_equipa",
@@ -160,8 +175,15 @@ class Acao:
 #: As duas línguas do manual (decisão do dono, 2026-10-16).
 LINGUAS_DA_AJUDA: tuple[str, ...] = ("pt-pt", "en")
 
-#: Os doze temas e o ecrã onde cada coisa se faz. `None` é "ainda não tem ecrã"
-#: — hoje só as receitas, cuja produção não tem rota na árvore do cliente.
+#: Os doze temas e o ecrã onde cada coisa se faz. `None` é "ainda não tem ecrã",
+#: e **hoje não há nenhum**: o `receitas-e-producao` era o último, e a fatia A da
+#: ADR 0035 deu-lhe a rota `/receitas`. O tipo continua a admitir `None` porque a
+#: afirmação que vale é *um tema sem rota é um tema cujo ecrã ainda não existe*,
+#: e um tema novo pode nascer assim.
+#:
+#: O destino do `receitas-e-producao` é a **ficha**, não a produção: o
+#: `POST /recipes/<id>/production` é da fatia B e não tem ecrã. O tema cobre as
+#: duas coisas e leva ao sítio onde metade delas já se faz.
 TEMAS: Mapping[str, Destino | None] = {
     "receber": Destino(rota="receber", rotulo_id="ver_rececoes"),
     "rever-linhas": Destino(
@@ -173,7 +195,7 @@ TEMAS: Mapping[str, Destino | None] = {
     "painel": Destino(rota="painel", rotulo_id="ver_painel"),
     "artigos-sku-embalagens": Destino(rota="stock", rotulo_id="ver_stock"),
     "fornecedores": Destino(rota="receber", rotulo_id="ver_rececoes"),
-    "receitas-e-producao": None,
+    "receitas-e-producao": Destino(rota="receitas", rotulo_id="ver_receitas"),
     "equipa-e-convites": Destino(
         rota="definicoes",
         parametros={"secao": "equipa"},
@@ -304,7 +326,8 @@ def _fixo(destino: Destino):
 
 #: O mapa **fechado**. Uma tool que não esteja aqui não produz botão nenhum, e
 #: isso é a resposta certa para as procuras (`procurar_artigos`) e para o que
-#: ainda não tem ecrã (receitas, produções).
+#: ainda não tem ecrã — hoje só as **produções**, que são da fatia B da ADR 0035.
+#: As receitas saíram dessa lista no dia em que ganharam rota.
 _MAPA = {
     "saldo_de_artigo": _destino_de_artigo,
     "movimentos_de_artigo": _destino_de_artigo,
@@ -318,6 +341,13 @@ _MAPA = {
     "alertas": _destino_de_alertas,
     "rececoes": _destino_de_rececoes,
     "rececao": _destino_de_rececao,
+    # As duas tools de receitas levam à **lista** de fichas. A `receita` sabe
+    # qual é e podia levar à ficha, e não leva: `/receitas/<id>` precisava de um
+    # id de rota próprio no `ROTAS` e de um `rotulo_id` próprio, e a ADR 0035
+    # autorizou um de cada. A lista é um destino verdadeiro; a ficha é melhor e
+    # fica nomeada.
+    "receitas": _fixo(Destino(rota="receitas", rotulo_id="ver_receitas")),
+    "receita": _fixo(Destino(rota="receitas", rotulo_id="ver_receitas")),
     "contagens": _fixo(Destino(rota="contar", rotulo_id="ver_contagens")),
     "contagem": _fixo(Destino(rota="contar", rotulo_id="ver_contagens")),
     "compras_por_periodo": _fixo(Destino(rota="receber", rotulo_id="ver_rececoes")),

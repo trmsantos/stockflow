@@ -229,6 +229,11 @@ def test_o_enum_tem_exatamente_os_ids_do_registo_do_shell() -> None:
         # depois o `gen:api`, e o `Record` do shell não compila até ter a rota.
         "assistente",
         "stock",
+        # As fichas técnicas (ADR 0035, fatia A), a 2026-11-02: o oitavo, pela
+        # mesma ordem. Entre o id entrar aqui e a rota `/receitas` existir na
+        # árvore do cliente, o `pnpm typecheck` do frontend falha com `TS2741` —
+        # e **o erro é o mecanismo**, não um acidente a corrigir à pressa.
+        "receitas",
         "contar",
         "receber",
     ]
@@ -347,7 +352,9 @@ def test_sem_linhas_o_menu_e_o_dos_defaults(cenario: Cenario) -> None:
         "que faz `grupo ?? registo.grupo`, e resolvê-lo no servidor prendia o "
         "tenant a um default que ele nunca escolheu — e numa língua só."
     )
-    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 40, 50]
+    # O 35 é o das Receitas (ADR 0035, fatia A): entre o Stock (30) e o Contar
+    # (40), porque a ficha técnica lê-se ao lado do stock e escreve-se sentado.
+    assert [item["ordem"] for item in menu] == [10, 15, 20, 30, 35, 40, 50]
 
 
 def test_sem_estabelecimento_ativo_o_menu_vem_vazio(cenario: Cenario) -> None:
@@ -381,6 +388,7 @@ def test_o_owner_guarda_o_menu_e_a_sessao_passa_a_devolve_lo(cenario: Cenario) -
         _item(RotaDeMenu.ALERTAS, grupo="Gestão", ordem=40),
         _item(RotaDeMenu.ASSISTENTE, grupo="Gestão", ordem=45),
         _item(RotaDeMenu.STOCK, grupo="Gestão", ordem=50, visivel=False),
+        _item(RotaDeMenu.RECEITAS, grupo="Gestão", ordem=60),
     ]
 
     resposta = _put(_cliente(cenario.ana, cenario.alfa.id), corpo)
