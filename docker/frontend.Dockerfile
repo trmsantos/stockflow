@@ -56,7 +56,7 @@ import (
 func main() { caddycmd.Main() }
 GO
 
-# As quatro dependências transitivas que trazem CVEs, fixadas nas versões que o
+# As dependências transitivas que trazem CVEs, fixadas nas versões que o
 # grafo de facto resolve — e não nas versões mínimas corrigidas, que era o meu
 # erro: cada mínima puxava outra para cima em cascata (`crypto@0.55` exige
 # `net@0.57`, `grpc@1.83.2` exige `text@0.41`). Estes números vieram de deixar o
@@ -83,6 +83,29 @@ GO
 #      (0.57→0.58) e o `text` (0.42→0.43); o `grpc` ficou no 1.84.0, que já era
 #      o que o `-u` queria. Ter fixado o 0.60.0 à mão recomeçava a cascata.
 #
+# **2026-11-02 — terceira ronda.** Uma CVE HIGH, outra vez negação de serviço:
+# CVE-2026-116587 no `github.com/go-jose/go-jose/v4` (v4.1.4), por parâmetros
+# RSA forjados num JWK. Não é `stdlib`, logo a lição 1 acima lê-se ao contrário:
+# o digest do builder está bom — zero no resto do binário e zero no Alpine — e o
+# que faltava era uma linha nesta lista. Entra por `modules/standard`, via
+# `caddypki/acmeserver` -> `smallstep/certificates` -> `go-oidc`; é código que
+# não usamos, mas está ligado no binário, e o Trivy analisa o binário.
+#
+# O `-u` resolveu **v4.1.7** (o mínimo corrigido era o 4.1.6) e desta vez não
+# levou nada atrás: `crypto`, `net`, `text`, `grpc` e `compress` ficaram onde
+# estavam, e as duas imagens resolveram a mesma versão, com e sem o plugin de
+# rate limit. Uma cascata vazia também é um resultado medido — o método é que
+# não muda: fixa-se o que o `-u` resolveu, não o mínimo corrigido.
+#
+# **O irmão `go-jose/v3` fica, e convém saber porquê.** O mesmo CVE afecta o
+# `v3.0.5` que o `caddypki` arrasta por `go.step.sm/crypto`, e a montante não há
+# correcção publicada para o ramo v3: o Trivy marca-o `affected` **sem** versão
+# de correcção, e o gate só fica verde porque corre com `--ignore-unfixed`.
+# Medido: nem com `go.step.sm/crypto` no v0.91.1, o mais recente, o v3 sai do
+# grafo — e esse upgrade arrastava `api`, `protobuf`, `tools` e `genproto` por
+# nada. Não há aqui número para fixar; no dia em que o ramo v3 for corrigido a
+# montante, entra nesta lista como qualquer outro.
+#
 # O andar `caddy-builder` é **igual** no `proxy.Dockerfile` e no
 # `frontend.Dockerfile` (só o `main.go` difere, pelo plugin). Subir um e
 # esquecer o outro deixa o `trivy` a falhar numa das imagens.
@@ -93,6 +116,7 @@ RUN go mod init stockflow/caddy \
             golang.org/x/text@v0.43.0 \
             google.golang.org/grpc@v1.84.0 \
             github.com/klauspost/compress@v1.18.7 \
+            github.com/go-jose/go-jose/v4@v4.1.7 \
  && go mod tidy \
  && go build -trimpath -ldflags="-s -w" -o /caddy . \
  && /caddy version
