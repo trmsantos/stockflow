@@ -36,6 +36,31 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
+**Estado atual (2026-10-29):** o **PR #17 está aberto** com os dois detalhes que não existiam. O
+`useArtigoEmStock` e o `useRececao` pediam a lista paginada a 50 e escolhiam a linha com um `find()`:
+o artigo para lá dos 50 — alcançável pela procura — abria a dizer **"não está no stock"**, no ecrã de
+onde se regista a quebra. Agora há rota de detalhe nos dois, e o artigo que **nunca entrou** é um
+facto próprio (`never_stocked`), distinto de "não existe" (404) e de "esgotado" — que é uma afirmação
+sobre consumo e não se escreve sobre quem nunca entrou, em superfície nenhuma.
+
+A fatia destapou **quatro** defeitos que estavam na `main` e que nenhum teste apanhava, e três deles
+não eram o que fomos procurar: um docstring a negar uma rota que existia desde a fatia 2; o
+`PUT /receipts/<id>` publicado, alcançável sobre receções **confirmadas** e capaz só de dar 500; dois
+`requestBody` obrigatórios que nenhum handler lia; e um teste a herdar o `PAGE_SIZE` do ambiente. A
+causa comum dos dois do meio é uma só, e é da casa: sem `request=`/`responses=`, o `drf-spectacular`
+cai no `get_serializer_class()`.
+
+Suite: **985 passed, 4 skipped** (+32), medidos em base criada de raiz; `ruff` a zero sem `# noqa`;
+`typecheck`/`lint`/`build` verdes; `security-reviewer` **PASS** com 0 critical/high/medium. Contrato
+em **ADR 0034, adenda de 2026-10-29, decisões 12 a 19**.
+
+**Armadilha medida hoje, que custou duas corridas de oito minutos:** dois `pytest` em paralelo
+deixam o `test_stockflow` **de pé**, e as corridas seguintes degradam-se sozinhas (49 falhas, depois
+172, com a árvore na mesma). Os subagentes também correm testes. Antes da suite:
+`ps aux | grep "[p]ytest"`, e `docker exec stockflow-db-1 psql -U stockflow -d stockflow -c "DROP
+DATABASE IF EXISTS test_stockflow;"`. Diagnóstico em dez segundos: corre **um** teste sozinho — se
+der `1 passed` com um `error` à volta, o problema é a base e não o código.
+
 **Estado atual (2026-10-26):** PR #13 mergeado a 25/10 — as contagens passam a ser **uma aberta por
 localização** e o fecho deixou de contar duas vezes (ADR 0033, que revoga a d2 da 0030). A `main`
 ficou **vermelha no próprio run do merge** e voltou a ficar no cron de segunda, e em nenhum dos dois
@@ -84,17 +109,39 @@ Dev local: `backend/.env` é a única fonte de variáveis (o Django lê-o sozinh
 `DATABASE_URL="$MIGRATION_DATABASE_URL"`; `uv run manage.py seed_demo --create-tenant` cria três
 lojas com `owner@demo.pt` / `manager@demo.pt` / `staff@demo.pt` (`DemoPassword123!`).
 
-**Por decidir / por fazer a seguir:** **ligar o Stock e os Alertas**, os últimos dois ecrãs a beber
-dos fixtures. Medido a 2026-10-26, e o contrato **não** é o mesmo dos dois lados: os fixtures servem
-`/stock/levels`, `/stock/summary`, `/stock/movements`, `/stock/alerts`, `/stock/alerts/summary` e
-`/stock/alerts/waste`; o Django serve `/stock/summary`, `/stock/by-location`, `/stock/by-product`,
-`/stock/alerts` e `/stock/movements`, e **não tem** `levels`, `alerts/summary` nem `alerts/waste`.
-Logo a fatia começa por uma decisão de contrato (ADR), não por código. O `fixtures/servidor.ts` diz
-como se desmonta: um recurso de cada vez, apagando o ficheiro e a linha.
+**Por decidir / por fazer a seguir:** **ligar as Receitas e a Produção** — escolhido pelo dono a
+2026-10-29 e ainda por começar. É a maior porta fechada da casa e a única em que o servidor já está
+pago: o `recipes` tem `models.py` (`Recipe`, `RecipeLineItem`), `services.py` com o `produzir()`
+**escrito e testado** (`tests/test_production.py`) desde a ADR 0026, `selectors.py` e `api.py` — e
+**nenhum `views.py`, nenhum `urls.py`, nenhuma linha em `config/urls.py` e nenhum ecrã**. A ADR 0026
+d3 deixou-o explícito: *"não há endpoint, vem na fatia 7"*. Falta a porta e os ecrãs (fichas técnicas
+e produzir), e isso dá o **custo do prato**, que é o que uma pastelaria quer ver. Consultar o
+`domain-expert` antes do contrato: `yield_factor`, semi-acabados (uma receita que é ingrediente de
+outra) e o lote sintético do produto acabado.
 
 Depois disso: as dívidas de IVA e de notas de crédito que a receção deixou (ADR 0029 — o `unit_cost`
 de um `receipt` já é líquido de IVA, e uma nota de crédito **de preço** não move stock);
 `billing` e `notifications` continuam sem `models.py`.
+
+**Dívidas decididas e por implementar, nenhuma bloqueia** (adenda de 2026-10-29 à ADR 0034, com a
+medição toda lá dentro, para não se voltar a medir):
+- **Cinco operações do `purchasing` publicam a resposta errada** — o `POST /receipts` publica o
+  serializer de **entrada** como resposta de criação; mais o `PATCH`, o `summary` e duas actions que
+  publicam 200 devolvendo 201. Nada parte hoje (os Zod são à mão e validam as respostas a sério),
+  logo é dívida de contrato e não defeito em produção. O que daí deve sair é um **gate nas duas
+  direcções e em toda a casa** — o precedente está no `CORPOS_PUBLICADOS` do `tests/test_rececoes.py`,
+  que faz isto para uma classe e uma direcção.
+- **Um artigo com mínimo definido que nunca entrou em stock é falta**, e hoje não aparece: o selector
+  parte do `StockLevel` e exclui-os por desenho. Decidido pelo dono que é falta; custa mudar o
+  selector (passa a partir do catálogo) e o ecrã de Alertas.
+- **Três dívidas de conformidade HACCP**, a confirmar com o plano de um cliente real: o ecrã não
+  responde a *"onde está o lote L2345?"* (recolha do fornecedor), nem a *"de quem veio"*
+  (Reg. CE 178/2002 art. 18, um-passo-atrás), e a validade secundária não cobre a **descongelação**.
+- **`unaccent`** (adiado desde a ADR 0027 d5): toda a casa faz `icontains`, logo `?q=acucar` não
+  encontra "Açúcar". Precisa de extensão do Postgres, logo de migração e ADR.
+- **Um artigo `never_stocked` não cabe numa folha de contagem**: o `abrir_contagem` só materializa
+  artigos com nível não-zero e o ecrã de contar não tem campo de procura. É por isso que o vazio da
+  ficha **não** promete a contagem como alternativa.
 
 **Resolvido — não voltar a listar.** A incoerência das validades (painel em calendário civil,
 assistente em dia de negócio) foi fechada a **2026-10-16**: os dois chamadores de
