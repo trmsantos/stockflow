@@ -247,14 +247,16 @@ export const EN: typeof PT = {
     aCarregar: "Loading the item…",
     minimoERegisto: (minimo: string, unidade: string) =>
       `minimum ${minimo}, recorded in ${unidade}`,
+    emTodoOEstabelecimento: "across the whole establishment",
     negativoTitulo: "It went negative",
     negativoCorpo:
       "The recorded stock is below zero. It is usually a receipt that was never entered, or an issue entered twice. Fix it with a new movement — nothing is deleted.",
     erroAoCarregar: "Could not load the item",
     tentarOutraVez: "Try again",
-    semArtigoTitulo: "This item is not in stock",
-    semArtigoCorpo:
-      "Either it never had movements, or the address points to an item from another establishment.",
+    nuncaEntrouTitulo: (artigo: string) => `${artigo} has not been received into stock yet.`,
+    nuncaEntrouCorpo: "The first entry is made from the supplier invoice.",
+    naoExisteTitulo: "This item does not exist",
+    naoExisteCorpo: "The address does not point to any item in this establishment.",
   },
 
   movimentos: {

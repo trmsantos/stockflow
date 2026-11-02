@@ -4,6 +4,9 @@ contagens; ADR 0034, os sete recursos de `/stock`).
 Rotas:
 - /locations — CRUD de localizações
 - /stock/levels, /stock/summary — o ecrã de Stock (linhas e os quatro números)
+- /stock/levels/{product_id} — a ficha de um artigo (ADR 0034, adenda de 29):
+  é uma **action** do `StockPanelViewSet` e não uma rota escrita aqui, logo
+  este ficheiro não muda por causa dela
 - /stock/alerts, /stock/alerts/summary, /stock/alerts/waste — o ecrã de Alertas
 - /stock/movements — o ledger de um artigo (`?artigo=` obrigatório)
 - /stock/movements/waste, /stock/movements/adjustment, /stock/movements/transfer —

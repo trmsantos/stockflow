@@ -852,6 +852,11 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^stock/counts/(?P<pk>[^/.]+)/closing$",
         "api/v1/^stock/counts/(?P<pk>[^/.]+)/lines$",
         "api/v1/^stock/levels$",
+        # A ficha de um artigo (ADR 0034, adenda de 29). Com âmbito, que é o
+        # default, e é o âmbito que faz o trabalho: um `product_id` de outro
+        # estabelecimento dá 404 **porque a política não devolve a linha**, e
+        # não porque alguém comparou tenants em Python.
+        "api/v1/^stock/levels/(?P<product_id>[^/.]+)$",
         "api/v1/^stock/movements$",
         "api/v1/^stock/movements/adjustment$",
         "api/v1/^stock/movements/transfer$",

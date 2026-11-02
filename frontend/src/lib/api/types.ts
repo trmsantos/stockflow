@@ -805,8 +805,7 @@ export interface paths {
         };
         /** @description GET /receipts/{id} — retorna uma receção com estrutura completa. */
         get: operations["receipts_retrieve"];
-        /** @description ViewSet para receções de mercadoria. */
-        put: operations["receipts_update"];
+        put?: never;
         post?: never;
         /** @description DELETE /receipts/{id} — apaga rascunho. */
         delete: operations["receipts_destroy"];
@@ -1117,6 +1116,30 @@ export interface paths {
          * @description Uma linha por artigo, o pior primeiro.
          */
         get: operations["stock_levels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock/levels/{product_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * O stock de **um** artigo: a linha da lista, mais `never_stocked`
+         * @description Três estados: o artigo tem `StockLevel` (200, `never_stocked: false`); existe no catálogo e nunca entrou (200, `never_stocked: true`, saldo zero e `by_location: []`); não existe neste estabelecimento (404). O vazio é 200 e o erro é 404, para o cliente não ter de traduzir um código de erro num ecrã vazio.
+         *
+         *     **Sem `?loja=`**: o detalhe é sempre do estabelecimento inteiro, porque é do `by_location` que se escolhe onde registar a quebra. O saldo total escreve-se *«em todo o estabelecimento»*.
+         *
+         *     Um artigo **arquivado** (`is_active=False`) responde 200: mercadoria que existiu continua auditável.
+         */
+        get: operations["stock_level"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2802,6 +2825,52 @@ export interface components {
             readonly unit_cost?: string | null;
         };
         /**
+         * @description O corpo do `GET /stock/levels/<product_id>`: a linha **mais um campo**.
+         *
+         *     ADR 0034, adenda de 29, decisão 14. Os outros doze campos não se repetem —
+         *     herdam-se —, e do lado do cliente também não nasce um segundo schema: é o
+         *     `nivelDeStockSchema.extend({ never_stocked })`.
+         *
+         *     ## O `CAMPOS_DE_DINHEIRO` **não** se redeclara aqui
+         *
+         *     Herda-se, e é a decisão 15 por extenso: redeclará-lo é literalmente a porta
+         *     irmã por onde o dinheiro sai, que é o padrão que esta casa já apanhou duas
+         *     vezes — a ADR 0031 fechou os euros da receção e deixou o `ExtracaoOut` do
+         *     documento aberto **sobre a mesma fatura**. O contexto é o mesmo
+         *     `get_serializer_context()` do `StockPanelViewSet`, e o seu default é falso.
+         *
+         *     ## Porque é que o campo **não** vai na lista
+         *
+         *     Lá seria `false` por construção — a lista parte do `StockLevel` e nunca
+         *     alcança um artigo que nunca entrou —, e um campo que nunca varia num sítio
+         *     é onde se começa a não olhar para ele.
+         */
+        NivelDoArtigoOut: {
+            readonly by_location?: components["schemas"]["NivelPorLocalizacaoOut"][];
+            /** @description Do **artigo**, logo do estabelecimento inteiro. */
+            readonly min_quantity?: components["schemas"]["QuantidadeOut"];
+            readonly nearest_expiry?: components["schemas"]["ValidadeProximaOut"] | null;
+            /** @description **Nunca houve `StockLevel` deste artigo** — nem receção, nem contagem, nem ajuste. Não é saldo zero: um artigo que entrou e acabou tem saldo zero e `never_stocked: false`. É o `nunca_entrou` do assistente (ADR 0027) com o nome em inglês que o resto de `/stock` usa. */
+            readonly never_stocked?: boolean;
+            /** Format: uuid */
+            readonly product?: string;
+            readonly quantity?: components["schemas"]["QuantidadeOut"];
+            /** @description Quanta desta quantidade está em níveis sem preço registado. Zero é cobertura total; igual ao `quantity` é não haver preço nenhum. */
+            readonly quantity_without_cost?: components["schemas"]["QuantidadeOut"];
+            readonly short_name?: string;
+            readonly status?: components["schemas"]["EstadoDoNivelEnum"];
+            /**
+             * Format: decimal
+             * @description Ausente para quem não vê euros.
+             */
+            readonly total_value?: string;
+            /**
+             * Format: decimal
+             * @description Custo médio ponderado da quantidade **com** preço — nunca diluído pela parte sem preço. NULL quando nenhuma tem. Ausente para quem não vê euros.
+             */
+            readonly unit_cost?: string | null;
+        };
+        /**
          * @description Quanto deste artigo está em cada prateleira. Sem euros, de propósito.
          *
          *     A repartição é **o produto**: é ela que responde a "onde está?" e é dela
@@ -3471,29 +3540,6 @@ export interface components {
             readonly temperatures?: components["schemas"]["TemperaturaRegistadaOut"][];
             readonly vat_breakdown?: components["schemas"]["VatBreakdown"][];
         };
-        /** @description Saída de receção. Os totais em euros só saem para `owner|manager`. */
-        RececaoOutRequest: {
-            /** Format: date-time */
-            confirmed_at: string | null;
-            confirmed_by: string | null;
-            customer_name: string;
-            customer_nif: string;
-            /** Format: date */
-            doc_date: string | null;
-            doc_number: string;
-            doc_type: components["schemas"]["DocTypeEnum"];
-            /** Format: uuid */
-            document: string | null;
-            /** Format: decimal */
-            document_total?: string | null;
-            /** Format: uuid */
-            id: string;
-            /** Format: date-time */
-            received_at: string;
-            reference: string;
-            /** Format: uuid */
-            supplier_id: string | null;
-        };
         /**
          * @description * `needs_review` - needs_review
          *     * `confirmed` - confirmed
@@ -3887,6 +3933,12 @@ export interface components {
          * @enum {string}
          */
         TemaEnum: "escuro" | "meio_termo" | "claro";
+        /** @description Entrada de temperatura. */
+        TemperaturaInRequest: {
+            /** Format: decimal */
+            celsius: string;
+            conservation: components["schemas"]["ConservacaoMedidaEnum"];
+        };
         /** @description Temperatura registada em receção. */
         TemperaturaRegistadaOut: {
             /** Format: decimal */
@@ -5198,33 +5250,6 @@ export interface operations {
             };
         };
     };
-    receipts_update: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this receção de mercadoria. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RececaoOutRequest"];
-                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RececaoOut"];
-                };
-            };
-        };
-    };
     receipts_destroy: {
         parameters: {
             query?: never;
@@ -5283,12 +5308,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RececaoOutRequest"];
-                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             200: {
                 headers: {
@@ -5389,8 +5409,8 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RececaoOutRequest"];
-                "multipart/form-data": components["schemas"]["RececaoOutRequest"];
+                "application/json": components["schemas"]["TemperaturaInRequest"];
+                "multipart/form-data": components["schemas"]["TemperaturaInRequest"];
             };
         };
         responses: {
@@ -5803,6 +5823,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedNivelDeStockOutList"];
+                };
+            };
+        };
+    };
+    stock_level: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description O artigo. Mal formado é 400; inexistente neste estabelecimento é 404. */
+                product_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NivelDoArtigoOut"];
                 };
             };
         };

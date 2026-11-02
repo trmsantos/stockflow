@@ -51,8 +51,18 @@ import type { Rececao } from "./schemas";
  * células que imprimem dinheiro precisam de estreitar o tipo (`undefined`,
  * `null`, ou a string) e um booleano não o faz — ficariam com o teste à mesma,
  * e a função era uma chave que ninguém lia. Quem decide as **colunas** é esta,
- * e isso é de propósito: o cabeçalho chega antes das linhas, logo o esqueleto
- * já sabe quantas colunas vêm e a tabela não salta quando os dados chegam.
+ * e isso continua a ser o desenho.
+ *
+ * **A razão que aqui estava escrita deixou de ser verdade a 2026-10-29**, e
+ * corrige-se em vez de se arrumar: dizia que *"o cabeçalho chega antes das
+ * linhas"* porque *"vem da mesma entrada de cache que a lista"*. Vinha — o
+ * `useRececao` escolhia o documento da página da lista com um `find()` —, e
+ * desde a decisão 17 da adenda à ADR 0034 o cabeçalho é um pedido
+ * (`GET /receipts/<id>`) com o seu próprio tempo, que pode chegar depois das
+ * linhas. **Não há salto de layout por causa disso**, e é o que mantém a
+ * decisão de pé: a tabela só renderiza dentro do ramo em que o cabeçalho já
+ * existe, logo o esqueleto das linhas e a tabela nunca se desenham com
+ * respostas diferentes a esta pergunta.
  */
 export function rececaoMostraEuros(rececao: Rececao): boolean {
   return (

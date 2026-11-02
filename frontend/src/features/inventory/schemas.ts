@@ -231,6 +231,44 @@ export const nivelDeStockSchema = z.object({
 });
 
 /**
+ * O corpo do `GET /stock/levels/<id do artigo>`: a linha da lista **mais um
+ * campo** (ADR 0034, adenda de 29, decisão 14).
+ *
+ * Um `.extend()` e **não um segundo schema**: o `nivelDeStockSchema` continua a
+ * ser a única definição de um nível, e os outros doze campos não se repetem
+ * aqui. Uma segunda cópia divergia na primeira correcção feita só numa delas —
+ * que é a família de defeitos que esta casa já apanhou duas vezes.
+ *
+ * **`never_stocked` não leva `.optional()`, e o tipo gerado diz o contrário.**
+ * O `NivelDoArtigoOut` sai do OpenAPI com o `required` vazio — como já sai o
+ * `NivelDeStockOut` —, logo o `types.ts` escreve `never_stocked?: boolean`. O
+ * servidor manda-o **sempre**: é um `BooleanField(read_only=True)` do
+ * serializer, não uma chave que a política de euros tire do JSON. A convenção
+ * desta casa é a que o `nivelDeStockSchema` já usa — `.optional()` só onde a
+ * chave pode **faltar de facto** (os dois campos de dinheiro, ausentes para
+ * quem não vê euros), e exigida em tudo o resto. Pô-lo opcional por causa do
+ * tipo gerado era deixar o ecrã tratar "o servidor não disse" e "nunca entrou"
+ * como o mesmo facto, que é precisamente a distinção que esta rota existe para
+ * fazer.
+ *
+ * O campo **não** existe na lista: lá seria `false` por construção, porque a
+ * lista parte do `StockLevel` e nunca alcança um artigo que nunca entrou.
+ */
+export const nivelDoArtigoSchema = nivelDeStockSchema.extend({
+  /**
+   * **Nunca houve `StockLevel` deste artigo** — nem receção, nem contagem, nem
+   * ajuste. Não é saldo zero: um artigo que entrou e acabou tem saldo zero e
+   * `never_stocked: false`.
+   *
+   * O ecrã trata-o como **vazio** e não como erro, e **não escreve "esgotado"**
+   * sobre ele: o `status` vem mesmo assim `"esgotado"` do servidor, mas isso é
+   * uma afirmação sobre consumo — tínhamos e acabou — e sobre o que nunca
+   * entrou é falsa no sentido que importa (decisão 13).
+   */
+  never_stocked: z.boolean(),
+});
+
+/**
  * Os três números do topo. Vêm do servidor porque são a mesma verdade que
  * alimenta os alertas — e o `expiring_within_days` viaja com o número para o
  * ecrã poder mostrar o limiar em vez de o esconder num painel de
@@ -726,6 +764,7 @@ export type Localizacao = z.output<typeof localizacaoSchema>;
 export type ValidadeProxima = z.output<typeof validadeProximaSchema>;
 export type NivelPorLocalizacao = z.output<typeof nivelPorLocalizacaoSchema>;
 export type NivelDeStock = z.output<typeof nivelDeStockSchema>;
+export type NivelDoArtigo = z.output<typeof nivelDoArtigoSchema>;
 export type ResumoDeStock = z.output<typeof resumoDeStockSchema>;
 export type Movimento = z.output<typeof movimentoSchema>;
 export type QuebraParaRegistar = z.output<typeof quebraParaRegistarSchema>;

@@ -6,6 +6,7 @@ Endpoints:
 - POST /api/v1/locations
 - PATCH /api/v1/locations/{id}
 - GET /api/v1/stock/levels
+- GET /api/v1/stock/levels/{product_id}
 - GET /api/v1/stock/summary
 - GET /api/v1/stock/alerts
 - GET /api/v1/stock/alerts/summary
@@ -25,6 +26,7 @@ from uuid import UUID
 
 from django.core.exceptions import ValidationError
 from django.db.models import Max, QuerySet
+from django.http import Http404
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from drf_spectacular.types import OpenApiTypes
@@ -77,6 +79,8 @@ from apps.inventory.selectors import (
     movimentos_do_artigo,
     niveis_de_stock,
     niveis_filtrados,
+    nivel_do_artigo,
+    nivel_sem_entradas,
     progresso_da_contagem,
     resumo_de_stock,
     rotulos_de_referencia,
@@ -97,6 +101,7 @@ from apps.inventory.serializers import (
     LocalizacaoPatchInSerializer,
     MovimentoOutSerializer,
     NivelDeStockOutSerializer,
+    NivelDoArtigoOutSerializer,
     QuebraInSerializer,
     RespostaDeQuebraOutSerializer,
     ResumoDeAlertasOutSerializer,
@@ -112,6 +117,7 @@ from apps.inventory.serializers import (
     compor_movimento,
     compor_movimento_do_ledger,
     compor_nivel,
+    compor_nivel_do_artigo,
     em_unidade_base,
     em_unidade_pedida,
     zona_da_localizacao,
@@ -275,6 +281,18 @@ _P_ARTIGO = OpenApiParameter(
     required=True,
     description="Obrigatório: o ledger lê-se por artigo. Sem ele é 400.",
 )
+#: O artigo **no caminho** da rota de detalhe. Tipado com `OpenApiTypes.UUID`
+#: de propósito: o `url_path` da action é uma expressão regular e sem isto o
+#: drf-spectacular publica o parâmetro como `string` — e o cliente gerado
+#: perde a única validação que tem antes de o pedido sair (ADR 0034, adenda de
+#: 29, decisão 12).
+_P_ARTIGO_NO_CAMINHO = OpenApiParameter(
+    "product_id",
+    OpenApiTypes.UUID,
+    OpenApiParameter.PATH,
+    required=True,
+    description="O artigo. Mal formado é 400; inexistente neste estabelecimento é 404.",
+)
 
 #: A frase de um parâmetro de união fechada fora da união. 400 e não uma lista
 #: a fingir que filtrou — é a regra que o `?status=` das contagens já segue.
@@ -308,6 +326,24 @@ def _da_uniao(valor: str | None, *, opcoes: tuple[str, ...]) -> str | None:
         summary="Stock por artigo: saldo, mínimo, estado, validade e onde está",
         parameters=[_P_LOJA, _P_Q, _P_FILTRO],
         responses={200: NivelDeStockOutSerializer(many=True)},
+    ),
+    level=extend_schema(
+        operation_id="stock_level",
+        summary="O stock de **um** artigo: a linha da lista, mais `never_stocked`",
+        description=(
+            "Três estados: o artigo tem `StockLevel` (200, `never_stocked: "
+            "false`); existe no catálogo e nunca entrou (200, `never_stocked: "
+            "true`, saldo zero e `by_location: []`); não existe neste "
+            "estabelecimento (404). O vazio é 200 e o erro é 404, para o "
+            "cliente não ter de traduzir um código de erro num ecrã vazio.\n\n"
+            "**Sem `?loja=`**: o detalhe é sempre do estabelecimento inteiro, "
+            "porque é do `by_location` que se escolhe onde registar a quebra. "
+            "O saldo total escreve-se *«em todo o estabelecimento»*.\n\n"
+            "Um artigo **arquivado** (`is_active=False`) responde 200: "
+            "mercadoria que existiu continua auditável."
+        ),
+        parameters=[_P_ARTIGO_NO_CAMINHO],
+        responses={200: NivelDoArtigoOutSerializer},
     ),
     summary=extend_schema(
         operation_id="stock_summary",
@@ -412,6 +448,56 @@ class StockPanelViewSet(viewsets.GenericViewSet):
             [compor_nivel(linha) for linha in linhas],
             NivelDeStockOutSerializer,
             request,
+        )
+
+    @action(detail=False, methods=["GET"], url_path="levels/(?P<product_id>[^/.]+)")
+    def level(self, request: Request, product_id: str) -> Response:
+        """O stock de um artigo: a linha da lista, mais `never_stocked`.
+
+        Mora nesta classe e não num ViewSet próprio (ADR 0034, adenda de 29,
+        decisão 12): o `get_serializer_context()` que monta o contexto dos
+        euros é **um**, e uma segunda classe era um segundo sítio para o
+        esquecer.
+
+        **Três estados, e o do meio é um vazio e não um erro** (decisão 13):
+
+        * tem `StockLevel` → 200 com `never_stocked: false`;
+        * existe no catálogo e nunca entrou → 200 com `never_stocked: true`;
+        * não existe neste estabelecimento → 404.
+
+        Quem distingue os dois últimos é o `catalog`: sem linha nenhuma para
+        olhar, a pergunta *"este artigo existe?"* não é do `inventory`. O 404 é
+        o da **política de RLS**, que não devolve a linha — ninguém compara
+        tenants em Python. Um artigo **arquivado** é (a) ou (b) e nunca (c): o
+        `produto_por_id` lê por `(tenant_id, id)` e não filtra `is_active`, e
+        isso passa a ser estado escrito em vez de acaso.
+
+        Um `product_id` mal formado é **400** e nunca 404, com o mesmo
+        `DETALHE_UUID_INVALIDO` do `?loja=`: *"isto não é um uuid"* e *"este
+        artigo não existe"* são dois factos, e o segundo seria mentira.
+        """
+        try:
+            artigo = UUID(product_id)
+        except ValueError:
+            return _recusa(DETALHE_UUID_INVALIDO)
+
+        linha = nivel_do_artigo(tenant_id=request.tenant.id, product_id=artigo)
+        # **`never_stocked` é a ausência de `StockLevel` e nunca o saldo a
+        # zero** (decisão 14): as duas condições divergem no dia em que o
+        # artigo entra e acaba, que é o caso mais comum dos dois. A bandeira
+        # sai daqui — de o selector não ter encontrado linha nenhuma — e não de
+        # olhar para a quantidade a seguir.
+        nunca_entrou = linha is None
+        if linha is None:
+            produto = produto_por_id(tenant_id=request.tenant.id, product_id=artigo)
+            if produto is None:
+                raise Http404
+            linha = nivel_sem_entradas(produto=produto)
+        corpo = compor_nivel_do_artigo(linha, never_stocked=nunca_entrou)
+        return Response(
+            NivelDoArtigoOutSerializer(
+                corpo, context=self.get_serializer_context()
+            ).data
         )
 
     @action(detail=False, methods=["GET"], url_path="summary")

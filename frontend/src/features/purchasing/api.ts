@@ -111,25 +111,38 @@ export function useRececoes(estado?: EstadoPedido): UseQueryResult<Paginated<Rec
 }
 
 /**
- * Uma receção, escolhida pelo `id`.
+ * Uma receção, pelo `id` — **o recurso, e não uma linha escolhida da lista**
+ * (ADR 0034, adenda de 29, decisão 17).
  *
- * Não há `GET /receipts/<id>`: o cabeçalho do documento é uma **seleção** da
- * mesma entrada de cache que a lista já tem, pelo que abrir uma receção e voltar
- * atrás não refaz pedido nenhum. É a mesma decisão que o `useArtigoEmStock` do
- * módulo `inventory`, e por isso lê a lista **sem filtro** — o documento aberto
- * pode não estar no filtro que estava aplicado quando se tocou nele.
+ * `GET /receipts/<id>`, que **existe desde a fatia 2** e é o `retrieve` desta
+ * mesma classe no servidor. O que aqui estava escrito — *"não há
+ * `GET /receipts/<id>`"* — era falso, e era o defeito: este hook pedia a lista
+ * **sem filtro** e escolhia o documento com um `find()`, logo com a página a 50
+ * a 51.ª receção abria a dizer que não existe. Como a lista vem por
+ * `-received_at`, a que não se alcançava era a **mais antiga** — precisamente a
+ * que ficou por rever, e a que o contador de "por rever" do topo conta.
  *
- * `null` e não `undefined` quando não existe: o ecrã tem de distinguir "esta
- * receção não existe" (que tem uma saída) de "ainda a carregar" (que tem um
- * skeleton).
+ * O docstring anterior citava a decisão do `useArtigoEmStock` como precedente;
+ * essa decisão foi revogada pela mesma adenda, e foi essa citação que trouxe
+ * este caminho para dentro do âmbito: corrigir um e deixar o outro não era meia
+ * correcção — era deixar um comentário a invocar uma decisão morta sobre o
+ * mesmo defeito.
+ *
+ * **Dois estados e não três**: a receção é legível neste estabelecimento
+ * (`200`), ou não é — nunca existiu, era rascunho e foi apagada, ou é de outra
+ * casa (`404`). Não há aqui o vazio do `never_stocked` do `inventory`, e não é
+ * por simetria que se escolhe: ali quem sabia que o artigo existia era o
+ * `catalog`, aqui a linha **é** a receção e não há segundo dono a quem
+ * perguntar. O ecrã trata o `404` **antes** do erro genérico, senão o `detail`
+ * do DRF é o que aparece a quem está ao lado de uma palete.
  */
-export function useRececao(rececao: string): UseQueryResult<Rececao | null> {
+export function useRececao(rececao: string): UseQueryResult<Rececao> {
   const tenant = tenantDaCache();
 
   return useQuery({
-    queryKey: queryKeys.list(tenant, RECURSO_RECECOES, { estado: undefined }),
-    queryFn: ({ signal }) => apiRequest(CAMINHO_RECECOES, paginated(rececaoSchema), { signal }),
-    select: (pagina) => pagina.results.find((linha) => linha.id === rececao) ?? null,
+    queryKey: queryKeys.detail(tenant, RECURSO_RECECOES, rececao),
+    queryFn: ({ signal }) =>
+      apiRequest(`${CAMINHO_RECECOES}/${rececao}`, rececaoSchema, { signal }),
   });
 }
 

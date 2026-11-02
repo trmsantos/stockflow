@@ -25,6 +25,7 @@ import {
   localizacaoSchema,
   movimentoSchema,
   nivelDeStockSchema,
+  nivelDoArtigoSchema,
   quebraParaRegistarSchema,
   respostaDeQuebraSchema,
   resumoDeAlertasSchema,
@@ -40,6 +41,7 @@ import {
   type Localizacao,
   type Movimento,
   type NivelDeStock,
+  type NivelDoArtigo,
   type QuebraParaRegistar,
   type ResumoDeAlertas,
   type ResumoDeStock,
@@ -212,33 +214,38 @@ export function useNiveisDeStock(
 }
 
 /**
- * Um artigo da lista, escolhido pelo `id` do produto.
+ * Um artigo em stock, pelo `id` do produto — **um recurso, e não uma linha
+ * escolhida da lista** (ADR 0034, adenda de 29, decisões 12 a 16).
  *
- * Não há `GET /stock/levels/<id>`: a projeção por artigo é a lista, e o detalhe
- * seleciona-a da **mesma** entrada de cache que o ecrã de Stock consolidado já
- * tem — logo voltar atrás e abrir outro artigo não refaz pedido nenhum. Sem
- * `?loja=`, de propósito: o detalhe mostra o artigo em todas as localizações,
- * porque é de uma delas que se vai registar o desperdício.
+ * `GET /stock/levels/<product_id>`. Até aqui este hook pedia a lista **sem
+ * filtros** e escolhia a linha com um `find()`; com a página a 50, um artigo
+ * que a procura alcança e a primeira página não contém abria a dizer que não
+ * estava no stock — uma frase falsa sobre mercadoria que existe, no ecrã a
+ * partir do qual se regista a quebra. O argumento que construiu aquele
+ * `select` — *"o detalhe não paga um pedido que a lista já pagou"* — só é
+ * verdade para quem chegou à ficha a partir da lista **sem filtros**, que é
+ * exactamente o caso em que o defeito não aparecia.
+ *
+ * **Três estados, e o do meio é um vazio e não um erro**: o artigo tem
+ * `StockLevel` (`never_stocked: false`); existe no catálogo e nunca entrou
+ * (`200` com `never_stocked: true` e saldo zero); não existe neste
+ * estabelecimento (`404`). O ecrã distingue os três, e o ramo do 404 vem antes
+ * do ramo de erro genérico — senão o `detail` do DRF ("Não encontrado.") é o
+ * que aparece a quem está numa cozinha.
+ *
+ * **Sem `?loja=`, e agora porque o servidor também não o aceita** (decisão 16):
+ * o detalhe é sempre do estabelecimento inteiro, porque é do `by_location` que
+ * se escolhe onde registar a quebra — e porque um saldo escopado a uma loja ao
+ * lado de um mínimo e de um estado que são de todas lê-se como erro de cálculo.
+ * O número escreve-se com o âmbito ao lado, no ecrã.
  */
-export function useArtigoEmStock(produto: string): UseQueryResult<NivelDeStock | null> {
+export function useArtigoEmStock(produto: string): UseQueryResult<NivelDoArtigo> {
   const tenant = tenantDaCache();
 
   return useQuery({
-    // A **mesma** chave que o ecrã de Stock sem filtros usa, para o detalhe não
-    // pagar um pedido que a lista já pagou. Os três filtros entram vazios de
-    // propósito: o detalhe mostra o artigo em todas as localizações, porque é
-    // de uma delas que se vai registar o desperdício.
-    queryKey: queryKeys.list(tenant, RECURSO_NIVEIS, {
-      loja: undefined,
-      q: undefined,
-      filtro: undefined,
-    }),
+    queryKey: queryKeys.detail(tenant, RECURSO_NIVEIS, produto),
     queryFn: ({ signal }) =>
-      apiRequest(CAMINHO_NIVEIS, paginated(nivelDeStockSchema), { signal }),
-    // `null` e não `undefined`: um `select` que devolve `undefined` deixa o
-    // `data` indistinguível de "ainda a carregar", e o ecrã perdia a diferença
-    // entre "o artigo não existe" e "espera".
-    select: (pagina) => pagina.results.find((linha) => linha.product === produto) ?? null,
+      apiRequest(`${CAMINHO_NIVEIS}/${produto}`, nivelDoArtigoSchema, { signal }),
   });
 }
 

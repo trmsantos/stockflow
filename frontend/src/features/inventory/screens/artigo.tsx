@@ -1,10 +1,11 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { ArrowLeft, CircleAlert, PackageSearch, RotateCcw, TriangleAlert } from "lucide-react";
 
+import { EstadoVazio } from "@/components/estado-vazio";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { mensagemDeErro } from "@/lib/api/errors";
+import { eNaoEncontrado, mensagemDeErro } from "@/lib/api/errors";
 
 import { useArtigoEmStock, useMovimentosDoArtigo, useResumoDeStock } from "../api";
 import { EstadoDoNivel } from "../components/estado-do-nivel";
@@ -64,12 +65,22 @@ function Cabecalho({ nivel, limiarEmDias }: { nivel: NivelDeStock; limiarEmDias:
       <h1 className="text-2xl font-semibold text-balance">{nivel.short_name}</h1>
 
       <div className="flex items-baseline justify-between gap-3">
-        <span
-          data-numeric
-          className={`text-3xl font-semibold ${negativo ? "text-danger" : ""}`}
-        >
-          {textoDeQuantidade(nivel.quantity)}
-        </span>
+        {/* O saldo **com o âmbito escrito ao lado** (ADR 0034, adenda de 29,
+            decisão 16). O detalhe é sempre do estabelecimento inteiro, também
+            para quem veio da lista com uma loja filtrada: sem a palavra, "2 kg"
+            na lista e "12 kg" aqui lê-se como erro de cálculo. Fica na mesma
+            linha de base do número, porque é a mesma frase. */}
+        <p className="flex items-baseline gap-2">
+          <span
+            data-numeric
+            className={`text-3xl font-semibold ${negativo ? "text-danger" : ""}`}
+          >
+            {textoDeQuantidade(nivel.quantity)}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {textos.artigo.emTodoOEstabelecimento}
+          </span>
+        </p>
         <EstadoDoNivel estado={nivel.status} />
       </div>
 
@@ -121,6 +132,14 @@ export function EcraDeArtigo() {
   const resumo = useResumoDeStock();
   const limiarEmDias = resumo.data?.expiring_within_days ?? 0;
 
+  // **Três estados e não dois** (ADR 0034, adenda de 29, decisão 13). Até aqui
+  // o ecrã tinha um ramo só — o `find()` na lista não encontrou — e escrevia
+  // "este artigo não está no stock" tanto sobre mercadoria que existe e nunca
+  // entrou como sobre um endereço de outro estabelecimento. São factos
+  // diferentes e têm saídas diferentes: um é o **vazio** deste ecrã, o outro é
+  // um **erro**.
+  const naoExiste = eNaoEncontrado(nivel.error);
+
   return (
     // Sem `max-w` na secção, **e com um cap no que é leitura**: o histórico é uma
     // tabela de sete colunas e usa a largura toda (DESIGN.md §4), mas o cabeçalho
@@ -132,7 +151,26 @@ export function EcraDeArtigo() {
 
       {nivel.isPending ? <Esqueleto /> : null}
 
-      {nivel.isError ? (
+      {/* **O 404 antes do erro genérico**, e a ordem é a correcção: o `detail`
+          que o DRF manda num 404 é "Não encontrado.", e é essa a frase que o
+          `mensagemDeErro` imprimia a quem está numa cozinha. Sem botão de
+          repetir — o endereço não melhora à segunda —, mas com saída: a lista. */}
+      {naoExiste ? (
+        <div className="px-4">
+          <Alert className="border-danger-border bg-danger-surface">
+            <CircleAlert aria-hidden="true" className="text-danger" />
+            <AlertTitle>{textos.artigo.naoExisteTitulo}</AlertTitle>
+            <AlertDescription className="flex flex-col items-start gap-2">
+              <span>{textos.artigo.naoExisteCorpo}</span>
+              <Button asChild variant="outline">
+                <Link to="/stock" search={() => ({})}>
+                  {textos.accoes.verOStock}
+                </Link>
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : nivel.isError ? (
         <div className="px-4">
           <Alert className="border-danger-border bg-danger-surface">
             <CircleAlert aria-hidden="true" className="text-danger" />
@@ -153,27 +191,33 @@ export function EcraDeArtigo() {
         </div>
       ) : null}
 
-      {nivel.data === null ? (
-        <div className="flex flex-col items-start gap-3 px-4 py-6">
-          <PackageSearch aria-hidden="true" className="size-6 text-muted-foreground" />
-          <div className="flex flex-col gap-1">
-            <p className="font-medium">{textos.artigo.semArtigoTitulo}</p>
-            <p className="text-pretty text-sm text-muted-foreground">
-              {textos.artigo.semArtigoCorpo}
-            </p>
-          </div>
+      {/* O artigo existe e **nunca deu entrada**: é o vazio deste ecrã, não um
+          erro. Pára aqui de propósito — nem cabeçalho, nem formulário de
+          quebra, nem histórico. Não se dá baixa do que nunca deu entrada: um
+          `waste` aqui escrevia uma saída sem entrada num ledger append-only.
+          E não se escreve "esgotado", apesar de o `status` vir com essa
+          palavra: é uma afirmação sobre consumo — tínhamos e acabou — e sobre
+          o que nunca entrou é falsa no sentido que importa (decisão 13). */}
+      {nivel.data?.never_stocked === true ? (
+        <EstadoVazio
+          icone={PackageSearch}
+          titulo={textos.artigo.nuncaEntrouTitulo(nivel.data.short_name)}
+          descricao={textos.artigo.nuncaEntrouCorpo}
+        >
           <Button asChild variant="outline">
             <Link to="/stock" search={() => ({})}>
               {textos.accoes.verOStock}
             </Link>
           </Button>
-        </div>
+        </EstadoVazio>
       ) : null}
 
       {/* Sem artigo não há histórico para mostrar: medido numa renderização, um
           "artigo não encontrado" com um esqueleto de movimentos por baixo é um
-          ecrã a contradizer-se. */}
-      {nivel.data === null || nivel.data === undefined ? null : (
+          ecrã a contradizer-se. O mesmo vale para o artigo que nunca entrou —
+          um histórico vazio por baixo de "ainda não deu entrada" é o ecrã a
+          responder duas vezes à mesma pergunta. */}
+      {nivel.data === undefined || nivel.data.never_stocked ? null : (
         <>
           <div className="flex w-full max-w-6xl flex-col gap-4">
             <Cabecalho nivel={nivel.data} limiarEmDias={limiarEmDias} />

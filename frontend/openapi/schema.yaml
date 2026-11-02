@@ -1345,37 +1345,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/RececaoOut'
           description: ''
-    put:
-      operationId: receipts_update
-      description: ViewSet para receções de mercadoria.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this receção de mercadoria.
-        required: true
-      tags:
-      - receipts
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
-        required: true
-      security:
-      - cookieAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RececaoOut'
-          description: ''
     patch:
       operationId: receipts_partial_update
       description: PATCH /receipts/{id} — atualiza cabeçalho.
@@ -1438,15 +1407,6 @@ paths:
         required: true
       tags:
       - receipts
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
-        required: true
       security:
       - cookieAuth: []
       responses:
@@ -1565,10 +1525,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
+              $ref: '#/components/schemas/TemperaturaInRequest'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/RececaoOutRequest'
+              $ref: '#/components/schemas/TemperaturaInRequest'
         required: true
       security:
       - cookieAuth: []
@@ -2045,6 +2005,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PaginatedNivelDeStockOutList'
+          description: ''
+  /api/v1/stock/levels/{product_id}:
+    get:
+      operationId: stock_level
+      description: |-
+        Três estados: o artigo tem `StockLevel` (200, `never_stocked: false`); existe no catálogo e nunca entrou (200, `never_stocked: true`, saldo zero e `by_location: []`); não existe neste estabelecimento (404). O vazio é 200 e o erro é 404, para o cliente não ter de traduzir um código de erro num ecrã vazio.
+
+        **Sem `?loja=`**: o detalhe é sempre do estabelecimento inteiro, porque é do `by_location` que se escolhe onde registar a quebra. O saldo total escreve-se *«em todo o estabelecimento»*.
+
+        Um artigo **arquivado** (`is_active=False`) responde 200: mercadoria que existiu continua auditável.
+      summary: 'O stock de **um** artigo: a linha da lista, mais `never_stocked`'
+      parameters:
+      - in: path
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        description: O artigo. Mal formado é 400; inexistente neste estabelecimento
+          é 404.
+        required: true
+      tags:
+      - stock
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NivelDoArtigoOut'
           description: ''
   /api/v1/stock/movements:
     get:
@@ -4982,6 +4972,87 @@ components:
           pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
           readOnly: true
           description: Ausente para quem não vê euros.
+    NivelDoArtigoOut:
+      type: object
+      description: |-
+        O corpo do `GET /stock/levels/<product_id>`: a linha **mais um campo**.
+
+        ADR 0034, adenda de 29, decisão 14. Os outros doze campos não se repetem —
+        herdam-se —, e do lado do cliente também não nasce um segundo schema: é o
+        `nivelDeStockSchema.extend({ never_stocked })`.
+
+        ## O `CAMPOS_DE_DINHEIRO` **não** se redeclara aqui
+
+        Herda-se, e é a decisão 15 por extenso: redeclará-lo é literalmente a porta
+        irmã por onde o dinheiro sai, que é o padrão que esta casa já apanhou duas
+        vezes — a ADR 0031 fechou os euros da receção e deixou o `ExtracaoOut` do
+        documento aberto **sobre a mesma fatura**. O contexto é o mesmo
+        `get_serializer_context()` do `StockPanelViewSet`, e o seu default é falso.
+
+        ## Porque é que o campo **não** vai na lista
+
+        Lá seria `false` por construção — a lista parte do `StockLevel` e nunca
+        alcança um artigo que nunca entrou —, e um campo que nunca varia num sítio
+        é onde se começa a não olhar para ele.
+      properties:
+        product:
+          type: string
+          format: uuid
+          readOnly: true
+        short_name:
+          type: string
+          readOnly: true
+        quantity:
+          allOf:
+          - $ref: '#/components/schemas/QuantidadeOut'
+          readOnly: true
+        min_quantity:
+          allOf:
+          - $ref: '#/components/schemas/QuantidadeOut'
+          readOnly: true
+          description: Do **artigo**, logo do estabelecimento inteiro.
+        status:
+          allOf:
+          - $ref: '#/components/schemas/EstadoDoNivelEnum'
+          readOnly: true
+        by_location:
+          type: array
+          items:
+            $ref: '#/components/schemas/NivelPorLocalizacaoOut'
+          readOnly: true
+        nearest_expiry:
+          allOf:
+          - $ref: '#/components/schemas/ValidadeProximaOut'
+          readOnly: true
+          nullable: true
+        quantity_without_cost:
+          allOf:
+          - $ref: '#/components/schemas/QuantidadeOut'
+          readOnly: true
+          description: Quanta desta quantidade está em níveis sem preço registado.
+            Zero é cobertura total; igual ao `quantity` é não haver preço nenhum.
+        unit_cost:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          readOnly: true
+          nullable: true
+          description: Custo médio ponderado da quantidade **com** preço — nunca diluído
+            pela parte sem preço. NULL quando nenhuma tem. Ausente para quem não vê
+            euros.
+        total_value:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          readOnly: true
+          description: Ausente para quem não vê euros.
+        never_stocked:
+          type: boolean
+          readOnly: true
+          description: '**Nunca houve `StockLevel` deste artigo** — nem receção, nem
+            contagem, nem ajuste. Não é saldo zero: um artigo que entrou e acabou
+            tem saldo zero e `never_stocked: false`. É o `nunca_entrou` do assistente
+            (ADR 0027) com o nome em inglês que o resto de `/stock` usa.'
     NivelPorLocalizacaoOut:
       type: object
       description: |-
@@ -6171,69 +6242,6 @@ components:
       - received_at
       - reference
       - supplier_id
-    RececaoOutRequest:
-      type: object
-      description: Saída de receção. Os totais em euros só saem para `owner|manager`.
-      properties:
-        id:
-          type: string
-          format: uuid
-        document:
-          type: string
-          format: uuid
-          nullable: true
-        supplier_id:
-          type: string
-          format: uuid
-          nullable: true
-        doc_type:
-          $ref: '#/components/schemas/DocTypeEnum'
-        doc_number:
-          type: string
-          maxLength: 100
-        doc_date:
-          type: string
-          format: date
-          nullable: true
-        received_at:
-          type: string
-          format: date-time
-        confirmed_at:
-          type: string
-          format: date-time
-          nullable: true
-        confirmed_by:
-          type: string
-          nullable: true
-          minLength: 1
-          maxLength: 150
-        customer_name:
-          type: string
-          maxLength: 200
-        customer_nif:
-          type: string
-          maxLength: 20
-        document_total:
-          type: string
-          format: decimal
-          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
-          nullable: true
-        reference:
-          type: string
-          maxLength: 120
-      required:
-      - confirmed_at
-      - confirmed_by
-      - customer_name
-      - customer_nif
-      - doc_date
-      - doc_number
-      - doc_type
-      - document
-      - id
-      - received_at
-      - reference
-      - supplier_id
     RececaoOutStatusEnum:
       enum:
       - needs_review
@@ -6889,6 +6897,19 @@ components:
         * `escuro` - Escuro
         * `meio_termo` - Meio termo
         * `claro` - Claro
+    TemperaturaInRequest:
+      type: object
+      description: Entrada de temperatura.
+      properties:
+        conservation:
+          $ref: '#/components/schemas/ConservacaoMedidaEnum'
+        celsius:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,4}(?:\.\d{0,1})?$
+      required:
+      - celsius
+      - conservation
     TemperaturaRegistadaOut:
       type: object
       description: Temperatura registada em receção.
