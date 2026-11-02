@@ -80,6 +80,7 @@ export const EN: typeof PT = {
     verRececoes: "See the deliveries",
     verRececao: "Open the delivery",
     verContagens: "Open a count",
+    verReceitas: "See the recipes",
     verPainel: "See the dashboard",
     verStock: "See the stock",
     verEquipa: "See the team",

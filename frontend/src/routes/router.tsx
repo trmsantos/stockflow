@@ -15,6 +15,7 @@ import { rotaInicial } from "./inicio";
 import { rotaDoPainel } from "./painel";
 import { rotaPublica } from "./publico";
 import { rotaDeFotografar, rotaDeRececao, rotaDeReceber } from "./receber";
+import { rotaDeFichaTecnica, rotaDeNovaReceita, rotaDeReceitas } from "./receitas";
 import { rotaRaiz } from "./root";
 import { rotaDeProdutos, rotaCriarProduto, rotaProdutoDetalhe } from "./produtos";
 import { rotaDeStock } from "./stock";
@@ -45,7 +46,7 @@ import { rotaDeStock } from "./stock";
  * sem caminho próprio:
  *
  *  - `rotaPublica` → `/entrar` e `/ativar`, num painel centrado, **sem** sessão;
- *  - `rotaDaApp` → o `AppShell` e os nove ecrãs, com o `beforeLoad` que exige
+ *  - `rotaDaApp` → o `AppShell` e os ecrãs da aplicação, com o `beforeLoad` que exige
  *    sessão ativa. Dois deles **não são de todos os papéis**: `/convites` (ADR
  *    0010) e `/painel`, que a 2026-10-06 saiu do Início para ser o painel de
  *    gestão do dono. O que isso muda não é a árvore — as rotas existem para
@@ -90,6 +91,9 @@ const arvoreDeRotas = rotaRaiz.addChildren([
     rotaDoPainel,
     rotaDeStock,
     rotaDeArtigo,
+    rotaDeReceitas,
+    rotaDeNovaReceita,
+    rotaDeFichaTecnica,
     rotaDeProdutos.addChildren([rotaCriarProduto, rotaProdutoDetalhe]),
     rotaDeReceber,
     rotaDeFotografar,

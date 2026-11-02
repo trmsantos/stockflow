@@ -110,6 +110,7 @@ export const PT = {
     verRececoes: "Ver as receções",
     verRececao: "Abrir a receção",
     verContagens: "Abrir contagem",
+    verReceitas: "Ver as receitas",
     verPainel: "Ver o painel",
     verStock: "Ver o stock",
     verEquipa: "Ver a equipa",

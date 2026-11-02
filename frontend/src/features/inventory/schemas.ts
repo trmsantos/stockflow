@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { decimalSchema, quantidadeSchema, unidadeBaseSchema } from "@/lib/quantidade";
+
 /**
  * O contrato do módulo `inventory`, em Zod.
  *
@@ -23,33 +25,19 @@ import { z } from "zod";
  */
 
 /**
- * `"-2000.000"` — o que o DRF serializa a partir de um `DecimalField`.
+ * O decimal, a unidade base e a quantidade **desceram para `src/lib/`** a
+ * 2026-11-02, com o `recipes` (ADR 0035) a ser o **terceiro** módulo a precisar
+ * das mesmas formas — que é o gatilho que o `purchasing/schemas.ts` já tinha
+ * escrito para a descida acontecer. Continuam a sair por este ficheiro, com os
+ * mesmos nomes: nenhum ecrã mudou de import, e o `src/lib/quantidade.ts`
+ * explica a decisão e o que **não** desceu com ela.
  *
- * Escrito como duas alternativas e não como `^-?\d+(?:\.\d+)?$`: a forma curta
- * tem altura de estrela 2 (um `+` dentro de um grupo opcional) e o
- * `security/detect-unsafe-regex` recusa-a. Aqui cada alternativa tem um só
- * quantificador, diz exactamente o mesmo, e a casa não suprime lint.
+ * Do lado do servidor a descida é a mesma e do mesmo dia: o
+ * `QuantidadeOutSerializer` vive agora em `apps/shared/serializers.py`.
  */
-const decimal = z.string().regex(/^-?\d+$|^-?\d+\.\d+$/, "decimal inválido");
+export { quantidadeSchema, unidadeBaseSchema };
 
-/** A unidade base de stock do artigo. É nesta unidade que o ledger guarda. */
-export const unidadeBaseSchema = z.enum(["g", "ml", "un"]);
-
-/**
- * Uma quantidade, nas duas formas: a do ledger e a de mostrar.
- *
- * O `display` existe porque o staff diz "3,4 kg" e o ledger guarda
- * "3400.000 g". A conversão é do servidor (o artigo sabe a sua unidade de
- * apresentação); o cliente só escolhe o formatador. Sem este campo, ou o ecrã
- * mostra `3400,000 g` — ilegível em pé, com pressa — ou o cliente divide por
- * 1000, que é exactamente a conversão que o domínio proíbe no frontend.
- */
-export const quantidadeSchema = z.object({
-  base: decimal,
-  base_unit: unidadeBaseSchema,
-  display: decimal,
-  display_unit: z.string().min(1),
-});
+const decimal = decimalSchema;
 
 /**
  * Os dois rótulos que a lei distingue, e que o guião da sessão 0 nomeia como

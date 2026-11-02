@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { decimalSchema, quantidadeSchema, unidadeBaseSchema } from "@/lib/quantidade";
+
 /**
  * O contrato do módulo `purchasing`, em Zod.
  *
@@ -52,19 +54,20 @@ import { z } from "zod";
  * decisão com um caso à frente em vez de uma generalização a dois.
  */
 
-/** `"-2000.000"` — o que o DRF serializa a partir de um `DecimalField`. */
-const decimal = z.string().regex(/^-?\d+$|^-?\d+\.\d+$/, "decimal inválido");
+/**
+ * As três formas acima — o decimal, a unidade base e a quantidade — **desceram
+ * para `src/lib/quantidade.ts`** a 2026-11-02, que é exactamente o que o
+ * parágrafo anterior deixou escrito: o `recipes` (ADR 0035) é o terceiro módulo
+ * a precisar delas, e a descida é a decisão com um caso à frente em vez da
+ * generalização a dois. Saem por aqui com os mesmos nomes.
+ *
+ * O `localizacaoSchema` **não** desceu, e está logo abaixo: o `recipes` não o
+ * usa, e descê-lo por simetria era a generalização que o mesmo parágrafo
+ * recusa.
+ */
+export { quantidadeSchema, unidadeBaseSchema };
 
-/** A unidade base de stock do artigo. É nesta unidade que o ledger guarda. */
-export const unidadeBaseSchema = z.enum(["g", "ml", "un"]);
-
-/** Uma quantidade, nas duas formas: a do ledger e a de mostrar. */
-export const quantidadeSchema = z.object({
-  base: decimal,
-  base_unit: unidadeBaseSchema,
-  display: decimal,
-  display_unit: z.string().min(1),
-});
+const decimal = decimalSchema;
 
 export const localizacaoSchema = z.object({
   id: z.uuid(),

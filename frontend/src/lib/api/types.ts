@@ -901,6 +901,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * As fichas técnicas do estabelecimento, com o custo de ingredientes
+         * @description Uma linha por ficha, por ordem alfabética do acabado e com as arquivadas no fim. Os três euros (`batch_cost`, `unit_cost`, `display_cost`) **não vêm** para quem não é `owner` ou `manager`: a chave fica **ausente**, nunca `0` nem `null`.
+         */
+        get: operations["receitas_listar"];
+        put?: never;
+        /**
+         * Gravar uma ficha técnica inteira, linhas incluídas
+         * @description `409 receita_ja_existe` quando o artigo já tem ficha, com o `id` da que existe no corpo. `404` quando o `product` ou um `ingredient` não é legível neste estabelecimento. `400` para os números, para uma unidade que não é a base nem a de apresentação do artigo, para ingrediente repetido e para **ciclos** — o acabado em qualquer ponto do seu grafo transitivo de receitas.
+         */
+        post: operations["receitas_criar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recipes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A ficha técnica de uma receita, com as linhas
+         * @description Uma receita **inactiva** responde 200 e nunca 404: mercadoria que existiu continua auditável.
+         */
+        get: operations["receitas_obter"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Alterar a ficha; `lines` presente substitui as linhas todas
+         * @description O campo `lines` **ausente** não toca nas linhas e `lines` **presente** substitui-as todas — é a única parte do contrato que não se adivinha. O `product` não é alterável: é a identidade da ficha. Arquivar é `{"is_active": false}`; não há `DELETE`.
+         */
+        patch: operations["receitas_atualizar"];
+        trace?: never;
+    };
     "/api/v1/reporting/month": {
         parameters: {
             query?: never;
@@ -1550,6 +1598,29 @@ export interface components {
             readonly detail?: string;
             /** Format: uuid */
             readonly id?: string | null;
+        };
+        /**
+         * @description O 409 do `POST /recipes`: `code` para ramificar, `id` para navegar.
+         *
+         *     O artigo já tem ficha, e a resposta leva o **id da que existe** para o ecrã
+         *     levar lá quem tentou — em vez de lhe dizer "erro" e o mandar procurar à mão
+         *     o que o servidor já sabia (precedente: o 409 da contagem já aberta).
+         *
+         *     O `code` é `CharField` e não `ChoiceField`, como no
+         *     `ConflitoDeContagemOutSerializer` e pela razão que o `base.py` escreve sobre
+         *     o `TypeEnum`: um `ChoiceField` com um valor só emitia um componente chamado
+         *     **`CodeEnum`** — o nome derivado do campo —, e o primeiro outro serializer
+         *     com um `code` fechado colide com ele e o drf-spectacular resolve a colisão
+         *     com um sufixo de hash, que é um nome que muda sozinho e um warning que é
+         *     exit 1 no `pnpm gen:api`. O valor é `receita_ja_existe` e está no
+         *     `help_text`, que é onde o cliente o lê sem pagar um componente por ele.
+         */
+        ConflitoDeReceitaOut: {
+            /** @description Hoje só `receita_ja_existe`. */
+            readonly code?: string;
+            readonly detail?: string;
+            /** Format: uuid */
+            readonly id?: string;
         };
         /**
          * @description * `ambient` - ambiente
@@ -2380,6 +2451,69 @@ export interface components {
          */
         LanguageEnum: "pt-pt" | "en";
         /**
+         * @description Um ingrediente a gravar: o artigo, a quantidade e a **unidade dela**.
+         *
+         *     O nome é `LinhaDaReceitaIn` e não `LinhaIn`, que é como a ADR 0035 lhe
+         *     chama: o `purchasing` já tem um `LinhaInSerializer` (a linha de uma receção)
+         *     e o nome do componente OpenAPI é o da classe — duas classes com o mesmo nome
+         *     dão **um** `LinhaInRequest` com os campos de uma delas, que é um warning e
+         *     portanto exit 1 no `spectacular --fail-on-warn`. Medido ao gerar.
+         *
+         *     `unit` tem de ser o `base_unit` ou o `display_unit` **daquele ingrediente** e
+         *     qualquer outra é 400: não existe motor genérico de conversão (ADR 0011). O
+         *     pasteleiro escreve "500 g de farinha" num catálogo cujo artigo é base `g` e
+         *     apresentação `kg`, e a conversão é do servidor — fazê-la no cliente é a fonte
+         *     nº 1 de bugs de stock.
+         *
+         *     Quem valida a unidade é a view, porque só ela pode ir buscar o artigo.
+         */
+        LinhaDaReceitaInRequest: {
+            /** Format: uuid */
+            ingredient: string;
+            /** Format: decimal */
+            quantity: string;
+            unit: string;
+        };
+        /**
+         * @description Um ingrediente da ficha: as duas quantidades e o custo dele.
+         *
+         *     `quantity` é o que a receita escreve **para uma fornada**; `quantity_real` é
+         *     `quantity ÷ yield_factor`, o que sai do stock. As duas são números diferentes
+         *     e a confusão entre elas é o erro clássico do rendimento — por isso viajam as
+         *     duas, e nenhuma se calcula no cliente.
+         *
+         *     `ingredient_is_active` é do **artigo**: uma ficha activa pode conter um
+         *     artigo arquivado e isso aceita-se, porque arquivar um artigo não pode partir
+         *     a gravação de uma ficha que já o continha. Quem recusa é a produção, na
+         *     fatia B — o sítio onde a decisão tem consequência é o movimento de stock, não
+         *     o documento.
+         *
+         *     `cost_status` vai para os três papéis e os dois euros não: a palavra diz
+         *     *com que certeza*, e é o que fica para quem não vê o número.
+         */
+        LinhaDaReceitaOut: {
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
+            /** Format: uuid */
+            readonly ingredient?: string;
+            readonly ingredient_is_active?: boolean;
+            /**
+             * Format: decimal
+             * @description `quantity_real × unit_cost`. NULL quando o ingrediente não tem custo. Ausente para quem não vê euros.
+             */
+            readonly line_cost?: string | null;
+            /** @description O que a ficha escreve, **por fornada**. */
+            readonly quantity?: components["schemas"]["QuantidadeOut"];
+            /** @description `quantity ÷ yield_factor` — o que de facto sai do stock. */
+            readonly quantity_real?: components["schemas"]["QuantidadeOut"];
+            readonly short_name?: string;
+            readonly sku?: string;
+            /**
+             * Format: decimal
+             * @description Custo de uma unidade **base** deste ingrediente, pela escada da ADR 0035, decisão 10. NULL quando não há número nenhum. Ausente para quem não vê euros.
+             */
+            readonly unit_cost?: string | null;
+        };
+        /**
          * @description `POST /stock/counts/{id}/lines`: o artigo e quanto lá está.
          *
          *     Sem `sku` (morreu com o contrato do servidor) e sem `unit` — o `unit` era
@@ -3110,6 +3244,21 @@ export interface components {
             previous?: string | null;
             results: components["schemas"]["RececaoOut"][];
         };
+        PaginatedReceitaResumoOutList: {
+            /** @example 123 */
+            count: number;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=4
+             */
+            next?: string | null;
+            /**
+             * Format: uri
+             * @example http://api.example.org/accounts/?page=2
+             */
+            previous?: string | null;
+            results: components["schemas"]["ReceitaResumoOut"][];
+        };
         /**
          * @description * `owner` - dono
          *     * `manager` - gerente
@@ -3547,6 +3696,190 @@ export interface components {
          */
         RececaoOutStatusEnum: "needs_review" | "confirmed";
         /**
+         * @description O corpo do `GET /recipes/<id>`: o resumo **mais as linhas**.
+         *
+         *     Zero campos repetidos: os dezasseis do resumo herdam-se, e do lado do cliente
+         *     também não nasce um segundo schema — é o `receitaResumoSchema.extend({
+         *     lines })`.
+         *
+         *     ## O `CAMPOS_DE_DINHEIRO` **não** se redeclara aqui
+         *
+         *     Herda-se, e é a ADR 0035, decisão 6, por extenso. O contexto é o mesmo
+         *     `get_serializer_context()` do `ReceitaViewSet`, e o seu default é **falso**:
+         *     esquecê-lo esconde dinheiro a toda a gente, que é a direcção certa para
+         *     falhar.
+         */
+        ReceitaDetalheOut: {
+            readonly base_unit?: string;
+            /**
+             * Format: decimal
+             * @description € da **fornada** inteira. Ausente para quem não vê euros.
+             */
+            readonly batch_cost?: string | null;
+            /** @description Quanto acabado sai de **uma** fornada. Servido também em apresentação, senão o cozinheiro lê 2400 onde escreveu 2,4 kg. */
+            readonly batch_size?: components["schemas"]["QuantidadeOut"];
+            /**
+             * @description O agregado: **nunca** `conhecido` se alguma linha não o for, e `desconhecido` só quando nenhuma linha tem custo — e aí os euros saem `null`.
+             *
+             *     * `conhecido` - conhecido
+             *     * `estimado` - estimado
+             *     * `desconhecido` - desconhecido
+             */
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
+            /**
+             * Format: decimal
+             * @description `unit_cost × display_factor` — € por unidade de **apresentação**, que é a pergunta do dono. Ausente para quem não vê euros.
+             */
+            readonly display_cost?: string | null;
+            /** Format: decimal */
+            readonly display_factor?: string;
+            readonly display_unit?: string;
+            /** Format: uuid */
+            readonly id?: string;
+            /** @description Quantas linhas não têm custo nenhum. É **contagem** e não euro, logo vai para os três papéis. É uma cobertura mais fraca do que a `quantity_without_cost` do stock — um ingrediente em dez pode ser 90 % do custo — e é por isso que o `cost_status` por linha existe. */
+            readonly ingredients_without_cost?: number;
+            readonly is_active?: boolean;
+            readonly line_count?: number;
+            readonly lines?: components["schemas"]["LinhaDaReceitaOut"][];
+            /** Format: uuid */
+            readonly product?: string;
+            readonly short_name?: string;
+            readonly sku?: string;
+            /**
+             * Format: decimal
+             * @description `batch_cost ÷ batch_size` — € por unidade **base** do acabado. Ausente para quem não vê euros.
+             */
+            readonly unit_cost?: string | null;
+            /**
+             * Format: decimal
+             * @description Rendimento do processo. Nasce a 1,000 porque a perda já está na fornada; não tem tecto de 1 (arroz cru → cozido é > 1).
+             */
+            readonly yield_factor?: string;
+        };
+        /**
+         * @description O corpo do `POST /recipes`: a ficha inteira, linhas incluídas.
+         *
+         *     As linhas viajam **dentro do corpo** e não num sub-recurso (ADR 0035,
+         *     decisão 4): a contagem e a receção têm `POST /…/lines` porque são
+         *     **percursos** — uma folha que se anda com o telemóvel na mão —, e uma ficha
+         *     técnica escreve-se de uma vez, num formulário com um botão de gravar. Oito
+         *     `POST` para oito ingredientes é uma receita meio gravada, e uma receita meio
+         *     gravada é um custo errado que ninguém vê.
+         */
+        ReceitaInRequest: {
+            /**
+             * Format: decimal
+             * @description Quanto acabado sai de uma fornada, na unidade `batch_unit`.
+             */
+            batch_size: string;
+            /** @description A unidade base ou a de apresentação **do acabado**: "2,4 kg" ou "2400 g", e nada mais. */
+            batch_unit: string;
+            /** @default true */
+            is_active: boolean;
+            lines: components["schemas"]["LinhaDaReceitaInRequest"][];
+            /**
+             * Format: uuid
+             * @description O artigo acabado. É a identidade da ficha.
+             */
+            product: string;
+            /**
+             * Format: decimal
+             * @description Default `1.000`: o rendimento vive na fornada, e pôr também 0,9 conta a mesma perda duas vezes.
+             * @default 1.000
+             */
+            yield_factor: string;
+        };
+        /**
+         * @description O corpo do `PATCH /recipes/<id>`. **Sem `product`**: é a identidade.
+         *
+         *     `lines` **ausente** não toca nas linhas; `lines` **presente** substitui-as
+         *     todas. Está escrito aqui e na ADR porque é a única parte do contrato que não
+         *     se adivinha.
+         *
+         *     Não há `DELETE`: uma receita não se apaga, arquiva-se com
+         *     `PATCH {is_active: false}` — foi a ficha técnica de mercadoria que entrou no
+         *     ledger. Uma receita inactiva continua a responder 200.
+         */
+        ReceitaPatchInRequest: {
+            /** Format: decimal */
+            batch_size?: string;
+            batch_unit?: string;
+            is_active?: boolean;
+            lines?: components["schemas"]["LinhaDaReceitaInRequest"][];
+            /** Format: decimal */
+            yield_factor?: string;
+        };
+        /**
+         * @description Uma linha do `GET /recipes`: o acabado, a fornada e o custo dela.
+         *
+         *     ## Os três euros saem juntos, e é por aritmética
+         *
+         *     `line_cost ÷ quantity_real` devolve o `unit_cost` do ingrediente,
+         *     `Σ(line_cost)` devolve o `batch_cost` e `batch_cost ÷ batch_size` devolve o
+         *     `unit_cost` da receita. As quatro pontas da divisão — `quantity`,
+         *     `quantity_real`, `yield_factor` e `batch_size` — estão no payload de quem
+         *     **não** vê euros e continuam a estar, porque as quantidades são o produto
+         *     (ADR 0032, decisão 2). Esconder um euro e deixar os outros era teatro.
+         *
+         *     `display_cost` existe ao lado do `unit_cost` e não em vez dele: o
+         *     `unit_cost` é por unidade **base**, como todo o ledger e como o
+         *     `/stock/levels` — uma definição —, mas a pergunta do dono é literalmente
+         *     *"quanto me custa um pastel"*, e um pastel é uma unidade de apresentação.
+         *     Fazer o cliente multiplicar pelo `display_factor` é a conversão no cliente
+         *     que a casa proíbe.
+         *
+         *     **Nunca "custo do prato"** (ADR 0035, decisão 9): é o custo de
+         *     **ingredientes**, o *food cost*. Numa pastelaria, chamar-lhe custo do prato
+         *     é falso por um factor de 2 a 4, porque num produto com 20 cêntimos de
+         *     matéria a mão-de-obra é o custo dominante.
+         */
+        ReceitaResumoOut: {
+            readonly base_unit?: string;
+            /**
+             * Format: decimal
+             * @description € da **fornada** inteira. Ausente para quem não vê euros.
+             */
+            readonly batch_cost?: string | null;
+            /** @description Quanto acabado sai de **uma** fornada. Servido também em apresentação, senão o cozinheiro lê 2400 onde escreveu 2,4 kg. */
+            readonly batch_size?: components["schemas"]["QuantidadeOut"];
+            /**
+             * @description O agregado: **nunca** `conhecido` se alguma linha não o for, e `desconhecido` só quando nenhuma linha tem custo — e aí os euros saem `null`.
+             *
+             *     * `conhecido` - conhecido
+             *     * `estimado` - estimado
+             *     * `desconhecido` - desconhecido
+             */
+            readonly cost_status?: components["schemas"]["EstadoDoCustoEnum"];
+            /**
+             * Format: decimal
+             * @description `unit_cost × display_factor` — € por unidade de **apresentação**, que é a pergunta do dono. Ausente para quem não vê euros.
+             */
+            readonly display_cost?: string | null;
+            /** Format: decimal */
+            readonly display_factor?: string;
+            readonly display_unit?: string;
+            /** Format: uuid */
+            readonly id?: string;
+            /** @description Quantas linhas não têm custo nenhum. É **contagem** e não euro, logo vai para os três papéis. É uma cobertura mais fraca do que a `quantity_without_cost` do stock — um ingrediente em dez pode ser 90 % do custo — e é por isso que o `cost_status` por linha existe. */
+            readonly ingredients_without_cost?: number;
+            readonly is_active?: boolean;
+            readonly line_count?: number;
+            /** Format: uuid */
+            readonly product?: string;
+            readonly short_name?: string;
+            readonly sku?: string;
+            /**
+             * Format: decimal
+             * @description `batch_cost ÷ batch_size` — € por unidade **base** do acabado. Ausente para quem não vê euros.
+             */
+            readonly unit_cost?: string | null;
+            /**
+             * Format: decimal
+             * @description Rendimento do processo. Nasce a 1,000 porque a perda já está na fornada; não tem tecto de 1 (arroz cru → cozido é > 1).
+             */
+            readonly yield_factor?: string;
+        };
+        /**
          * @description O corpo de uma recusa: `code` estável para ramificar, `detail` para ler.
          *
          *     A mesma forma do `ErroOutSerializer` do `accounts`, numa classe própria e não
@@ -3786,24 +4119,26 @@ export interface components {
          *     * `assistente` - assistente
          *     * `stock` - stock
          *     * `artigo` - artigo
+         *     * `receitas` - receitas
          *     * `contar` - contar
          *     * `receber` - receber
          *     * `rececao` - rececao
          *     * `definicoes` - definicoes
          * @enum {string}
          */
-        RotaEnum: "inicio" | "painel" | "alertas" | "assistente" | "stock" | "artigo" | "contar" | "receber" | "rececao" | "definicoes";
+        RotaEnum: "inicio" | "painel" | "alertas" | "assistente" | "stock" | "artigo" | "receitas" | "contar" | "receber" | "rececao" | "definicoes";
         /**
          * @description * `inicio` - Início
          *     * `painel` - Painel de gestão
          *     * `alertas` - Alertas
          *     * `assistente` - Assistente
          *     * `stock` - Stock
+         *     * `receitas` - Receitas
          *     * `contar` - Contar
          *     * `receber` - Receber
          * @enum {string}
          */
-        RotaIdEnum: "inicio" | "painel" | "alertas" | "assistente" | "stock" | "contar" | "receber";
+        RotaIdEnum: "inicio" | "painel" | "alertas" | "assistente" | "stock" | "receitas" | "contar" | "receber";
         /**
          * @description * `ver_artigo` - ver_artigo
          *     * `ver_falta` - ver_falta
@@ -3815,6 +4150,7 @@ export interface components {
          *     * `ver_rececoes` - ver_rececoes
          *     * `ver_rececao` - ver_rececao
          *     * `ver_contagens` - ver_contagens
+         *     * `ver_receitas` - ver_receitas
          *     * `ver_painel` - ver_painel
          *     * `ver_stock` - ver_stock
          *     * `ver_equipa` - ver_equipa
@@ -3822,7 +4158,7 @@ export interface components {
          *     * `ver_inicio` - ver_inicio
          * @enum {string}
          */
-        RotuloIdEnum: "ver_artigo" | "ver_falta" | "ver_validade" | "ver_desperdicio" | "ver_alertas" | "rever_rececoes" | "ver_rececoes_de_hoje" | "ver_rececoes" | "ver_rececao" | "ver_contagens" | "ver_painel" | "ver_stock" | "ver_equipa" | "ver_estabelecimento" | "ver_inicio";
+        RotuloIdEnum: "ver_artigo" | "ver_falta" | "ver_validade" | "ver_desperdicio" | "ver_alertas" | "rever_rececoes" | "ver_rececoes_de_hoje" | "ver_rececoes" | "ver_rececao" | "ver_contagens" | "ver_receitas" | "ver_painel" | "ver_stock" | "ver_equipa" | "ver_estabelecimento" | "ver_inicio";
         /** @description Uma série do gráfico. */
         SerieOut: {
             id: components["schemas"]["IdDeSerieEnum"];
@@ -5439,6 +5775,115 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RececaoOut"];
+                };
+            };
+        };
+    };
+    receitas_listar: {
+        parameters: {
+            query?: {
+                /** @description `activas` (omissão) ou `todas`. As arquivadas entram **marcadas** pelo `is_active` e nunca escondidas: esconder uma ficha arquivada fazia *«não tenho essa receita»* mentir. */
+                estado?: "activas" | "todas";
+                /** @description Só as fichas que usam este artigo como ingrediente — a pergunta *«que receitas usam farinha»*. Um uuid inválido é 400. */
+                ingrediente?: string;
+                /** @description A page number within the paginated result set. */
+                page?: number;
+                /** @description Casa no nome curto ou no SKU do **acabado**, por tokens. */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedReceitaResumoOutList"];
+                };
+            };
+        };
+    };
+    receitas_criar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReceitaInRequest"];
+                "multipart/form-data": components["schemas"]["ReceitaInRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReceitaDetalheOut"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflitoDeReceitaOut"];
+                };
+            };
+        };
+    };
+    receitas_obter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receita. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReceitaDetalheOut"];
+                };
+            };
+        };
+    };
+    receitas_atualizar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A UUID string identifying this receita. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ReceitaPatchInRequest"];
+                "multipart/form-data": components["schemas"]["ReceitaPatchInRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReceitaDetalheOut"];
                 };
             };
         };

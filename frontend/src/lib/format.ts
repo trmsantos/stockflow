@@ -58,6 +58,21 @@ const dinheiroRedondo = new Intl.NumberFormat(LOCALE, {
   maximumFractionDigits: 0,
 });
 
+/**
+ * O custo de **uma unidade**, que é onde o cêntimo deixa de chegar.
+ *
+ * O contrato serve os custos unitários a **seis** casas de propósito (ADR 0032,
+ * ADR 0035): um grama de farinha custa `0,000420 €` e o cêntimo arredonda-o a
+ * zero. Duas casas são o mínimo para a forma continuar a ler-se como dinheiro —
+ * `0,20 €` e não `0,2 €` — e seis são o tecto que o servidor manda.
+ */
+const dinheiroUnitario = new Intl.NumberFormat(LOCALE, {
+  style: "currency",
+  currency: "EUR",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+});
+
 const dinheiroComSinal = new Intl.NumberFormat(LOCALE, {
   style: "currency",
   currency: "EUR",
@@ -149,6 +164,20 @@ export function formatDecimalField(value: string): string {
 /** `78,40 €` */
 export function formatMoney(value: string | number): string {
   return dinheiro.format(Number(value));
+}
+
+/**
+ * `0,000420 €` · `0,18 €` — o custo de **uma** unidade.
+ *
+ * O par do `formatMoney` para a outra ponta da escala. Um total de fatura ou de
+ * fornada é exacto ao cêntimo e lê-se com duas casas; um custo **por unidade
+ * base** é um quociente, vem do contrato com seis casas, e ao cêntimo um grama
+ * de farinha custaria `0,00 €` — que é a afirmação falsa que esta casa recusa
+ * em todo o lado onde fala de preços. As casas são **significativas**: um
+ * pastel a 0,18 € continua a ler-se `0,18 €` e não `0,180000 €`.
+ */
+export function formatUnitMoney(value: string | number): string {
+  return dinheiroUnitario.format(Number(value));
 }
 
 /**

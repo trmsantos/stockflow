@@ -6,7 +6,6 @@ import type {
   EstadoDeLinha,
   EstadoDeRececao,
   LinhaDeRececao,
-  Quantidade,
   TipoDeDocumento,
   TipoValidade,
 } from "./schemas";
@@ -215,30 +214,16 @@ export function textoDeQuantidadeDaFatura(valor: string, unidade: string): strin
 }
 
 /**
- * Uma quantidade de stock como o ecrã de Stock a escreve: na unidade de
- * apresentação do artigo, com as casas decimais que correspondem ao passo do
- * ledger. É a mesma regra do `inventory` — o menor dígito visível é a unidade
- * base — e está repetida aqui porque as fronteiras do ADR 0008 só deixam
- * importar de outra feature o seu `api.ts`.
- */
-export function textoDeQuantidade(quantidade: Quantidade): string {
-  return quantidade.display_unit === quantidade.base_unit
-    ? formatCount(quantidade.display, quantidade.display_unit)
-    : formatQuantity(quantidade.display, quantidade.display_unit);
-}
-
-/**
- * A quantidade **na unidade base**, que é a unidade do ledger: "12 000 ml",
- * "5 000 g", "100 un".
+ * `12,500 kg` e `12 500 g` — a quantidade na forma de apresentação e na do
+ * ledger.
  *
- * É esta a metade direita da conversão que o guião §1 manda ter à vista. A
- * esquerda fala a língua do fornecedor ("1 caixa 12×1 L") e esta fala a do
- * stock — e é por isso que não se mostra em kg nem em L aqui: o que o ecrã está
- * a afirmar é exactamente o número que vai entrar no ledger.
+ * As duas **desceram para `src/lib/quantidade.ts`** a 2026-11-02 e saem por
+ * aqui com os mesmos nomes. A razão está escrita lá e é a que este ficheiro já
+ * anunciava: eram cópias por a fronteira da ADR 0008 só deixar importar o
+ * `api.ts` de outra feature, e o `recipes` (ADR 0035) é o terceiro módulo a
+ * precisar delas — o gatilho que o `purchasing/schemas.ts` deixou escrito.
  */
-export function textoNaUnidadeBase(quantidade: Quantidade): string {
-  return formatCount(quantidade.base, quantidade.base_unit);
-}
+export { textoDeQuantidade, textoNaUnidadeBase } from "@/lib/quantidade";
 
 /**
  * `true` quando há de facto uma conversão para mostrar.
