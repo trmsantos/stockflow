@@ -97,8 +97,14 @@ _JANELA_DO_CUSTO_REAL = timedelta(days=365)
 #: Quantos níveis de semi-acabado a leitura cascateia (`inventory-domain` §4, e
 #: ADR 0035, decisão 10, degrau 4). Três é o tecto do domínio: massa folhada →
 #: base de pastel → pastel de nata. Mais do que isto é quase sempre erro de
-#: dados, e a terminação não depende deste número — depende do conjunto de
-#: visitados, que existe de qualquer forma.
+#: dados.
+#:
+#: **É também a rede da terminação**, e é a única: a avaliação gasta um
+#: orçamento que começa aqui e desce estritamente a cada ficha que abre, logo a
+#: recursão é estrutural sobre um inteiro que decresce e pára sempre — com
+#: ciclos nos dados ou sem eles. Ver `_custos_dos_ingredientes`, que explica
+#: porque é que o conjunto de visitados que aqui estava **não** servia para
+#: isto e calculava a menos.
 PROFUNDIDADE_MAXIMA = 3
 
 
@@ -318,8 +324,6 @@ def fichas_das_receitas(
         tenant_id=tenant_id,
         product_ids=[linha.ingredient_product_id for linha in linhas],
         desde=agora - _JANELA_DO_CUSTO_REAL,
-        profundidade=0,
-        visitados=frozenset(),
     )
     fichas = []
     for receita in receitas:
@@ -365,13 +369,30 @@ def receita_por_id(*, tenant_id: UUID, recipe_id: UUID) -> ReceitaDetalhe | None
 # ---------------------------------------------------------------------------
 # A escada dos cinco degraus (ADR 0035, decisão 10)
 # ---------------------------------------------------------------------------
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _GrafoDoCusto:
+    """O que a leitura em largura trouxe da base de dados, já em memória.
+
+    `custos` são os degraus 1 a 3 por artigo — o que o `inventory` sabe;
+    `fichas` leva do **artigo acabado** à ficha **activa** dele; `linhas` leva
+    da ficha às linhas dela, com o artigo ingrediente já carregado. Depois
+    disto a escada não volta a tocar na base de dados: o degrau 4 avalia-se
+    inteiro sobre estas três tabelas.
+    """
+
+    custos: Mapping[UUID, _CustoDeIngrediente]
+    fichas: Mapping[UUID, Any]
+    linhas: Mapping[UUID, tuple[Any, ...]]
+
+
+#: O degrau 5 em forma de valor: não há número nenhum. É o que um artigo que o
+#: grafo não alcançou vale, e é diferente de zero — zero seria uma afirmação
+#: falsa sobre o preço.
+_SEM_CUSTO = _CustoDeIngrediente(unit_cost=None, cost_status=CUSTO_DESCONHECIDO)
+
+
 def _custos_dos_ingredientes(
-    *,
-    tenant_id: UUID,
-    product_ids: Sequence[UUID],
-    desde: datetime,
-    profundidade: int,
-    visitados: frozenset[UUID],
+    *, tenant_id: UUID, product_ids: Sequence[UUID], desde: datetime
 ) -> Mapping[UUID, _CustoDeIngrediente]:
     """O custo de cada ingrediente, pela escada, **para o conjunto todo de uma vez**.
 
@@ -388,20 +409,48 @@ def _custos_dos_ingredientes(
     função que o ecrã de Stock usa — quem compara a ficha com o `/stock` vê o
     mesmo número (decisão 3).
 
-    O degrau 4 é daqui, porque é aqui que vive o que é uma ficha. Cascateia por
-    **níveis** e não por ingrediente: cada nível é uma chamada à escada com o
-    conjunto inteiro dos ingredientes das fichas desse nível, logo o custo de uma
-    página inteira de receitas é um número fixo de queries e não um por
-    ingrediente.
+    O degrau 4 é daqui, porque é aqui que vive o que é uma ficha.
+
+    ## Ler em largura, avaliar por artigo — e porque são duas fases
+
+    A **leitura** continua a ser por níveis e em lote (`_carregar_o_grafo`): um
+    nível é uma chamada à porta do `inventory` mais duas leituras de fichas,
+    para o conjunto inteiro dos artigos desse nível. É o que mata o N+1 que a
+    decisão 3 matou, e o número de queries não cresce com o número de fichas da
+    página. A **avaliação** (`_custo_pela_escada`) passou a ser por artigo,
+    sobre o grafo já em memória e sem tocar na base de dados.
+
+    Eram a mesma coisa, e isso tinha um defeito **medido contra o servidor**: o
+    conjunto de visitados que impedia ciclos levava o **lote inteiro do nível**
+    antes de descer. Dois semi-acabados **irmãos** no mesmo lote, com um a
+    depender do outro — a Massa leva Creme, e o Bolo leva Massa **e** Creme —
+    davam o dependente por `desconhecido`: a mesma ficha valia 0,03 € dentro da
+    Tarte e nada dentro do Bolo, e a contribuição dela desaparecia da soma em
+    silêncio, que é a família do *zero mentiroso* que a ADR 0034 fechou no
+    ledger. Na lista era pior, porque o lote cobre os ingredientes de **todas**
+    as receitas da página: o custo de uma ficha dependia de quem lhe calhasse ao
+    lado e mudava entre a lista e o detalhe. **Irmãos não formam ciclo entre si**
+    — o que forma ciclo é um caminho —, e separar as duas fases é o que torna a
+    avaliação indiferente a quem está no lote.
 
     ## Terminação, e porque não depende da guarda de escrita
 
-    Duas redes, e as duas estão sempre ligadas: a `PROFUNDIDADE_MAXIMA` e o
-    conjunto de **visitados**, que carrega os artigos já expandidos em níveis
-    mais acima. Um ciclo no grafo é sempre erro de dados e a escrita recusa-o
-    (`services.py`), mas **a guarda de escrita só vale até à última escrita** e a
-    leitura de hoje corre sobre dados escritos antes dela. Um artigo já visitado
-    não se expande outra vez e fica no degrau 5.
+    A rede é o **orçamento de profundidade**: cada artigo avalia-se com um
+    orçamento que começa em `PROFUNDIDADE_MAXIMA` e desce **estritamente** a
+    cada ficha que se abre; a zero, a escada fica no degrau 3 e não expande
+    mais. A recursão é estrutural sobre um inteiro que decresce, logo termina
+    sempre — e termina sem olhar aos dados, que é o ponto: um ciclo no grafo é
+    sempre erro de dados e a escrita recusa-o (`services.py`), mas **a guarda de
+    escrita só vale até à última escrita** e esta leitura corre sobre dados
+    escritos antes dela. Um ciclo gravado dá um número truncado — na prática
+    `desconhecido`, que é a resposta certa para dados em ciclo — e nunca uma
+    recursão infinita.
+
+    Daí sai a propriedade que o defeito acima pedia: o custo de um artigo é uma
+    função pura do par `(artigo, orçamento)`, e os artigos pedidos aqui têm
+    todos o mesmo orçamento. Não depende do caminho, nem dos irmãos, nem da
+    página — a mesma ficha vale o mesmo dentro de duas receitas diferentes, e na
+    lista o mesmo que no detalhe.
 
     ## O que o degrau 4 devolve quando a sub-ficha está ela própria incompleta
 
@@ -415,59 +464,141 @@ def _custos_dos_ingredientes(
     ids = list(dict.fromkeys(product_ids))
     if not ids:
         return {}
-    do_inventario = inventory_api.custos_de_artigos(
-        tenant_id=tenant_id, product_ids=ids, desde=desde
-    )
-    custos: dict[UUID, _CustoDeIngrediente] = {
-        product_id: _CustoDeIngrediente(
-            unit_cost=custo.unit_cost, cost_status=custo.cost_status
+    grafo = _carregar_o_grafo(tenant_id=tenant_id, product_ids=ids, desde=desde)
+    memoria: dict[tuple[UUID, int], _CustoDeIngrediente] = {}
+    return {
+        product_id: _custo_pela_escada(
+            product_id=product_id,
+            orcamento=PROFUNDIDADE_MAXIMA,
+            grafo=grafo,
+            memoria=memoria,
         )
-        for product_id, custo in do_inventario.items()
-    }
-    por_cascatear = [
-        product_id
         for product_id in ids
-        if custos[product_id].cost_status == CUSTO_DESCONHECIDO
-        and product_id not in visitados
-    ]
-    if not por_cascatear or profundidade >= PROFUNDIDADE_MAXIMA:
-        return custos
+    }
 
-    fichas = [
-        receita
-        for receita in _selectors.receitas_dos_artigos(
-            tenant_id=tenant_id, product_ids=por_cascatear
+
+def _carregar_o_grafo(
+    *, tenant_id: UUID, product_ids: Sequence[UUID], desde: datetime
+) -> _GrafoDoCusto:
+    """Em largura e por níveis: tudo o que a escada pode vir a precisar, de uma vez.
+
+    Por nível: uma chamada a `custos_de_artigos` (duas queries, nunca N) para os
+    artigos **novos** desse nível e, para os que saírem `desconhecido`, as fichas
+    activas deles e as linhas delas — duas queries para o conjunto todo. Com a
+    `PROFUNDIDADE_MAXIMA` a limitar os níveis, o total é um número fixo de
+    queries, seja a página de uma receita ou de cinquenta.
+
+    **Um artigo carrega-se uma vez só, no nível mais raso onde aparece.** Esta
+    dedupe é de *carregamento* e não de avaliação, e é por isso que é segura: o
+    que a base de dados sabe sobre um artigo não depende de por onde se lá
+    chegou — ao contrário do custo dele, que era precisamente o que o defeito
+    confundia.
+
+    O horizonte chega e sobra: expandem-se fichas em `PROFUNDIDADE_MAXIMA`
+    níveis e o último só traz custos. Um artigo descoberto ao nível N só é
+    alcançável na avaliação com orçamento `PROFUNDIDADE_MAXIMA - N` ou menos
+    (o nível é o caminho mais curto até ele), logo o que o último nível descobre
+    nunca chega a precisar de ficha.
+    """
+    custos: dict[UUID, _CustoDeIngrediente] = {}
+    fichas: dict[UUID, Any] = {}
+    por_ficha: dict[UUID, list[Any]] = {}
+    por_pedir = list(dict.fromkeys(product_ids))
+    for nivel in range(PROFUNDIDADE_MAXIMA + 1):
+        if not por_pedir:
+            break
+        for product_id, custo in inventory_api.custos_de_artigos(
+            tenant_id=tenant_id, product_ids=por_pedir, desde=desde
+        ).items():
+            custos[product_id] = _CustoDeIngrediente(
+                unit_cost=custo.unit_cost, cost_status=custo.cost_status
+            )
+        if nivel == PROFUNDIDADE_MAXIMA:
+            break
+        por_expandir = [
+            product_id
+            for product_id in por_pedir
+            if custos[product_id].cost_status == CUSTO_DESCONHECIDO
+        ]
+        do_nivel = [
+            receita
+            for receita in _selectors.receitas_dos_artigos(
+                tenant_id=tenant_id, product_ids=por_expandir
+            )
+            if receita.is_active
+        ]
+        linhas = _selectors.ingredientes_das_receitas(
+            tenant_id=tenant_id, recipe_ids=[receita.id for receita in do_nivel]
         )
-        if receita.is_active
-    ]
-    if not fichas:
-        return custos
-    linhas = _selectors.ingredientes_das_receitas(
-        tenant_id=tenant_id, recipe_ids=[ficha.id for ficha in fichas]
+        for receita in do_nivel:
+            fichas[receita.product_id] = receita
+            por_ficha.setdefault(receita.id, [])
+        for linha in linhas:
+            por_ficha[linha.recipe_id].append(linha)
+        por_pedir = list(
+            dict.fromkeys(
+                linha.ingredient_product_id
+                for linha in linhas
+                if linha.ingredient_product_id not in custos
+            )
+        )
+    return _GrafoDoCusto(
+        custos=custos,
+        fichas=fichas,
+        linhas={recipe_id: tuple(suas) for recipe_id, suas in por_ficha.items()},
     )
-    de_baixo = _custos_dos_ingredientes(
-        tenant_id=tenant_id,
-        product_ids=[linha.ingredient_product_id for linha in linhas],
-        desde=desde,
-        profundidade=profundidade + 1,
-        visitados=visitados | set(por_cascatear),
+
+
+def _custo_pela_escada(
+    *,
+    product_id: UUID,
+    orcamento: int,
+    grafo: _GrafoDoCusto,
+    memoria: dict[tuple[UUID, int], _CustoDeIngrediente],
+) -> _CustoDeIngrediente:
+    """O custo de **um** artigo: os degraus 1 a 3 e, se faltarem, a ficha dele.
+
+    Função pura de `(artigo, orçamento)` sobre o grafo já carregado: não lê a
+    base de dados, não conhece os irmãos e não conhece o caminho por onde se
+    chegou aqui. É essa pureza que faz a mesma ficha valer o mesmo dentro de
+    duas receitas diferentes, e na lista o mesmo que no detalhe.
+
+    O `orcamento` desce a cada ficha aberta e, a zero, a escada fica no degrau 3
+    — é a terminação, e é estrutural. A `memoria` é só velocidade: com a chave a
+    ser o par inteiro, lembrar não muda nenhuma resposta.
+    """
+    base = grafo.custos.get(product_id, _SEM_CUSTO)
+    if base.cost_status != CUSTO_DESCONHECIDO or orcamento <= 0:
+        return base
+    ficha = grafo.fichas.get(product_id)
+    if ficha is None:
+        return base
+    lembrado = memoria.get((product_id, orcamento))
+    if lembrado is not None:
+        return lembrado
+    linhas = grafo.linhas.get(ficha.id, ())
+    de_baixo = {
+        linha.ingredient_product_id: _custo_pela_escada(
+            product_id=linha.ingredient_product_id,
+            orcamento=orcamento - 1,
+            grafo=grafo,
+            memoria=memoria,
+        )
+        for linha in linhas
+    }
+    agregado = _agregar(
+        receita=ficha,
+        ingredientes=_ingredientes(receita=ficha, linhas=linhas, custos=de_baixo),
     )
-    por_ficha: dict[UUID, list[Any]] = {ficha.id: [] for ficha in fichas}
-    for linha in linhas:
-        por_ficha.setdefault(linha.recipe_id, []).append(linha)
-    for ficha in fichas:
-        ingredientes = _ingredientes(
-            receita=ficha, linhas=por_ficha.get(ficha.id, []), custos=de_baixo
-        )
-        agregado = _agregar(receita=ficha, ingredientes=ingredientes)
-        if agregado.unit_cost is None:
-            continue
-        # Sempre **estimado**: é o custo teórico de outra ficha, não um preço
-        # pago. Nunca `conhecido`, mesmo que a sub-ficha o fosse.
-        custos[ficha.product_id] = _CustoDeIngrediente(
-            unit_cost=agregado.unit_cost, cost_status=CUSTO_ESTIMADO
-        )
-    return custos
+    # Sempre **estimado**: é o custo teórico de outra ficha, não um preço pago.
+    # Nunca `conhecido`, mesmo que a sub-ficha o fosse.
+    resultado = (
+        base
+        if agregado.unit_cost is None
+        else _CustoDeIngrediente(unit_cost=agregado.unit_cost, cost_status=CUSTO_ESTIMADO)
+    )
+    memoria[(product_id, orcamento)] = resultado
+    return resultado
 
 
 def _ingredientes(
