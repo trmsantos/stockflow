@@ -165,10 +165,12 @@ custo em que o dono deixa de acreditar. A janela é **um ano**, a mesma do `_JAN
 no `recipes/api.py` e pela mesma razão escrita lá. Lê-se do **ledger**, sem agrupar por localização: o
 `inventory_productcost` daria o número por loja e era a d3 a voltar pela porta das traseiras.
 
-**Degrau 4 — o custo cascateia na leitura.** Profundidade **máxima 3** (`inventory-domain` §4) e **conjunto de
-visitados**, sempre. **Na escrita, os ciclos recusam-se**: o acabado em qualquer ponto do seu próprio grafo
-transitivo é `400 ciclo_de_receitas`. **Na leitura garante-se a terminação com visitados de qualquer forma** —
-a guarda de escrita só vale até à última escrita, e a leitura de hoje corre sobre dados escritos antes dela. O
+**Degrau 4 — o custo cascateia na leitura.** Profundidade **máxima 3** (`inventory-domain` §4), e essa
+profundidade é a **única** rede: a avaliação gasta um orçamento que começa em 3 e desce **estritamente** a cada
+ficha que abre. **Na escrita, os ciclos recusam-se**: o acabado em qualquer ponto do seu grafo transitivo é
+`400 ciclo_de_receitas`. **Na leitura garante-se a terminação de qualquer forma** — a guarda de escrita só vale
+até à última escrita, e a leitura de hoje corre sobre dados escritos antes dela. *(Esta decisão dizia aqui «e
+**conjunto de visitados**, sempre»; esse conjunto era o defeito e saiu — adenda de 2026-11-04.)* O
 reaproveitamento real **não é ciclo**: as aparas de folhada voltam como *outro* artigo e o pão de ontem vira
 pão ralado, que é outro artigo. **Um ciclo no grafo é sempre erro de dados.**
 
@@ -441,10 +443,82 @@ estabelecimentos.
 **Q1 — fornada.** Sim, **por fornada**: d8, com coluna e migração. **Q2 — rendimento.** `yield_factor` nasce a
 `1,000` porque a perda já está na fornada; sem tecto de 1; e os três sentidos do rendimento separados, com o
 fora-de-especificação a não ser um `waste` (d8). **Q3 — semi-acabados.** Duas produções e dois custos
-gravados, como a 0026 dizia — mas **a leitura cascateia** até à profundidade 3 com visitados, e os ciclos são
+gravados, como a 0026 dizia — mas **a leitura cascateia** até à profundidade 3, que é também a rede da
+terminação (adenda de 2026-11-04), e os ciclos são
 400 na escrita (d10). **Q4 — validade do acabado.** Do artigo, em horas, `produced_shelf_life_hours`; o lote de
 ingrediente é tecto de montagem a frio e não fonte; entrega-se com a fatia B (d12). **Q5 — mão-de-obra.** Não:
 muda-se o **rótulo** para "custo de ingredientes" e a ADR 0014 aguenta-se (d9). **Q6 — CMP.** Fica como estava,
 porque quem compara a ficha com o `/stock` tem de ver o mesmo número (d3) — mas ganha a escada que o impede de
 desaparecer e de mentir sobre a sua própria precisão (d10). **Q7 — quem escreve a ficha.** `owner|manager`,
 confirmado pelo dono; o pasteleiro-chefe que precise de escrever fichas é `manager`.
+
+---
+
+## Adenda (2026-11-04) — o conjunto de visitados do degrau 4 **era** o defeito, e saiu
+
+**Toca em receitas e em custos: consultar `domain-expert`** — mas nada aqui muda uma regra de domínio: a escada
+da d10 continua a ter cinco degraus, a ordem é a mesma e o tecto continua a ser três. O que muda é **onde** o
+degrau 4 decide. A d10 foi editada acima, nos dois sítios onde nomeava o conjunto de visitados, para a ADR não
+continuar a descrever um mecanismo que já não existe.
+
+**O defeito, medido contra o servidor a correr.** O `visitados` carregava o **lote inteiro do nível** antes de
+descer (`visitados | set(por_cascatear)`). Consequência: dois semi-acabados **irmãos** no mesmo lote, em que um
+depende do outro, apagavam-se mutuamente — o dependente era saltado e ficava sem custo. Reprodução na base de
+desenvolvimento, com produtos e fichas de prefixo `ZZ`: `ZZ Creme` leva açúcar (com custo); `ZZ Massa` leva
+`ZZ Creme`; `ZZ Tarte` leva só `ZZ Massa`; `ZZ Bolo` leva `ZZ Massa` **e** `ZZ Creme`.
+
+| onde se lê | antes | depois |
+|---|---|---|
+| `ZZ Massa` dentro da `ZZ Tarte` | 0,03 € `estimado` | 0,03 € `estimado` |
+| `ZZ Massa` dentro do `ZZ Bolo` | **`None` `desconhecido`** | 0,03 € `estimado` |
+| fornada do `ZZ Bolo` | **0,15 €**, `ingredients_without_cost: 1` | **0,18 €**, `ingredients_without_cost: 0` |
+
+**Na lista era pior, e é isso que torna o defeito grave.** O lote cobre os ingredientes de *todas* as receitas
+da página, logo o custo de uma ficha dependia de quem lhe calhou na mesma página e **mudava entre a lista e o
+detalhe**. Um custo que muda consoante o sítio de onde se olha, e que **subestima em silêncio** — é o número
+com que o dono decide preços, e é a família do *zero mentiroso* que a 0034 fechou no ledger.
+
+**A correcção — separou-se o que estava colado: ler em largura, avaliar por artigo.**
+
+- A **leitura** continua em lote por nível (`_carregar_o_grafo`): é o que mata o N+1 que a d3 proibiu, e não
+  mudou. Deduplicar o *carregamento* é seguro porque o que a base de dados sabe sobre um artigo não depende de
+  por onde se lá chegou — ao contrário do custo dele, que era precisamente o que o defeito confundia.
+- A **avaliação** do degrau 4 (`_custo_pela_escada`) passou a ser uma **função pura do par `(artigo, orçamento
+  de profundidade)`** sobre o grafo já em memória: não toca na base de dados, não conhece os irmãos, não
+  conhece o caminho.
+
+**A invariante que daí sai, e é o ponto:** o custo de um artigo depende do artigo e do orçamento, e de mais
+nada. Logo a mesma ficha vale o mesmo dentro de duas receitas diferentes, e a lista diz o mesmo que o detalhe —
+**por construção**, e não por um teste a vigiar. **Irmãos não formam ciclo entre si**: o que forma ciclo é um
+caminho.
+
+**A terminação mudou de mecanismo.** Deixa de ser um conjunto de visitados e passa a ser o **orçamento**, que
+decresce estritamente a cada ficha aberta e pára a zero: recursão estrutural sobre um inteiro que decresce,
+logo termina **sem olhar aos dados** — e um ciclo gravado antes da guarda de escrita também termina, truncado
+(na prática `desconhecido`, que é a resposta certa para dados em ciclo). A `PROFUNDIDADE_MAXIMA = 3` fica, e
+passa a ser a **única** rede. **O conjunto de visitados da escrita não é este e fica onde está**: o
+`_recusar_ciclos` pergunta se *existe um caminho*, a qualquer distância e sem tecto de profundidade, e aí o
+conjunto é a terminação certa.
+
+**Alternativa recusada, e a razão merece ficar escrita:** *ordenar os irmãos por dependência dentro do nível*
+resolvia o caso medido e **reinstalava o defeito noutro sítio** — uma cadeia resolvida por ordem entre irmãos
+gasta menos degraus de profundidade do que a mesma cadeia resolvida por recursão, logo o tecto passaria a
+morder conforme quem calhou no lote. Era trocar "o custo depende da página" por "o tecto depende da página".
+
+**Impacto: nenhum, e é afirmação e não esperança.** Zero tabelas, zero colunas, zero migrações, zero RLS, zero
+tarefas Celery, zero eventos. **O contrato HTTP é inalterado** — os mesmos campos, os mesmos papéis, as mesmas
+três palavras —, o `schema.yml` gerado difere em **zero linhas** e o `pnpm gen:api` não produz diff. É
+aritmética por baixo de um contrato que não se mexeu.
+
+**Duas coisas nomeadas, nenhuma resolvida aqui.**
+
+1. **A incompletude da sub-ficha não sobe.** Um `Bolo` pode sair `ingredients_without_cost: 0` enquanto a
+   `Massa` por baixo tem um ingrediente sem preço. A d10 já o escreve (*"não soma ao
+   `ingredients_without_cost` de quem está acima"*), logo é dívida nomeada e não defeito — **mas a correcção
+   torna-a mais frequente**: antes estes grafos colapsavam todos para `desconhecido` e a questão não se punha;
+   agora cascateiam, e o rótulo `estimado` com cobertura `0` passa a aparecer. Medir a cobertura do
+   **subgrafo** é mudança de contrato e é decisão do dono.
+2. **A profundidade é do caminho mais longo, não do mais curto.** Um semi-acabado a quatro níveis do preço sai
+   `desconhecido` mesmo havendo um caminho mais curto até um preço. É o tecto do domínio a funcionar como
+   desenhado — mas agora que o `visitados` saiu, o **3 é a única rede**, e é a esse número que se olha se
+   alguma vez um grafo real passar a morder.
