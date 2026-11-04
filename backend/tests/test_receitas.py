@@ -254,6 +254,20 @@ def _ficha(
     return receita
 
 
+def _linha_de(ficha: dict[str, Any], nome: str) -> dict[str, Any]:
+    """A linha de um ingrediente pelo nome curto.
+
+    Pelo nome e não pelo índice: os testes do lote leem a mesma ficha de dois
+    sítios e o que se compara é o **ingrediente**, não a posição dele.
+    """
+    for linha in ficha["lines"]:
+        if linha["short_name"] == nome:
+            return linha
+    raise AssertionError(
+        f"{nome!r} não está na ficha: {[linha['short_name'] for linha in ficha['lines']]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 1. O caminho feliz e a forma do contrato
 # ---------------------------------------------------------------------------
@@ -859,6 +873,215 @@ class TestAEscadaDoCusto:
 
 
 # ---------------------------------------------------------------------------
+# 6b. O lote de um nível não contamina os irmãos
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+class TestOsIrmaosNoMesmoLote:
+    """O defeito medido contra o servidor a 2026-11-04, e o leque dele.
+
+    A escada expande em **lote por nível** — é o que mata o N+1 da decisão 3 —,
+    e o conjunto que impedia ciclos levava o lote **inteiro do nível** antes de
+    descer. Dois semi-acabados **irmãos** no mesmo lote, com um a depender do
+    outro, davam o dependente por `desconhecido`: a mesma ficha valia 0,03 €
+    dentro da Tarte e **nada** dentro do Bolo, e a contribuição dela desaparecia
+    da soma em silêncio — a família do *zero mentiroso* que a ADR 0034 fechou no
+    ledger, num número com que o dono decide preços.
+
+    Irmãos não formam ciclo entre si; o que forma ciclo é um **caminho**. O que
+    estes testes fixam é a propriedade que a correcção compra: **o custo de uma
+    ficha não depende de com quem ela calha no mesmo lote** — nem dentro de
+    outra receita, nem na mesma página da lista.
+    """
+
+    def _a_escada_medida(self, casa: SimpleNamespace) -> tuple[Recipe, Recipe]:
+        """O grafo exacto da reprodução: `Creme` ← açúcar, `Massa` ← `Creme`.
+
+        A `Tarte` leva só `Massa`; o `Bolo` leva `Massa` **e** `Creme`, logo os
+        dois entram no mesmo lote do primeiro nível e um depende do outro.
+        """
+        acucar = _artigo(casa, nome="Acucar")
+        _receber(casa, acucar, quantidade="100000", custo="0.0015")
+        creme = _artigo(casa, nome="Creme")
+        massa = _artigo(casa, nome="Massa")
+        _ficha(casa, acabado=creme, fornada="10", linhas=((acucar, "1000"),))
+        _ficha(casa, acabado=massa, fornada="10", linhas=((creme, "2"),))
+        tarte = _ficha(
+            casa, acabado=_artigo(casa, nome="Tarte"), fornada="10", linhas=((massa, "1"),)
+        )
+        bolo = _ficha(
+            casa,
+            acabado=_artigo(casa, nome="Bolo"),
+            fornada="10",
+            linhas=((massa, "1"), (creme, "1")),
+        )
+        return tarte, bolo
+
+    def test_a_mesma_ficha_custa_o_mesmo_dentro_de_duas_receitas(self):
+        """O caso medido: 0,03 € na Tarte e `None` no Bolo era a mesma Massa."""
+        casa = _casa()
+        tarte, bolo = self._a_escada_medida(casa)
+        dono = _sessao(casa.dono.email)
+
+        na_tarte = _linha_de(dono.get(f"{URL}/{tarte.id}").json(), "Massa")
+        no_bolo = _linha_de(dono.get(f"{URL}/{bolo.id}").json(), "Massa")
+
+        assert na_tarte["unit_cost"] == no_bolo["unit_cost"] == "0.030000", (
+            "a Massa é a mesma ficha nas duas receitas: no Bolo ela vem no "
+            "mesmo lote que o Creme de que depende, e isso não pode saltá-la"
+        )
+        assert na_tarte["cost_status"] == no_bolo["cost_status"] == "estimado"
+
+    def test_a_contribuicao_do_irmao_nao_desaparece_da_soma(self):
+        casa = _casa()
+        _, bolo = self._a_escada_medida(casa)
+
+        ficha = _sessao(casa.dono.email).get(f"{URL}/{bolo.id}").json()
+
+        assert ficha["batch_cost"] == "0.18", (
+            "0,03 € da Massa mais 0,15 € do Creme — e não só o Creme"
+        )
+        assert ficha["ingredients_without_cost"] == 0
+
+    def test_a_lista_diz_o_mesmo_que_o_detalhe(self):
+        """Na lista o lote cobre a página toda, logo era aqui que era pior.
+
+        O custo de uma ficha não pode depender de quem calhou na mesma página,
+        nem mudar entre a linha da lista e o cabeçalho da ficha.
+        """
+        casa = _casa()
+        tarte, bolo = self._a_escada_medida(casa)
+        dono = _sessao(casa.dono.email)
+
+        lista = {linha["id"]: linha for linha in dono.get(URL).json()["results"]}
+        detalhe_do_bolo = dono.get(f"{URL}/{bolo.id}").json()
+        detalhe_da_tarte = dono.get(f"{URL}/{tarte.id}").json()
+
+        assert lista[str(bolo.id)]["batch_cost"] == detalhe_do_bolo["batch_cost"] == "0.18"
+        assert lista[str(tarte.id)]["batch_cost"] == detalhe_da_tarte["batch_cost"] == "0.03"
+
+    def test_o_leque_de_oito_irmaos_com_dependencias_cruzadas(self):
+        """Oito semi-acabados no mesmo lote, metade a depender de um irmão.
+
+        Os pares levam a `Base`; os ímpares levam o irmão anterior; e o acabado
+        leva os oito, logo entram todos no mesmo lote do primeiro nível. Cada um
+        leva uma quantidade diferente, para que oito números iguais não possam
+        passar por acaso.
+
+        O que se compara não são números escritos à mão: é o `unit_cost` de cada
+        irmão **dentro** do acabado contra o `unit_cost` da **ficha dele**, que
+        sai de um lote onde ele está sozinho. São dois caminhos para o mesmo
+        número, e o defeito era exactamente os dois discordarem.
+        """
+        casa = _casa()
+        acucar = _artigo(casa, nome="Acucar")
+        _receber(casa, acucar, quantidade="1000000", custo="0.002")
+        base = _artigo(casa, nome="Base")
+        _ficha(casa, acabado=base, fornada="1000", linhas=((acucar, "1000"),))
+        irmaos: list[Product] = []
+        fichas: list[Recipe] = []
+        for numero in range(8):
+            irmao = _artigo(casa, nome=f"Semi {numero}")
+            ingrediente = base if numero % 2 == 0 else irmaos[numero - 1]
+            fichas.append(
+                _ficha(
+                    casa,
+                    acabado=irmao,
+                    fornada="1000",
+                    linhas=((ingrediente, str(100 * (numero + 1))),),
+                )
+            )
+            irmaos.append(irmao)
+        acabado = _ficha(
+            casa,
+            acabado=_artigo(casa, nome="Acabado"),
+            fornada="1000",
+            linhas=tuple((irmao, "100") for irmao in irmaos),
+        )
+        dono = _sessao(casa.dono.email)
+
+        no_acabado = dono.get(f"{URL}/{acabado.id}").json()
+        sozinhos = [dono.get(f"{URL}/{ficha.id}").json() for ficha in fichas]
+
+        for numero, sozinho in enumerate(sozinhos):
+            dentro = _linha_de(no_acabado, f"Semi {numero}")
+            assert dentro["unit_cost"] is not None, (
+                f"Semi {numero} ficou sem custo dentro do acabado — e tem ficha"
+            )
+            assert dentro["unit_cost"] == sozinho["unit_cost"], (
+                f"Semi {numero} vale uma coisa dentro do acabado e outra na sua "
+                "própria ficha: o custo não pode depender do lote"
+            )
+            assert dentro["cost_status"] == "estimado"
+        assert no_acabado["ingredients_without_cost"] == 0
+
+    def test_um_ciclo_de_tres_responde_e_nao_apaga_os_vizinhos(self):
+        """A guarda de escrita só vale até à última escrita.
+
+        Três fichas escritas directamente fecham um ciclo — A leva B, B leva C,
+        C leva A —, como ficariam dados de uma versão anterior à guarda. A
+        leitura tem de responder em vez de recursar para sempre, **e** o
+        ingrediente que não está no ciclo tem de manter o seu custo: um ciclo é
+        erro de dados num sítio, não na página inteira.
+        """
+        casa = _casa()
+        farinha = _artigo(casa, nome="Farinha")
+        _receber(casa, farinha, quantidade="100000", custo="0.002")
+        a = _artigo(casa, nome="Aparas")
+        b = _artigo(casa, nome="Bolacha")
+        c = _artigo(casa, nome="Crosta")
+        _ficha(casa, acabado=a, fornada="1000", linhas=((b, "1000"),))
+        _ficha(casa, acabado=b, fornada="1000", linhas=((c, "1000"),))
+        _ficha(casa, acabado=c, fornada="1000", linhas=((a, "1000"),))
+        bolo = _ficha(
+            casa,
+            acabado=_artigo(casa, nome="Bolo"),
+            fornada="1000",
+            linhas=((a, "500"), (farinha, "500")),
+        )
+
+        resposta = _sessao(casa.dono.email).get(f"{URL}/{bolo.id}")
+
+        assert resposta.status_code == 200, resposta.content
+        ficha = resposta.json()
+        assert _linha_de(ficha, "Aparas")["cost_status"] == "desconhecido"
+        assert _linha_de(ficha, "Aparas")["unit_cost"] is None
+        assert _linha_de(ficha, "Farinha")["cost_status"] == "conhecido", (
+            "o vizinho do ciclo continua a ter o custo que sempre teve"
+        )
+        assert ficha["batch_cost"] == "1.00"
+        assert ficha["ingredients_without_cost"] == 1
+
+    def test_o_ciclo_entre_irmaos_do_mesmo_lote_tambem_termina(self):
+        """O ciclo no sítio onde o conjunto de visitados deixou de existir.
+
+        Os três do ciclo entram **no mesmo lote**, como linhas da mesma ficha.
+        Era o conjunto de visitados que garantia a terminação aqui; passou a ser
+        o orçamento de profundidade, e o que não muda é que a resposta sai.
+        """
+        casa = _casa()
+        a = _artigo(casa, nome="Aparas")
+        b = _artigo(casa, nome="Bolacha")
+        c = _artigo(casa, nome="Crosta")
+        _ficha(casa, acabado=a, fornada="1000", linhas=((b, "1000"),))
+        _ficha(casa, acabado=b, fornada="1000", linhas=((c, "1000"),))
+        _ficha(casa, acabado=c, fornada="1000", linhas=((a, "1000"),))
+        receita = _ficha(
+            casa,
+            acabado=_artigo(casa, nome="Tudo"),
+            fornada="1000",
+            linhas=((a, "100"), (b, "100"), (c, "100")),
+        )
+
+        resposta = _sessao(casa.dono.email).get(f"{URL}/{receita.id}")
+
+        assert resposta.status_code == 200, resposta.content
+        ficha = resposta.json()
+        assert ficha["cost_status"] == "desconhecido"
+        assert ficha["ingredients_without_cost"] == 3
+        assert ficha["batch_cost"] is None, "zero seria uma afirmação falsa"
+
+
+# ---------------------------------------------------------------------------
 # 7. A aritmética e a ordem dela (decisão 8)
 # ---------------------------------------------------------------------------
 @pytest.mark.django_db
@@ -1235,3 +1458,47 @@ class TestOLoteNaoVoltaASerNMaisUm:
             "degrau por ingrediente"
         )
         assert all(linha["batch_cost"] == "1.60" for linha in dez.json()["results"])
+
+    def test_com_a_cascata_a_diferenca_tambem_e_zero(self):
+        """O mesmo, mas com o custo a vir do **degrau 4** — onde mora a correcção.
+
+        A avaliação da escada passou a ser por artigo, sobre um grafo já em
+        memória; a **leitura** continua a ser por níveis e em lote. Avaliar por
+        artigo não pode ter voltado a ler por artigo, e é isso que esta
+        diferença mede.
+
+        As duas páginas têm o mesmo filtro (`Bolo`) de propósito: assim as duas
+        partem exactamente do mesmo conjunto de ingredientes de raiz — Massa e
+        Creme — e o que sobra entre elas é só o número de fichas.
+        """
+        casa = _casa()
+        acucar = _artigo(casa, nome="Acucar")
+        _receber(casa, acucar, quantidade="1000000", custo="0.002")
+        creme = _artigo(casa, nome="Creme")
+        _ficha(casa, acabado=creme, fornada="1000", linhas=((acucar, "500"),))
+        massa = _artigo(casa, nome="Massa")
+        _ficha(casa, acabado=massa, fornada="1000", linhas=((creme, "500"),))
+        for numero in range(10):
+            _ficha(
+                casa,
+                acabado=_artigo(casa, nome=f"Bolo {numero:02d}"),
+                fornada="1000",
+                linhas=((massa, "200"), (creme, "100")),
+            )
+        dono = _sessao(casa.dono.email)
+        dono.get(URL)  # aquece o que houver a aquecer no pedido autenticado
+
+        with CaptureQueriesContext(connection) as de_uma:
+            uma = dono.get(f"{URL}?q=Bolo 00")
+        with CaptureQueriesContext(connection) as de_dez:
+            dez = dono.get(f"{URL}?q=Bolo")
+
+        assert uma.json()["count"] == 1
+        assert dez.json()["count"] == 10
+        assert len(de_dez.captured_queries) == len(de_uma.captured_queries), (
+            "dez fichas que cascateiam custam as mesmas queries que uma: a "
+            "leitura do grafo é por níveis e em lote, e a avaliação não lê nada"
+        )
+        assert all(linha["batch_cost"] == "0.20" for linha in dez.json()["results"]), (
+            "200 g de Massa a 0,0005 €/g mais 100 g de Creme a 0,001 €/g"
+        )
