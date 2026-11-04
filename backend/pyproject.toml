@@ -263,6 +263,15 @@ unmatched_ignore_imports_alerting = "none"
 allow_indirect_imports = true
 
 # Garante: recipes -> inventory.api, catalog.api e mais nada (nunca purchasing).
+#
+# **`apps.accounts` saiu desta lista a 2026-11-02** (ADR 0035): o cabeçalho acima
+# e o ARCHITECTURE.md §6b dizem `todos -> accounts.api, shared`, e o `recipes` era
+# o único módulo de domínio a contradizê-lo — só passava porque nunca serviu HTTP.
+# Um `views.py` precisa do `PertenceAoTenant`, do `TemPapel`, do `Papel`, do
+# `ve_euros`, do `CHAVE_DE_EUROS` e do `SemEurosParaQuemNaoVe`, todos de
+# `accounts.api`. A correcção é tirá-lo dos proibidos e não acrescentar um
+# `ignore_imports`: uma excepção por importação esconderia a regra geral que já
+# existe. O `ignore_imports` do `accounts.models` fica — é o TYPE_CHECKING.
 [[tool.importlinter.contracts]]
 name = "recipes só depende de inventory e catalog"
 type = "forbidden"
@@ -272,11 +281,14 @@ forbidden_modules = [
     "apps.agents",
     "apps.billing",
     "apps.notifications",
-    "apps.accounts",  # Excepto TYPE_CHECKING
 ]
 ignore_imports = [
     "apps.** -> apps.*.events",  # DTOs de evento — ver cabeçalho
-    "apps.recipes.** -> apps.accounts.models",  # TYPE_CHECKING para type hints
+    # O `apps.recipes.** -> apps.accounts.models` saiu com o `apps.accounts`:
+    # dizia "TYPE_CHECKING para type hints" e **não havia import nenhum** por
+    # baixo dele (`grep accounts apps/recipes/*.py` não devolve uma linha). Uma
+    # excepção sem aresta é uma permissão esquecida — a frase é do contrato do
+    # `reporting`, aqui ao lado.
     "apps.recipes.services -> apps.inventory.models",  # Import local privado
 ]
 unmatched_ignore_imports_alerting = "none"

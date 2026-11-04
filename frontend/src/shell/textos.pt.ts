@@ -103,7 +103,7 @@ export const PT = {
   },
 
   /**
-   * As sete rotas de operação. A `pergunta` é a do DESIGN.md §1 — o que o ecrã
+   * As oito rotas de operação. A `pergunta` é a do DESIGN.md §1 — o que o ecrã
    * responde — e aparece na gaveta e nos títulos só-para-áudio.
    */
   rotas: {
@@ -121,6 +121,15 @@ export const PT = {
       pergunta: "Quanto tenho de farinha? O que vence esta semana?",
     },
     stock: { rotulo: "Stock", pergunta: "O que é que eu tenho, e quanto?" },
+    receitas: {
+      rotulo: "Receitas",
+      /**
+       * **"Custo de ingredientes" e nunca "custo do prato"** (ADR 0035,
+       * decisão 9): é o *food cost*, e com só ingredientes o custo do prato
+       * erra por um factor de 2 a 4 numa pastelaria.
+       */
+      pergunta: "O que entra numa fornada, e quanto custa de ingredientes?",
+    },
     contar: {
       rotulo: "Contar",
       pergunta: "O que está na prateleira é o que o sistema diz?",

@@ -4,6 +4,7 @@ import {
   Boxes,
   ChartNoAxesColumn,
   ClipboardCheck,
+  CookingPot,
   House,
   TriangleAlert,
   Truck,
@@ -216,6 +217,27 @@ export const REGISTO_DE_ROTAS: Record<RotaId, EntradaDoRegisto> = {
     grupo: textos.grupos.inventario,
     icone: Boxes,
     pergunta: textos.rotas.stock.pergunta,
+    campo: false,
+  },
+  receitas: {
+    caminho: "/receitas",
+    rotulo: textos.rotas.receitas.rotulo,
+    // **Inventário e não um grupo novo** (ADR 0035, fatia A). A `ordem_default`
+    // do `accounts/menu.py` põe as receitas em 35, entre o Stock (30) e o
+    // Contar (40): um grupo próprio inserir-se-ia no meio do Inventário, e a
+    // ordem dos grupos é a do primeiro item de cada um. Uma ficha técnica é a
+    // definição do que esta casa tem em stock, não uma família à parte.
+    grupo: textos.grupos.inventario,
+    icone: CookingPot,
+    pergunta: textos.rotas.receitas.pergunta,
+    // **Não** é rota de campo: uma ficha técnica escreve-se sentado, num
+    // formulário com oito linhas. O que se anda com o telemóvel na mão é contar
+    // e receber. A 360px as duas tabelas deslizam na horizontal, e o DESIGN.md
+    // §4 declara-o em vez de o tratar como defeito.
+    //
+    // O papel **não** está aqui, pela regra do ficheiro: a leitura é dos três
+    // (ADR 0035, decisão 5) e o que o `staff` não vê são os euros, que são uma
+    // coluna do payload e não a rota.
     campo: false,
   },
   contar: {

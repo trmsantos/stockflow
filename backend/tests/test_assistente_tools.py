@@ -1551,15 +1551,22 @@ def _ficha(
     tenant: Tenant,
     acabado: Product,
     *,
+    batch_size: str = "1",
     yield_factor: str = "1",
     ativa: bool = True,
     ingredientes: tuple[tuple[Product, str], ...] = (),
 ) -> Recipe:
+    """Uma ficha técnica. `batch_size` default a 1 — ver a ADR 0035, decisão 8.
+
+    As quantidades de `ingredientes` são **por fornada**, que com a fornada a 1
+    é o que estes testes já afirmavam.
+    """
     with tenant_scope(tenant.id):
         receita = Recipe.objects.create(
             tenant=tenant,
             product=acabado,
             is_active=ativa,
+            batch_size=Decimal(batch_size),
             yield_factor=Decimal(yield_factor),
         )
         for ingrediente, quantidade in ingredientes:
@@ -1612,50 +1619,91 @@ def _producao(
     return producao_id
 
 
-def test_a_ficha_e_por_apresentacao_do_acabado_e_o_consumo_real_divide_pelo_rendimento(
+def test_a_ficha_e_por_fornada_e_o_consumo_real_divide_pelo_rendimento(
     loja: Loja,
 ) -> None:
     """Dois números diferentes, e a confusão entre eles é o erro clássico.
 
-    A lista escreve 0,9 kg de farinha por quilo de massa; com 80 % de
-    rendimento, o que sai do stock para um quilo de massa sair é 1,125 kg.
+    A ficha escreve 0,9 kg de farinha numa fornada de 1 kg de massa; com 80 %
+    de rendimento, o que sai do stock para essa fornada sair é 1,125 kg.
+
+    **Por fornada e não por unidade do acabado** (ADR 0035, decisão 8): até
+    2026-11-02 esta tool multiplicava as duas colunas pelo `display_factor` do
+    acabado, por causa de um cabeçalho do `recipes/api.py` que dizia "por uma
+    unidade de apresentação" enquanto o DTO ao lado dizia "por unidade base".
+    Num artigo com base em gramas as duas frases diferem por **mil vezes**.
     """
     massa = _produto(loja.tenant, "Massa", track_lots=False)
     farinha = _produto(loja.tenant, "Farinha", track_lots=False)
     receita = _ficha(
-        loja.tenant, massa, yield_factor="0.8", ingredientes=((farinha, "0.9"),)
+        loja.tenant,
+        massa,
+        batch_size="1000",
+        yield_factor="0.8",
+        ingredientes=((farinha, "900"),),
     )
 
     dados, _ = _executar(_contexto(loja.tenant), "receita", id=receita.id)
 
-    assert dados["por"] == "1 kg de Massa"
+    assert dados["fornada"] == "1 kg"
     assert dados["rendimento"] == "80 %"
     assert dados["linhas"][0]["na_lista"] == "0,9 kg"
     assert dados["linhas"][0]["consumo_real"] == "1,125 kg"
     assert "a dividir pelo rendimento" in dados["nota"]
+    assert "por" not in dados, "a ficha deixou de ser 'por 1 kg' e a chave saiu"
 
 
 def test_o_custo_da_receita_e_so_de_quem_ve_euros(loja: Loja) -> None:
+    """Os euros são de `owner|manager`; as quantidades e a certeza são dos três.
+
+    O custo vem agora do **mesmo sítio que o ecrã de Stock** (ADR 0035, decisão
+    3) e já não do `inventory_productcost`, que é por localização: a farinha no
+    Armazém e o creme na Cozinha davam duas linhas, as duas incompletas e as
+    duas por baixo.
+    """
     massa = _produto(loja.tenant, "Massa", track_lots=False)
     farinha = _produto(loja.tenant, "Farinha", track_lots=False)
-    receita = _ficha(loja.tenant, massa, ingredientes=((farinha, "0.5"),))
-    with tenant_scope(loja.tenant.id):
-        ProductCost.objects.create(
-            tenant=loja.tenant,
-            product=farinha,
-            location=loja.loja,
-            unit_cost=Decimal("0.002"),
-        )
+    _nivel(loja.tenant, farinha, loja.loja, "10000", custo="0.002")
+    receita = _ficha(
+        loja.tenant, massa, batch_size="1000", ingredientes=((farinha, "500"),)
+    )
 
     do_dono, _ = _executar(_contexto(loja.tenant), "receita", id=receita.id)
     do_staff, _ = _executar(
         _contexto(loja.tenant, papel="staff"), "receita", id=receita.id
     )
 
-    assert do_dono["custos"][0]["custo_teorico"] == "€ 1,00", "0,5 g/g × 0,002 €/g × 1000"
+    assert do_dono["custo_da_fornada"] == "€ 1,00", "500 g × 0,002 €/g"
+    assert do_dono["custo_de_ingredientes_por_kg"] == "€ 1,00", "€ 1,00 ÷ 1 kg"
+    assert do_dono["certeza_do_custo"] == "conhecido"
+    assert do_dono["ingredientes_sem_custo"] == 0
     assert do_dono["euros_visiveis"] is True
-    assert do_staff["custos"] == [] and do_staff["euros_visiveis"] is False
+
+    assert "custo_da_fornada" not in do_staff, "ausente, nunca zero"
+    assert "custo_de_ingredientes_por_kg" not in do_staff
+    assert "custo_na_fornada" not in do_staff["linhas"][0]
+    assert do_staff["euros_visiveis"] is False
+    assert do_staff["certeza_do_custo"] == "conhecido", "a palavra fica para os três"
     assert do_staff["linhas"][0]["na_lista"] == "0,5 kg", "a ficha técnica é de todos"
+
+
+def test_sem_stock_e_sem_ledger_o_custo_da_ficha_e_desconhecido(loja: Loja) -> None:
+    """Degrau 5 da escada: não há número nenhum, e diz-se.
+
+    Nunca zero — um zero aqui lia-se como "esta fornada não custa nada".
+    """
+    massa = _produto(loja.tenant, "Massa", track_lots=False)
+    farinha = _produto(loja.tenant, "Farinha", track_lots=False)
+    receita = _ficha(
+        loja.tenant, massa, batch_size="1000", ingredientes=((farinha, "500"),)
+    )
+
+    dados, _ = _executar(_contexto(loja.tenant), "receita", id=receita.id)
+
+    assert dados["certeza_do_custo"] == "desconhecido"
+    assert dados["ingredientes_sem_custo"] == 1
+    assert "custo_da_fornada" not in dados, "ausente porque não há número nenhum"
+    assert dados["euros_visiveis"] is True, "o dono vê euros; é que não há euros"
 
 
 def test_que_receitas_usam_farinha_responde_se_pelo_ingrediente(loja: Loja) -> None:

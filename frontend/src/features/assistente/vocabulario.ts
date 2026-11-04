@@ -96,6 +96,7 @@ const ROTULO_DA_ACAO: Record<RotuloDeAcao, string> = {
   ver_rececoes: textos.acoes.verRececoes,
   ver_rececao: textos.acoes.verRececao,
   ver_contagens: textos.acoes.verContagens,
+  ver_receitas: textos.acoes.verReceitas,
   ver_painel: textos.acoes.verPainel,
   ver_stock: textos.acoes.verStock,
   ver_equipa: textos.acoes.verEquipa,

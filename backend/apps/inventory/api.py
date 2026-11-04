@@ -22,6 +22,12 @@ from django.utils import timezone
 from apps.accounts.api import nomes_de_membros
 from apps.inventory import selectors
 from apps.inventory.models import Location, StockCountLine, StockLevel
+from apps.inventory.selectors import (
+    CUSTO_CONHECIDO,
+    CUSTO_DESCONHECIDO,
+    CUSTO_ESTIMADO,
+    ESTADOS_DO_CUSTO,
+)
 from apps.inventory.services import (
     Autor,
     MovementDTO,
@@ -30,7 +36,21 @@ from apps.inventory.services import (
     record_movements,
 )
 
+#: **As três palavras do custo saem por esta porta** (ADR 0035). Viviam só em
+#: `inventory/selectors.py`, que nenhum outro módulo pode importar: o `recipes`
+#: precisa delas para rotular o custo de cada ingrediente e de uma ficha, e
+#: copiá-las para lá era criar um segundo vocabulário — no OpenAPI, um
+#: `EstadoDoCusto2Enum` ao lado do `EstadoDoCustoEnum`, que é exactamente a
+#: divergência que a ADR 0032 fechou. O `ENUM_NAME_OVERRIDES` do `base.py`
+#: aponta para a tupla do `selectors`, logo os dois módulos emitem **um** enum.
+
 __all__ = [
+    "ESTADOS_DO_CUSTO",
+    "CUSTO_CONHECIDO",
+    "CUSTO_DESCONHECIDO",
+    "CUSTO_ESTIMADO",
+    "CustoDeArtigo",
+    "custos_de_artigos",
     "AgregadoDeDesperdicio",
     "AgregadoDeMovimentos",
     "AgregadoDiarioDeMovimentos",
@@ -989,6 +1009,95 @@ def producoes_por_periodo(
         ),
         truncado,
     )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CustoDeArtigo:
+    """Quanto vale uma unidade **base** de um artigo hoje, e **com que certeza**.
+
+    O número é o mesmo `unit_cost` que o ecrã de Stock mostra (ADR 0032,
+    segunda adenda): `total_value ÷ (quantity − quantity_without_cost)`, do
+    **estabelecimento inteiro**. Quem compara a ficha técnica com o `/stock` vê
+    o mesmo número, que é a propriedade que a ADR 0035, decisão 3, compra.
+
+    A palavra é uma das três do `ESTADOS_DO_CUSTO`, e aqui cobre os **três
+    primeiros degraus** da escada da decisão 10:
+
+    | quando | `unit_cost` | `cost_status` |
+    |---|---|---|
+    | há quantidade com custo e **toda** tem preço | o CMP | `conhecido` |
+    | há quantidade com custo e parte não tem preço | o CMP | `estimado` |
+    | não há quantidade com custo, mas o ledger tem o último preço | esse | `estimado` |
+    | nada disto | `None` | `desconhecido` |
+
+    O `estimado` do segundo caso não é cosmética: com parte do stock sem preço
+    o CMP está **por baixo**, e dizer `conhecido` afirmava uma precisão que o
+    número não tem.
+
+    Os dois degraus seguintes — a ficha do semi-acabado e o "não sabemos" — são
+    do `recipes`, porque é lá que vive o que é uma ficha.
+    """
+
+    product_id: UUID
+    unit_cost: Decimal | None
+    cost_status: str
+
+
+def custos_de_artigos(
+    *, tenant_id: UUID, product_ids: Sequence[UUID], desde: datetime
+) -> Mapping[UUID, CustoDeArtigo]:
+    """O custo de cada artigo pedido, **em duas queries e nunca em N**.
+
+    A porta que a ADR 0035 abre para o `recipes` calcular o custo de uma ficha.
+    Devolve uma entrada por artigo pedido — também para os que não têm custo
+    nenhum, com `None` e `desconhecido`, porque é essa ausência que manda o
+    chamador ao degrau seguinte (a ficha do semi-acabado).
+
+    `desde` é a janela do degrau 3: um preço mais antigo do que isso já não diz
+    nada sobre o de hoje. Quem chama escolhe-a e escreve porquê.
+
+    **Duas leituras, sejam dez artigos ou duzentos**: a dos níveis (a mesma
+    função do ecrã de Stock, decisão 3) e a do último custo do ledger, só para
+    os artigos que a primeira não resolveu. O cálculo antigo fazia uma chamada
+    a `custos_medios_por_artigo` **por ingrediente** e multiplicava isso pelo
+    número de receitas de uma página — era N+1 por desenho.
+    """
+    ids = list(dict.fromkeys(product_ids))
+    if not ids:
+        return {}
+    niveis = {
+        linha["product"]: linha
+        for linha in selectors.niveis_de_stock(tenant_id=tenant_id, product_ids=ids)
+    }
+    custos: dict[UUID, CustoDeArtigo] = {}
+    por_resolver: list[UUID] = []
+    for product_id in ids:
+        linha = niveis.get(product_id)
+        unitario = linha["unit_cost"] if linha else None
+        if unitario is None:
+            # Degrau 3: não há quantidade com custo — acabou, ou nunca teve
+            # preço. O stock a zero não pode apagar o custo.
+            por_resolver.append(product_id)
+            continue
+        sem_preco = linha["quantity_without_cost"] or Decimal("0")
+        custos[product_id] = CustoDeArtigo(
+            product_id=product_id,
+            unit_cost=unitario,
+            cost_status=CUSTO_CONHECIDO if sem_preco <= 0 else CUSTO_ESTIMADO,
+        )
+    do_ledger = selectors.ultimo_custo_do_ledger(
+        tenant_id=tenant_id, product_ids=por_resolver, desde=desde
+    )
+    for product_id in por_resolver:
+        unitario = do_ledger.get(product_id)
+        custos[product_id] = CustoDeArtigo(
+            product_id=product_id,
+            unit_cost=unitario,
+            # O que vem do ledger é sempre **estimado**: é o preço da última
+            # vez e não o de agora.
+            cost_status=CUSTO_DESCONHECIDO if unitario is None else CUSTO_ESTIMADO,
+        )
+    return custos
 
 
 def custos_medios_por_artigo(

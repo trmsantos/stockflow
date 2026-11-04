@@ -1,6 +1,6 @@
-import { formatCount, formatDate, formatDaysAway, formatQuantity } from "@/lib/format";
+import { formatDate, formatDaysAway } from "@/lib/format";
 
-import type { EstadoNivel, MotivoQuebra, Quantidade, TipoMovimento } from "./schemas";
+import type { EstadoNivel, MotivoQuebra, TipoMovimento } from "./schemas";
 import { textos } from "./textos";
 
 /**
@@ -74,28 +74,15 @@ export const MOTIVOS_DE_DESPERDICIO: readonly MotivoQuebra[] = [
 ];
 
 /**
- * Uma quantidade como se escreve: número, unidade visível, e as casas decimais
- * que correspondem ao passo do ledger.
+ * `12,500 kg` — uma quantidade como se escreve, com a unidade visível.
  *
- * A regra é uma só: **o menor dígito visível é a unidade base**. Se a unidade de
- * apresentação é a própria unidade base (g, ml, un), o menor passo possível já é
- * o inteiro e três casas decimais seriam milésimos de grama — ruído, num ecrã
- * que se lê em pé. Se a apresentação é derivada (kg, L), as três casas são
- * exactamente os gramas e os mililitros que o ledger guarda.
- *
- * O que isto assume: uma unidade de apresentação diferente da base é múltipla de
- * 1000. É o que o catálogo tem (g→kg, ml→L) e o que o `format.ts` fixa em três
- * casas. No dia em que houver uma apresentação em caixas de 12, as casas
- * decimais passam a ser dado do servidor, ao lado do par `display`/`display_unit`
- * — não uma segunda conta aqui. Converter unidades no cliente é a fonte nº 1 de
- * bugs de stock (`inventory-domain` §2) e aqui não se converte nada: o par vem
- * pronto do servidor e isto só escolhe o formatador.
+ * **Desceu para `src/lib/quantidade.ts` a 2026-11-02**, com o `recipes`
+ * (ADR 0035) a ser o terceiro módulo a precisar dela — o gatilho que o
+ * `purchasing/vocabulario.ts` já tinha escrito. Sai por aqui com o mesmo nome,
+ * logo nenhum dos oito sítios que a chamam mudou de import, e continua a sair
+ * também pelo `api.ts` deste módulo, que é a porta para o ecrã Início.
  */
-export function textoDeQuantidade(quantidade: Quantidade): string {
-  return quantidade.display_unit === quantidade.base_unit
-    ? formatCount(quantidade.display, quantidade.display_unit)
-    : formatQuantity(quantidade.display, quantidade.display_unit);
-}
+export { textoDeQuantidade } from "@/lib/quantidade";
 
 /**
  * Os tipos que **não são eventos económicos** (ADR 0014, decisão 2): pares de

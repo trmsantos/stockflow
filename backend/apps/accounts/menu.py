@@ -243,6 +243,25 @@ _ROTAS: Final[tuple[RotaDoRegisto, ...]] = (
         campo=False,
     ),
     RotaDoRegisto(
+        route_id=RotaDeMenu.RECEITAS,
+        ordem_default=35,
+        # **Os três papéis, e isso é uma decisão e não um descuido** (ADR 0035,
+        # decisão 5): quem está na cozinha precisa das quantidades para
+        # produzir, e o dono decidiu a 2026-10-16 que o `staff` vê a ficha
+        # técnica. O que o `staff` não vê são os euros — e isso é uma **coluna**
+        # que desaparece do payload (`SemEurosParaQuemNaoVe`), não a rota.
+        # Restringir o item era tirar o ecrã a quem mais o usa.
+        #
+        # Escrever a ficha **é** de `owner|manager`, e vive no
+        # `permission_classes` do `ReceitaViewSet`: a assimetria do `recipes` é
+        # o espelho da das contagens — ali o campo abre e o gabinete fecha,
+        # aqui o gabinete escreve a ficha e o campo produz a partir dela.
+        papeis=TODOS_OS_PAPEIS,
+        # Escritório. Uma ficha técnica escreve-se sentado, num formulário com
+        # oito linhas; o que se anda com o telemóvel na mão é contar e receber.
+        campo=False,
+    ),
+    RotaDoRegisto(
         route_id=RotaDeMenu.CONTAR,
         ordem_default=40,
         papeis=TODOS_OS_PAPEIS,

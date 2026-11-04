@@ -295,11 +295,13 @@ def test_o_menu_do_demo_e_o_menu_de_qualquer_estabelecimento(ana: User) -> None:
     """Decisão 1: "nenhum endpoint sabe que ele existe. Zero ramos."
 
     O menu de um `owner` num demo é o mesmo de um `owner` em qualquer outro
-    estabelecimento — as sete rotas de operação, os defaults do registo, sem linha
+    estabelecimento — as rotas de operação, os defaults do registo, sem linha
     nenhuma na tabela. Se algum dia alguém esconder um item "porque é o demo", é
-    aqui que aparece. O `assistente` é a sétima (ADR 0027, 2026-10-15) e entra no
-    demo como em qualquer estabelecimento: a purga das conversas também não o
-    salta.
+    aqui que aparece. O `assistente` entrou a 2026-10-15 (ADR 0027) e não aparece
+    nesta lista porque **nenhum papel o vê no menu**: a entrada é o lançador
+    global. As `receitas` entraram a 2026-11-02 (ADR 0035) e aparecem, como
+    qualquer rota de operação — ainda que o `semear_demonstracao` não semeie
+    receita nenhuma, que é outra coisa e está nomeada na ADR.
 
     Eram oito até 2026-10-07: os `convites` e a `configuracao` saíram do registo
     quando viraram secções das Definições (ADR 0019, decisão 7), porque definições
@@ -316,6 +318,7 @@ def test_o_menu_do_demo_e_o_menu_de_qualquer_estabelecimento(ana: User) -> None:
         "painel",
         "alertas",
         "stock",
+        "receitas",
         "contar",
         "receber",
     ]

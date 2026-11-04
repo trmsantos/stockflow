@@ -38,6 +38,16 @@ api_v1_patterns = [
     path("", include("apps.catalog.urls")),
     # Inventário: localizações (ADR 0021, fatia 2). O ledger vem na fatia 3.
     path("", include("apps.inventory.urls")),
+    # Fichas técnicas (ADR 0035, fatia A): `/recipes` e `/recipes/{id}`. O
+    # `recipes` tinha o servidor pago e a porta fechada — modelos, RLS,
+    # `produzir()` e leitura desde a ADR 0028, e nenhuma linha neste ficheiro.
+    # **Esta linha é o que o liga.** Com âmbito, como tudo o que não declara o
+    # contrário: nenhuma das duas views leva `tenant_scope_exempt`, e é essa
+    # ausência que as torna normais. O que a fatia tem de assimétrico é o
+    # **papel** — ler é dos três, escrever é de `owner|manager` —, e isso vive
+    # em `permission_classes`, não aqui. A lista fechada das dispensas em
+    # `tests/test_rls_isolation.py` **não cresce** com esta feature.
+    path("", include("apps.recipes.urls")),
     # O assistente (ADR 0027): `/assistant/conversations`. Com âmbito, como
     # tudo o que não declara o contrário; as três rotas entram no lado com
     # âmbito da lista fechada do `tests/test_rls_isolation.py`.

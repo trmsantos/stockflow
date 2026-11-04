@@ -834,6 +834,15 @@ def test_a_lista_de_views_dispensadas_de_ambito_esta_fechada() -> None:
         "api/v1/^receipts/(?P<pk>[^/.]+)/lines/(?P<linha_id>[^/.]+)/confirmation$",
         "api/v1/^receipts/(?P<pk>[^/.]+)/temperature$",
         "api/v1/^receipts/summary$",
+        # As duas rotas das fichas técnicas (ADR 0035, fatia A). O `recipes`
+        # tinha modelos, RLS e `produzir()` e **não tinha urls**: estas são as
+        # primeiras. Com âmbito, que é o default, e **nenhuma** dispensa — o
+        # `fora_do_admin` acima não cresceu. O que a fatia tem de assimétrico é
+        # o **papel** (ler é dos três, escrever é de `owner|manager`), e isso
+        # vive em `permission_classes`. A fatia B acrescenta aqui o
+        # `api/v1/^recipes/(?P<pk>[^/.]+)/production$`.
+        "api/v1/^recipes$",
+        "api/v1/^recipes/(?P<pk>[^/.]+)$",
         # Os sete recursos de `/stock` (ADR 0034). O `by-location` e o
         # `by-product` saíram da lista porque **morreram inteiros**: eram de
         # grão lote, exigiam um filtro obrigatório e não tinham consumidor

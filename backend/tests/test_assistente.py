@@ -307,7 +307,10 @@ def cenario(transactional_db: None) -> Cenario:
             display_factor=Decimal("1000"),
         )
         receita = Recipe.objects.create(
-            tenant=alfa, product=massa, yield_factor=Decimal("0.9")
+            tenant=alfa,
+            product=massa,
+            batch_size=Decimal("1"),
+            yield_factor=Decimal("0.9"),
         )
         RecipeLineItem.objects.create(
             tenant=alfa,
@@ -1367,7 +1370,10 @@ def test_que_receitas_usam_farinha(cenario: Cenario, falso: ClienteFalso) -> Non
     receitas = json.loads(falso.chamadas[2]["messages"][5]["content"])["dados"]
     assert [linha["artigo"] for linha in receitas["linhas"]] == ["Massa"]
     assert receitas["linhas"][0]["rendimento"] == "90 %"
-    assert _acoes(turno) == [], "as receitas ainda não têm ecrã, logo não há botão"
+    assert _acoes(turno) == [("receitas", {}, "ver_receitas")], (
+        "as receitas ganharam ecrã com a fatia A da ADR 0035, logo a tool passa "
+        "a produzir botão — era o `_MAPA` a não ter onde pousar"
+    )
 
 
 def test_regista_2_kg_de_farinha_como_perda_nao_escreve_nada(

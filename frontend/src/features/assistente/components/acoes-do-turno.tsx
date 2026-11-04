@@ -130,6 +130,10 @@ function ligacao(acao: Acao, aoNavegar: (() => void) | undefined, rotulo: string
           search={{}}
         />
       );
+    // Sem `search`: o contrato declara a rota sem parâmetros e o botão abre a
+    // lista de fichas inteira — com o filtro de estado na omissão (`activas`).
+    case "receitas":
+      return <Link {...comuns} to="/receitas" search={{}} />;
     case "contar":
       return <Link {...comuns} to="/contar" search={acao.parametros} />;
     case "receber":

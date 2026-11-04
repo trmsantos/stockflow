@@ -105,7 +105,7 @@ export const toolCallSchema = z.object({
 type RotaDeAcaoGerada = components["schemas"]["RotaEnum"];
 type RotuloDeAcaoGerado = components["schemas"]["RotuloIdEnum"];
 
-/** As dez rotas que uma acção pode nomear, do enum gerado e nos dois sentidos. */
+/** As onze rotas que uma acção pode nomear, do enum gerado e nos dois sentidos. */
 const ROTAS_DE_ACAO = {
   inicio: "inicio",
   painel: "painel",
@@ -113,13 +113,19 @@ const ROTAS_DE_ACAO = {
   assistente: "assistente",
   stock: "stock",
   artigo: "artigo",
+  // ADR 0035, fatia A: a `/receitas` passou a existir na árvore e as tools de
+  // receitas ganharam onde pousar. **Não há um id de detalhe**: `/receitas/<id>`
+  // existe, mas um id de rota novo é também um `rotulo_id` novo e uma entrada
+  // nova no registo do cliente, e a ADR autorizou um de cada. As tools levam à
+  // lista, que é um destino verdadeiro e mais fraco.
+  receitas: "receitas",
   contar: "contar",
   receber: "receber",
   rececao: "rececao",
   definicoes: "definicoes",
 } as const satisfies Record<RotaDeAcaoGerada, RotaDeAcaoGerada>;
 
-/** Os quinze ids de rótulo. A palavra de cada um está no `vocabulario.ts`. */
+/** Os dezasseis ids de rótulo. A palavra de cada um está no `vocabulario.ts`. */
 const ROTULOS_DE_ACAO = {
   ver_artigo: "ver_artigo",
   ver_falta: "ver_falta",
@@ -131,6 +137,7 @@ const ROTULOS_DE_ACAO = {
   ver_rececoes: "ver_rececoes",
   ver_rececao: "ver_rececao",
   ver_contagens: "ver_contagens",
+  ver_receitas: "ver_receitas",
   ver_painel: "ver_painel",
   ver_stock: "ver_stock",
   ver_equipa: "ver_equipa",
@@ -195,6 +202,13 @@ export const acaoSchema = z.discriminatedUnion("rota", [
   ),
   // O detalhe de um artigo: o id vem de uma tool que já o validou.
   destino(ROTAS_DE_ACAO.artigo, z.strictObject({ artigo: z.uuid() })),
+  // **Sem parâmetros**, e isso é o contrato e não um esquecimento: o
+  // `PARAMETROS_POR_ROTA` do `apps/agents/navegacao.py` declara `receitas` com
+  // o conjunto vazio. A rota aceita `?q=`, `?estado=` e `?editar=` (ver o
+  // `busca-de-receitas.ts`), mas uma acção do assistente nunca os produz — o
+  // botão abre a lista inteira, e o `strictObject` recusa um parâmetro que um
+  // servidor mais novo mandasse sem este cliente saber o que fazer com ele.
+  destino(ROTAS_DE_ACAO.receitas, z.strictObject({})),
   // `busca-de-contagem.ts`.
   destino(ROTAS_DE_ACAO.contar, z.strictObject({ zona: z.string().trim().max(40).optional() })),
   destino(ROTAS_DE_ACAO.receber, z.strictObject({ estado: estadoDeRececoes.optional() })),

@@ -98,6 +98,10 @@ export const EN: typeof PT = {
       pergunta: "How much flour do I have? What expires this week?",
     },
     stock: { rotulo: "Stock", pergunta: "What do I have, and how much?" },
+    receitas: {
+      rotulo: "Recipes",
+      pergunta: "What goes into one batch, and what does it cost in ingredients?",
+    },
     contar: {
       rotulo: "Count",
       pergunta: "Is what is on the shelf what the system says?",
