@@ -36,7 +36,43 @@ relatório de desperdício em euros — e não um chatbot de suporte.
 - Se eu decidir algo relevante nesta conversa, regista-o em `docs/decisions/` antes de terminar.
 - Não instales dependências fora do lockfile, não desligues segurança "para testar", não suprimas lint.
 
-**Estado atual (2026-10-29):** o **PR #17 está aberto** com os dois detalhes que não existiam. O
+**Estado atual (2026-11-04):** **as fichas técnicas estão ligadas** (ADR 0035, PR #19 e #20). O
+`recipes` era o único módulo de domínio com o servidor pago e a porta fechada — o `produzir()` estava
+escrito e testado desde a ADR 0026 e não havia `views.py`, `urls.py` nem ecrã. Agora há `/receitas`,
+a ficha escreve-se **por fornada** ("1 kg de massa dá 100 pastéis") e o ecrã mostra o **custo de
+ingredientes** — nunca "custo do prato", que numa pastelaria erra por um factor de 2 a 4 por não ter
+mão-de-obra. **Produzir é a fatia B e não está feita.**
+
+O custo é uma **escada de cinco degraus**, porque no dia 1 não há produções e todo o prato feito
+sobre um semi-acabado saía "desconhecido": CMP com cobertura completa · CMP parcial · último custo do
+ledger · custo teórico da ficha do semi-acabado · desconhecido. Stock zero deixou de apagar o custo
+no dia de maior movimento.
+
+**O defeito que o PR #20 corrigiu, e como apareceu, porque a lição é de método:** o conjunto de
+visitados do degrau 4 carregava o **lote inteiro do nível**, logo dois semi-acabados irmãos em que um
+depende do outro apagavam-se mutuamente — a mesma ficha custava 0,03 € numa receita e nada noutra, e
+a soma saía por baixo **sem o dizer**. Na lista era pior: o lote cobre a página, logo o custo
+dependia de quem calhou ao lado. **Nenhum gate o apanhou** (suite verde, `security_check` PASS, CI
+verde nos sete jobs, e o #19 chegou a ser mergeado com ele lá dentro); veio de uma **pista de um
+agente que morreu a meio** e só se confirmou por **construção** — quatro fichas inventadas e dois
+números que tinham de ser iguais. A correcção separa ler (em largura, em lote, que mata o N+1) de
+avaliar (função pura de `(artigo, orçamento)`), e a invariante passa a ser: o custo depende do artigo
+e do orçamento e de mais nada.
+
+**A rede desta máquina falhou de forma intermitente durante toda a sessão** — dez agentes morreram
+com `ENOTFOUND` ou paragem, e o `gh` e o DNS também. Nenhum trabalho se perdeu porque cada
+relançamento parte do que o anterior deixou: medir a árvore, copiar para o scratchpad, e só então
+relançar com o estado dentro do briefing.
+
+**Por decidir, da ADR 0035:** medir a cobertura do **subgrafo** (hoje um bolo pode dizer "zero
+ingredientes sem custo" enquanto a massa por baixo tem um sem preço — a correcção tornou isto mais
+visível) é **mudança de contrato** e é decisão do dono.
+
+**Na base de desenvolvimento ficaram** quatro produtos e quatro fichas com prefixo `ZZ` (Creme →
+Massa → Bolo/Tarte): são a reprodução do defeito do custo e já viraram teste. Arquivam-se com
+`is_active: false` — artigos com histórico não se apagam.
+
+**Estado de 2026-10-29:** o **PR #17 foi mergeado** com os dois detalhes que não existiam. O
 `useArtigoEmStock` e o `useRececao` pediam a lista paginada a 50 e escolhiam a linha com um `find()`:
 o artigo para lá dos 50 — alcançável pela procura — abria a dizer **"não está no stock"**, no ecrã de
 onde se regista a quebra. Agora há rota de detalhe nos dois, e o artigo que **nunca entrou** é um
@@ -109,15 +145,22 @@ Dev local: `backend/.env` é a única fonte de variáveis (o Django lê-o sozinh
 `DATABASE_URL="$MIGRATION_DATABASE_URL"`; `uv run manage.py seed_demo --create-tenant` cria três
 lojas com `owner@demo.pt` / `manager@demo.pt` / `staff@demo.pt` (`DemoPassword123!`).
 
-**Por decidir / por fazer a seguir:** **ligar as Receitas e a Produção** — escolhido pelo dono a
-2026-10-29 e ainda por começar. É a maior porta fechada da casa e a única em que o servidor já está
-pago: o `recipes` tem `models.py` (`Recipe`, `RecipeLineItem`), `services.py` com o `produzir()`
-**escrito e testado** (`tests/test_production.py`) desde a ADR 0026, `selectors.py` e `api.py` — e
-**nenhum `views.py`, nenhum `urls.py`, nenhuma linha em `config/urls.py` e nenhum ecrã**. A ADR 0026
-d3 deixou-o explícito: *"não há endpoint, vem na fatia 7"*. Falta a porta e os ecrãs (fichas técnicas
-e produzir), e isso dá o **custo do prato**, que é o que uma pastelaria quer ver. Consultar o
-`domain-expert` antes do contrato: `yield_factor`, semi-acabados (uma receita que é ingrediente de
-outra) e o lote sintético do produto acabado.
+**Por decidir / por fazer a seguir:** **a fatia B das receitas — produzir**. O contrato está na ADR
+0035; o `produzir()` existe e está testado desde a ADR 0026, e agora **já há fichas para consumir**.
+Dois bloqueadores medidos e escritos, os dois no caminho principal e não em cantos:
+
+- **O `produzir()` só encontra stock através de linhas de `Lot`** (`_get_fefo_lots_with_stock`), logo
+  um semi-acabado com `track_lots=False` é **invisível** → 409 "sem stock" com a arca cheia. É a
+  família do FEFO partido do `registar_waste` (ADR 0034 d8): caminho de escrita testado contra um
+  mundo que a app não produz.
+- **A validade do acabado nasce `NULL`** (ADR 0026 d5). Decidida na 0035 e por entregar com esta
+  fatia: vem do **catálogo, em horas** (pastel 24h, massa folhada 72h), e não do ingrediente mais
+  antigo — o forno reinicia o relógio; o ingrediente é **tecto** só na montagem a frio. Ligar a B com
+  `NULL` tem três custos: o que está na montra nunca aparece nos Alertas, o FEFO vende o tabuleiro de
+  ontem depois do de hoje, e a cadeia de rastreabilidade parte-se no último elo.
+
+Mais: o `produzir()` grava `unit_cost = 0` com `cost_is_estimate=False` — o zero mentiroso que a
+adenda de 27/10 já corrigiu no `waste`, pela outra porta.
 
 Depois disso: as dívidas de IVA e de notas de crédito que a receção deixou (ADR 0029 — o `unit_cost`
 de um `receipt` já é líquido de IVA, e uma nota de crédito **de preço** não move stock);
